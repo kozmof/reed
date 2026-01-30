@@ -1,0 +1,315 @@
+/**
+ * State factory functions for the Reed document editor.
+ * Creates initial immutable state structures.
+ */
+
+import type {
+  DocumentState,
+  DocumentStoreConfig,
+  PieceTableState,
+  PieceNode,
+  LineIndexState,
+  LineIndexNode,
+  SelectionState,
+  HistoryState,
+  DocumentMetadata,
+} from '../types/state.ts';
+
+/**
+ * Default configuration values.
+ */
+const DEFAULT_CONFIG: Required<DocumentStoreConfig> = {
+  content: '',
+  historyLimit: 1000,
+  chunkSize: 65536,
+  encoding: 'utf-8',
+  lineEnding: 'lf',
+};
+
+/**
+ * Create an empty piece table state.
+ */
+export function createEmptyPieceTableState(): PieceTableState {
+  return Object.freeze({
+    root: null,
+    originalBuffer: new Uint8Array(0),
+    addBuffer: new Uint8Array(0),
+    addBufferLength: 0,
+    totalLength: 0,
+  });
+}
+
+/**
+ * Create a piece node. Used internally by piece table operations.
+ */
+export function createPieceNode(
+  bufferType: 'original' | 'add',
+  start: number,
+  length: number,
+  color: 'red' | 'black' = 'black',
+  left: PieceNode | null = null,
+  right: PieceNode | null = null
+): PieceNode {
+  const leftLength = left?.subtreeLength ?? 0;
+  const rightLength = right?.subtreeLength ?? 0;
+
+  return Object.freeze({
+    color,
+    left,
+    right,
+    bufferType,
+    start,
+    length,
+    subtreeLength: length + leftLength + rightLength,
+  });
+}
+
+/**
+ * Create a piece table state from initial content.
+ */
+export function createPieceTableState(content: string): PieceTableState {
+  if (content.length === 0) {
+    return createEmptyPieceTableState();
+  }
+
+  // Encode content to original buffer
+  const encoder = new TextEncoder();
+  const originalBuffer = encoder.encode(content);
+
+  // Create single piece spanning entire original buffer
+  const root = createPieceNode('original', 0, originalBuffer.length);
+
+  return Object.freeze({
+    root,
+    originalBuffer,
+    addBuffer: new Uint8Array(1024), // Pre-allocate some space
+    addBufferLength: 0,
+    totalLength: originalBuffer.length,
+  });
+}
+
+/**
+ * Create an empty line index state.
+ */
+export function createEmptyLineIndexState(): LineIndexState {
+  return Object.freeze({
+    root: null,
+    lineCount: 1, // Empty document has 1 line
+  });
+}
+
+/**
+ * Create a line index node. Used internally by line index operations.
+ */
+export function createLineIndexNode(
+  documentOffset: number,
+  lineLength: number,
+  color: 'red' | 'black' = 'black',
+  left: LineIndexNode | null = null,
+  right: LineIndexNode | null = null
+): LineIndexNode {
+  const leftLineCount = left?.subtreeLineCount ?? 0;
+  const leftByteLength = left?.subtreeByteLength ?? 0;
+  const rightLineCount = right?.subtreeLineCount ?? 0;
+  const rightByteLength = right?.subtreeByteLength ?? 0;
+
+  return Object.freeze({
+    color,
+    left,
+    right,
+    documentOffset,
+    lineLength,
+    subtreeLineCount: 1 + leftLineCount + rightLineCount,
+    subtreeByteLength: lineLength + leftByteLength + rightByteLength,
+  });
+}
+
+/**
+ * Build line index from content string.
+ * Returns the line index state with all line positions.
+ */
+export function createLineIndexState(content: string): LineIndexState {
+  if (content.length === 0) {
+    return createEmptyLineIndexState();
+  }
+
+  // Find all line breaks
+  const lineStarts: { offset: number; length: number }[] = [];
+  let lineStart = 0;
+
+  for (let i = 0; i < content.length; i++) {
+    const char = content[i];
+    if (char === '\n') {
+      lineStarts.push({
+        offset: lineStart,
+        length: i - lineStart + 1, // Include newline
+      });
+      lineStart = i + 1;
+    } else if (char === '\r') {
+      // Handle CRLF
+      if (i + 1 < content.length && content[i + 1] === '\n') {
+        lineStarts.push({
+          offset: lineStart,
+          length: i - lineStart + 2, // Include \r\n
+        });
+        i++; // Skip \n
+        lineStart = i + 1;
+      } else {
+        // CR only
+        lineStarts.push({
+          offset: lineStart,
+          length: i - lineStart + 1,
+        });
+        lineStart = i + 1;
+      }
+    }
+  }
+
+  // Add last line (may not end with newline)
+  if (lineStart <= content.length) {
+    lineStarts.push({
+      offset: lineStart,
+      length: content.length - lineStart,
+    });
+  }
+
+  // Build balanced tree from line starts
+  const root = buildLineIndexTree(lineStarts, 0, lineStarts.length - 1);
+
+  return Object.freeze({
+    root,
+    lineCount: lineStarts.length,
+  });
+}
+
+/**
+ * Build a balanced Red-Black tree from sorted line data.
+ * Uses iterative approach with explicit parent tracking.
+ */
+function buildLineIndexTree(
+  lines: { offset: number; length: number }[],
+  start: number,
+  end: number
+): LineIndexNode | null {
+  if (start > end) {
+    return null;
+  }
+
+  // Use middle element as root for balance
+  const mid = Math.floor((start + end) / 2);
+  const line = lines[mid];
+
+  const left = buildLineIndexTree(lines, start, mid - 1);
+  const right = buildLineIndexTree(lines, mid + 1, end);
+
+  return createLineIndexNode(line.offset, line.length, 'black', left, right);
+}
+
+/**
+ * Create initial selection state.
+ * Default: cursor at position 0.
+ */
+export function createInitialSelectionState(): SelectionState {
+  return Object.freeze({
+    ranges: Object.freeze([Object.freeze({ anchor: 0, head: 0 })]),
+    primaryIndex: 0,
+  });
+}
+
+/**
+ * Create initial history state.
+ */
+export function createInitialHistoryState(limit: number = 1000): HistoryState {
+  return Object.freeze({
+    undoStack: Object.freeze([]),
+    redoStack: Object.freeze([]),
+    limit,
+  });
+}
+
+/**
+ * Create initial document metadata.
+ */
+export function createInitialMetadata(
+  config: Partial<DocumentStoreConfig> = {}
+): DocumentMetadata {
+  return Object.freeze({
+    filePath: undefined,
+    encoding: config.encoding ?? DEFAULT_CONFIG.encoding,
+    lineEnding: config.lineEnding ?? DEFAULT_CONFIG.lineEnding,
+    isDirty: false,
+    lastSaved: undefined,
+  });
+}
+
+/**
+ * Create initial document state from configuration.
+ */
+export function createInitialState(
+  config: Partial<DocumentStoreConfig> = {}
+): DocumentState {
+  const mergedConfig = { ...DEFAULT_CONFIG, ...config };
+  const content = mergedConfig.content;
+
+  return Object.freeze({
+    version: 0,
+    pieceTable: createPieceTableState(content),
+    lineIndex: createLineIndexState(content),
+    selection: createInitialSelectionState(),
+    history: createInitialHistoryState(mergedConfig.historyLimit),
+    metadata: createInitialMetadata(config),
+  });
+}
+
+/**
+ * Helper to create modified state with structural sharing.
+ * Only creates new objects for changed properties.
+ */
+export function withState(
+  state: DocumentState,
+  changes: Partial<DocumentState>
+): DocumentState {
+  return Object.freeze({ ...state, ...changes });
+}
+
+/**
+ * Helper to create modified piece node with structural sharing.
+ */
+export function withPieceNode(
+  node: PieceNode,
+  changes: Partial<PieceNode>
+): PieceNode {
+  const newNode = { ...node, ...changes };
+
+  // Recalculate subtreeLength if children changed
+  if ('left' in changes || 'right' in changes || 'length' in changes) {
+    const leftLength = newNode.left?.subtreeLength ?? 0;
+    const rightLength = newNode.right?.subtreeLength ?? 0;
+    newNode.subtreeLength = newNode.length + leftLength + rightLength;
+  }
+
+  return Object.freeze(newNode);
+}
+
+/**
+ * Helper to create modified line index node with structural sharing.
+ */
+export function withLineIndexNode(
+  node: LineIndexNode,
+  changes: Partial<LineIndexNode>
+): LineIndexNode {
+  const newNode = { ...node, ...changes };
+
+  // Recalculate subtree metadata if children changed
+  if ('left' in changes || 'right' in changes || 'lineLength' in changes) {
+    const leftLineCount = newNode.left?.subtreeLineCount ?? 0;
+    const leftByteLength = newNode.left?.subtreeByteLength ?? 0;
+    const rightLineCount = newNode.right?.subtreeLineCount ?? 0;
+    const rightByteLength = newNode.right?.subtreeByteLength ?? 0;
+
+    newNode.subtreeLineCount = 1 + leftLineCount + rightLineCount;
+    newNode.subtreeByteLength = newNode.lineLength + leftByteLength + rightByteLength;
+  }
+
+  return Object.freeze(newNode);
+}
