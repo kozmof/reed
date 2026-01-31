@@ -6,6 +6,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createDocumentStore } from './store.ts';
 import { DocumentActions } from './actions.ts';
+import { byteOffset } from '../types/branded.ts';
 
 describe('Editor Use Cases', () => {
   describe('Basic Text Editing', () => {
@@ -15,7 +16,7 @@ describe('Editor Use Cases', () => {
 
       // Simulate typing each character
       for (let i = 0; i < text.length; i++) {
-        store.dispatch(DocumentActions.insert(i, text[i]));
+        store.dispatch(DocumentActions.insert(byteOffset(i), text[i]));
       }
 
       const state = store.getSnapshot();
@@ -28,15 +29,15 @@ describe('Editor Use Cases', () => {
       const store = createDocumentStore({ content: 'Hello' });
 
       // Insert at end
-      store.dispatch(DocumentActions.insert(5, ' World'));
+      store.dispatch(DocumentActions.insert(byteOffset(5), ' World'));
       expect(store.getSnapshot().pieceTable.totalLength).toBe(11);
 
       // Insert at beginning
-      store.dispatch(DocumentActions.insert(0, 'Say '));
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'Say '));
       expect(store.getSnapshot().pieceTable.totalLength).toBe(15);
 
       // Insert in middle
-      store.dispatch(DocumentActions.insert(9, ','));
+      store.dispatch(DocumentActions.insert(byteOffset(9), ','));
       expect(store.getSnapshot().pieceTable.totalLength).toBe(16);
     });
 
@@ -44,12 +45,12 @@ describe('Editor Use Cases', () => {
       const store = createDocumentStore({ content: 'Hello World' });
 
       // Simulate backspace at end (delete one character)
-      store.dispatch(DocumentActions.delete(10, 11)); // Delete 'd'
+      store.dispatch(DocumentActions.delete(byteOffset(10), byteOffset(11))); // Delete 'd'
       expect(store.getSnapshot().pieceTable.totalLength).toBe(10);
 
       // Continue backspacing
-      store.dispatch(DocumentActions.delete(9, 10)); // Delete 'l'
-      store.dispatch(DocumentActions.delete(8, 9));  // Delete 'r'
+      store.dispatch(DocumentActions.delete(byteOffset(9), byteOffset(10))); // Delete 'l'
+      store.dispatch(DocumentActions.delete(byteOffset(8), byteOffset(9)));  // Delete 'r'
       expect(store.getSnapshot().pieceTable.totalLength).toBe(8);
     });
 
@@ -57,7 +58,7 @@ describe('Editor Use Cases', () => {
       const store = createDocumentStore({ content: 'Hello World' });
 
       // Delete at beginning
-      store.dispatch(DocumentActions.delete(0, 1)); // Delete 'H'
+      store.dispatch(DocumentActions.delete(byteOffset(0), byteOffset(1))); // Delete 'H'
       expect(store.getSnapshot().pieceTable.totalLength).toBe(10);
     });
 
@@ -65,7 +66,7 @@ describe('Editor Use Cases', () => {
       const store = createDocumentStore({ content: 'Hello World' });
 
       // Select "World" and replace with "Everyone"
-      store.dispatch(DocumentActions.replace(6, 11, 'Everyone'));
+      store.dispatch(DocumentActions.replace(byteOffset(6), byteOffset(11), 'Everyone'));
       expect(store.getSnapshot().pieceTable.totalLength).toBe(14); // "Hello Everyone"
     });
   });
@@ -74,7 +75,7 @@ describe('Editor Use Cases', () => {
     it('should undo a single insert operation', () => {
       const store = createDocumentStore({ content: '' });
 
-      store.dispatch(DocumentActions.insert(0, 'Hello'));
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'Hello'));
       expect(store.getSnapshot().pieceTable.totalLength).toBe(5);
 
       store.dispatch(DocumentActions.undo());
@@ -84,7 +85,7 @@ describe('Editor Use Cases', () => {
     it('should redo an undone operation', () => {
       const store = createDocumentStore({ content: '' });
 
-      store.dispatch(DocumentActions.insert(0, 'Hello'));
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'Hello'));
       store.dispatch(DocumentActions.undo());
       expect(store.getSnapshot().pieceTable.totalLength).toBe(0);
 
@@ -96,9 +97,9 @@ describe('Editor Use Cases', () => {
       const store = createDocumentStore({ content: '' });
 
       // Type sequence
-      store.dispatch(DocumentActions.insert(0, 'A'));
-      store.dispatch(DocumentActions.insert(1, 'B'));
-      store.dispatch(DocumentActions.insert(2, 'C'));
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'A'));
+      store.dispatch(DocumentActions.insert(byteOffset(1), 'B'));
+      store.dispatch(DocumentActions.insert(byteOffset(2), 'C'));
       expect(store.getSnapshot().pieceTable.totalLength).toBe(3);
 
       // Undo all
@@ -121,12 +122,12 @@ describe('Editor Use Cases', () => {
     it('should clear redo stack when new edit is made after undo', () => {
       const store = createDocumentStore({ content: '' });
 
-      store.dispatch(DocumentActions.insert(0, 'ABC'));
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'ABC'));
       store.dispatch(DocumentActions.undo());
       expect(store.getSnapshot().history.redoStack.length).toBe(1);
 
       // New edit should clear redo stack
-      store.dispatch(DocumentActions.insert(0, 'X'));
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'X'));
       expect(store.getSnapshot().history.redoStack.length).toBe(0);
     });
 
@@ -144,7 +145,7 @@ describe('Editor Use Cases', () => {
     it('should do nothing when redoing with empty redo stack', () => {
       const store = createDocumentStore({ content: '' });
 
-      store.dispatch(DocumentActions.insert(0, 'Hello'));
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'Hello'));
       const stateBefore = store.getSnapshot();
       store.dispatch(DocumentActions.redo());
       const stateAfter = store.getSnapshot();
@@ -197,9 +198,9 @@ describe('Editor Use Cases', () => {
 
       // Batch insert "Hello World" as single transaction
       store.batch([
-        DocumentActions.insert(0, 'Hello'),
-        DocumentActions.insert(5, ' '),
-        DocumentActions.insert(6, 'World'),
+        DocumentActions.insert(byteOffset(0), 'Hello'),
+        DocumentActions.insert(byteOffset(5), ' '),
+        DocumentActions.insert(byteOffset(6), 'World'),
       ]);
 
       expect(store.getSnapshot().pieceTable.totalLength).toBe(11);
@@ -212,9 +213,9 @@ describe('Editor Use Cases', () => {
       store.subscribe(listener);
 
       store.batch([
-        DocumentActions.insert(0, 'A'),
-        DocumentActions.insert(1, 'B'),
-        DocumentActions.insert(2, 'C'),
+        DocumentActions.insert(byteOffset(0), 'A'),
+        DocumentActions.insert(byteOffset(1), 'B'),
+        DocumentActions.insert(byteOffset(2), 'C'),
       ]);
 
       // Only one notification for the entire batch
@@ -227,7 +228,7 @@ describe('Editor Use Cases', () => {
 
       // Start transaction manually
       store.dispatch(DocumentActions.transactionStart());
-      store.dispatch(DocumentActions.insert(8, ' text'));
+      store.dispatch(DocumentActions.insert(byteOffset(8), ' text'));
 
       // Rollback
       store.dispatch(DocumentActions.transactionRollback());
@@ -242,16 +243,16 @@ describe('Editor Use Cases', () => {
 
       // Outer transaction
       store.dispatch(DocumentActions.transactionStart());
-      store.dispatch(DocumentActions.insert(0, 'A'));
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'A'));
 
       // Inner transaction
       store.dispatch(DocumentActions.transactionStart());
-      store.dispatch(DocumentActions.insert(1, 'B'));
+      store.dispatch(DocumentActions.insert(byteOffset(1), 'B'));
       store.dispatch(DocumentActions.transactionCommit()); // Inner commit (no notification)
 
       expect(listener).not.toHaveBeenCalled();
 
-      store.dispatch(DocumentActions.insert(2, 'C'));
+      store.dispatch(DocumentActions.insert(byteOffset(2), 'C'));
       store.dispatch(DocumentActions.transactionCommit()); // Outer commit (notification)
 
       expect(listener).toHaveBeenCalledTimes(1);
@@ -262,7 +263,7 @@ describe('Editor Use Cases', () => {
     it('should track line count after inserting newlines', () => {
       const store = createDocumentStore({ content: '' });
 
-      store.dispatch(DocumentActions.insert(0, 'Line 1\nLine 2\nLine 3'));
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'Line 1\nLine 2\nLine 3'));
 
       const state = store.getSnapshot();
       expect(state.lineIndex.lineCount).toBe(3);
@@ -272,7 +273,7 @@ describe('Editor Use Cases', () => {
       const store = createDocumentStore({ content: 'Line 1' });
       expect(store.getSnapshot().lineIndex.lineCount).toBe(1);
 
-      store.dispatch(DocumentActions.insert(6, '\nLine 2'));
+      store.dispatch(DocumentActions.insert(byteOffset(6), '\nLine 2'));
       expect(store.getSnapshot().lineIndex.lineCount).toBe(2);
     });
   });
@@ -283,7 +284,7 @@ describe('Editor Use Cases', () => {
       const iterations = 1000;
 
       for (let i = 0; i < iterations; i++) {
-        store.dispatch(DocumentActions.insert(i, 'x'));
+        store.dispatch(DocumentActions.insert(byteOffset(i), 'x'));
       }
 
       expect(store.getSnapshot().pieceTable.totalLength).toBe(iterations);
@@ -295,7 +296,7 @@ describe('Editor Use Cases', () => {
       const actions = [];
 
       for (let i = 0; i < 100; i++) {
-        actions.push(DocumentActions.insert(i, String(i % 10)));
+        actions.push(DocumentActions.insert(byteOffset(i), String(i % 10)));
       }
 
       store.batch(actions);
@@ -313,7 +314,7 @@ describe('Editor Use Cases', () => {
       store.subscribe(listener1);
       store.subscribe(listener2);
 
-      store.dispatch(DocumentActions.insert(0, 'A'));
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'A'));
 
       expect(listener1).toHaveBeenCalledTimes(1);
       expect(listener2).toHaveBeenCalledTimes(1);
@@ -324,11 +325,11 @@ describe('Editor Use Cases', () => {
       const listener = vi.fn();
 
       const unsubscribe = store.subscribe(listener);
-      store.dispatch(DocumentActions.insert(0, 'A'));
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'A'));
       expect(listener).toHaveBeenCalledTimes(1);
 
       unsubscribe();
-      store.dispatch(DocumentActions.insert(1, 'B'));
+      store.dispatch(DocumentActions.insert(byteOffset(1), 'B'));
       expect(listener).toHaveBeenCalledTimes(1); // Still 1, not notified
     });
 
@@ -338,7 +339,7 @@ describe('Editor Use Cases', () => {
       store.subscribe(listener);
 
       // Delete with empty range (no-op)
-      store.dispatch(DocumentActions.delete(0, 0));
+      store.dispatch(DocumentActions.delete(byteOffset(0), byteOffset(0)));
 
       expect(listener).not.toHaveBeenCalled();
     });
@@ -355,7 +356,7 @@ describe('Editor Use Cases', () => {
 
       // Should not throw, and second listener should still be called
       expect(() => {
-        store.dispatch(DocumentActions.insert(0, 'A'));
+        store.dispatch(DocumentActions.insert(byteOffset(0), 'A'));
       }).not.toThrow();
 
       expect(normalListener).toHaveBeenCalled();
@@ -367,13 +368,13 @@ describe('Editor Use Cases', () => {
       const store = createDocumentStore({ content: '' });
 
       // Type "Hello World"
-      store.dispatch(DocumentActions.insert(0, 'Hello World'));
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'Hello World'));
 
       // Select "World" (positions 6-11)
       store.dispatch(DocumentActions.setSelection([{ anchor: 6, head: 11 }]));
 
       // Delete selection (simulating backspace/delete with selection)
-      store.dispatch(DocumentActions.delete(6, 11));
+      store.dispatch(DocumentActions.delete(byteOffset(6), byteOffset(11)));
 
       expect(store.getSnapshot().pieceTable.totalLength).toBe(6); // "Hello "
     });
@@ -382,23 +383,23 @@ describe('Editor Use Cases', () => {
       const store = createDocumentStore({ content: 'foo bar foo baz foo' });
 
       // Replace first "foo" with "qux"
-      store.dispatch(DocumentActions.replace(0, 3, 'qux'));
+      store.dispatch(DocumentActions.replace(byteOffset(0), byteOffset(3), 'qux'));
       expect(store.getSnapshot().pieceTable.totalLength).toBe(19);
 
       // Replace second "foo" (now at position 8)
-      store.dispatch(DocumentActions.replace(8, 11, 'qux'));
+      store.dispatch(DocumentActions.replace(byteOffset(8), byteOffset(11), 'qux'));
 
       // Replace third "foo" (now at position 16)
-      store.dispatch(DocumentActions.replace(16, 19, 'qux'));
+      store.dispatch(DocumentActions.replace(byteOffset(16), byteOffset(19), 'qux'));
     });
 
     it('should simulate code editing with auto-indent', () => {
       const store = createDocumentStore({ content: '' });
 
       // Type function definition
-      store.dispatch(DocumentActions.insert(0, 'function foo() {\n'));
-      store.dispatch(DocumentActions.insert(17, '  return 42;\n'));
-      store.dispatch(DocumentActions.insert(30, '}'));
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'function foo() {\n'));
+      store.dispatch(DocumentActions.insert(byteOffset(17), '  return 42;\n'));
+      store.dispatch(DocumentActions.insert(byteOffset(30), '}'));
 
       const state = store.getSnapshot();
       expect(state.lineIndex.lineCount).toBe(3);

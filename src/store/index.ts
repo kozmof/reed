@@ -40,6 +40,9 @@ export {
   getValueStream,
   findPieceAtPosition,
   collectPieces,
+  // Byte/char conversion utilities
+  charToByteOffset,
+  byteToCharOffset,
 } from './piece-table.ts';
 export type { StreamOptions, DocumentChunk } from './piece-table.ts';
 

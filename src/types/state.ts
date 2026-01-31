@@ -3,6 +3,8 @@
  * All state structures are read-only and use structural sharing for efficiency.
  */
 
+import type { ByteOffset } from './branded.ts';
+
 // =============================================================================
 // Piece Table Types
 // =============================================================================
@@ -127,8 +129,8 @@ export interface SelectionState {
 export interface HistoryChange {
   /** Type of change */
   readonly type: 'insert' | 'delete' | 'replace';
-  /** Position where the change occurred */
-  readonly position: number;
+  /** Position where the change occurred (byte offset) */
+  readonly position: ByteOffset;
   /** Text that was inserted or deleted */
   readonly text: string;
   /** For replace: the original text that was replaced */

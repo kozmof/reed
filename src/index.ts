@@ -55,6 +55,37 @@ export type {
   DocumentReducer,
 } from './types/index.ts';
 
+// Branded position types
+export type {
+  ByteOffset,
+  CharOffset,
+  LineNumber,
+  ColumnNumber,
+} from './types/index.ts';
+
+export {
+  byteOffset,
+  charOffset,
+  lineNumber,
+  columnNumber,
+  isValidOffset,
+  isValidLineNumber,
+  addByteOffset,
+  diffByteOffset,
+  addCharOffset,
+  diffCharOffset,
+  nextLine,
+  prevLine,
+  compareByteOffsets,
+  compareCharOffsets,
+  clampByteOffset,
+  clampCharOffset,
+  ZERO_BYTE_OFFSET,
+  ZERO_CHAR_OFFSET,
+  LINE_ZERO,
+  COLUMN_ZERO,
+} from './types/index.ts';
+
 // =============================================================================
 // Type Guards
 // =============================================================================
@@ -114,6 +145,9 @@ export {
   getValueStream,
   findPieceAtPosition,
   collectPieces,
+  // Byte/char conversion utilities
+  charToByteOffset,
+  byteToCharOffset,
 } from './store/index.ts';
 export type { StreamOptions, DocumentChunk } from './store/index.ts';
 

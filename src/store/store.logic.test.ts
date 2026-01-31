@@ -32,6 +32,7 @@ import {
   isDocumentAction,
 } from '../types/actions.ts';
 import { createDocumentStore, isDocumentStore } from './store.ts';
+import { byteOffset } from '../types/branded.ts';
 
 // =============================================================================
 // State Factory Tests
@@ -305,28 +306,28 @@ describe('Document Reducer', () => {
   describe('INSERT action', () => {
     it('should increase total length', () => {
       const state = createInitialState();
-      const newState = documentReducer(state, DocumentActions.insert(0, 'Hello'));
+      const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
 
       expect(newState.pieceTable.totalLength).toBe(5);
     });
 
     it('should increment version', () => {
       const state = createInitialState();
-      const newState = documentReducer(state, DocumentActions.insert(0, 'Hi'));
+      const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hi'));
 
       expect(newState.version).toBe(1);
     });
 
     it('should mark document as dirty', () => {
       const state = createInitialState();
-      const newState = documentReducer(state, DocumentActions.insert(0, 'A'));
+      const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), 'A'));
 
       expect(newState.metadata.isDirty).toBe(true);
     });
 
     it('should push to history', () => {
       const state = createInitialState();
-      const newState = documentReducer(state, DocumentActions.insert(0, 'Test'));
+      const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Test'));
 
       expect(newState.history.undoStack.length).toBe(1);
       expect(newState.history.undoStack[0].changes[0].type).toBe('insert');
@@ -334,7 +335,7 @@ describe('Document Reducer', () => {
 
     it('should update line count for newlines', () => {
       const state = createInitialState();
-      const newState = documentReducer(state, DocumentActions.insert(0, 'A\nB\nC'));
+      const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), 'A\nB\nC'));
 
       expect(newState.lineIndex.lineCount).toBe(3);
     });
@@ -342,7 +343,7 @@ describe('Document Reducer', () => {
     it('should grow add buffer when needed', () => {
       const state = createInitialState();
       const longText = 'x'.repeat(2000);
-      const newState = documentReducer(state, DocumentActions.insert(0, longText));
+      const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), longText));
 
       expect(newState.pieceTable.addBuffer.length).toBeGreaterThanOrEqual(2000);
     });
@@ -351,28 +352,28 @@ describe('Document Reducer', () => {
   describe('DELETE action', () => {
     it('should decrease total length', () => {
       const state = createInitialState({ content: 'Hello World' });
-      const newState = documentReducer(state, DocumentActions.delete(0, 5));
+      const newState = documentReducer(state, DocumentActions.delete(byteOffset(0), byteOffset(5)));
 
       expect(newState.pieceTable.totalLength).toBe(6);
     });
 
     it('should do nothing for zero-length delete', () => {
       const state = createInitialState({ content: 'Hello' });
-      const newState = documentReducer(state, DocumentActions.delete(2, 2));
+      const newState = documentReducer(state, DocumentActions.delete(byteOffset(2), byteOffset(2)));
 
       expect(newState).toBe(state);
     });
 
     it('should do nothing for negative range', () => {
       const state = createInitialState({ content: 'Hello' });
-      const newState = documentReducer(state, DocumentActions.delete(5, 3));
+      const newState = documentReducer(state, DocumentActions.delete(byteOffset(5), byteOffset(3)));
 
       expect(newState).toBe(state);
     });
 
     it('should not go below zero length', () => {
       const state = createInitialState({ content: 'Hi' });
-      const newState = documentReducer(state, DocumentActions.delete(0, 100));
+      const newState = documentReducer(state, DocumentActions.delete(byteOffset(0), byteOffset(100)));
 
       expect(newState.pieceTable.totalLength).toBe(0);
     });
@@ -383,7 +384,7 @@ describe('Document Reducer', () => {
       const state = createInitialState({ content: 'Hello World' });
       const newState = documentReducer(
         state,
-        DocumentActions.replace(6, 11, 'Universe')
+        DocumentActions.replace(byteOffset(6), byteOffset(11), 'Universe')
       );
 
       // Original: 11, Delete 5, Add 8 = 14
@@ -394,7 +395,7 @@ describe('Document Reducer', () => {
       const state = createInitialState({ content: 'AB' });
       const newState = documentReducer(
         state,
-        DocumentActions.replace(1, 1, 'X')
+        DocumentActions.replace(byteOffset(1), byteOffset(1), 'X')
       );
 
       expect(newState.pieceTable.totalLength).toBe(3);
@@ -437,7 +438,7 @@ describe('Document Reducer', () => {
   describe('UNDO action', () => {
     it('should revert insert', () => {
       let state = createInitialState();
-      state = documentReducer(state, DocumentActions.insert(0, 'Hello'));
+      state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
       expect(state.pieceTable.totalLength).toBe(5);
 
       state = documentReducer(state, DocumentActions.undo());
@@ -446,7 +447,7 @@ describe('Document Reducer', () => {
 
     it('should move entry from undo to redo stack', () => {
       let state = createInitialState();
-      state = documentReducer(state, DocumentActions.insert(0, 'A'));
+      state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'A'));
       expect(state.history.undoStack.length).toBe(1);
       expect(state.history.redoStack.length).toBe(0);
 
@@ -466,7 +467,7 @@ describe('Document Reducer', () => {
   describe('REDO action', () => {
     it('should reapply undone action', () => {
       let state = createInitialState();
-      state = documentReducer(state, DocumentActions.insert(0, 'Hello'));
+      state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
       state = documentReducer(state, DocumentActions.undo());
       expect(state.pieceTable.totalLength).toBe(0);
 
@@ -488,7 +489,7 @@ describe('Document Reducer', () => {
       const newState = documentReducer(
         state,
         DocumentActions.applyRemote([
-          { type: 'insert', position: 0, text: 'Remote' },
+          { type: 'insert', position: byteOffset(0), text: 'Remote' },
         ])
       );
 
@@ -500,7 +501,7 @@ describe('Document Reducer', () => {
       const newState = documentReducer(
         state,
         DocumentActions.applyRemote([
-          { type: 'delete', position: 5, length: 6 },
+          { type: 'delete', position: byteOffset(5), length: 6 },
         ])
       );
 
@@ -512,7 +513,7 @@ describe('Document Reducer', () => {
       const newState = documentReducer(
         state,
         DocumentActions.applyRemote([
-          { type: 'insert', position: 0, text: 'A' },
+          { type: 'insert', position: byteOffset(0), text: 'A' },
         ])
       );
 
@@ -570,7 +571,7 @@ describe('Document Reducer', () => {
 
     it('should only update affected parts', () => {
       const state = createInitialState({ content: 'Hello' });
-      const newState = documentReducer(state, DocumentActions.insert(5, '!'));
+      const newState = documentReducer(state, DocumentActions.insert(byteOffset(5), '!'));
 
       // Selection should be same reference if not changed
       expect(newState.selection).toBe(state.selection);
@@ -583,7 +584,7 @@ describe('Document Reducer', () => {
 
       // Add 5 entries
       for (let i = 0; i < 5; i++) {
-        state = documentReducer(state, DocumentActions.insert(i, String(i)));
+        state = documentReducer(state, DocumentActions.insert(byteOffset(i), String(i)));
       }
 
       // Should only keep last 3
@@ -599,7 +600,7 @@ describe('Document Reducer', () => {
 describe('Action Creators', () => {
   describe('DocumentActions', () => {
     it('should create INSERT action', () => {
-      const action = DocumentActions.insert(5, 'Hello');
+      const action = DocumentActions.insert(byteOffset(5), 'Hello');
 
       expect(action.type).toBe('INSERT');
       expect(action.position).toBe(5);
@@ -607,7 +608,7 @@ describe('Action Creators', () => {
     });
 
     it('should create DELETE action', () => {
-      const action = DocumentActions.delete(0, 10);
+      const action = DocumentActions.delete(byteOffset(0), byteOffset(10));
 
       expect(action.type).toBe('DELETE');
       expect(action.start).toBe(0);
@@ -615,7 +616,7 @@ describe('Action Creators', () => {
     });
 
     it('should create REPLACE action', () => {
-      const action = DocumentActions.replace(5, 10, 'New');
+      const action = DocumentActions.replace(byteOffset(5), byteOffset(10), 'New');
 
       expect(action.type).toBe('REPLACE');
       expect(action.start).toBe(5);
@@ -648,7 +649,7 @@ describe('Action Creators', () => {
     });
 
     it('should create APPLY_REMOTE action', () => {
-      const changes = [{ type: 'insert' as const, position: 0, text: 'Hi' }];
+      const changes = [{ type: 'insert' as const, position: byteOffset(0), text: 'Hi' }];
       const action = DocumentActions.applyRemote(changes);
 
       expect(action.type).toBe('APPLY_REMOTE');
@@ -674,7 +675,7 @@ describe('Action Creators', () => {
 
   describe('serializeAction / deserializeAction', () => {
     it('should round-trip INSERT action', () => {
-      const action = DocumentActions.insert(10, 'Hello');
+      const action = DocumentActions.insert(byteOffset(10), 'Hello');
       const json = serializeAction(action);
       const restored = deserializeAction(json);
 
@@ -682,7 +683,7 @@ describe('Action Creators', () => {
     });
 
     it('should round-trip DELETE action', () => {
-      const action = DocumentActions.delete(5, 15);
+      const action = DocumentActions.delete(byteOffset(5), byteOffset(15));
       const json = serializeAction(action);
       const restored = deserializeAction(json);
 
@@ -702,7 +703,7 @@ describe('Action Creators', () => {
     });
 
     it('should produce valid JSON', () => {
-      const action = DocumentActions.replace(0, 5, 'Test');
+      const action = DocumentActions.replace(byteOffset(0), byteOffset(5), 'Test');
       const json = serializeAction(action);
 
       expect(() => JSON.parse(json)).not.toThrow();
@@ -717,15 +718,15 @@ describe('Action Creators', () => {
 describe('Type Guards', () => {
   describe('isTextEditAction', () => {
     it('should return true for INSERT', () => {
-      expect(isTextEditAction(DocumentActions.insert(0, 'a'))).toBe(true);
+      expect(isTextEditAction(DocumentActions.insert(byteOffset(0), 'a'))).toBe(true);
     });
 
     it('should return true for DELETE', () => {
-      expect(isTextEditAction(DocumentActions.delete(0, 1))).toBe(true);
+      expect(isTextEditAction(DocumentActions.delete(byteOffset(0), byteOffset(1)))).toBe(true);
     });
 
     it('should return true for REPLACE', () => {
-      expect(isTextEditAction(DocumentActions.replace(0, 1, 'x'))).toBe(true);
+      expect(isTextEditAction(DocumentActions.replace(byteOffset(0), byteOffset(1), 'x'))).toBe(true);
     });
 
     it('should return false for UNDO', () => {
@@ -743,7 +744,7 @@ describe('Type Guards', () => {
     });
 
     it('should return false for INSERT', () => {
-      expect(isHistoryAction(DocumentActions.insert(0, 'a'))).toBe(false);
+      expect(isHistoryAction(DocumentActions.insert(byteOffset(0), 'a'))).toBe(false);
     });
   });
 
@@ -761,7 +762,7 @@ describe('Type Guards', () => {
     });
 
     it('should return false for INSERT', () => {
-      expect(isTransactionAction(DocumentActions.insert(0, 'a'))).toBe(false);
+      expect(isTransactionAction(DocumentActions.insert(byteOffset(0), 'a'))).toBe(false);
     });
   });
 
@@ -895,7 +896,7 @@ describe('Store getSnapshot Identity', () => {
     const store = createDocumentStore();
 
     const snapshot1 = store.getSnapshot();
-    store.dispatch(DocumentActions.insert(0, 'A'));
+    store.dispatch(DocumentActions.insert(byteOffset(0), 'A'));
     const snapshot2 = store.getSnapshot();
 
     expect(snapshot1).not.toBe(snapshot2);
@@ -905,7 +906,7 @@ describe('Store getSnapshot Identity', () => {
     const store = createDocumentStore();
 
     const snapshot1 = store.getSnapshot();
-    store.dispatch(DocumentActions.delete(0, 0)); // No-op
+    store.dispatch(DocumentActions.delete(byteOffset(0), byteOffset(0))); // No-op
     const snapshot2 = store.getSnapshot();
 
     expect(snapshot1).toBe(snapshot2);

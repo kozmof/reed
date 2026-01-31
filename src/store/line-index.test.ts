@@ -15,6 +15,7 @@ import {
   rebuildLineIndex,
 } from './line-index.ts';
 import { createLineIndexState, createEmptyLineIndexState } from './state.ts';
+import { byteOffset } from '../types/branded.ts';
 
 describe('Line Index Operations', () => {
   describe('rebuildLineIndex', () => {
@@ -42,12 +43,12 @@ describe('Line Index Operations', () => {
   describe('findLineAtPosition', () => {
     it('should return null for empty state', () => {
       const state = createEmptyLineIndexState();
-      expect(findLineAtPosition(state.root, 0)).toBeNull();
+      expect(findLineAtPosition(state.root, byteOffset(0))).toBeNull();
     });
 
     it('should find line at position 0', () => {
       const state = createLineIndexState('Hello\nWorld');
-      const location = findLineAtPosition(state.root, 0);
+      const location = findLineAtPosition(state.root, byteOffset(0));
       expect(location).not.toBeNull();
       expect(location!.lineNumber).toBe(0);
       expect(location!.offsetInLine).toBe(0);
@@ -55,7 +56,7 @@ describe('Line Index Operations', () => {
 
     it('should find correct line for position in first line', () => {
       const state = createLineIndexState('Hello\nWorld');
-      const location = findLineAtPosition(state.root, 3);
+      const location = findLineAtPosition(state.root, byteOffset(3));
       expect(location).not.toBeNull();
       expect(location!.lineNumber).toBe(0);
       expect(location!.offsetInLine).toBe(3);
@@ -63,7 +64,7 @@ describe('Line Index Operations', () => {
 
     it('should find correct line for position in second line', () => {
       const state = createLineIndexState('Hello\nWorld');
-      const location = findLineAtPosition(state.root, 7);
+      const location = findLineAtPosition(state.root, byteOffset(7));
       expect(location).not.toBeNull();
       expect(location!.lineNumber).toBe(1);
       expect(location!.offsetInLine).toBe(1);
@@ -71,7 +72,7 @@ describe('Line Index Operations', () => {
 
     it('should handle position at newline', () => {
       const state = createLineIndexState('Hello\nWorld');
-      const location = findLineAtPosition(state.root, 5);
+      const location = findLineAtPosition(state.root, byteOffset(5));
       expect(location).not.toBeNull();
       expect(location!.lineNumber).toBe(0);
       expect(location!.offsetInLine).toBe(5);
@@ -169,37 +170,37 @@ describe('Line Index Operations', () => {
   describe('lineIndexInsert', () => {
     it('should handle insert without newlines', () => {
       const state = createLineIndexState('Hello');
-      const newState = lineIndexInsert(state, 5, ' World');
+      const newState = lineIndexInsert(state, byteOffset(5), ' World');
       expect(getLineCountFromIndex(newState)).toBe(1);
     });
 
     it('should handle insert with newline at end', () => {
       const state = createLineIndexState('Hello');
-      const newState = lineIndexInsert(state, 5, '\nWorld');
+      const newState = lineIndexInsert(state, byteOffset(5), '\nWorld');
       expect(getLineCountFromIndex(newState)).toBe(2);
     });
 
     it('should handle insert with newline in middle', () => {
       const state = createLineIndexState('HelloWorld');
-      const newState = lineIndexInsert(state, 5, '\n');
+      const newState = lineIndexInsert(state, byteOffset(5), '\n');
       expect(getLineCountFromIndex(newState)).toBe(2);
     });
 
     it('should handle insert with multiple newlines', () => {
       const state = createLineIndexState('A');
-      const newState = lineIndexInsert(state, 1, '\nB\nC');
+      const newState = lineIndexInsert(state, byteOffset(1), '\nB\nC');
       expect(getLineCountFromIndex(newState)).toBe(3);
     });
 
     it('should handle insert into empty state', () => {
       const state = createEmptyLineIndexState();
-      const newState = lineIndexInsert(state, 0, 'Hello');
+      const newState = lineIndexInsert(state, byteOffset(0), 'Hello');
       expect(getLineCountFromIndex(newState)).toBe(1);
     });
 
     it('should handle insert newlines into empty state', () => {
       const state = createEmptyLineIndexState();
-      const newState = lineIndexInsert(state, 0, 'A\nB\nC');
+      const newState = lineIndexInsert(state, byteOffset(0), 'A\nB\nC');
       expect(getLineCountFromIndex(newState)).toBe(3);
     });
   });
@@ -207,25 +208,25 @@ describe('Line Index Operations', () => {
   describe('lineIndexDelete', () => {
     it('should handle delete without newlines', () => {
       const state = createLineIndexState('Hello World');
-      const newState = lineIndexDelete(state, 5, 11, ' World');
+      const newState = lineIndexDelete(state, byteOffset(5), byteOffset(11), ' World');
       expect(getLineCountFromIndex(newState)).toBe(1);
     });
 
     it('should handle delete newline (merge lines)', () => {
       const state = createLineIndexState('Hello\nWorld');
-      const newState = lineIndexDelete(state, 5, 6, '\n');
+      const newState = lineIndexDelete(state, byteOffset(5), byteOffset(6), '\n');
       expect(getLineCountFromIndex(newState)).toBe(1);
     });
 
     it('should handle delete multiple lines', () => {
       const state = createLineIndexState('A\nB\nC\nD');
-      const newState = lineIndexDelete(state, 2, 6, 'B\nC\n');
+      const newState = lineIndexDelete(state, byteOffset(2), byteOffset(6), 'B\nC\n');
       expect(getLineCountFromIndex(newState)).toBe(2);
     });
 
     it('should handle delete entire content', () => {
       const state = createLineIndexState('Hello\nWorld');
-      const newState = lineIndexDelete(state, 0, 11, 'Hello\nWorld');
+      const newState = lineIndexDelete(state, byteOffset(0), byteOffset(11), 'Hello\nWorld');
       expect(getLineCountFromIndex(newState)).toBe(1);
     });
   });

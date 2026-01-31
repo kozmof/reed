@@ -7,6 +7,7 @@
  */
 
 import type { DocumentAction } from '../types/actions.ts';
+import { byteOffset } from '../types/branded.ts';
 import { DocumentActions } from './actions.ts';
 
 // =============================================================================
@@ -410,22 +411,21 @@ export function computeSetValueActions(
   // We need to track both string offset and byte offset
   const encoder = new TextEncoder();
   let stringOffset = 0;
-  let byteOffset = 0;
+  let byteOffsetDelta = 0;
 
   for (const op of ops) {
     // Convert string position to byte position
-    const bytePos = stringIndexToByteIndex(oldContent, op.position) + byteOffset;
+    const bytePos = stringIndexToByteIndex(oldContent, op.position) + byteOffsetDelta;
 
     if (op.type === 'delete') {
       const deleteByteLen = encoder.encode(op.text).length;
-      actions.push(DocumentActions.delete(bytePos, bytePos + deleteByteLen));
+      actions.push(DocumentActions.delete(byteOffset(bytePos), byteOffset(bytePos + deleteByteLen)));
       stringOffset -= op.text.length;
-      byteOffset -= deleteByteLen;
+      byteOffsetDelta -= deleteByteLen;
     } else if (op.type === 'insert') {
-      const insertByteLen = encoder.encode(op.text).length;
-      actions.push(DocumentActions.insert(bytePos, op.text));
+      actions.push(DocumentActions.insert(byteOffset(bytePos), op.text));
       stringOffset += op.text.length;
-      byteOffset += insertByteLen;
+      byteOffsetDelta += encoder.encode(op.text).length;
     }
   }
 
@@ -504,8 +504,8 @@ export function computeSetValueActionsOptimized(
   }
 
   // Convert string indices to byte indices for the piece table
-  const byteStart = stringIndexToByteIndex(oldContent, start);
-  const byteOldEnd = stringIndexToByteIndex(oldContent, oldEnd);
+  const byteStart = byteOffset(stringIndexToByteIndex(oldContent, start));
+  const byteOldEnd = byteOffset(stringIndexToByteIndex(oldContent, oldEnd));
 
   if (deletedText.length === 0) {
     // Pure insert

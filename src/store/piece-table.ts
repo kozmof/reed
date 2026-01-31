@@ -8,11 +8,17 @@ import type {
   PieceTableState,
   BufferType,
 } from '../types/state.ts';
+import type { ByteOffset } from '../types/branded.ts';
+import { byteOffset } from '../types/branded.ts';
 import { createPieceNode, withPieceNode } from './state.ts';
 import { fixInsert, type WithNodeFn } from './rb-tree.ts';
 
 // Type-safe wrapper for withPieceNode to use with generic R-B tree functions
 const withPiece: WithNodeFn<PieceNode> = withPieceNode;
+
+// Module-level TextEncoder/TextDecoder singletons for efficient reuse
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
 
 // =============================================================================
 // Types
@@ -51,7 +57,7 @@ export interface PathEntry {
  */
 export function findPieceAtPosition(
   root: PieceNode | null,
-  position: number
+  position: ByteOffset
 ): PieceLocation | null {
   if (root === null) return null;
   if (position < 0) return null;
@@ -246,13 +252,12 @@ export function splitPiece(
  */
 export function pieceTableInsert(
   state: PieceTableState,
-  position: number,
+  position: ByteOffset,
   text: string
 ): PieceTableState {
   if (text.length === 0) return state;
 
-  const encoder = new TextEncoder();
-  const textBytes = encoder.encode(text);
+  const textBytes = textEncoder.encode(text);
 
   // Grow add buffer if needed
   let addBuffer = state.addBuffer;
@@ -376,42 +381,36 @@ function insertWithSplit(
 }
 
 /**
- * Replace a piece in the tree, reconstructing the path.
+ * Replace a piece in the tree using the path for O(log n) performance.
+ *
+ * Instead of traversing the entire tree O(n), we walk back up the path
+ * that was built during findPieceAtPosition, creating only O(log n) new nodes.
  */
 function replacePieceInTree(
-  root: PieceNode,
-  _path: PathEntry[],
-  _oldNode: PieceNode,
+  _root: PieceNode,
+  path: PathEntry[],
+  oldNode: PieceNode,
   newNode: PieceNode
 ): PieceNode {
-  // Simple approach: rebuild the tree structure
-  // Find and replace using tree traversal
-  function replace(node: PieceNode | null): PieceNode | null {
-    if (node === null) return null;
+  // Start with the new node, preserving the old node's children
+  let current = withPieceNode(newNode, {
+    left: oldNode.left,
+    right: oldNode.right,
+  });
 
-    // Check if this is the node to replace (by identity)
-    if (
-      node.bufferType === _oldNode.bufferType &&
-      node.start === _oldNode.start &&
-      node.length === _oldNode.length
-    ) {
-      return withPieceNode(newNode, {
-        left: node.left,
-        right: node.right,
-      });
+  // Walk back up the path in reverse, creating new parent nodes
+  // This only touches O(log n) nodes - the ones on the path from root to target
+  for (let i = path.length - 1; i >= 0; i--) {
+    const { node: parent, direction } = path[i];
+
+    if (direction === 'left') {
+      current = withPieceNode(parent, { left: current });
+    } else {
+      current = withPieceNode(parent, { right: current });
     }
-
-    const newLeft = replace(node.left);
-    const newRight = replace(node.right);
-
-    if (newLeft !== node.left || newRight !== node.right) {
-      return withPieceNode(node, { left: newLeft, right: newRight });
-    }
-
-    return node;
   }
 
-  return replace(root) ?? newNode;
+  return current;
 }
 
 /**
@@ -420,8 +419,8 @@ function replacePieceInTree(
  */
 export function pieceTableDelete(
   state: PieceTableState,
-  start: number,
-  end: number
+  start: ByteOffset,
+  end: ByteOffset
 ): PieceTableState {
   if (start >= end) return state;
   if (state.root === null) return state;
@@ -563,7 +562,6 @@ function mergeTrees(
 export function getValue(state: PieceTableState): string {
   if (state.root === null) return '';
 
-  const decoder = new TextDecoder();
   const pieces = collectPieces(state.root);
 
   // Pre-calculate total length for efficient concatenation
@@ -584,7 +582,7 @@ export function getValue(state: PieceTableState): string {
     offset += piece.length;
   }
 
-  return decoder.decode(result);
+  return textDecoder.decode(result);
 }
 
 /**
@@ -592,8 +590,8 @@ export function getValue(state: PieceTableState): string {
  */
 export function getText(
   state: PieceTableState,
-  start: number,
-  end: number
+  start: ByteOffset,
+  end: ByteOffset
 ): string {
   if (state.root === null) return '';
   if (start < 0) return '';
@@ -601,13 +599,12 @@ export function getText(
   if (start >= state.totalLength) return '';
 
   const actualEnd = Math.min(end, state.totalLength);
-  const decoder = new TextDecoder();
 
   // Collect bytes in range
   const bytes: number[] = [];
   collectBytesInRange(state, state.root, 0, start, actualEnd, bytes);
 
-  return decoder.decode(new Uint8Array(bytes));
+  return textDecoder.decode(new Uint8Array(bytes));
 }
 
 /**
@@ -715,7 +712,7 @@ export function getLine(state: PieceTableState, lineNumber: number): string {
 function findLineOffsets(
   state: PieceTableState,
   lineNumber: number
-): { start: number; end: number } | null {
+): { start: ByteOffset; end: ByteOffset } | null {
   const pieces = collectPieces(state.root);
   let currentLine = 0;
   let lineStartOffset = 0;
@@ -731,7 +728,7 @@ function findLineOffsets(
       if (buffer[piece.start + i] === 0x0A) {
         if (currentLine === lineNumber) {
           // Found the end of target line (include newline)
-          return { start: lineStartOffset, end: currentOffset + i + 1 };
+          return { start: byteOffset(lineStartOffset), end: byteOffset(currentOffset + i + 1) };
         }
         currentLine++;
         lineStartOffset = currentOffset + i + 1;
@@ -743,7 +740,7 @@ function findLineOffsets(
 
   // Handle last line (no trailing newline)
   if (currentLine === lineNumber) {
-    return { start: lineStartOffset, end: state.totalLength };
+    return { start: byteOffset(lineStartOffset), end: byteOffset(state.totalLength) };
   }
 
   return null;
@@ -900,6 +897,71 @@ function rebuildTreeWithNewOffsets(
 }
 
 // =============================================================================
+// Byte/Character Offset Conversion
+// =============================================================================
+
+/**
+ * Convert a character offset to byte offset within a given text.
+ *
+ * Use this when converting user input (string indices) to piece table positions.
+ * The piece table internally uses UTF-8 byte offsets, but JavaScript strings
+ * use UTF-16 code unit indices.
+ *
+ * @param text - The text to measure
+ * @param charOffset - Character offset (UTF-16 code units, i.e. string index)
+ * @returns Byte offset (UTF-8 bytes)
+ *
+ * @example
+ * ```typescript
+ * charToByteOffset('Hello', 2);     // Returns 2 (ASCII: 1 byte per char)
+ * charToByteOffset('你好', 1);       // Returns 3 (CJK: 3 bytes per char)
+ * charToByteOffset('Hello 😀', 7);  // Returns 8 (emoji: 4 bytes)
+ * ```
+ */
+export function charToByteOffset(text: string, charOffset: number): number {
+  const clampedOffset = Math.max(0, Math.min(charOffset, text.length));
+  return textEncoder.encode(text.slice(0, clampedOffset)).length;
+}
+
+/**
+ * Convert a byte offset to character offset within a given text.
+ *
+ * Use this when converting piece table positions to user-visible indices.
+ * Returns the character index that corresponds to (or is just before) the given byte offset.
+ *
+ * @param text - The text to measure
+ * @param byteOffset - Byte offset (UTF-8 bytes)
+ * @returns Character offset (UTF-16 code units, i.e. string index)
+ *
+ * @example
+ * ```typescript
+ * byteToCharOffset('Hello', 2);     // Returns 2 (ASCII: 1 byte per char)
+ * byteToCharOffset('你好', 3);       // Returns 1 (CJK: 3 bytes per char)
+ * byteToCharOffset('你好', 4);       // Returns 1 (mid-character, returns start)
+ * ```
+ */
+export function byteToCharOffset(text: string, byteOffset: number): number {
+  if (byteOffset <= 0) return 0;
+
+  const bytes = textEncoder.encode(text);
+  if (byteOffset >= bytes.length) return text.length;
+
+  // Linear scan to find character boundary
+  // For most text this is fast; for very long strings, could optimize with binary search
+  let charPos = 0;
+  let bytePos = 0;
+
+  while (bytePos < byteOffset && charPos < text.length) {
+    const charBytes = textEncoder.encode(text[charPos]).length;
+    if (bytePos + charBytes > byteOffset) break;
+    bytePos += charBytes;
+    charPos++;
+  }
+
+  return charPos;
+}
+
+// =============================================================================
 // Streaming Operations
 // =============================================================================
 
@@ -959,7 +1021,6 @@ export function* getValueStream(
     return;
   }
 
-  const decoder = new TextDecoder();
   const pieces = collectPieces(state.root);
 
   // Track position across pieces
@@ -1018,7 +1079,7 @@ export function* getValueStream(
     const isLast = documentPosition >= end || pieceIndex >= pieces.length;
     if (chunkOffset >= chunkSize || isLast) {
       yield {
-        content: decoder.decode(chunkBuffer.subarray(0, chunkOffset)),
+        content: textDecoder.decode(chunkBuffer.subarray(0, chunkOffset)),
         byteOffset: chunkStartPosition,
         byteLength: chunkOffset,
         isLast,

@@ -4,8 +4,13 @@
  */
 
 import type { DocumentState } from '../types/state.ts';
+import type { ByteOffset } from '../types/branded.ts';
+import { byteOffset } from '../types/branded.ts';
 import { findLineAtPosition, getLineRange, getLineCountFromIndex } from './line-index.ts';
 import { getText } from './piece-table.ts';
+
+// Module-level TextEncoder singleton for efficient reuse
+const textEncoder = new TextEncoder();
 
 // =============================================================================
 // Types
@@ -121,8 +126,8 @@ export function getVisibleLines(
   for (let lineNum = firstLine; lineNum <= lastLine; lineNum++) {
     const range = getLineRange(state.lineIndex, lineNum);
     if (range) {
-      const startOffset = range.start;
-      const endOffset = range.start + range.length;
+      const startOffset = byteOffset(range.start);
+      const endOffset = byteOffset(range.start + range.length);
       const rawContent = getText(state.pieceTable, startOffset, endOffset);
 
       // Check if line ends with newline and strip it for display
@@ -165,8 +170,8 @@ export function getVisibleLine(
     return null;
   }
 
-  const startOffset = range.start;
-  const endOffset = range.start + range.length;
+  const startOffset = byteOffset(range.start);
+  const endOffset = byteOffset(range.start + range.length);
   const rawContent = getText(state.pieceTable, startOffset, endOffset);
   const hasNewline = rawContent.endsWith('\n');
   const content = hasNewline ? rawContent.slice(0, -1) : rawContent;
@@ -274,7 +279,7 @@ export function estimateTotalHeight(
  */
 export function positionToLineColumn(
   state: DocumentState,
-  position: number
+  position: ByteOffset
 ): { line: number; column: number } | null {
   // Handle empty document (root is null but lineCount is 1)
   if (state.lineIndex.root === null) {
@@ -293,7 +298,7 @@ export function positionToLineColumn(
     // We need to convert to character offset
     const range = getLineRange(state.lineIndex, lineInfo.lineNumber);
     if (range) {
-      const lineContent = getText(state.pieceTable, range.start, range.start + lineInfo.offsetInLine);
+      const lineContent = getText(state.pieceTable, byteOffset(range.start), byteOffset(range.start + lineInfo.offsetInLine));
       return {
         line: lineInfo.lineNumber,
         column: lineContent.length,
@@ -306,7 +311,7 @@ export function positionToLineColumn(
   if (lastLineRange) {
     const endOffset = lastLineRange.start + lastLineRange.length;
     if (position === endOffset) {
-      const content = getText(state.pieceTable, lastLineRange.start, endOffset);
+      const content = getText(state.pieceTable, byteOffset(lastLineRange.start), byteOffset(endOffset));
       return {
         line: totalLines - 1,
         column: content.length,
@@ -324,7 +329,7 @@ export function lineColumnToPosition(
   state: DocumentState,
   line: number,
   column: number
-): number | null {
+): ByteOffset | null {
   const range = getLineRange(state.lineIndex, line);
   if (!range) {
     return null;
@@ -332,14 +337,13 @@ export function lineColumnToPosition(
 
   const startOffset = range.start;
   const endOffset = range.start + range.length;
-  const lineContent = getText(state.pieceTable, startOffset, endOffset);
+  const lineContent = getText(state.pieceTable, byteOffset(startOffset), byteOffset(endOffset));
 
   // Clamp column to line length
   const clampedColumn = Math.min(column, lineContent.length);
 
-  // Convert character column to byte offset
-  const encoder = new TextEncoder();
-  const byteOffset = encoder.encode(lineContent.slice(0, clampedColumn)).length;
+  // Convert character column to byte offset within the line
+  const columnByteLen = textEncoder.encode(lineContent.slice(0, clampedColumn)).length;
 
-  return startOffset + byteOffset;
+  return byteOffset(startOffset + columnByteLen);
 }

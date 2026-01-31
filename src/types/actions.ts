@@ -5,6 +5,7 @@
  */
 
 import type { SelectionRange } from './state.ts';
+import type { ByteOffset } from './branded.ts';
 
 // =============================================================================
 // Text Editing Actions
@@ -16,7 +17,7 @@ import type { SelectionRange } from './state.ts';
 export interface InsertAction {
   readonly type: 'INSERT';
   /** Position to insert at (0-based byte offset) */
-  readonly position: number;
+  readonly position: ByteOffset;
   /** Text to insert */
   readonly text: string;
 }
@@ -26,10 +27,10 @@ export interface InsertAction {
  */
 export interface DeleteAction {
   readonly type: 'DELETE';
-  /** Start position of deletion (inclusive) */
-  readonly start: number;
-  /** End position of deletion (exclusive) */
-  readonly end: number;
+  /** Start position of deletion (inclusive, byte offset) */
+  readonly start: ByteOffset;
+  /** End position of deletion (exclusive, byte offset) */
+  readonly end: ByteOffset;
 }
 
 /**
@@ -37,10 +38,10 @@ export interface DeleteAction {
  */
 export interface ReplaceAction {
   readonly type: 'REPLACE';
-  /** Start position of replacement (inclusive) */
-  readonly start: number;
-  /** End position of replacement (exclusive) */
-  readonly end: number;
+  /** Start position of replacement (inclusive, byte offset) */
+  readonly start: ByteOffset;
+  /** End position of replacement (exclusive, byte offset) */
+  readonly end: ByteOffset;
   /** New text to insert */
   readonly text: string;
 }
@@ -120,7 +121,7 @@ export interface TransactionRollbackAction {
  */
 export interface RemoteChange {
   readonly type: 'insert' | 'delete';
-  readonly position: number;
+  readonly position: ByteOffset;
   readonly text?: string;
   readonly length?: number;
 }

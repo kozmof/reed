@@ -14,6 +14,7 @@ import {
   lineColumnToPosition,
 } from './rendering.ts';
 import type { ScrollPosition, LineHeightConfig, VisibleLine } from './rendering.ts';
+import { byteOffset } from '../types/branded.ts';
 
 describe('getVisibleLineRange', () => {
   it('should calculate visible lines from scroll position', () => {
@@ -307,16 +308,16 @@ describe('positionToLineColumn', () => {
       content: 'Hello\nWorld',
     });
 
-    expect(positionToLineColumn(state, 0)).toEqual({ line: 0, column: 0 });
-    expect(positionToLineColumn(state, 5)).toEqual({ line: 0, column: 5 });
-    expect(positionToLineColumn(state, 6)).toEqual({ line: 1, column: 0 });
-    expect(positionToLineColumn(state, 11)).toEqual({ line: 1, column: 5 });
+    expect(positionToLineColumn(state, byteOffset(0))).toEqual({ line: 0, column: 0 });
+    expect(positionToLineColumn(state, byteOffset(5))).toEqual({ line: 0, column: 5 });
+    expect(positionToLineColumn(state, byteOffset(6))).toEqual({ line: 1, column: 0 });
+    expect(positionToLineColumn(state, byteOffset(11))).toEqual({ line: 1, column: 5 });
   });
 
   it('should handle empty document', () => {
     const state = createInitialState();
 
-    expect(positionToLineColumn(state, 0)).toEqual({ line: 0, column: 0 });
+    expect(positionToLineColumn(state, byteOffset(0))).toEqual({ line: 0, column: 0 });
   });
 
   it('should handle position at newline', () => {
@@ -325,7 +326,7 @@ describe('positionToLineColumn', () => {
     });
 
     // Position 3 is at the newline
-    const result = positionToLineColumn(state, 3);
+    const result = positionToLineColumn(state, byteOffset(3));
     expect(result).toEqual({ line: 0, column: 3 });
   });
 });

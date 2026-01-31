@@ -6,6 +6,8 @@
 
 import type { DocumentState, HistoryEntry, HistoryChange, SelectionState } from '../types/state.ts';
 import type { DocumentAction } from '../types/actions.ts';
+import type { ByteOffset } from '../types/branded.ts';
+import { byteOffset } from '../types/branded.ts';
 import { withState } from './state.ts';
 import {
   pieceTableInsert as ptInsert,
@@ -17,6 +19,9 @@ import {
   lineIndexDelete as liDelete,
 } from './line-index.ts';
 
+// Module-level TextEncoder singleton for efficient reuse
+const textEncoder = new TextEncoder();
+
 // =============================================================================
 // Position Validation
 // =============================================================================
@@ -25,12 +30,12 @@ import {
  * Validate and clamp position to valid document range.
  * Returns clamped position within [0, totalLength].
  */
-function validatePosition(position: number, totalLength: number): number {
+function validatePosition(position: number, totalLength: number): ByteOffset {
   if (!Number.isFinite(position)) {
     console.warn(`Invalid position: ${position}, defaulting to 0`);
-    return 0;
+    return byteOffset(0);
   }
-  return Math.max(0, Math.min(position, totalLength));
+  return byteOffset(Math.max(0, Math.min(position, totalLength)));
 }
 
 /**
@@ -42,10 +47,10 @@ function validateRange(
   start: number,
   end: number,
   totalLength: number
-): { start: number; end: number; valid: boolean } {
+): { start: ByteOffset; end: ByteOffset; valid: boolean } {
   // Inverted range is invalid (should be no-op)
   if (start > end) {
-    return { start, end, valid: false };
+    return { start: byteOffset(start), end: byteOffset(end), valid: false };
   }
 
   const validStart = validatePosition(start, totalLength);
@@ -64,7 +69,7 @@ function validateRange(
  */
 function pieceTableInsert(
   state: DocumentState,
-  position: number,
+  position: ByteOffset,
   text: string
 ): DocumentState {
   const newPieceTable = ptInsert(state.pieceTable, position, text);
@@ -79,8 +84,8 @@ function pieceTableInsert(
  */
 function pieceTableDelete(
   state: DocumentState,
-  start: number,
-  end: number
+  start: ByteOffset,
+  end: ByteOffset
 ): DocumentState {
   const newPieceTable = ptDelete(state.pieceTable, start, end);
   return withState(state, {
@@ -92,7 +97,7 @@ function pieceTableDelete(
  * Get text in a range from the piece table.
  * Used for capturing deleted text for undo.
  */
-function getTextRange(state: DocumentState, start: number, end: number): string {
+function getTextRange(state: DocumentState, start: ByteOffset, end: ByteOffset): string {
   return getText(state.pieceTable, start, end);
 }
 
@@ -105,7 +110,7 @@ function getTextRange(state: DocumentState, start: number, end: number): string 
  */
 function lineIndexUpdate(
   state: DocumentState,
-  position: number,
+  position: ByteOffset,
   text: string
 ): DocumentState {
   const newLineIndex = liInsert(state.lineIndex, position, text);
@@ -119,8 +124,8 @@ function lineIndexUpdate(
  */
 function lineIndexRemove(
   state: DocumentState,
-  start: number,
-  end: number,
+  start: ByteOffset,
+  end: ByteOffset,
   deletedText: string
 ): DocumentState {
   const newLineIndex = liDelete(state.lineIndex, start, end, deletedText);
@@ -146,7 +151,7 @@ function computeSelectionAfterChange(
   switch (change.type) {
     case 'insert':
       // After insert, cursor should be at end of inserted text
-      newPosition = change.position + new TextEncoder().encode(change.text).length;
+      newPosition = change.position + textEncoder.encode(change.text).length;
       break;
     case 'delete':
       // After delete, cursor should be at the deletion point
@@ -154,7 +159,7 @@ function computeSelectionAfterChange(
       break;
     case 'replace':
       // After replace, cursor should be at end of inserted text
-      newPosition = change.position + new TextEncoder().encode(change.text).length;
+      newPosition = change.position + textEncoder.encode(change.text).length;
       break;
     default:
       return state.selection;
@@ -274,11 +279,15 @@ function applyChange(state: DocumentState, change: HistoryChange): DocumentState
   switch (change.type) {
     case 'insert':
       return pieceTableInsert(state, change.position, change.text);
-    case 'delete':
-      return pieceTableDelete(state, change.position, change.position + change.text.length);
-    case 'replace':
-      const deleted = pieceTableDelete(state, change.position, change.position + (change.oldText?.length ?? 0));
+    case 'delete': {
+      const textByteLength = textEncoder.encode(change.text).length;
+      return pieceTableDelete(state, change.position, byteOffset(change.position + textByteLength));
+    }
+    case 'replace': {
+      const oldTextByteLength = textEncoder.encode(change.oldText ?? '').length;
+      const deleted = pieceTableDelete(state, change.position, byteOffset(change.position + oldTextByteLength));
       return pieceTableInsert(deleted, change.position, change.text);
+    }
     default:
       return state;
   }
@@ -289,16 +298,20 @@ function applyChange(state: DocumentState, change: HistoryChange): DocumentState
  */
 function applyInverseChange(state: DocumentState, change: HistoryChange): DocumentState {
   switch (change.type) {
-    case 'insert':
+    case 'insert': {
       // Inverse of insert is delete
-      return pieceTableDelete(state, change.position, change.position + change.text.length);
+      const textByteLength = textEncoder.encode(change.text).length;
+      return pieceTableDelete(state, change.position, byteOffset(change.position + textByteLength));
+    }
     case 'delete':
       // Inverse of delete is insert
       return pieceTableInsert(state, change.position, change.text);
-    case 'replace':
+    case 'replace': {
       // Inverse of replace is replace with old text
-      const deleted = pieceTableDelete(state, change.position, change.position + change.text.length);
+      const textByteLength = textEncoder.encode(change.text).length;
+      const deleted = pieceTableDelete(state, change.position, byteOffset(change.position + textByteLength));
       return pieceTableInsert(deleted, change.position, change.oldText ?? '');
+    }
     default:
       return state;
   }
@@ -477,9 +490,10 @@ export function documentReducer(
           newState = lineIndexUpdate(newState, change.position, change.text);
         } else if (change.type === 'delete' && change.length) {
           // Capture deleted text before deleting for line index update
-          const deletedText = getTextRange(newState, change.position, change.position + change.length);
-          newState = pieceTableDelete(newState, change.position, change.position + change.length);
-          newState = lineIndexRemove(newState, change.position, change.position + change.length, deletedText);
+          const endPosition = byteOffset(change.position + change.length);
+          const deletedText = getTextRange(newState, change.position, endPosition);
+          newState = pieceTableDelete(newState, change.position, endPosition);
+          newState = lineIndexRemove(newState, change.position, endPosition, deletedText);
         }
       }
       // Remote changes don't push to history (they come from network)

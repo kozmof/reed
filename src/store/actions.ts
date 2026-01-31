@@ -4,6 +4,7 @@
  */
 
 import type { SelectionRange } from '../types/state.ts';
+import type { ByteOffset } from '../types/branded.ts';
 import type {
   DocumentAction,
   InsertAction,
@@ -32,26 +33,26 @@ export const DocumentActions = {
    * @param position - Position to insert at (0-based byte offset)
    * @param text - Text to insert
    */
-  insert(position: number, text: string): InsertAction {
+  insert(position: ByteOffset, text: string): InsertAction {
     return { type: 'INSERT', position, text };
   },
 
   /**
    * Create a delete action.
-   * @param start - Start position of deletion (inclusive)
-   * @param end - End position of deletion (exclusive)
+   * @param start - Start position of deletion (inclusive, byte offset)
+   * @param end - End position of deletion (exclusive, byte offset)
    */
-  delete(start: number, end: number): DeleteAction {
+  delete(start: ByteOffset, end: ByteOffset): DeleteAction {
     return { type: 'DELETE', start, end };
   },
 
   /**
    * Create a replace action.
-   * @param start - Start position of replacement (inclusive)
-   * @param end - End position of replacement (exclusive)
+   * @param start - Start position of replacement (inclusive, byte offset)
+   * @param end - End position of replacement (exclusive, byte offset)
    * @param text - New text to insert
    */
-  replace(start: number, end: number, text: string): ReplaceAction {
+  replace(start: ByteOffset, end: ByteOffset, text: string): ReplaceAction {
     return { type: 'REPLACE', start, end, text };
   },
 

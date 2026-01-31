@@ -14,6 +14,7 @@ import {
 } from './events.ts';
 import { createInitialState } from './state.ts';
 import { DocumentActions } from './actions.ts';
+import { byteOffset } from '../types/branded.ts';
 
 describe('Event Emitter', () => {
   describe('addEventListener', () => {
@@ -155,7 +156,7 @@ describe('Event Creators', () => {
     it('should create frozen content change event', () => {
       const prevState = createInitialState({ content: 'Hello' });
       const nextState = createInitialState({ content: 'Hello World' });
-      const action = DocumentActions.insert(5, ' World');
+      const action = DocumentActions.insert(byteOffset(5), ' World');
 
       const event = createContentChangeEvent(action, prevState, nextState, [5, 11]);
 
@@ -247,7 +248,7 @@ describe('Event Creators', () => {
 
 describe('getAffectedRange', () => {
   it('should calculate range for INSERT', () => {
-    const action = DocumentActions.insert(10, 'Hello');
+    const action = DocumentActions.insert(byteOffset(10), 'Hello');
     const range = getAffectedRange(action);
 
     expect(range[0]).toBe(10);
@@ -255,7 +256,7 @@ describe('getAffectedRange', () => {
   });
 
   it('should calculate range for DELETE', () => {
-    const action = DocumentActions.delete(5, 15); // start=5, end=15
+    const action = DocumentActions.delete(byteOffset(5), byteOffset(15)); // start=5, end=15
     const range = getAffectedRange(action);
 
     expect(range[0]).toBe(5);
@@ -263,7 +264,7 @@ describe('getAffectedRange', () => {
   });
 
   it('should calculate range for REPLACE', () => {
-    const action = DocumentActions.replace(5, 15, 'Hi'); // start=5, end=15, text='Hi' (2 bytes)
+    const action = DocumentActions.replace(byteOffset(5), byteOffset(15), 'Hi'); // start=5, end=15, text='Hi' (2 bytes)
     const range = getAffectedRange(action);
 
     expect(range[0]).toBe(5);
@@ -271,7 +272,7 @@ describe('getAffectedRange', () => {
   });
 
   it('should handle unicode in INSERT', () => {
-    const action = DocumentActions.insert(0, '世界'); // 6 bytes in UTF-8
+    const action = DocumentActions.insert(byteOffset(0), '世界'); // 6 bytes in UTF-8
     const range = getAffectedRange(action);
 
     expect(range[0]).toBe(0);

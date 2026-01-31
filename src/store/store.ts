@@ -158,6 +158,7 @@ export function createDocumentStore(
     // Start transaction
     dispatch({ type: 'TRANSACTION_START' });
 
+    let success = false;
     try {
       // Apply all actions
       for (const action of actions) {
@@ -166,10 +167,22 @@ export function createDocumentStore(
 
       // Commit transaction
       dispatch({ type: 'TRANSACTION_COMMIT' });
-    } catch (error) {
-      // Rollback on error
-      dispatch({ type: 'TRANSACTION_ROLLBACK' });
-      throw error;
+      success = true;
+    } finally {
+      // Ensure transaction state is always cleaned up, even if rollback fails
+      if (!success) {
+        try {
+          dispatch({ type: 'TRANSACTION_ROLLBACK' });
+        } catch {
+          // If rollback fails, manually reset transaction state to prevent corruption
+          if (transaction.snapshotBeforeTransaction) {
+            state = transaction.snapshotBeforeTransaction;
+          }
+          transaction.depth = 0;
+          transaction.snapshotBeforeTransaction = null;
+          transaction.pendingActions = [];
+        }
+      }
     }
 
     return state;
