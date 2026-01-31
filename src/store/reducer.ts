@@ -4,7 +4,7 @@
  * No side effects - produces new state from old state + action.
  */
 
-import type { DocumentState, HistoryEntry, HistoryChange } from '../types/state.ts';
+import type { DocumentState, HistoryEntry, HistoryChange, SelectionState } from '../types/state.ts';
 import type { DocumentAction } from '../types/actions.ts';
 import { withState } from './state.ts';
 import {
@@ -16,6 +16,43 @@ import {
   lineIndexInsert as liInsert,
   lineIndexDelete as liDelete,
 } from './line-index.ts';
+
+// =============================================================================
+// Position Validation
+// =============================================================================
+
+/**
+ * Validate and clamp position to valid document range.
+ * Returns clamped position within [0, totalLength].
+ */
+function validatePosition(position: number, totalLength: number): number {
+  if (!Number.isFinite(position)) {
+    console.warn(`Invalid position: ${position}, defaulting to 0`);
+    return 0;
+  }
+  return Math.max(0, Math.min(position, totalLength));
+}
+
+/**
+ * Validate and clamp a range to valid document bounds.
+ * Returns { start, end, valid } with both within [0, totalLength].
+ * If start > end, marks as invalid (caller should treat as no-op).
+ */
+function validateRange(
+  start: number,
+  end: number,
+  totalLength: number
+): { start: number; end: number; valid: boolean } {
+  // Inverted range is invalid (should be no-op)
+  if (start > end) {
+    return { start, end, valid: false };
+  }
+
+  const validStart = validatePosition(start, totalLength);
+  const validEnd = validatePosition(end, totalLength);
+
+  return { start: validStart, end: validEnd, valid: true };
+}
 
 // =============================================================================
 // Piece Table Operations
@@ -97,6 +134,39 @@ function lineIndexRemove(
 // =============================================================================
 
 /**
+ * Compute the expected cursor position after a change.
+ * This is used to properly restore selection on redo.
+ */
+function computeSelectionAfterChange(
+  state: DocumentState,
+  change: HistoryChange
+): SelectionState {
+  let newPosition: number;
+
+  switch (change.type) {
+    case 'insert':
+      // After insert, cursor should be at end of inserted text
+      newPosition = change.position + new TextEncoder().encode(change.text).length;
+      break;
+    case 'delete':
+      // After delete, cursor should be at the deletion point
+      newPosition = change.position;
+      break;
+    case 'replace':
+      // After replace, cursor should be at end of inserted text
+      newPosition = change.position + new TextEncoder().encode(change.text).length;
+      break;
+    default:
+      return state.selection;
+  }
+
+  return Object.freeze({
+    ranges: Object.freeze([Object.freeze({ anchor: newPosition, head: newPosition })]),
+    primaryIndex: 0,
+  });
+}
+
+/**
  * Push a change to the history stack.
  */
 function historyPush(
@@ -105,10 +175,13 @@ function historyPush(
 ): DocumentState {
   const history = state.history;
 
+  // Compute expected selection after the change for proper redo
+  const selectionAfter = computeSelectionAfterChange(state, change);
+
   const entry: HistoryEntry = Object.freeze({
     changes: Object.freeze([change]),
     selectionBefore: state.selection,
-    selectionAfter: state.selection, // Updated after action completes
+    selectionAfter,
     timestamp: Date.now(),
   });
 
@@ -264,14 +337,20 @@ export function documentReducer(
 ): DocumentState {
   switch (action.type) {
     case 'INSERT': {
+      // Validate position
+      const position = validatePosition(action.position, state.pieceTable.totalLength);
+
+      // Skip empty inserts
+      if (action.text.length === 0) return state;
+
       // Insert text and update line index
-      let newState = pieceTableInsert(state, action.position, action.text);
-      newState = lineIndexUpdate(newState, action.position, action.text);
+      let newState = pieceTableInsert(state, position, action.text);
+      newState = lineIndexUpdate(newState, position, action.text);
 
       // Push to history
       newState = historyPush(newState, {
         type: 'insert',
-        position: action.position,
+        position,
         text: action.text,
       });
 
@@ -286,20 +365,24 @@ export function documentReducer(
     }
 
     case 'DELETE': {
-      const deletedLength = action.end - action.start;
+      // Validate range
+      const { start, end, valid } = validateRange(action.start, action.end, state.pieceTable.totalLength);
+      if (!valid) return state;
+
+      const deletedLength = end - start;
       if (deletedLength <= 0) return state;
 
       // Capture deleted text for undo BEFORE deleting
-      const deletedText = getTextRange(state, action.start, action.end);
+      const deletedText = getTextRange(state, start, end);
 
       // Delete from piece table and update line index
-      let newState = pieceTableDelete(state, action.start, action.end);
-      newState = lineIndexRemove(newState, action.start, action.end, deletedText);
+      let newState = pieceTableDelete(state, start, end);
+      newState = lineIndexRemove(newState, start, end, deletedText);
 
       // Push to history with actual deleted text
       newState = historyPush(newState, {
         type: 'delete',
-        position: action.start,
+        position: start,
         text: deletedText,
       });
 
@@ -314,19 +397,23 @@ export function documentReducer(
     }
 
     case 'REPLACE': {
+      // Validate range
+      const { start, end, valid } = validateRange(action.start, action.end, state.pieceTable.totalLength);
+      if (!valid) return state;
+
       // Capture old text for undo BEFORE replacing
-      const oldText = getTextRange(state, action.start, action.end);
+      const oldText = getTextRange(state, start, end);
 
       // Replace is delete + insert
-      let newState = pieceTableDelete(state, action.start, action.end);
-      newState = pieceTableInsert(newState, action.start, action.text);
-      newState = lineIndexRemove(newState, action.start, action.end, oldText);
-      newState = lineIndexUpdate(newState, action.start, action.text);
+      let newState = pieceTableDelete(state, start, end);
+      newState = pieceTableInsert(newState, start, action.text);
+      newState = lineIndexRemove(newState, start, end, oldText);
+      newState = lineIndexUpdate(newState, start, action.text);
 
       // Push to history with actual old text
       newState = historyPush(newState, {
         type: 'replace',
-        position: action.start,
+        position: start,
         text: action.text,
         oldText,
       });

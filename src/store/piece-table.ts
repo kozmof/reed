@@ -6,7 +6,6 @@
 import type {
   PieceNode,
   PieceTableState,
-  NodeColor,
   BufferType,
 } from '../types/state.ts';
 import { createPieceNode, withPieceNode } from './state.ts';
@@ -329,8 +328,8 @@ function fixRedViolations(node: PieceNode): PieceNode {
 /**
  * Check if a node is red.
  */
-function isRed(node: PieceNode | null): boolean {
-  return node !== null && node.color === 'red';
+function isRed(node: PieceNode | null | undefined): boolean {
+  return node != null && node.color === 'red';
 }
 
 // =============================================================================
@@ -799,56 +798,91 @@ export function getLength(state: PieceTableState): number {
 /**
  * Get the number of lines in the document.
  * Counts newline characters + 1.
+ *
+ * Note: This is O(n) as it scans the entire document.
+ * For O(1) line count, use `getLineCountFromIndex(state.lineIndex)` instead
+ * when you have access to DocumentState.
  */
 export function getLineCount(state: PieceTableState): number {
   if (state.root === null) return 1;
 
-  const content = getValue(state);
+  // Optimized path: count newlines by scanning pieces directly
+  // instead of building the full string
+  const pieces = collectPieces(state.root);
   let count = 1;
-  for (let i = 0; i < content.length; i++) {
-    if (content[i] === '\n') count++;
+
+  for (const piece of pieces) {
+    const buffer = piece.bufferType === 'original'
+      ? state.originalBuffer
+      : state.addBuffer;
+
+    for (let i = piece.start; i < piece.start + piece.length; i++) {
+      // Check for newline byte (0x0A)
+      if (buffer[i] === 0x0A) count++;
+    }
   }
+
   return count;
 }
 
 /**
  * Get a specific line by line number (0-indexed).
  * Returns the line content including the trailing newline if present.
+ *
+ * Note: This scans the document to find line boundaries.
+ * For O(log n) line access, use `getVisibleLine()` from rendering.ts
+ * or `getLineRange()` from line-index.ts when you have DocumentState.
  */
 export function getLine(state: PieceTableState, lineNumber: number): string {
   if (state.root === null) return '';
   if (lineNumber < 0) return '';
 
-  const content = getValue(state);
+  // Find line start and end offsets by scanning for newlines
+  const lineOffsets = findLineOffsets(state, lineNumber);
+  if (lineOffsets === null) return '';
+
+  return getText(state, lineOffsets.start, lineOffsets.end);
+}
+
+/**
+ * Find the byte offsets for a specific line.
+ * Returns {start, end} or null if line doesn't exist.
+ */
+function findLineOffsets(
+  state: PieceTableState,
+  lineNumber: number
+): { start: number; end: number } | null {
+  const pieces = collectPieces(state.root);
   let currentLine = 0;
-  let lineStart = 0;
+  let lineStartOffset = 0;
+  let currentOffset = 0;
 
-  for (let i = 0; i < content.length; i++) {
-    if (currentLine === lineNumber) {
-      // Find end of this line
-      let lineEnd = i;
-      while (lineEnd < content.length && content[lineEnd] !== '\n') {
-        lineEnd++;
+  for (const piece of pieces) {
+    const buffer = piece.bufferType === 'original'
+      ? state.originalBuffer
+      : state.addBuffer;
+
+    for (let i = 0; i < piece.length; i++) {
+      // Check for newline byte (0x0A)
+      if (buffer[piece.start + i] === 0x0A) {
+        if (currentLine === lineNumber) {
+          // Found the end of target line (include newline)
+          return { start: lineStartOffset, end: currentOffset + i + 1 };
+        }
+        currentLine++;
+        lineStartOffset = currentOffset + i + 1;
       }
-      // Include the newline if present
-      if (lineEnd < content.length && content[lineEnd] === '\n') {
-        lineEnd++;
-      }
-      return content.slice(lineStart, lineEnd);
     }
 
-    if (content[i] === '\n') {
-      currentLine++;
-      lineStart = i + 1;
-    }
+    currentOffset += piece.length;
   }
 
-  // Handle last line (or requested line matches current position)
+  // Handle last line (no trailing newline)
   if (currentLine === lineNumber) {
-    return content.slice(lineStart);
+    return { start: lineStartOffset, end: state.totalLength };
   }
 
-  return '';
+  return null;
 }
 
 // =============================================================================

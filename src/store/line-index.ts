@@ -209,8 +209,8 @@ function rotateRight(node: LineIndexNode): LineIndexNode {
 /**
  * Check if a node is red.
  */
-function isRed(node: LineIndexNode | null): boolean {
-  return node !== null && node.color === 'red';
+function isRed(node: LineIndexNode | null | undefined): boolean {
+  return node != null && node.color === 'red';
 }
 
 // =============================================================================
