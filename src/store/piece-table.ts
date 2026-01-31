@@ -9,6 +9,10 @@ import type {
   BufferType,
 } from '../types/state.ts';
 import { createPieceNode, withPieceNode } from './state.ts';
+import { fixInsert, type WithNodeFn } from './rb-tree.ts';
+
+// Type-safe wrapper for withPieceNode to use with generic R-B tree functions
+const withPiece: WithNodeFn<PieceNode> = withPieceNode;
 
 // =============================================================================
 // Types
@@ -127,44 +131,6 @@ export function collectPieces(root: PieceNode | null): PieceNode[] {
 }
 
 // =============================================================================
-// Red-Black Tree Rotations (Immutable)
-// =============================================================================
-
-/**
- * Rotate left at the given node. Returns the new subtree root.
- * Immutable - creates new nodes.
- */
-function rotateLeft(node: PieceNode): PieceNode {
-  const right = node.right;
-  if (right === null) return node;
-
-  const newNode = withPieceNode(node, {
-    right: right.left,
-  });
-
-  return withPieceNode(right, {
-    left: newNode,
-  });
-}
-
-/**
- * Rotate right at the given node. Returns the new subtree root.
- * Immutable - creates new nodes.
- */
-function rotateRight(node: PieceNode): PieceNode {
-  const left = node.left;
-  if (left === null) return node;
-
-  const newNode = withPieceNode(node, {
-    left: left.right,
-  });
-
-  return withPieceNode(left, {
-    right: newNode,
-  });
-}
-
-// =============================================================================
 // Red-Black Tree Insert (Immutable)
 // =============================================================================
 
@@ -188,10 +154,10 @@ export function rbInsertPiece(
   }
 
   // Insert using standard BST insertion, tracking the path
-  const { newRoot, path } = bstInsert(root, position, newPiece);
+  const { newRoot } = bstInsert(root, position, newPiece);
 
-  // Fix Red-Black violations
-  return fixInsert(newRoot, path);
+  // Fix Red-Black violations using shared R-B tree utilities
+  return fixInsert(newRoot, withPiece);
 }
 
 /**
@@ -228,108 +194,6 @@ function bstInsert(
 
   const newRoot = insert(root, 0);
   return { newRoot, path };
-}
-
-/**
- * Fix Red-Black tree violations after insertion.
- * Uses bottom-up fixing with path reconstruction.
- */
-function fixInsert(root: PieceNode, _path: PathEntry[]): PieceNode {
-  // Simplified approach: rebuild with proper colors
-  // For a more efficient implementation, we'd use the path to fix violations
-  // bottom-up, but this requires parent pointers or zipper pattern
-
-  // For now, use a recursive approach that's simpler but still O(log n)
-  return ensureBlackRoot(rebalanceAfterInsert(root));
-}
-
-/**
- * Ensure the root is black.
- */
-function ensureBlackRoot(node: PieceNode): PieceNode {
-  if (node.color === 'red') {
-    return withPieceNode(node, { color: 'black' });
-  }
-  return node;
-}
-
-/**
- * Rebalance tree after insert to fix red-red violations.
- */
-function rebalanceAfterInsert(node: PieceNode): PieceNode {
-  // Fix left subtree first
-  let newLeft = node.left;
-  if (newLeft !== null) {
-    newLeft = rebalanceAfterInsert(newLeft);
-  }
-
-  // Fix right subtree
-  let newRight = node.right;
-  if (newRight !== null) {
-    newRight = rebalanceAfterInsert(newRight);
-  }
-
-  let result = node;
-  if (newLeft !== node.left || newRight !== node.right) {
-    result = withPieceNode(node, { left: newLeft, right: newRight });
-  }
-
-  // Check for red-red violations and fix
-  return fixRedViolations(result);
-}
-
-/**
- * Fix red-red violations at a node.
- * Implements the four rotation cases of Red-Black tree balancing.
- */
-function fixRedViolations(node: PieceNode): PieceNode {
-  let result = node;
-
-  // Case 1: Left-Left (right rotation)
-  if (isRed(result.left) && isRed(result.left?.left)) {
-    result = rotateRight(result);
-    result = withPieceNode(result, {
-      color: 'black',
-      right: result.right ? withPieceNode(result.right, { color: 'red' }) : null,
-    });
-  }
-  // Case 2: Left-Right (left-right rotation)
-  else if (isRed(result.left) && isRed(result.left?.right)) {
-    const newLeft = rotateLeft(result.left!);
-    result = withPieceNode(result, { left: newLeft });
-    result = rotateRight(result);
-    result = withPieceNode(result, {
-      color: 'black',
-      right: result.right ? withPieceNode(result.right, { color: 'red' }) : null,
-    });
-  }
-  // Case 3: Right-Right (left rotation)
-  else if (isRed(result.right) && isRed(result.right?.right)) {
-    result = rotateLeft(result);
-    result = withPieceNode(result, {
-      color: 'black',
-      left: result.left ? withPieceNode(result.left, { color: 'red' }) : null,
-    });
-  }
-  // Case 4: Right-Left (right-left rotation)
-  else if (isRed(result.right) && isRed(result.right?.left)) {
-    const newRight = rotateRight(result.right!);
-    result = withPieceNode(result, { right: newRight });
-    result = rotateLeft(result);
-    result = withPieceNode(result, {
-      color: 'black',
-      left: result.left ? withPieceNode(result.left, { color: 'red' }) : null,
-    });
-  }
-
-  return result;
-}
-
-/**
- * Check if a node is red.
- */
-function isRed(node: PieceNode | null | undefined): boolean {
-  return node != null && node.color === 'red';
 }
 
 // =============================================================================
@@ -883,6 +747,156 @@ function findLineOffsets(
   }
 
   return null;
+}
+
+// =============================================================================
+// Buffer Compaction
+// =============================================================================
+
+/**
+ * Statistics about buffer usage and waste.
+ */
+export interface BufferStats {
+  /** Total bytes in the add buffer */
+  addBufferSize: number;
+  /** Bytes actually referenced by pieces */
+  addBufferUsed: number;
+  /** Bytes wasted (allocated but not referenced) */
+  addBufferWaste: number;
+  /** Waste ratio (0-1) */
+  wasteRatio: number;
+}
+
+/**
+ * Get statistics about buffer usage.
+ * Useful for deciding when to compact.
+ */
+export function getBufferStats(state: PieceTableState): BufferStats {
+  const pieces = collectPieces(state.root);
+
+  // Calculate bytes actually used in add buffer
+  let addBufferUsed = 0;
+  for (const piece of pieces) {
+    if (piece.bufferType === 'add') {
+      addBufferUsed += piece.length;
+    }
+  }
+
+  const addBufferSize = state.addBufferLength;
+  const addBufferWaste = addBufferSize - addBufferUsed;
+  const wasteRatio = addBufferSize > 0 ? addBufferWaste / addBufferSize : 0;
+
+  return {
+    addBufferSize,
+    addBufferUsed,
+    addBufferWaste,
+    wasteRatio,
+  };
+}
+
+/**
+ * Compact the add buffer by removing unreferenced bytes.
+ * Returns a new PieceTableState with a compacted buffer.
+ *
+ * This operation is O(n) where n is the document size.
+ * Use getBufferStats() to decide when compaction is worthwhile.
+ *
+ * @param state - Current piece table state
+ * @param threshold - Only compact if waste ratio exceeds this (default: 0.5)
+ * @returns New state with compacted buffer, or original if no compaction needed
+ */
+export function compactAddBuffer(
+  state: PieceTableState,
+  threshold: number = 0.5
+): PieceTableState {
+  const stats = getBufferStats(state);
+
+  // Don't compact if waste is below threshold
+  if (stats.wasteRatio < threshold) {
+    return state;
+  }
+
+  // Don't compact if there's nothing to compact
+  if (stats.addBufferUsed === 0) {
+    // No add buffer content - reset to empty
+    return Object.freeze({
+      root: state.root,
+      originalBuffer: state.originalBuffer,
+      addBuffer: new Uint8Array(1024), // Start with small buffer
+      addBufferLength: 0,
+      totalLength: state.totalLength,
+    });
+  }
+
+  const pieces = collectPieces(state.root);
+
+  // Build mapping from old offsets to new offsets
+  const offsetMap = new Map<number, number>();
+  let newOffset = 0;
+
+  // First pass: calculate new offsets for each add buffer piece
+  for (const piece of pieces) {
+    if (piece.bufferType === 'add') {
+      offsetMap.set(piece.start, newOffset);
+      newOffset += piece.length;
+    }
+  }
+
+  // Create new compact buffer
+  const newBuffer = new Uint8Array(Math.max(newOffset * 2, 1024)); // Leave room to grow
+  let writeOffset = 0;
+
+  // Second pass: copy live data to new buffer
+  for (const piece of pieces) {
+    if (piece.bufferType === 'add') {
+      newBuffer.set(
+        state.addBuffer.subarray(piece.start, piece.start + piece.length),
+        writeOffset
+      );
+      writeOffset += piece.length;
+    }
+  }
+
+  // Rebuild tree with updated offsets
+  const newRoot = rebuildTreeWithNewOffsets(state.root, offsetMap);
+
+  return Object.freeze({
+    root: newRoot,
+    originalBuffer: state.originalBuffer,
+    addBuffer: newBuffer,
+    addBufferLength: writeOffset,
+    totalLength: state.totalLength,
+  });
+}
+
+/**
+ * Rebuild tree with updated add buffer offsets.
+ */
+function rebuildTreeWithNewOffsets(
+  node: PieceNode | null,
+  offsetMap: Map<number, number>
+): PieceNode | null {
+  if (node === null) return null;
+
+  const newLeft = rebuildTreeWithNewOffsets(node.left, offsetMap);
+  const newRight = rebuildTreeWithNewOffsets(node.right, offsetMap);
+
+  if (node.bufferType === 'add') {
+    const newStart = offsetMap.get(node.start);
+    if (newStart !== undefined && newStart !== node.start) {
+      return withPieceNode(node, {
+        start: newStart,
+        left: newLeft,
+        right: newRight,
+      });
+    }
+  }
+
+  if (newLeft !== node.left || newRight !== node.right) {
+    return withPieceNode(node, { left: newLeft, right: newRight });
+  }
+
+  return node;
 }
 
 // =============================================================================

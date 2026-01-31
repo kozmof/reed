@@ -55,3 +55,34 @@ export type {
   ReadonlyDocumentStore,
   DocumentReducer,
 } from './store.ts';
+
+// Branded position types
+export type {
+  ByteOffset,
+  CharOffset,
+  LineNumber,
+  ColumnNumber,
+} from './branded.ts';
+
+export {
+  byteOffset,
+  charOffset,
+  lineNumber,
+  columnNumber,
+  isValidOffset,
+  isValidLineNumber,
+  addByteOffset,
+  diffByteOffset,
+  addCharOffset,
+  diffCharOffset,
+  nextLine,
+  prevLine,
+  compareByteOffsets,
+  compareCharOffsets,
+  clampByteOffset,
+  clampCharOffset,
+  ZERO_BYTE_OFFSET,
+  ZERO_CHAR_OFFSET,
+  LINE_ZERO,
+  COLUMN_ZERO,
+} from './branded.ts';

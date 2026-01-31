@@ -13,6 +13,8 @@ import {
   getLine,
   findPieceAtPosition,
   collectPieces,
+  getBufferStats,
+  compactAddBuffer,
 } from './piece-table.ts';
 import {
   createEmptyPieceTableState,
@@ -387,6 +389,91 @@ describe('Piece Table Operations', () => {
       }
       expect(getLength(state)).toBe(1000);
       expect(getValue(state)).toBe('x'.repeat(1000));
+    });
+  });
+
+  describe('buffer compaction', () => {
+    it('should return stats with zero waste for fresh insert', () => {
+      let state = createEmptyPieceTableState();
+      state = pieceTableInsert(state, 0, 'Hello');
+      const stats = getBufferStats(state);
+      expect(stats.addBufferUsed).toBe(5);
+      expect(stats.addBufferWaste).toBe(0);
+      expect(stats.wasteRatio).toBe(0);
+    });
+
+    it('should detect waste after deletion', () => {
+      let state = createEmptyPieceTableState();
+      state = pieceTableInsert(state, 0, 'Hello World');
+      state = pieceTableDelete(state, 0, 6); // Delete "Hello "
+
+      const stats = getBufferStats(state);
+      expect(stats.addBufferSize).toBe(11);
+      expect(stats.addBufferUsed).toBe(5); // "World"
+      expect(stats.addBufferWaste).toBe(6);
+      expect(stats.wasteRatio).toBeCloseTo(6 / 11);
+    });
+
+    it('should compact buffer when waste exceeds threshold', () => {
+      let state = createEmptyPieceTableState();
+      state = pieceTableInsert(state, 0, 'Hello World');
+      state = pieceTableDelete(state, 0, 6); // Delete "Hello "
+
+      // Compact with 0 threshold (always compact)
+      const compacted = compactAddBuffer(state, 0);
+
+      expect(getValue(compacted)).toBe('World');
+      const stats = getBufferStats(compacted);
+      expect(stats.addBufferUsed).toBe(5);
+      expect(stats.addBufferWaste).toBe(0);
+    });
+
+    it('should not compact when waste is below threshold', () => {
+      let state = createEmptyPieceTableState();
+      state = pieceTableInsert(state, 0, 'Hello');
+
+      // Try to compact with 0.5 threshold (no waste, so shouldn't compact)
+      const result = compactAddBuffer(state, 0.5);
+
+      expect(result).toBe(state); // Same reference
+    });
+
+    it('should preserve content after compaction', () => {
+      let state = createEmptyPieceTableState();
+      // Create fragmented state with insertions and deletions
+      state = pieceTableInsert(state, 0, 'AAA');
+      state = pieceTableInsert(state, 3, 'BBB');
+      state = pieceTableInsert(state, 6, 'CCC');
+      state = pieceTableDelete(state, 3, 6); // Delete "BBB"
+
+      const before = getValue(state);
+      const compacted = compactAddBuffer(state, 0);
+      const after = getValue(compacted);
+
+      expect(after).toBe(before);
+      expect(after).toBe('AAACCC');
+    });
+
+    it('should handle compaction with original buffer content', () => {
+      const state = createPieceTableState('Original');
+      let modified = pieceTableInsert(state, 8, ' Added');
+      modified = pieceTableDelete(modified, 8, 14); // Delete " Added"
+
+      const compacted = compactAddBuffer(modified, 0);
+
+      expect(getValue(compacted)).toBe('Original');
+    });
+
+    it('should handle empty add buffer after all deletions', () => {
+      let state = createEmptyPieceTableState();
+      state = pieceTableInsert(state, 0, 'Hello');
+      state = pieceTableDelete(state, 0, 5);
+
+      const stats = getBufferStats(state);
+      expect(stats.addBufferUsed).toBe(0);
+
+      const compacted = compactAddBuffer(state, 0);
+      expect(getValue(compacted)).toBe('');
     });
   });
 });

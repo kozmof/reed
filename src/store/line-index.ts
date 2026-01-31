@@ -9,6 +9,10 @@ import type {
   LineIndexState,
 } from '../types/state.ts';
 import { createLineIndexNode, withLineIndexNode } from './state.ts';
+import { fixInsert, type WithNodeFn } from './rb-tree.ts';
+
+// Type-safe wrapper for withLineIndexNode to use with generic R-B tree functions
+const withLine: WithNodeFn<LineIndexNode> = withLineIndexNode;
 
 // =============================================================================
 // Types
@@ -157,49 +161,6 @@ export function collectLines(root: LineIndexNode | null): LineIndexNode[] {
 }
 
 // =============================================================================
-// Red-Black Tree Rotations (Immutable)
-// =============================================================================
-
-/**
- * Rotate left at the given node. Returns the new subtree root.
- */
-function rotateLeft(node: LineIndexNode): LineIndexNode {
-  const right = node.right;
-  if (right === null) return node;
-
-  const newNode = withLineIndexNode(node, {
-    right: right.left,
-  });
-
-  return withLineIndexNode(right, {
-    left: newNode,
-  });
-}
-
-/**
- * Rotate right at the given node. Returns the new subtree root.
- */
-function rotateRight(node: LineIndexNode): LineIndexNode {
-  const left = node.left;
-  if (left === null) return node;
-
-  const newNode = withLineIndexNode(node, {
-    left: left.right,
-  });
-
-  return withLineIndexNode(left, {
-    right: newNode,
-  });
-}
-
-/**
- * Check if a node is red.
- */
-function isRed(node: LineIndexNode | null | undefined): boolean {
-  return node != null && node.color === 'red';
-}
-
-// =============================================================================
 // Red-Black Tree Insert
 // =============================================================================
 
@@ -219,7 +180,8 @@ function rbInsertLine(
   }
 
   const newRoot = bstInsertLine(root, lineNumber, newNode);
-  return ensureBlackRoot(rebalanceAfterInsert(newRoot));
+  // Use shared R-B tree balancing utilities
+  return fixInsert(newRoot, withLine);
 }
 
 /**
@@ -250,84 +212,6 @@ function bstInsertLine(
       right: bstInsertLine(node.right, rightLineNumber, newNode),
     });
   }
-}
-
-/**
- * Ensure the root is black.
- */
-function ensureBlackRoot(node: LineIndexNode): LineIndexNode {
-  if (node.color === 'red') {
-    return withLineIndexNode(node, { color: 'black' });
-  }
-  return node;
-}
-
-/**
- * Rebalance tree after insert to fix red-red violations.
- */
-function rebalanceAfterInsert(node: LineIndexNode): LineIndexNode {
-  let newLeft = node.left;
-  if (newLeft !== null) {
-    newLeft = rebalanceAfterInsert(newLeft);
-  }
-
-  let newRight = node.right;
-  if (newRight !== null) {
-    newRight = rebalanceAfterInsert(newRight);
-  }
-
-  let result = node;
-  if (newLeft !== node.left || newRight !== node.right) {
-    result = withLineIndexNode(node, { left: newLeft, right: newRight });
-  }
-
-  return fixRedViolations(result);
-}
-
-/**
- * Fix red-red violations at a node.
- */
-function fixRedViolations(node: LineIndexNode): LineIndexNode {
-  let result = node;
-
-  // Case 1: Left-Left (right rotation)
-  if (isRed(result.left) && isRed(result.left?.left)) {
-    result = rotateRight(result);
-    result = withLineIndexNode(result, {
-      color: 'black',
-      right: result.right ? withLineIndexNode(result.right, { color: 'red' }) : null,
-    });
-  }
-  // Case 2: Left-Right (left-right rotation)
-  else if (isRed(result.left) && isRed(result.left?.right)) {
-    const newLeft = rotateLeft(result.left!);
-    result = withLineIndexNode(result, { left: newLeft });
-    result = rotateRight(result);
-    result = withLineIndexNode(result, {
-      color: 'black',
-      right: result.right ? withLineIndexNode(result.right, { color: 'red' }) : null,
-    });
-  }
-  // Case 3: Right-Right (left rotation)
-  else if (isRed(result.right) && isRed(result.right?.right)) {
-    result = rotateLeft(result);
-    result = withLineIndexNode(result, {
-      color: 'black',
-      left: result.left ? withLineIndexNode(result.left, { color: 'red' }) : null,
-    });
-  }
-  // Case 4: Right-Left (right-left rotation)
-  else if (isRed(result.right) && isRed(result.right?.left)) {
-    const newRight = rotateRight(result.right!);
-    result = withLineIndexNode(result, { right: newRight });
-    result = rotateLeft(result);
-    result = withLineIndexNode(result, {
-      color: 'black',
-      left: result.left ? withLineIndexNode(result.left, { color: 'red' }) : null,
-    });
-  }
-
-  return result;
 }
 
 // =============================================================================
@@ -709,6 +593,7 @@ export function lineIndexDelete(
 
 /**
  * Delete a range of lines and merge.
+ * Optimized to use single-pass tree reconstruction.
  */
 function deleteLineRange(
   state: LineIndexState,
@@ -719,55 +604,87 @@ function deleteLineRange(
   const { lineNumber: startLine, offsetInLine: startOffset } = startLocation;
   const endLine = startLine + deletedNewlines;
 
-  // Find the end line
+  // Find the end line to get its length
   const endNode = findLineByNumber(state.root, endLine);
   if (endNode === null) {
     // End line doesn't exist - delete to end of document
     return removeLinesToEnd(state, startLine, startOffset);
   }
 
-  // Simpler approach: rebuild the line index
-  // This is O(n) but correct - can optimize later with proper tree surgery
-  const lines = collectLines(state.root);
-  const newLines: { offset: number; length: number }[] = [];
+  // Find the start line to get its length
+  const startNode = findLineByNumber(state.root, startLine);
+  if (startNode === null) {
+    return state;
+  }
 
+  // Calculate merged line length
+  const startLineLength = startNode.lineLength;
+  const endLineLength = endNode.lineLength;
+
+  // How much of the deletion falls on the start line (after startOffset)
+  const deleteOnStartLine = startLineLength - startOffset;
+
+  // Calculate remaining delete that falls on middle lines and end line
+  let remainingDelete = deleteLength - deleteOnStartLine;
+
+  // Subtract middle lines' lengths
+  for (let i = startLine + 1; i < endLine; i++) {
+    const middleNode = findLineByNumber(state.root, i);
+    if (middleNode) {
+      remainingDelete -= middleNode.lineLength;
+    }
+  }
+
+  // What's left is deleted from the end line
+  const deleteOnEndLine = Math.max(0, remainingDelete);
+  const keepFromEndLine = Math.max(0, endLineLength - deleteOnEndLine);
+
+  // Merged line length = what we keep from start + what we keep from end
+  const mergedLength = startOffset + keepFromEndLine;
+
+  // Single-pass reconstruction: collect lines, skip deleted range, merge start/end
+  return rebuildWithDeletedRange(state.root!, startLine, endLine, mergedLength);
+}
+
+/**
+ * Rebuild tree with a range of lines deleted and merged.
+ * Single O(n) pass instead of multiple O(n) deletions.
+ */
+function rebuildWithDeletedRange(
+  root: LineIndexNode,
+  startLine: number,
+  endLine: number,
+  mergedLength: number
+): LineIndexState {
+  const lines = collectLines(root);
+  const newLines: { offset: number; length: number }[] = [];
   let currentOffset = 0;
+
   for (let i = 0; i < lines.length; i++) {
     if (i < startLine) {
       // Lines before deletion - unchanged
       newLines.push({ offset: currentOffset, length: lines[i].lineLength });
       currentOffset += lines[i].lineLength;
     } else if (i === startLine) {
-      // Merge start and end lines
-      // Calculate the actual merged length
-      let mergedLength = startOffset;
-      if (i + deletedNewlines < lines.length) {
-        const endLineLength = lines[i + deletedNewlines].lineLength;
-        const deleteInEndLine = deleteLength - (lines[i].lineLength - startOffset);
-        for (let j = i + 1; j < i + deletedNewlines; j++) {
-          // Skip fully deleted middle lines
-        }
-        mergedLength += Math.max(0, endLineLength - deleteInEndLine);
-      }
-
+      // Merged line
       newLines.push({ offset: currentOffset, length: mergedLength });
       currentOffset += mergedLength;
-
-      // Skip deleted lines
-      i += deletedNewlines;
-    } else {
-      // Lines after deletion - adjust offset
+      // Skip to after endLine
+      i = endLine;
+    } else if (i > endLine) {
+      // Lines after deletion
       newLines.push({ offset: currentOffset, length: lines[i].lineLength });
       currentOffset += lines[i].lineLength;
     }
+    // Lines between startLine+1 and endLine are skipped (deleted)
   }
 
   if (newLines.length === 0) {
     return Object.freeze({ root: null, lineCount: 1 });
   }
 
-  const root = buildBalancedTree(newLines, 0, newLines.length - 1);
-  return Object.freeze({ root, lineCount: newLines.length });
+  const newRoot = buildBalancedTree(newLines, 0, newLines.length - 1);
+  return Object.freeze({ root: newRoot, lineCount: newLines.length });
 }
 
 /**
