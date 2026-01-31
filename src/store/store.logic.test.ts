@@ -864,7 +864,7 @@ describe('Immutability', () => {
     const state = createInitialState();
 
     expect(() => {
-      (state.selection.ranges as { anchor: number }[]).push({ anchor: 5, head: 5 });
+      (state.selection.ranges as { anchor: number; head: number }[]).push({ anchor: 5, head: 5 });
     }).toThrow();
   });
 
@@ -914,6 +914,6 @@ describe('Store getSnapshot Identity', () => {
   it('getServerSnapshot should return same as getSnapshot', () => {
     const store = createDocumentStore({ content: 'Test' });
 
-    expect(store.getServerSnapshot()).toBe(store.getSnapshot());
+    expect(store.getServerSnapshot!()).toBe(store.getSnapshot());
   });
 });

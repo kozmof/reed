@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { createInitialState } from './state.ts';
-import { getValueStream, getValue } from './piece-table.ts';
+import { getValueStream } from './piece-table.ts';
 
 describe('getValueStream', () => {
   describe('basic functionality', () => {

@@ -11,7 +11,6 @@ import {
 } from './diff.ts';
 import { createInitialState } from './state.ts';
 import { getValue } from './piece-table.ts';
-import { DocumentActions } from './actions.ts';
 
 describe('Diff Algorithm', () => {
   describe('diff', () => {

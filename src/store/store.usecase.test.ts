@@ -3,7 +3,7 @@
  * Tests simulate real-world editing scenarios and workflows.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createDocumentStore } from './store.ts';
 import { DocumentActions } from './actions.ts';
 

@@ -26,20 +26,6 @@ export interface LineLocation {
   offsetInLine: number;
 }
 
-/**
- * Information about lines affected by a text change.
- */
-interface AffectedLines {
-  /** First affected line number */
-  startLine: number;
-  /** Offset within first line where change starts */
-  startOffset: number;
-  /** Last affected line number (for deletions spanning multiple lines) */
-  endLine: number;
-  /** Offset within last line where change ends */
-  endOffset: number;
-}
-
 // =============================================================================
 // Tree Traversal
 // =============================================================================
@@ -730,7 +716,7 @@ function deleteLineRange(
   deletedNewlines: number,
   deleteLength: number
 ): LineIndexState {
-  const { lineNumber: startLine, offsetInLine: startOffset, node: startNode } = startLocation;
+  const { lineNumber: startLine, offsetInLine: startOffset } = startLocation;
   const endLine = startLine + deletedNewlines;
 
   // Find the end line
@@ -739,19 +725,6 @@ function deleteLineRange(
     // End line doesn't exist - delete to end of document
     return removeLinesToEnd(state, startLine, startOffset);
   }
-
-  // Calculate merged line length:
-  // - Text before deletion on start line
-  // - Text after deletion on end line
-  const textBeforeDeletion = startOffset;
-  const endLineStart = getLineStartOffset(state.root, endLine);
-  const deletionEndInEndLine = (startLocation.node === endNode)
-    ? startOffset + deleteLength
-    : deleteLength - (endLineStart - (getLineStartOffset(state.root, startLine) + startOffset));
-
-  // Calculate remaining text after deletion on end line
-  const textAfterDeletion = Math.max(0, endNode.lineLength - deletionEndInEndLine + startOffset);
-  const mergedLineLength = textBeforeDeletion + (endNode.lineLength - (deleteLength - textBeforeDeletion - (startNode.lineLength - startOffset)));
 
   // Simpler approach: rebuild the line index
   // This is O(n) but correct - can optimize later with proper tree surgery
@@ -766,13 +739,8 @@ function deleteLineRange(
       currentOffset += lines[i].lineLength;
     } else if (i === startLine) {
       // Merge start and end lines
-      const beforeDelete = startOffset;
-      const afterDeleteOnEndLine = (i + deletedNewlines < lines.length)
-        ? Math.max(0, lines[i + deletedNewlines].lineLength - (deleteLength - (lines[i].lineLength - startOffset)))
-        : 0;
-
       // Calculate the actual merged length
-      let mergedLength = beforeDelete;
+      let mergedLength = startOffset;
       if (i + deletedNewlines < lines.length) {
         const endLineLength = lines[i + deletedNewlines].lineLength;
         const deleteInEndLine = deleteLength - (lines[i].lineLength - startOffset);
