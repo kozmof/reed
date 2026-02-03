@@ -7,6 +7,7 @@ import type {
   PieceNode,
   PieceTableState,
   BufferType,
+  BufferReference,
 } from '../types/state.ts';
 import type { ByteOffset } from '../types/branded.ts';
 import { byteOffset } from '../types/branded.ts';
@@ -19,6 +20,54 @@ const withPiece: WithNodeFn<PieceNode> = withPieceNode;
 // Module-level TextEncoder/TextDecoder singletons for efficient reuse
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+
+// =============================================================================
+// Buffer Access Helpers
+// =============================================================================
+
+/**
+ * Create a BufferReference from a piece node.
+ * Provides a type-safe way to reference buffer locations.
+ */
+export function getPieceBufferRef(piece: PieceNode): BufferReference {
+  return piece.bufferType === 'original'
+    ? { kind: 'original', start: piece.start, length: piece.length }
+    : { kind: 'add', start: piece.start, length: piece.length };
+}
+
+/**
+ * Get the raw buffer (Uint8Array) for a buffer reference.
+ * Use this when you need direct buffer access.
+ */
+export function getBuffer(
+  state: PieceTableState,
+  ref: BufferReference
+): Uint8Array {
+  return ref.kind === 'original' ? state.originalBuffer : state.addBuffer;
+}
+
+/**
+ * Get a subarray slice from the appropriate buffer.
+ * This is the most common operation - extracting bytes from a piece.
+ */
+export function getBufferSlice(
+  state: PieceTableState,
+  ref: BufferReference
+): Uint8Array {
+  const buffer = ref.kind === 'original' ? state.originalBuffer : state.addBuffer;
+  return buffer.subarray(ref.start, ref.start + ref.length);
+}
+
+/**
+ * Get the buffer for a piece node directly.
+ * Convenience function that combines getPieceBufferRef and getBuffer.
+ */
+export function getPieceBuffer(
+  state: PieceTableState,
+  piece: PieceNode
+): Uint8Array {
+  return piece.bufferType === 'original' ? state.originalBuffer : state.addBuffer;
+}
 
 // =============================================================================
 // Types
@@ -575,9 +624,7 @@ export function getValue(state: PieceTableState): string {
   let offset = 0;
 
   for (const piece of pieces) {
-    const buffer = piece.bufferType === 'original'
-      ? state.originalBuffer
-      : state.addBuffer;
+    const buffer = getPieceBuffer(state, piece);
     result.set(buffer.subarray(piece.start, piece.start + piece.length), offset);
     offset += piece.length;
   }
@@ -631,10 +678,7 @@ function collectBytesInRange(
 
   // Collect from this piece if it overlaps
   if (pieceStart < end && pieceEnd > start) {
-    const buffer = node.bufferType === 'original'
-      ? state.originalBuffer
-      : state.addBuffer;
-
+    const buffer = getPieceBuffer(state, node);
     const copyStart = Math.max(0, start - pieceStart);
     const copyEnd = Math.min(node.length, end - pieceStart);
 
@@ -673,10 +717,7 @@ export function getLineCount(state: PieceTableState): number {
   let count = 1;
 
   for (const piece of pieces) {
-    const buffer = piece.bufferType === 'original'
-      ? state.originalBuffer
-      : state.addBuffer;
-
+    const buffer = getPieceBuffer(state, piece);
     for (let i = piece.start; i < piece.start + piece.length; i++) {
       // Check for newline byte (0x0A)
       if (buffer[i] === 0x0A) count++;
@@ -719,10 +760,7 @@ function findLineOffsets(
   let currentOffset = 0;
 
   for (const piece of pieces) {
-    const buffer = piece.bufferType === 'original'
-      ? state.originalBuffer
-      : state.addBuffer;
-
+    const buffer = getPieceBuffer(state, piece);
     for (let i = 0; i < piece.length; i++) {
       // Check for newline byte (0x0A)
       if (buffer[piece.start + i] === 0x0A) {
@@ -1046,9 +1084,7 @@ export function* getValueStream(
 
   while (pieceIndex < pieces.length && documentPosition < end) {
     const piece = pieces[pieceIndex];
-    const buffer = piece.bufferType === 'original'
-      ? state.originalBuffer
-      : state.addBuffer;
+    const buffer = getPieceBuffer(state, piece);
 
     // Calculate how much to read from this piece
     const pieceRemaining = piece.length - offsetInCurrentPiece;

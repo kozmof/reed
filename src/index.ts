@@ -11,7 +11,11 @@
 // State types
 export type {
   BufferType,
+  OriginalBufferRef,
+  AddBufferRef,
+  BufferReference,
   NodeColor,
+  RBNode,
   PieceNode,
   PieceTableState,
   LineIndexNode,
@@ -45,6 +49,7 @@ export type {
   EvictChunkAction,
   DocumentAction,
   DocumentActionType,
+  ActionValidationResult,
 } from './types/index.ts';
 
 // Store types
@@ -52,6 +57,7 @@ export type {
   StoreListener,
   Unsubscribe,
   DocumentStore,
+  DocumentStoreWithEvents,
   ReadonlyDocumentStore,
   DocumentReducer,
 } from './types/index.ts';
@@ -96,6 +102,7 @@ export {
   isHistoryAction,
   isTransactionAction,
   isDocumentAction,
+  validateAction,
 } from './types/index.ts';
 
 // =============================================================================
@@ -104,6 +111,7 @@ export {
 
 export {
   createDocumentStore,
+  createDocumentStoreWithEvents,
   isDocumentStore,
   DocumentActions,
   serializeAction,
@@ -149,6 +157,11 @@ export {
   // Byte/char conversion utilities
   charToByteOffset,
   byteToCharOffset,
+  // Buffer access helpers
+  getPieceBufferRef,
+  getBuffer,
+  getBufferSlice,
+  getPieceBuffer,
 } from './store/index.ts';
 export type { StreamOptions, DocumentChunk } from './store/index.ts';
 

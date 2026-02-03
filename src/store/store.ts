@@ -5,10 +5,19 @@
 
 import type { DocumentState, DocumentStoreConfig } from '../types/state.ts';
 import type { DocumentAction } from '../types/actions.ts';
-import type { DocumentStore, StoreListener, Unsubscribe } from '../types/store.ts';
+import type { DocumentStore, DocumentStoreWithEvents, StoreListener, Unsubscribe } from '../types/store.ts';
 import { createInitialState } from './state.ts';
 import { documentReducer } from './reducer.ts';
 import { reconcileFull, reconcileViewport } from './line-index.ts';
+import {
+  createEventEmitter,
+  createContentChangeEvent,
+  createSelectionChangeEvent,
+  createHistoryChangeEvent,
+  createDirtyChangeEvent,
+  getAffectedRange,
+} from './events.ts';
+import { isTextEditAction } from '../types/actions.ts';
 
 /**
  * Transaction state tracked by the store.
@@ -314,6 +323,136 @@ export function createDocumentStore(
     scheduleReconciliation,
     reconcileNow,
     setViewport,
+  };
+}
+
+/**
+ * Create a DocumentStore with integrated event emission.
+ * Wraps a base store to automatically emit typed events on dispatch.
+ *
+ * Events are emitted after state changes:
+ * - 'content-change': On INSERT, DELETE, REPLACE, APPLY_REMOTE
+ * - 'selection-change': On SET_SELECTION
+ * - 'history-change': On UNDO, REDO
+ * - 'dirty-change': When isDirty state changes
+ *
+ * @example
+ * ```typescript
+ * const store = createDocumentStoreWithEvents({ content: 'Hello' });
+ *
+ * store.addEventListener('content-change', (event) => {
+ *   console.log('Content changed:', event.affectedRange);
+ * });
+ *
+ * store.dispatch({ type: 'INSERT', position: byteOffset(5), text: ' World' });
+ * // Event fires with affectedRange: [5, 11]
+ * ```
+ *
+ * @param config - Optional configuration for the store
+ * @returns A DocumentStoreWithEvents instance
+ */
+export function createDocumentStoreWithEvents(
+  config: Partial<DocumentStoreConfig> = {}
+): DocumentStoreWithEvents {
+  const baseStore = createDocumentStore(config);
+  const emitter = createEventEmitter();
+
+  /**
+   * Emit appropriate events based on action type and state changes.
+   */
+  function emitEventsForAction(
+    action: DocumentAction,
+    prevState: DocumentState,
+    nextState: DocumentState
+  ): void {
+    // Content change events for text editing actions
+    if (isTextEditAction(action)) {
+      emitter.emit(
+        'content-change',
+        createContentChangeEvent(action, prevState, nextState, getAffectedRange(action))
+      );
+    }
+
+    // Selection change events
+    if (action.type === 'SET_SELECTION') {
+      emitter.emit(
+        'selection-change',
+        createSelectionChangeEvent(prevState, nextState)
+      );
+    }
+
+    // History change events
+    if (action.type === 'UNDO' || action.type === 'REDO') {
+      emitter.emit(
+        'history-change',
+        createHistoryChangeEvent(
+          action.type === 'UNDO' ? 'undo' : 'redo',
+          prevState,
+          nextState
+        )
+      );
+    }
+
+    // Dirty state change events
+    if (prevState.metadata.isDirty !== nextState.metadata.isDirty) {
+      emitter.emit(
+        'dirty-change',
+        createDirtyChangeEvent(nextState.metadata.isDirty, nextState)
+      );
+    }
+  }
+
+  /**
+   * Enhanced dispatch that emits events after state changes.
+   */
+  function dispatch(action: DocumentAction): DocumentState {
+    const prevState = baseStore.getSnapshot();
+    const nextState = baseStore.dispatch(action);
+
+    // Only emit events if state actually changed
+    if (nextState !== prevState) {
+      emitEventsForAction(action, prevState, nextState);
+    }
+
+    return nextState;
+  }
+
+  /**
+   * Enhanced batch that emits events after all actions complete.
+   */
+  function batch(actions: DocumentAction[]): DocumentState {
+    const prevState = baseStore.getSnapshot();
+    const nextState = baseStore.batch(actions);
+
+    // Emit events for each action that contributed to the change
+    if (nextState !== prevState) {
+      for (const action of actions) {
+        // For batched actions, we emit with the overall prev/next state
+        // This is a simplification - individual intermediate states are not tracked
+        emitEventsForAction(action, prevState, nextState);
+      }
+    }
+
+    return nextState;
+  }
+
+  return {
+    // Pass through base store methods
+    subscribe: baseStore.subscribe,
+    getSnapshot: baseStore.getSnapshot,
+    getServerSnapshot: baseStore.getServerSnapshot,
+    scheduleReconciliation: baseStore.scheduleReconciliation,
+    reconcileNow: baseStore.reconcileNow,
+    setViewport: baseStore.setViewport,
+
+    // Enhanced methods with event emission
+    dispatch,
+    batch,
+
+    // Event emitter methods
+    addEventListener: emitter.addEventListener.bind(emitter),
+    removeEventListener: emitter.removeEventListener.bind(emitter),
+    events: emitter,
   };
 }
 

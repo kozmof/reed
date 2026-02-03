@@ -278,3 +278,199 @@ export function isDocumentAction(value: unknown): value is DocumentAction {
       return false;
   }
 }
+
+// =============================================================================
+// Action Validation
+// =============================================================================
+
+/**
+ * Result of validating an action.
+ */
+export interface ActionValidationResult {
+  /** Whether the action is valid */
+  readonly valid: boolean;
+  /** Error messages if validation failed */
+  readonly errors: readonly string[];
+}
+
+/**
+ * Validate an action with detailed error messages.
+ * Optionally validates position bounds against document length.
+ *
+ * @example
+ * ```typescript
+ * const result = validateAction(action, 100); // documentLength = 100
+ * if (!result.valid) {
+ *   console.error('Invalid action:', result.errors);
+ * }
+ * ```
+ *
+ * @param value - Value to validate as an action
+ * @param documentLength - Optional document length for bounds checking
+ * @returns Validation result with errors array
+ */
+export function validateAction(
+  value: unknown,
+  documentLength?: number
+): ActionValidationResult {
+  const errors: string[] = [];
+
+  // Basic type check
+  if (typeof value !== 'object' || value === null) {
+    errors.push('Action must be a non-null object');
+    return { valid: false, errors };
+  }
+
+  const action = value as { type?: unknown };
+
+  if (typeof action.type !== 'string') {
+    errors.push('Action must have a string "type" property');
+    return { valid: false, errors };
+  }
+
+  // Validate action structure
+  switch (action.type) {
+    case 'INSERT': {
+      const insertAction = action as Partial<InsertAction>;
+      if (typeof insertAction.position !== 'number') {
+        errors.push('INSERT action requires a numeric "position" property');
+      } else if (insertAction.position < 0) {
+        errors.push(`INSERT position cannot be negative: ${insertAction.position}`);
+      } else if (documentLength !== undefined && insertAction.position > documentLength) {
+        errors.push(
+          `INSERT position ${insertAction.position} exceeds document length ${documentLength}`
+        );
+      }
+      if (typeof insertAction.text !== 'string') {
+        errors.push('INSERT action requires a string "text" property');
+      }
+      break;
+    }
+
+    case 'DELETE': {
+      const deleteAction = action as Partial<DeleteAction>;
+      if (typeof deleteAction.start !== 'number') {
+        errors.push('DELETE action requires a numeric "start" property');
+      } else if (deleteAction.start < 0) {
+        errors.push(`DELETE start cannot be negative: ${deleteAction.start}`);
+      }
+      if (typeof deleteAction.end !== 'number') {
+        errors.push('DELETE action requires a numeric "end" property');
+      } else if (deleteAction.end < 0) {
+        errors.push(`DELETE end cannot be negative: ${deleteAction.end}`);
+      }
+      if (
+        typeof deleteAction.start === 'number' &&
+        typeof deleteAction.end === 'number'
+      ) {
+        if (deleteAction.start > deleteAction.end) {
+          errors.push(
+            `DELETE start (${deleteAction.start}) cannot be greater than end (${deleteAction.end})`
+          );
+        }
+        if (documentLength !== undefined) {
+          if (deleteAction.start > documentLength) {
+            errors.push(
+              `DELETE start ${deleteAction.start} exceeds document length ${documentLength}`
+            );
+          }
+          if (deleteAction.end > documentLength) {
+            errors.push(
+              `DELETE end ${deleteAction.end} exceeds document length ${documentLength}`
+            );
+          }
+        }
+      }
+      break;
+    }
+
+    case 'REPLACE': {
+      const replaceAction = action as Partial<ReplaceAction>;
+      if (typeof replaceAction.start !== 'number') {
+        errors.push('REPLACE action requires a numeric "start" property');
+      } else if (replaceAction.start < 0) {
+        errors.push(`REPLACE start cannot be negative: ${replaceAction.start}`);
+      }
+      if (typeof replaceAction.end !== 'number') {
+        errors.push('REPLACE action requires a numeric "end" property');
+      } else if (replaceAction.end < 0) {
+        errors.push(`REPLACE end cannot be negative: ${replaceAction.end}`);
+      }
+      if (typeof replaceAction.text !== 'string') {
+        errors.push('REPLACE action requires a string "text" property');
+      }
+      if (
+        typeof replaceAction.start === 'number' &&
+        typeof replaceAction.end === 'number'
+      ) {
+        if (replaceAction.start > replaceAction.end) {
+          errors.push(
+            `REPLACE start (${replaceAction.start}) cannot be greater than end (${replaceAction.end})`
+          );
+        }
+        if (documentLength !== undefined) {
+          if (replaceAction.start > documentLength) {
+            errors.push(
+              `REPLACE start ${replaceAction.start} exceeds document length ${documentLength}`
+            );
+          }
+          if (replaceAction.end > documentLength) {
+            errors.push(
+              `REPLACE end ${replaceAction.end} exceeds document length ${documentLength}`
+            );
+          }
+        }
+      }
+      break;
+    }
+
+    case 'SET_SELECTION': {
+      const selectionAction = action as Partial<SetSelectionAction>;
+      if (!Array.isArray(selectionAction.ranges)) {
+        errors.push('SET_SELECTION action requires an array "ranges" property');
+      }
+      break;
+    }
+
+    case 'UNDO':
+    case 'REDO':
+    case 'HISTORY_CLEAR':
+    case 'TRANSACTION_START':
+    case 'TRANSACTION_COMMIT':
+    case 'TRANSACTION_ROLLBACK':
+      // These actions have no additional properties to validate
+      break;
+
+    case 'APPLY_REMOTE': {
+      const remoteAction = action as Partial<ApplyRemoteAction>;
+      if (!Array.isArray(remoteAction.changes)) {
+        errors.push('APPLY_REMOTE action requires an array "changes" property');
+      }
+      break;
+    }
+
+    case 'LOAD_CHUNK': {
+      const loadAction = action as Partial<LoadChunkAction>;
+      if (typeof loadAction.chunkIndex !== 'number') {
+        errors.push('LOAD_CHUNK action requires a numeric "chunkIndex" property');
+      }
+      if (!(loadAction.data instanceof Uint8Array)) {
+        errors.push('LOAD_CHUNK action requires a Uint8Array "data" property');
+      }
+      break;
+    }
+
+    case 'EVICT_CHUNK': {
+      const evictAction = action as Partial<EvictChunkAction>;
+      if (typeof evictAction.chunkIndex !== 'number') {
+        errors.push('EVICT_CHUNK action requires a numeric "chunkIndex" property');
+      }
+      break;
+    }
+
+    default:
+      errors.push(`Unknown action type: "${action.type}"`);
+  }
+
+  return { valid: errors.length === 0, errors };
+}

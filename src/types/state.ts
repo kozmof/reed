@@ -15,9 +15,48 @@ import type { ByteOffset } from './branded.ts';
 export type BufferType = 'original' | 'add';
 
 /**
+ * Reference to a location in the original (immutable) buffer.
+ * Part of the BufferReference discriminated union.
+ */
+export interface OriginalBufferRef {
+  readonly kind: 'original';
+  readonly start: number;
+  readonly length: number;
+}
+
+/**
+ * Reference to a location in the add (append-only) buffer.
+ * Part of the BufferReference discriminated union.
+ */
+export interface AddBufferRef {
+  readonly kind: 'add';
+  readonly start: number;
+  readonly length: number;
+}
+
+/**
+ * Discriminated union for type-safe buffer references.
+ * Use `kind` field to distinguish between buffer types.
+ */
+export type BufferReference = OriginalBufferRef | AddBufferRef;
+
+/**
  * Red-Black tree node color.
  */
 export type NodeColor = 'red' | 'black';
+
+/**
+ * Generic base interface for Red-Black tree nodes.
+ * Provides the common structure (color, left, right) that all RB-tree nodes share.
+ * Uses F-bounded polymorphism for type-safe self-referential children.
+ *
+ * @template T - The concrete node type extending this interface
+ */
+export interface RBNode<T extends RBNode<T> = RBNode<any>> {
+  readonly color: NodeColor;
+  readonly left: T | null;
+  readonly right: T | null;
+}
 
 /**
  * Immutable piece node in the Red-Black tree.
@@ -26,11 +65,7 @@ export type NodeColor = 'red' | 'black';
  * Note: Parent references are removed for immutability.
  * Use zipper pattern or path tracking for traversal.
  */
-export interface PieceNode {
-  readonly color: NodeColor;
-  readonly left: PieceNode | null;
-  readonly right: PieceNode | null;
-
+export interface PieceNode extends RBNode<PieceNode> {
   /** Which buffer this piece references */
   readonly bufferType: BufferType;
   /** Start offset in the buffer */
@@ -66,11 +101,7 @@ export interface PieceTableState {
  * Immutable line index node in the separate Red-Black tree.
  * Maps line numbers to absolute byte offsets.
  */
-export interface LineIndexNode {
-  readonly color: NodeColor;
-  readonly left: LineIndexNode | null;
-  readonly right: LineIndexNode | null;
-
+export interface LineIndexNode extends RBNode<LineIndexNode> {
   /** Byte offset in document where this line starts */
   readonly documentOffset: number;
   /** Length of this line including newline character(s) */

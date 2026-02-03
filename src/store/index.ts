@@ -3,7 +3,7 @@
  */
 
 // Store factory
-export { createDocumentStore, isDocumentStore } from './store.ts';
+export { createDocumentStore, createDocumentStoreWithEvents, isDocumentStore } from './store.ts';
 
 // Action creators
 export { DocumentActions, serializeAction, deserializeAction } from './actions.ts';
@@ -43,6 +43,11 @@ export {
   // Byte/char conversion utilities
   charToByteOffset,
   byteToCharOffset,
+  // Buffer access helpers
+  getPieceBufferRef,
+  getBuffer,
+  getBufferSlice,
+  getPieceBuffer,
 } from './piece-table.ts';
 export type { StreamOptions, DocumentChunk } from './piece-table.ts';
 

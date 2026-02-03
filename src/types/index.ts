@@ -5,7 +5,11 @@
 // State types
 export type {
   BufferType,
+  OriginalBufferRef,
+  AddBufferRef,
+  BufferReference,
   NodeColor,
+  RBNode,
   PieceNode,
   PieceTableState,
   LineIndexNode,
@@ -39,6 +43,7 @@ export type {
   EvictChunkAction,
   DocumentAction,
   DocumentActionType,
+  ActionValidationResult,
 } from './actions.ts';
 
 export {
@@ -46,6 +51,7 @@ export {
   isHistoryAction,
   isTransactionAction,
   isDocumentAction,
+  validateAction,
 } from './actions.ts';
 
 // Store types
@@ -53,6 +59,7 @@ export type {
   StoreListener,
   Unsubscribe,
   DocumentStore,
+  DocumentStoreWithEvents,
   ReadonlyDocumentStore,
   DocumentReducer,
 } from './store.ts';

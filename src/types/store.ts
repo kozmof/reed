@@ -6,6 +6,11 @@
 
 import type { DocumentState } from './state.ts';
 import type { DocumentAction } from './actions.ts';
+import type {
+  DocumentEventEmitter,
+  DocumentEventMap,
+  EventHandler,
+} from '../store/events.ts';
 
 /**
  * Listener function type for store subscriptions.
@@ -102,3 +107,51 @@ export type DocumentReducer = (
   state: DocumentState,
   action: DocumentAction
 ) => DocumentState;
+
+/**
+ * Extended store interface that combines state management with event emission.
+ * Provides automatic event emission on dispatch for type-safe event handling.
+ *
+ * Use this when you need to react to specific document changes
+ * (content changes, selection changes, history changes) rather than
+ * just knowing that "something changed".
+ */
+export interface DocumentStoreWithEvents extends DocumentStore {
+  /**
+   * Subscribe to typed document events.
+   * More specific than subscribe() - you get detailed event information.
+   *
+   * @example
+   * ```typescript
+   * store.addEventListener('content-change', (event) => {
+   *   console.log('Changed range:', event.affectedRange);
+   *   console.log('Action:', event.action.type);
+   * });
+   * ```
+   *
+   * @param type - Event type to listen for
+   * @param handler - Handler function called with the event
+   * @returns Unsubscribe function
+   */
+  addEventListener<K extends keyof DocumentEventMap>(
+    type: K,
+    handler: EventHandler<DocumentEventMap[K]>
+  ): Unsubscribe;
+
+  /**
+   * Remove a previously registered event listener.
+   *
+   * @param type - Event type
+   * @param handler - The same handler function passed to addEventListener
+   */
+  removeEventListener<K extends keyof DocumentEventMap>(
+    type: K,
+    handler: EventHandler<DocumentEventMap[K]>
+  ): void;
+
+  /**
+   * Access the underlying event emitter for advanced use cases.
+   * Prefer addEventListener/removeEventListener for typical usage.
+   */
+  readonly events: DocumentEventEmitter;
+}

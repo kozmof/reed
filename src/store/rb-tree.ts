@@ -3,21 +3,14 @@
  * Provides immutable balancing operations for any R-B tree node type.
  */
 
-import type { NodeColor } from '../types/state.ts';
+import type { NodeColor, RBNode } from '../types/state.ts';
+
+// Re-export RBNode for consumers that import from rb-tree
+export type { RBNode };
 
 // =============================================================================
 // Types
 // =============================================================================
-
-/**
- * Base interface for any Red-Black tree node.
- * Node types must implement this interface to use the generic utilities.
- */
-export interface RBNode {
-  readonly color: NodeColor;
-  readonly left: RBNode | null;
-  readonly right: RBNode | null;
-}
 
 /**
  * Function type for creating a new node with updated properties.
