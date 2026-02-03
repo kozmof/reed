@@ -4,7 +4,7 @@
 **Analyzer:** Claude Opus 4.5
 **Project:** Reed Text Editor Library
 **Version:** 0.0.0
-**Last Updated:** 2026-01-31 (Phase 1-3 Pitfalls Fixed)
+**Last Updated:** 2026-02-03 (Lazy Line Index Maintenance)
 
 ---
 
@@ -14,7 +14,7 @@ Reed is a high-performance text editor library written in Vanilla TypeScript, de
 
 | Metric | Value |
 |--------|-------|
-| Total Source Lines | ~9,300 |
+| Total Source Lines | ~10,200 |
 | Test Coverage | 374 tests passing |
 | Core Data Structures | 2 (Piece Table, Line Index) |
 | Action Types | 12 |
@@ -41,12 +41,12 @@ reed/
 ├── src/
 │   ├── index.ts              # Public library entry point
 │   ├── store/                # Core store logic (~6,000+ lines)
-│   │   ├── store.ts          # Store factory & state management (204 lines)
-│   │   ├── reducer.ts        # Pure reducer function (507 lines)
+│   │   ├── store.ts          # Store factory & state management (336 lines)
+│   │   ├── reducer.ts        # Pure reducer function (565 lines)
 │   │   ├── state.ts          # State factory functions (315 lines)
 │   │   ├── actions.ts        # Action creators (165 lines)
 │   │   ├── piece-table.ts    # Piece table with R-B tree (1,034 lines)
-│   │   ├── line-index.ts     # Line index with R-B tree (751 lines)
+│   │   ├── line-index.ts     # Line index with R-B tree + lazy maintenance (1,477 lines)
 │   │   ├── rb-tree.ts        # Generic R-B tree utilities (212 lines)
 │   │   ├── diff.ts           # Myers diff algorithm (611 lines)
 │   │   ├── events.ts         # Event pub/sub system (306 lines)
@@ -55,7 +55,7 @@ reed/
 │   │   ├── index.ts          # Store module exports (118 lines)
 │   │   └── *.test.ts         # Comprehensive test suite (2,500+ lines)
 │   └── types/                # Type definitions
-│       ├── state.ts          # Core state types (225 lines)
+│       ├── state.ts          # Core state types (249 lines)
 │       ├── actions.ts        # Action types (279 lines)
 │       ├── store.ts          # Store interface (83 lines)
 │       ├── branded.ts        # Branded position types (252 lines)
@@ -82,7 +82,8 @@ DocumentState (root state)
 │   ├── PieceNode (R-B tree)
 │   └── Buffers (originalBuffer, addBuffer)
 ├── LineIndexState
-│   └── LineIndexNode (R-B tree)
+│   ├── LineIndexNode (R-B tree)
+│   └── DirtyLineRange[] (lazy maintenance)
 ├── SelectionState
 │   └── SelectionRange[]
 ├── HistoryState
@@ -140,9 +141,13 @@ pieceTableDelete    lineIndexDelete
 - `getValue()` / `getText()` → `collectPieces()` + buffer access
 
 **Line Index Operations:**
-- `lineIndexInsert()` → `rbInsertLine()` → `fixInsert()`
-- `lineIndexDelete()` → `rebuildWithDeletedRange()`
+- `lineIndexInsert()` → `rbInsertLine()` → `fixInsert()` (eager, O(n) for newlines)
+- `lineIndexInsertLazy()` → marks dirty ranges, O(log n) (deferred reconciliation)
+- `lineIndexDelete()` → `rebuildWithDeletedRange()` (eager)
+- `lineIndexDeleteLazy()` → marks dirty ranges (deferred reconciliation)
 - `findLineAtPosition()` / `findLineByNumber()` for queries
+- `getLineRangePrecise()` → applies dirty range deltas on-demand
+- `reconcileFull()` / `reconcileViewport()` → background reconciliation
 
 **Shared Utilities:**
 - `rb-tree.ts` provides generic `fixInsert()`, `rotateLeft()`, `rotateRight()`
@@ -387,14 +392,64 @@ export type { ByteOffset, CharOffset, LineNumber, ColumnNumber } from './types/i
 export { byteOffset, charOffset, lineNumber, columnNumber } from './types/index.ts';
 ```
 
-### Improvement 2: Lazy Line Index Maintenance
+### ~~Improvement 2: Lazy Line Index Maintenance~~ ✅ IMPLEMENTED
 
-Instead of rebuilding the entire tree on deletions, implement an incremental update strategy:
-- Track dirty ranges
-- Defer full rebuilds to idle time
-- Use a "rope" structure for the line index
+~~Instead of rebuilding the entire tree on deletions, implement an incremental update strategy.~~
 
-**Note:** Partially addressed by the optimized `rebuildWithDeletedRange()` which now uses incremental approach for small deletions.
+**Implemented:** Full lazy maintenance system with:
+
+**New Types (`src/types/state.ts`):**
+```typescript
+interface DirtyLineRange {
+  readonly startLine: number;
+  readonly endLine: number;      // -1 = to end of document
+  readonly offsetDelta: number;
+  readonly createdAtVersion: number;
+}
+
+interface LineIndexState {
+  readonly root: LineIndexNode | null;
+  readonly lineCount: number;
+  readonly dirtyRanges: readonly DirtyLineRange[];  // NEW
+  readonly lastReconciledVersion: number;            // NEW
+  readonly rebuildPending: boolean;                  // NEW
+}
+```
+
+**Lazy Operations (`src/store/line-index.ts`):**
+- `lineIndexInsertLazy()` - O(log n) insert, defers offset recalculation
+- `lineIndexDeleteLazy()` - marks dirty ranges for later reconciliation
+- `getLineRangePrecise()` - applies offset deltas on-demand for queries
+
+**Dirty Range Management:**
+- `mergeDirtyRanges()` - consolidates overlapping ranges
+- `isLineDirty()` - checks if line needs reconciliation
+- `getOffsetDeltaForLine()` - computes cumulative offset delta
+
+**Reconciliation (`src/store/line-index.ts`):**
+- `reconcileRange()` - fixes offsets for specific line range
+- `reconcileFull()` - rebuilds entire tree (called from idle callback)
+- `reconcileViewport()` - ensures visible lines are accurate
+
+**Store Integration (`src/store/store.ts`):**
+```typescript
+interface DocumentStore {
+  // ...existing
+  scheduleReconciliation?(): void;  // Uses requestIdleCallback
+  reconcileNow?(): void;            // Synchronous reconciliation
+  setViewport?(startLine: number, endLine: number): void;  // Viewport accuracy
+}
+```
+
+**Performance Impact:**
+| Operation | Before | After |
+|-----------|--------|-------|
+| Insert with newlines | O(n) immediate | O(log n) + deferred O(n) |
+| Delete with newlines | O(n) immediate | O(log n) + deferred O(n) |
+| Query visible line | O(log n) | O(log n) + O(d) where d = dirty ranges |
+| Rapid typing | Each keystroke O(n) | Batched in idle time |
+
+**Rendering Integration:** `getVisibleLines()` and `getVisibleLine()` now use `getLineRangePrecise()` for dirty-aware accuracy.
 
 ### Improvement 3: Add Buffer View Abstraction
 
@@ -644,12 +699,13 @@ The Reed codebase demonstrates excellent software engineering practices:
 - ✅ `replacePieceInTree` optimized from O(n) to O(log n)
 - ✅ Byte/char conversion utilities added (`charToByteOffset`, `byteToCharOffset`)
 - ✅ Branded types (`ByteOffset`) consistently used throughout codebase
+- ✅ Lazy line index maintenance with dirty range tracking and background reconciliation
 
 **Remaining Areas for Attention:**
 - Buffer pre-allocation strategy could be more sophisticated
 - Documentation improvement needed for when to use `getValueStream()` vs `getValue()`
 
-**Recommendation:** The foundation is solid and ready for Phase 3 (Large File Support) implementation. All major pitfalls have been addressed.
+**Recommendation:** The foundation is solid and ready for Phase 3 (Large File Support) implementation. All major pitfalls and Improvement 2 (Lazy Line Index Maintenance) have been addressed.
 
 ---
 
@@ -685,7 +741,45 @@ The Reed codebase demonstrates excellent software engineering practices:
 
 All 374 tests passing after fixes.
 
+### 2026-02-03 - Lazy Line Index Maintenance (Improvement 2)
+
+**New Types:**
+| Type | Location | Purpose |
+|------|----------|---------|
+| `DirtyLineRange` | `types/state.ts:89-98` | Tracks stale offset regions |
+| Extended `LineIndexState` | `types/state.ts:105-116` | Added `dirtyRanges`, `lastReconciledVersion`, `rebuildPending` |
+
+**New Functions (`line-index.ts`):**
+| Function | Purpose |
+|----------|---------|
+| `lineIndexInsertLazy()` | O(log n) insert with deferred offset recalculation |
+| `lineIndexDeleteLazy()` | Delete with dirty range marking |
+| `getLineRangePrecise()` | Query with on-demand offset delta application |
+| `mergeDirtyRanges()` | Consolidate overlapping dirty ranges |
+| `isLineDirty()` | Check if line needs reconciliation |
+| `getOffsetDeltaForLine()` | Compute cumulative offset delta |
+| `reconcileRange()` | Fix offsets for specific line range |
+| `reconcileFull()` | Rebuild tree with correct offsets |
+| `reconcileViewport()` | Ensure visible lines are accurate |
+
+**Store Updates (`store.ts`):**
+| Method | Purpose |
+|--------|---------|
+| `scheduleReconciliation()` | Queue idle callback for background reconciliation |
+| `reconcileNow()` | Force synchronous reconciliation |
+| `setViewport()` | Reconcile visible lines immediately |
+
+**Reducer Updates (`reducer.ts`):**
+- INSERT, DELETE, REPLACE, APPLY_REMOTE now use lazy versions
+- Eager versions preserved for undo/redo accuracy
+
+**Rendering Updates (`rendering.ts`):**
+- `getVisibleLines()`, `getVisibleLine()`, `positionToLineColumn()`, `lineColumnToPosition()` now use `getLineRangePrecise()`
+
+All 374 tests passing after implementation.
+
 ---
 
 *Report generated by Claude Opus 4.5 on 2026-01-31*
 *Updated with Phase 1-3 fixes on 2026-01-31*
+*Updated with Lazy Line Index Maintenance on 2026-02-03*

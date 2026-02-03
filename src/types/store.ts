@@ -61,6 +61,27 @@ export interface DocumentStore {
    * @returns New state after applying all actions
    */
   batch(actions: DocumentAction[]): DocumentState;
+
+  /**
+   * Schedule background reconciliation of the line index.
+   * Uses requestIdleCallback when available, falls back to setTimeout.
+   * Does nothing if no reconciliation is pending.
+   */
+  scheduleReconciliation?(): void;
+
+  /**
+   * Force immediate synchronous reconciliation of the line index.
+   * Use sparingly - prefer scheduleReconciliation() for non-critical updates.
+   */
+  reconcileNow?(): void;
+
+  /**
+   * Set viewport bounds and ensure those lines have accurate offsets.
+   * Reconciles visible lines immediately while deferring off-screen updates.
+   * @param startLine - First visible line (0-indexed)
+   * @param endLine - Last visible line (0-indexed)
+   */
+  setViewport?(startLine: number, endLine: number): void;
 }
 
 /**

@@ -95,6 +95,9 @@ export function createEmptyLineIndexState(): LineIndexState {
   return Object.freeze({
     root: null,
     lineCount: 1, // Empty document has 1 line
+    dirtyRanges: Object.freeze([]),
+    lastReconciledVersion: 0,
+    rebuildPending: false,
   });
 }
 
@@ -179,6 +182,9 @@ export function createLineIndexState(content: string): LineIndexState {
   return Object.freeze({
     root,
     lineCount: lineStarts.length,
+    dirtyRanges: Object.freeze([]),
+    lastReconciledVersion: 0,
+    rebuildPending: false,
   });
 }
 

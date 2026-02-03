@@ -6,7 +6,7 @@
 import type { DocumentState } from '../types/state.ts';
 import type { ByteOffset } from '../types/branded.ts';
 import { byteOffset } from '../types/branded.ts';
-import { findLineAtPosition, getLineRange, getLineCountFromIndex } from './line-index.ts';
+import { findLineAtPosition, getLineRange, getLineRangePrecise, getLineCountFromIndex } from './line-index.ts';
 import { getText } from './piece-table.ts';
 
 // Module-level TextEncoder singleton for efficient reuse
@@ -124,7 +124,8 @@ export function getVisibleLines(
   const lines: VisibleLine[] = [];
 
   for (let lineNum = firstLine; lineNum <= lastLine; lineNum++) {
-    const range = getLineRange(state.lineIndex, lineNum);
+    // Use getLineRangePrecise to handle dirty line indices correctly
+    const range = getLineRangePrecise(state.lineIndex, lineNum);
     if (range) {
       const startOffset = byteOffset(range.start);
       const endOffset = byteOffset(range.start + range.length);
@@ -165,7 +166,8 @@ export function getVisibleLine(
     return null;
   }
 
-  const range = getLineRange(state.lineIndex, lineNumber);
+  // Use getLineRangePrecise to handle dirty line indices correctly
+  const range = getLineRangePrecise(state.lineIndex, lineNumber);
   if (!range) {
     return null;
   }
@@ -296,7 +298,7 @@ export function positionToLineColumn(
   if (lineInfo) {
     // offsetInLine is the byte offset within the line
     // We need to convert to character offset
-    const range = getLineRange(state.lineIndex, lineInfo.lineNumber);
+    const range = getLineRangePrecise(state.lineIndex, lineInfo.lineNumber);
     if (range) {
       const lineContent = getText(state.pieceTable, byteOffset(range.start), byteOffset(range.start + lineInfo.offsetInLine));
       return {
@@ -307,7 +309,7 @@ export function positionToLineColumn(
   }
 
   // Check if position is at the very end of document
-  const lastLineRange = getLineRange(state.lineIndex, totalLines - 1);
+  const lastLineRange = getLineRangePrecise(state.lineIndex, totalLines - 1);
   if (lastLineRange) {
     const endOffset = lastLineRange.start + lastLineRange.length;
     if (position === endOffset) {
@@ -330,7 +332,8 @@ export function lineColumnToPosition(
   line: number,
   column: number
 ): ByteOffset | null {
-  const range = getLineRange(state.lineIndex, line);
+  // Use getLineRangePrecise to handle dirty line indices correctly
+  const range = getLineRangePrecise(state.lineIndex, line);
   if (!range) {
     return null;
   }

@@ -17,6 +17,8 @@ import {
 import {
   lineIndexInsert as liInsert,
   lineIndexDelete as liDelete,
+  lineIndexInsertLazy as liInsertLazy,
+  lineIndexDeleteLazy as liDeleteLazy,
 } from './line-index.ts';
 
 // Module-level TextEncoder singleton for efficient reuse
@@ -106,7 +108,8 @@ function getTextRange(state: DocumentState, start: ByteOffset, end: ByteOffset):
 // =============================================================================
 
 /**
- * Update line index after text insertion.
+ * Update line index after text insertion (eager version).
+ * Used for undo/redo where we need immediate accuracy.
  */
 function lineIndexUpdate(
   state: DocumentState,
@@ -120,7 +123,24 @@ function lineIndexUpdate(
 }
 
 /**
- * Update line index after text deletion.
+ * Update line index after text insertion (lazy version).
+ * Defers offset recalculation to idle time.
+ */
+function lineIndexUpdateLazy(
+  state: DocumentState,
+  position: ByteOffset,
+  text: string,
+  version: number
+): DocumentState {
+  const newLineIndex = liInsertLazy(state.lineIndex, position, text, version);
+  return withState(state, {
+    lineIndex: newLineIndex,
+  });
+}
+
+/**
+ * Update line index after text deletion (eager version).
+ * Used for undo/redo where we need immediate accuracy.
  */
 function lineIndexRemove(
   state: DocumentState,
@@ -129,6 +149,23 @@ function lineIndexRemove(
   deletedText: string
 ): DocumentState {
   const newLineIndex = liDelete(state.lineIndex, start, end, deletedText);
+  return withState(state, {
+    lineIndex: newLineIndex,
+  });
+}
+
+/**
+ * Update line index after text deletion (lazy version).
+ * Defers offset recalculation to idle time.
+ */
+function lineIndexRemoveLazy(
+  state: DocumentState,
+  start: ByteOffset,
+  end: ByteOffset,
+  deletedText: string,
+  version: number
+): DocumentState {
+  const newLineIndex = liDeleteLazy(state.lineIndex, start, end, deletedText, version);
   return withState(state, {
     lineIndex: newLineIndex,
   });
@@ -356,9 +393,11 @@ export function documentReducer(
       // Skip empty inserts
       if (action.text.length === 0) return state;
 
-      // Insert text and update line index
+      const nextVersion = state.version + 1;
+
+      // Insert text and update line index (using lazy version)
       let newState = pieceTableInsert(state, position, action.text);
-      newState = lineIndexUpdate(newState, position, action.text);
+      newState = lineIndexUpdateLazy(newState, position, action.text, nextVersion);
 
       // Push to history
       newState = historyPush(newState, {
@@ -369,7 +408,7 @@ export function documentReducer(
 
       // Mark as dirty and increment version
       return withState(newState, {
-        version: state.version + 1,
+        version: nextVersion,
         metadata: Object.freeze({
           ...state.metadata,
           isDirty: true,
@@ -385,12 +424,14 @@ export function documentReducer(
       const deletedLength = end - start;
       if (deletedLength <= 0) return state;
 
+      const nextVersion = state.version + 1;
+
       // Capture deleted text for undo BEFORE deleting
       const deletedText = getTextRange(state, start, end);
 
-      // Delete from piece table and update line index
+      // Delete from piece table and update line index (using lazy version)
       let newState = pieceTableDelete(state, start, end);
-      newState = lineIndexRemove(newState, start, end, deletedText);
+      newState = lineIndexRemoveLazy(newState, start, end, deletedText, nextVersion);
 
       // Push to history with actual deleted text
       newState = historyPush(newState, {
@@ -401,7 +442,7 @@ export function documentReducer(
 
       // Mark as dirty and increment version
       return withState(newState, {
-        version: state.version + 1,
+        version: nextVersion,
         metadata: Object.freeze({
           ...state.metadata,
           isDirty: true,
@@ -414,14 +455,16 @@ export function documentReducer(
       const { start, end, valid } = validateRange(action.start, action.end, state.pieceTable.totalLength);
       if (!valid) return state;
 
+      const nextVersion = state.version + 1;
+
       // Capture old text for undo BEFORE replacing
       const oldText = getTextRange(state, start, end);
 
-      // Replace is delete + insert
+      // Replace is delete + insert (using lazy versions)
       let newState = pieceTableDelete(state, start, end);
       newState = pieceTableInsert(newState, start, action.text);
-      newState = lineIndexRemove(newState, start, end, oldText);
-      newState = lineIndexUpdate(newState, start, action.text);
+      newState = lineIndexRemoveLazy(newState, start, end, oldText, nextVersion);
+      newState = lineIndexUpdateLazy(newState, start, action.text, nextVersion);
 
       // Push to history with actual old text
       newState = historyPush(newState, {
@@ -433,7 +476,7 @@ export function documentReducer(
 
       // Mark as dirty and increment version
       return withState(newState, {
-        version: state.version + 1,
+        version: nextVersion,
         metadata: Object.freeze({
           ...state.metadata,
           isDirty: true,
@@ -483,22 +526,23 @@ export function documentReducer(
 
     case 'APPLY_REMOTE': {
       // Apply remote changes from collaboration
+      const nextVersion = state.version + 1;
       let newState = state;
       for (const change of action.changes) {
         if (change.type === 'insert' && change.text) {
           newState = pieceTableInsert(newState, change.position, change.text);
-          newState = lineIndexUpdate(newState, change.position, change.text);
+          newState = lineIndexUpdateLazy(newState, change.position, change.text, nextVersion);
         } else if (change.type === 'delete' && change.length) {
           // Capture deleted text before deleting for line index update
           const endPosition = byteOffset(change.position + change.length);
           const deletedText = getTextRange(newState, change.position, endPosition);
           newState = pieceTableDelete(newState, change.position, endPosition);
-          newState = lineIndexRemove(newState, change.position, endPosition, deletedText);
+          newState = lineIndexRemoveLazy(newState, change.position, endPosition, deletedText, nextVersion);
         }
       }
       // Remote changes don't push to history (they come from network)
       return withState(newState, {
-        version: state.version + 1,
+        version: nextVersion,
       });
     }
 

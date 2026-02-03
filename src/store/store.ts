@@ -8,6 +8,7 @@ import type { DocumentAction } from '../types/actions.ts';
 import type { DocumentStore, StoreListener, Unsubscribe } from '../types/store.ts';
 import { createInitialState } from './state.ts';
 import { documentReducer } from './reducer.ts';
+import { reconcileFull, reconcileViewport } from './line-index.ts';
 
 /**
  * Transaction state tracked by the store.
@@ -19,6 +20,16 @@ interface TransactionState {
   snapshotBeforeTransaction: DocumentState | null;
   /** Actions accumulated during transaction */
   pendingActions: DocumentAction[];
+}
+
+/**
+ * Background reconciliation state.
+ */
+interface ReconciliationState {
+  /** ID of pending idle callback (or timeout) */
+  idleCallbackId: number | null;
+  /** Whether reconciliation is currently running */
+  isReconciling: boolean;
 }
 
 /**
@@ -41,6 +52,10 @@ export function createDocumentStore(
     depth: 0,
     snapshotBeforeTransaction: null,
     pendingActions: [],
+  };
+  const reconciliation: ReconciliationState = {
+    idleCallbackId: null,
+    isReconciling: false,
   };
 
   /**
@@ -136,6 +151,11 @@ export function createDocumentStore(
       } else {
         // Notify listeners immediately if not in transaction
         notifyListeners();
+
+        // Schedule background reconciliation if line index has dirty ranges
+        if (state.lineIndex.rebuildPending) {
+          scheduleReconciliation();
+        }
       }
     }
 
@@ -188,6 +208,102 @@ export function createDocumentStore(
     return state;
   }
 
+  /**
+   * Schedule background reconciliation using requestIdleCallback.
+   * Falls back to setTimeout for environments without rIC.
+   */
+  function scheduleReconciliation(): void {
+    // Don't schedule if already scheduled or no reconciliation needed
+    if (reconciliation.idleCallbackId !== null) return;
+    if (!state.lineIndex.rebuildPending) return;
+
+    const callback = (deadline?: IdleDeadline) => {
+      reconciliation.idleCallbackId = null;
+
+      // Don't reconcile during active transaction
+      if (transaction.depth > 0) {
+        scheduleReconciliation();
+        return;
+      }
+
+      // Check if we have time (>5ms remaining or no deadline)
+      const hasTime = !deadline || deadline.timeRemaining() > 5;
+      if (!hasTime) {
+        scheduleReconciliation();
+        return;
+      }
+
+      reconciliation.isReconciling = true;
+
+      try {
+        const newLineIndex = reconcileFull(state.lineIndex);
+        if (newLineIndex !== state.lineIndex) {
+          state = Object.freeze({
+            ...state,
+            lineIndex: newLineIndex,
+            version: state.version + 1,
+          });
+          // Don't notify listeners - this is a background optimization
+          // that doesn't change visible content
+        }
+      } finally {
+        reconciliation.isReconciling = false;
+      }
+    };
+
+    if (typeof requestIdleCallback !== 'undefined') {
+      reconciliation.idleCallbackId = requestIdleCallback(callback, {
+        timeout: 1000, // Max 1 second delay
+      });
+    } else {
+      // Fallback to setTimeout for environments without requestIdleCallback
+      reconciliation.idleCallbackId = setTimeout(callback, 16) as unknown as number;
+    }
+  }
+
+  /**
+   * Force immediate reconciliation (blocking).
+   * Use sparingly - prefer scheduleReconciliation().
+   */
+  function reconcileNow(): void {
+    // Cancel any pending idle callback
+    if (reconciliation.idleCallbackId !== null) {
+      if (typeof cancelIdleCallback !== 'undefined') {
+        cancelIdleCallback(reconciliation.idleCallbackId);
+      } else {
+        clearTimeout(reconciliation.idleCallbackId);
+      }
+      reconciliation.idleCallbackId = null;
+    }
+
+    if (!state.lineIndex.rebuildPending) return;
+
+    const newLineIndex = reconcileFull(state.lineIndex);
+    if (newLineIndex !== state.lineIndex) {
+      state = Object.freeze({
+        ...state,
+        lineIndex: newLineIndex,
+        version: state.version + 1,
+      });
+    }
+  }
+
+  /**
+   * Set viewport bounds and ensure those lines are accurate.
+   */
+  function setViewport(startLine: number, endLine: number): void {
+    const newLineIndex = reconcileViewport(state.lineIndex, startLine, endLine);
+    if (newLineIndex !== state.lineIndex) {
+      state = Object.freeze({
+        ...state,
+        lineIndex: newLineIndex,
+      });
+    }
+
+    // Schedule background reconciliation for remaining dirty ranges
+    scheduleReconciliation();
+  }
+
   // Return the store interface
   return {
     subscribe,
@@ -195,6 +311,9 @@ export function createDocumentStore(
     getServerSnapshot,
     dispatch,
     batch,
+    scheduleReconciliation,
+    reconcileNow,
+    setViewport,
   };
 }
 

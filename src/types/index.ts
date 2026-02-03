@@ -10,6 +10,7 @@ export type {
   PieceTableState,
   LineIndexNode,
   LineIndexState,
+  DirtyLineRange,
   SelectionRange,
   SelectionState,
   HistoryChange,

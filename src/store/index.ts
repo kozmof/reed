@@ -57,6 +57,18 @@ export {
   getLineCountFromIndex,
   collectLines,
   rebuildLineIndex,
+  // Lazy line index operations
+  lineIndexInsertLazy,
+  lineIndexDeleteLazy,
+  getLineRangePrecise,
+  // Dirty range management
+  mergeDirtyRanges,
+  isLineDirty,
+  getOffsetDeltaForLine,
+  // Reconciliation
+  reconcileRange,
+  reconcileFull,
+  reconcileViewport,
 } from './line-index.ts';
 
 // Diff and setValue operations

@@ -83,14 +83,36 @@ export interface LineIndexNode {
 }
 
 /**
+ * Represents a range of lines with stale offset data.
+ * Used for lazy line index maintenance to defer expensive O(n) offset recalculations.
+ */
+export interface DirtyLineRange {
+  /** First line affected (inclusive, 0-indexed) */
+  readonly startLine: number;
+  /** Last line affected (inclusive), -1 means "to end of document" */
+  readonly endLine: number;
+  /** Byte delta to apply to lines in this range */
+  readonly offsetDelta: number;
+  /** Version when this dirty range was created */
+  readonly createdAtVersion: number;
+}
+
+/**
  * Immutable line index state.
  * Maintains a separate Red-Black tree for O(log n) line lookups.
+ * Supports lazy maintenance with dirty range tracking.
  */
 export interface LineIndexState {
   /** Root of the line index tree */
   readonly root: LineIndexNode | null;
   /** Total line count (cached for O(1) access) */
   readonly lineCount: number;
+  /** Dirty ranges awaiting background reconciliation */
+  readonly dirtyRanges: readonly DirtyLineRange[];
+  /** Version number of last full reconciliation */
+  readonly lastReconciledVersion: number;
+  /** Whether a background rebuild is pending */
+  readonly rebuildPending: boolean;
 }
 
 // =============================================================================

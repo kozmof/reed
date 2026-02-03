@@ -7,6 +7,7 @@
 import type {
   LineIndexNode,
   LineIndexState,
+  DirtyLineRange,
 } from '../types/state.ts';
 import type { ByteOffset } from '../types/branded.ts';
 import { createLineIndexNode, withLineIndexNode } from './state.ts';
@@ -270,11 +271,23 @@ function updateLineLength(
   if (state.root === null) {
     // Create first line
     const root = createLineIndexNode(0, lengthDelta, 'black');
-    return Object.freeze({ root, lineCount: 1 });
+    return Object.freeze({
+      root,
+      lineCount: 1,
+      dirtyRanges: Object.freeze([]),
+      lastReconciledVersion: state.lastReconciledVersion,
+      rebuildPending: false,
+    });
   }
 
   const newRoot = updateLineLengthInTree(state.root, position as number, lengthDelta);
-  return Object.freeze({ root: newRoot, lineCount: state.lineCount });
+  return Object.freeze({
+    root: newRoot,
+    lineCount: state.lineCount,
+    dirtyRanges: state.dirtyRanges,
+    lastReconciledVersion: state.lastReconciledVersion,
+    rebuildPending: state.rebuildPending,
+  });
 }
 
 /**
@@ -356,7 +369,13 @@ function appendLines(
     lineCount++;
   }
 
-  return Object.freeze({ root: newRoot, lineCount });
+  return Object.freeze({
+    root: newRoot,
+    lineCount,
+    dirtyRanges: state.dirtyRanges,
+    lastReconciledVersion: state.lastReconciledVersion,
+    rebuildPending: state.rebuildPending,
+  });
 }
 
 /**
@@ -429,7 +448,13 @@ function insertLinesAtPosition(
     insertedBytes
   );
 
-  return Object.freeze({ root: newRoot, lineCount });
+  return Object.freeze({
+    root: newRoot,
+    lineCount,
+    dirtyRanges: state.dirtyRanges,
+    lastReconciledVersion: state.lastReconciledVersion,
+    rebuildPending: state.rebuildPending,
+  });
 }
 
 /**
@@ -522,11 +547,23 @@ function buildLineIndexFromText(text: string, startOffset: number): LineIndexSta
   }
 
   if (lines.length === 0) {
-    return Object.freeze({ root: null, lineCount: 1 });
+    return Object.freeze({
+      root: null,
+      lineCount: 1,
+      dirtyRanges: Object.freeze([]),
+      lastReconciledVersion: 0,
+      rebuildPending: false,
+    });
   }
 
   const root = buildBalancedTree(lines, 0, lines.length - 1);
-  return Object.freeze({ root, lineCount: lines.length });
+  return Object.freeze({
+    root,
+    lineCount: lines.length,
+    dirtyRanges: Object.freeze([]),
+    lastReconciledVersion: 0,
+    rebuildPending: false,
+  });
 }
 
 /**
@@ -668,7 +705,13 @@ function rebuildWithDeletedRange(
   const newLineCount = totalLines - deletedCount;
 
   if (newLineCount <= 0) {
-    return Object.freeze({ root: null, lineCount: 1 });
+    return Object.freeze({
+      root: null,
+      lineCount: 1,
+      dirtyRanges: Object.freeze([]),
+      lastReconciledVersion: 0,
+      rebuildPending: false,
+    });
   }
 
   // For small deletions (1-3 lines), use optimized incremental approach
@@ -694,11 +737,23 @@ function rebuildWithDeletedRange(
   }
 
   if (newLines.length === 0) {
-    return Object.freeze({ root: null, lineCount: 1 });
+    return Object.freeze({
+      root: null,
+      lineCount: 1,
+      dirtyRanges: Object.freeze([]),
+      lastReconciledVersion: 0,
+      rebuildPending: false,
+    });
   }
 
   const newRoot = buildBalancedTree(newLines, 0, newLines.length - 1);
-  return Object.freeze({ root: newRoot, lineCount: newLines.length });
+  return Object.freeze({
+    root: newRoot,
+    lineCount: newLines.length,
+    dirtyRanges: Object.freeze([]),
+    lastReconciledVersion: 0,
+    rebuildPending: false,
+  });
 }
 
 /**
@@ -763,7 +818,13 @@ function rebuildWithSmallDeletion(
   collectLinesForRebuild(root, 0, startLine, endLine, mergedLength, newLines, state);
 
   if (state.writeIndex === 0) {
-    return Object.freeze({ root: null, lineCount: 1 });
+    return Object.freeze({
+      root: null,
+      lineCount: 1,
+      dirtyRanges: Object.freeze([]),
+      lastReconciledVersion: 0,
+      rebuildPending: false,
+    });
   }
 
   // Trim array if needed (defensive)
@@ -772,7 +833,13 @@ function rebuildWithSmallDeletion(
   }
 
   const newRoot = buildBalancedTree(newLines, 0, newLines.length - 1);
-  return Object.freeze({ root: newRoot, lineCount: newLines.length });
+  return Object.freeze({
+    root: newRoot,
+    lineCount: newLines.length,
+    dirtyRanges: Object.freeze([]),
+    lastReconciledVersion: 0,
+    rebuildPending: false,
+  });
 }
 
 /**
@@ -798,11 +865,23 @@ function removeLinesToEnd(
   }
 
   if (newLines.length === 0) {
-    return Object.freeze({ root: null, lineCount: 1 });
+    return Object.freeze({
+      root: null,
+      lineCount: 1,
+      dirtyRanges: Object.freeze([]),
+      lastReconciledVersion: 0,
+      rebuildPending: false,
+    });
   }
 
   const root = buildBalancedTree(newLines, 0, newLines.length - 1);
-  return Object.freeze({ root, lineCount: newLines.length });
+  return Object.freeze({
+    root,
+    lineCount: newLines.length,
+    dirtyRanges: Object.freeze([]),
+    lastReconciledVersion: 0,
+    rebuildPending: false,
+  });
 }
 
 // =============================================================================
@@ -836,4 +915,563 @@ export function getLineRange(
 
   const start = getLineStartOffset(state.root, lineNumber);
   return { start, length: node.lineLength };
+}
+
+// =============================================================================
+// Dirty Range Management (Lazy Line Index Maintenance)
+// =============================================================================
+
+/**
+ * Merge overlapping or adjacent dirty ranges to minimize tracking overhead.
+ */
+export function mergeDirtyRanges(
+  ranges: readonly DirtyLineRange[]
+): DirtyLineRange[] {
+  if (ranges.length <= 1) return [...ranges];
+
+  // Sort by startLine
+  const sorted = [...ranges].sort((a, b) => a.startLine - b.startLine);
+  const merged: DirtyLineRange[] = [];
+  let current = sorted[0];
+
+  for (let i = 1; i < sorted.length; i++) {
+    const next = sorted[i];
+    const currentEnd = current.endLine === -1 ? Infinity : current.endLine;
+    const nextEnd = next.endLine === -1 ? Infinity : next.endLine;
+
+    // Adjacent or overlapping ranges with same delta can merge
+    if (next.startLine <= currentEnd + 1 && next.offsetDelta === current.offsetDelta) {
+      current = Object.freeze({
+        startLine: current.startLine,
+        endLine: currentEnd === Infinity || nextEnd === Infinity ? -1 : Math.max(currentEnd, nextEnd),
+        offsetDelta: current.offsetDelta,
+        createdAtVersion: Math.max(current.createdAtVersion, next.createdAtVersion),
+      });
+    } else {
+      merged.push(current);
+      current = next;
+    }
+  }
+  merged.push(current);
+
+  return merged;
+}
+
+/**
+ * Check if a line number falls within any dirty range.
+ */
+export function isLineDirty(
+  dirtyRanges: readonly DirtyLineRange[],
+  lineNumber: number
+): boolean {
+  return dirtyRanges.some(
+    r => lineNumber >= r.startLine && (r.endLine === -1 || lineNumber <= r.endLine)
+  );
+}
+
+/**
+ * Get the cumulative offset delta for a line number.
+ */
+export function getOffsetDeltaForLine(
+  dirtyRanges: readonly DirtyLineRange[],
+  lineNumber: number
+): number {
+  let delta = 0;
+  for (const range of dirtyRanges) {
+    if (lineNumber >= range.startLine &&
+        (range.endLine === -1 || lineNumber <= range.endLine)) {
+      delta += range.offsetDelta;
+    }
+  }
+  return delta;
+}
+
+/**
+ * Create a new dirty range.
+ */
+function createDirtyRange(
+  startLine: number,
+  endLine: number,
+  offsetDelta: number,
+  version: number
+): DirtyLineRange {
+  return Object.freeze({
+    startLine,
+    endLine,
+    offsetDelta,
+    createdAtVersion: version,
+  });
+}
+
+// =============================================================================
+// Lazy Line Index Operations
+// =============================================================================
+
+/**
+ * Insert text with lazy offset updates.
+ * Updates line lengths and structure immediately, but defers offset recalculation
+ * to idle time for lines after the insertion point.
+ */
+export function lineIndexInsertLazy(
+  state: LineIndexState,
+  position: ByteOffset,
+  text: string,
+  currentVersion: number
+): LineIndexState {
+  if (text.length === 0) return state;
+
+  // Count newlines
+  const newlinePositions: number[] = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '\n') newlinePositions.push(i);
+  }
+
+  // No newlines: simple length update (O(log n), no lazy needed)
+  if (newlinePositions.length === 0) {
+    return updateLineLengthLazy(state, position, text.length);
+  }
+
+  // Find affected line
+  const location = findLineAtPosition(state.root, position);
+  if (location === null) {
+    // Position at or past end - use eager approach for simplicity
+    return appendLinesLazy(state, position as number, text, newlinePositions, currentVersion);
+  }
+
+  // Insert new lines and mark downstream as dirty
+  return insertLinesAtPositionLazy(state, location, text, newlinePositions, currentVersion);
+}
+
+/**
+ * Update line length when inserting text without newlines (lazy version).
+ */
+function updateLineLengthLazy(
+  state: LineIndexState,
+  position: ByteOffset,
+  lengthDelta: number
+): LineIndexState {
+  if (state.root === null) {
+    const root = createLineIndexNode(0, lengthDelta, 'black');
+    return Object.freeze({
+      root,
+      lineCount: 1,
+      dirtyRanges: Object.freeze([]),
+      lastReconciledVersion: state.lastReconciledVersion,
+      rebuildPending: false,
+    });
+  }
+
+  const newRoot = updateLineLengthInTree(state.root, position as number, lengthDelta);
+  return Object.freeze({
+    root: newRoot,
+    lineCount: state.lineCount,
+    dirtyRanges: state.dirtyRanges,
+    lastReconciledVersion: state.lastReconciledVersion,
+    rebuildPending: state.rebuildPending,
+  });
+}
+
+/**
+ * Append lines at the end with lazy tracking.
+ */
+function appendLinesLazy(
+  state: LineIndexState,
+  position: number,
+  text: string,
+  newlinePositions: number[],
+  currentVersion: number
+): LineIndexState {
+  const totalLength = state.root?.subtreeByteLength ?? 0;
+
+  if (state.root === null) {
+    const newState = buildLineIndexFromText(text, 0);
+    return Object.freeze({
+      root: newState.root,
+      lineCount: newState.lineCount,
+      dirtyRanges: Object.freeze([]),
+      lastReconciledVersion: currentVersion,
+      rebuildPending: false,
+    });
+  }
+
+  const firstNewlinePos = newlinePositions[0];
+  const textBeforeFirstNewline = firstNewlinePos + 1;
+
+  let newRoot = state.root;
+  let lineCount = state.lineCount;
+
+  if (position >= totalLength) {
+    newRoot = addToLastLine(newRoot, textBeforeFirstNewline);
+  } else {
+    newRoot = updateLineLengthInTree(newRoot, position, textBeforeFirstNewline);
+  }
+
+  // For appending at end, offsets are naturally correct (no dirty ranges needed)
+  let currentOffset = position + textBeforeFirstNewline;
+  for (let i = 1; i < newlinePositions.length; i++) {
+    const lineLength = newlinePositions[i] - newlinePositions[i - 1];
+    newRoot = rbInsertLine(newRoot, lineCount, currentOffset, lineLength);
+    lineCount++;
+    currentOffset += lineLength;
+  }
+
+  const textAfterLastNewline = text.length - newlinePositions[newlinePositions.length - 1] - 1;
+  if (textAfterLastNewline > 0 || newlinePositions.length > 0) {
+    newRoot = rbInsertLine(newRoot, lineCount, currentOffset, textAfterLastNewline);
+    lineCount++;
+  }
+
+  return Object.freeze({
+    root: newRoot,
+    lineCount,
+    dirtyRanges: state.dirtyRanges,
+    lastReconciledVersion: state.lastReconciledVersion,
+    rebuildPending: state.rebuildPending,
+  });
+}
+
+/**
+ * Insert lines at a specific position with lazy offset tracking.
+ */
+function insertLinesAtPositionLazy(
+  state: LineIndexState,
+  location: LineLocation,
+  text: string,
+  newlinePositions: number[],
+  currentVersion: number
+): LineIndexState {
+  const { lineNumber, offsetInLine, node } = location;
+
+  const originalLineLength = node.lineLength;
+  const beforeInsert = offsetInLine;
+  const afterInsert = originalLineLength - offsetInLine;
+
+  const firstNewlinePos = newlinePositions[0];
+  const firstLineLength = beforeInsert + firstNewlinePos + 1;
+
+  // Update the current line to be the first part
+  let newRoot = updateLineAtNumber(state.root!, lineNumber, firstLineLength);
+  let lineCount = state.lineCount;
+
+  // Use placeholder offset (0) for new lines - will be corrected during reconciliation
+  // This makes insertion O(log n) instead of O(n)
+  const placeholderOffset = 0;
+
+  // Insert middle lines
+  for (let i = 1; i < newlinePositions.length; i++) {
+    const lineLength = newlinePositions[i] - newlinePositions[i - 1];
+    newRoot = rbInsertLine(newRoot, lineNumber + i, placeholderOffset, lineLength);
+    lineCount++;
+  }
+
+  // Last line
+  const textAfterLastNewline = text.length - newlinePositions[newlinePositions.length - 1] - 1;
+  const lastLineLength = textAfterLastNewline + afterInsert;
+
+  newRoot = rbInsertLine(
+    newRoot,
+    lineNumber + newlinePositions.length,
+    placeholderOffset,
+    lastLineLength
+  );
+  lineCount++;
+
+  // Mark all lines after the insertion as dirty (they have stale offsets)
+  const newDirtyRange = createDirtyRange(
+    lineNumber + 1, // First inserted line and all after
+    -1, // To end of document
+    text.length, // Offset delta
+    currentVersion
+  );
+
+  const mergedRanges = mergeDirtyRanges([...state.dirtyRanges, newDirtyRange]);
+
+  return Object.freeze({
+    root: newRoot,
+    lineCount,
+    dirtyRanges: Object.freeze(mergedRanges),
+    lastReconciledVersion: state.lastReconciledVersion,
+    rebuildPending: true,
+  });
+}
+
+/**
+ * Delete text with lazy offset updates.
+ */
+export function lineIndexDeleteLazy(
+  state: LineIndexState,
+  start: ByteOffset,
+  end: ByteOffset,
+  deletedText: string,
+  currentVersion: number
+): LineIndexState {
+  if (start >= end) return state;
+  if (state.root === null) return state;
+
+  const deleteLength = end - start;
+
+  // Count newlines
+  let deletedNewlines = 0;
+  for (let i = 0; i < deletedText.length; i++) {
+    if (deletedText[i] === '\n') deletedNewlines++;
+  }
+
+  // No newlines: just update line length
+  if (deletedNewlines === 0) {
+    return updateLineLengthLazy(state, start, -deleteLength);
+  }
+
+  // Find the start line
+  const startLocation = findLineAtPosition(state.root, start);
+  if (startLocation === null) return state;
+
+  // Delete lines and mark remaining as dirty
+  return deleteLineRangeLazy(state, startLocation, deletedNewlines, deleteLength, currentVersion);
+}
+
+/**
+ * Delete a range of lines with lazy offset tracking.
+ */
+function deleteLineRangeLazy(
+  state: LineIndexState,
+  startLocation: LineLocation,
+  deletedNewlines: number,
+  deleteLength: number,
+  currentVersion: number
+): LineIndexState {
+  const { lineNumber: startLine, offsetInLine: startOffset } = startLocation;
+  const endLine = startLine + deletedNewlines;
+
+  const endNode = findLineByNumber(state.root, endLine);
+  if (endNode === null) {
+    return removeLinesToEndLazy(state, startLine, startOffset, currentVersion);
+  }
+
+  const startNode = findLineByNumber(state.root, startLine);
+  if (startNode === null) return state;
+
+  // Calculate merged line length
+  const startLineLength = startNode.lineLength;
+  const endLineLength = endNode.lineLength;
+  const deleteOnStartLine = startLineLength - startOffset;
+
+  let remainingDelete = deleteLength - deleteOnStartLine;
+  for (let i = startLine + 1; i < endLine; i++) {
+    const middleNode = findLineByNumber(state.root, i);
+    if (middleNode) remainingDelete -= middleNode.lineLength;
+  }
+
+  const deleteOnEndLine = Math.max(0, remainingDelete);
+  const keepFromEndLine = Math.max(0, endLineLength - deleteOnEndLine);
+  const mergedLength = startOffset + keepFromEndLine;
+
+  // Rebuild with deleted range (this is still O(n) for deletions with newlines)
+  // Future optimization: track deleted ranges for lazy reconciliation
+  const newState = rebuildWithDeletedRange(state.root!, startLine, endLine, mergedLength);
+
+  // Mark lines after deletion as dirty
+  const newDirtyRange = createDirtyRange(
+    startLine + 1,
+    -1,
+    -deleteLength,
+    currentVersion
+  );
+
+  const mergedRanges = mergeDirtyRanges([...state.dirtyRanges, newDirtyRange]);
+
+  return Object.freeze({
+    root: newState.root,
+    lineCount: newState.lineCount,
+    dirtyRanges: Object.freeze(mergedRanges),
+    lastReconciledVersion: state.lastReconciledVersion,
+    rebuildPending: true,
+  });
+}
+
+/**
+ * Remove lines to end with lazy tracking.
+ */
+function removeLinesToEndLazy(
+  state: LineIndexState,
+  startLine: number,
+  startOffset: number,
+  currentVersion: number
+): LineIndexState {
+  const newState = removeLinesToEnd(state, startLine, startOffset);
+  return Object.freeze({
+    root: newState.root,
+    lineCount: newState.lineCount,
+    dirtyRanges: Object.freeze([]),
+    lastReconciledVersion: currentVersion,
+    rebuildPending: false,
+  });
+}
+
+// =============================================================================
+// Reconciliation Functions
+// =============================================================================
+
+/**
+ * Get a line's content range with on-demand precision.
+ * If the line is dirty, computes correct offset before returning.
+ */
+export function getLineRangePrecise(
+  state: LineIndexState,
+  lineNumber: number
+): { start: number; length: number } | null {
+  const node = findLineByNumber(state.root, lineNumber);
+  if (node === null) return null;
+
+  let start = getLineStartOffset(state.root, lineNumber);
+
+  // Apply cumulative delta if line is dirty
+  if (state.dirtyRanges.length > 0) {
+    const delta = getOffsetDeltaForLine(state.dirtyRanges, lineNumber);
+    start += delta;
+  }
+
+  return { start, length: node.lineLength };
+}
+
+/**
+ * Reconcile a specific range of lines.
+ * Updates offsets for lines in [startLine, endLine].
+ */
+export function reconcileRange(
+  state: LineIndexState,
+  startLine: number,
+  endLine: number
+): LineIndexState {
+  if (state.root === null || state.dirtyRanges.length === 0) return state;
+
+  // For each line in range, compute correct offset and update
+  let newRoot = state.root;
+  for (let line = startLine; line <= endLine && line < state.lineCount; line++) {
+    const delta = getOffsetDeltaForLine(state.dirtyRanges, line);
+    if (delta !== 0) {
+      newRoot = updateLineOffsetByNumber(newRoot, line, delta);
+    }
+  }
+
+  // Filter out ranges that are now reconciled
+  const remainingRanges = state.dirtyRanges.filter(range => {
+    const rangeEnd = range.endLine === -1 ? state.lineCount - 1 : range.endLine;
+    // Keep if range extends beyond reconciled area
+    return rangeEnd > endLine || range.startLine < startLine;
+  }).map(range => {
+    // Adjust ranges that partially overlap
+    if (range.startLine <= endLine &&
+        (range.endLine === -1 || range.endLine > endLine)) {
+      return Object.freeze({
+        ...range,
+        startLine: endLine + 1,
+      });
+    }
+    return range;
+  });
+
+  return Object.freeze({
+    root: newRoot,
+    lineCount: state.lineCount,
+    dirtyRanges: Object.freeze(remainingRanges),
+    lastReconciledVersion: state.lastReconciledVersion,
+    rebuildPending: remainingRanges.length > 0,
+  });
+}
+
+/**
+ * Update offset for a specific line in the tree.
+ */
+function updateLineOffsetByNumber(
+  node: LineIndexNode,
+  lineNumber: number,
+  offsetDelta: number
+): LineIndexNode {
+  const leftLineCount = node.left?.subtreeLineCount ?? 0;
+
+  if (lineNumber < leftLineCount && node.left !== null) {
+    return withLineIndexNode(node, {
+      left: updateLineOffsetByNumber(node.left, lineNumber, offsetDelta),
+    });
+  } else if (lineNumber > leftLineCount && node.right !== null) {
+    return withLineIndexNode(node, {
+      right: updateLineOffsetByNumber(node.right, lineNumber - leftLineCount - 1, offsetDelta),
+    });
+  } else {
+    return withLineIndexNode(node, {
+      documentOffset: node.documentOffset + offsetDelta,
+    });
+  }
+}
+
+/**
+ * Perform full reconciliation of all dirty ranges.
+ * Rebuilds tree with correct offsets.
+ * Intended to be called from idle callback.
+ */
+export function reconcileFull(state: LineIndexState): LineIndexState {
+  if (state.dirtyRanges.length === 0) return state;
+  if (state.root === null) {
+    return Object.freeze({
+      root: null,
+      lineCount: 1,
+      dirtyRanges: Object.freeze([]),
+      lastReconciledVersion: state.lastReconciledVersion,
+      rebuildPending: false,
+    });
+  }
+
+  // Collect all lines and recalculate offsets
+  const lines = collectLines(state.root);
+  if (lines.length === 0) {
+    return Object.freeze({
+      root: null,
+      lineCount: 1,
+      dirtyRanges: Object.freeze([]),
+      lastReconciledVersion: state.lastReconciledVersion,
+      rebuildPending: false,
+    });
+  }
+
+  // Recalculate all offsets from scratch
+  const correctedLines: { offset: number; length: number }[] = [];
+  let currentOffset = 0;
+
+  for (const line of lines) {
+    correctedLines.push({ offset: currentOffset, length: line.lineLength });
+    currentOffset += line.lineLength;
+  }
+
+  const newRoot = buildBalancedTree(correctedLines, 0, correctedLines.length - 1);
+
+  return Object.freeze({
+    root: newRoot,
+    lineCount: correctedLines.length,
+    dirtyRanges: Object.freeze([]),
+    lastReconciledVersion: state.lastReconciledVersion,
+    rebuildPending: false,
+  });
+}
+
+/**
+ * Ensure viewport lines are fully reconciled.
+ * Called before rendering to guarantee visible content accuracy.
+ */
+export function reconcileViewport(
+  state: LineIndexState,
+  startLine: number,
+  endLine: number
+): LineIndexState {
+  if (state.dirtyRanges.length === 0) return state;
+
+  // Check if any viewport lines are dirty
+  const viewportDirty = state.dirtyRanges.some(range => {
+    const rangeEnd = range.endLine === -1 ? Infinity : range.endLine;
+    return range.startLine <= endLine && rangeEnd >= startLine;
+  });
+
+  if (!viewportDirty) return state;
+
+  // Reconcile only the viewport range
+  return reconcileRange(state, startLine, endLine);
 }
