@@ -171,7 +171,7 @@ export function findLastPiece(root: PieceNode | null): PieceLocation | null {
 /**
  * Collect all pieces in document order (in-order traversal).
  */
-export function collectPieces(root: PieceNode | null): PieceNode[] {
+export function collectPieces(root: PieceNode | null): readonly PieceNode[] {
   const result: PieceNode[] = [];
 
   function inOrder(node: PieceNode | null) {
@@ -647,15 +647,17 @@ export function getText(
 
   const actualEnd = Math.min(end, state.totalLength);
 
-  // Collect bytes in range
-  const bytes: number[] = [];
-  collectBytesInRange(state, state.root, 0, start, actualEnd, bytes);
+  // Pre-allocate result buffer for the exact range size
+  const rangeLength = actualEnd - start;
+  const result = new Uint8Array(rangeLength);
+  const writeState = { offset: 0 };
+  collectBytesInRange(state, state.root, 0, start, actualEnd, result, writeState);
 
-  return textDecoder.decode(new Uint8Array(bytes));
+  return textDecoder.decode(result.subarray(0, writeState.offset));
 }
 
 /**
- * Collect bytes in a range from the tree.
+ * Collect bytes in a range from the tree into a pre-allocated Uint8Array.
  */
 function collectBytesInRange(
   state: PieceTableState,
@@ -663,7 +665,8 @@ function collectBytesInRange(
   offset: number,
   start: number,
   end: number,
-  result: number[]
+  result: Uint8Array,
+  writeState: { offset: number }
 ): void {
   if (node === null) return;
 
@@ -673,7 +676,7 @@ function collectBytesInRange(
 
   // Recurse into left subtree if needed
   if (start < pieceStart) {
-    collectBytesInRange(state, node.left, offset, start, end, result);
+    collectBytesInRange(state, node.left, offset, start, end, result, writeState);
   }
 
   // Collect from this piece if it overlaps
@@ -682,14 +685,16 @@ function collectBytesInRange(
     const copyStart = Math.max(0, start - pieceStart);
     const copyEnd = Math.min(node.length, end - pieceStart);
 
-    for (let i = copyStart; i < copyEnd; i++) {
-      result.push(buffer[node.start + i]);
-    }
+    result.set(
+      buffer.subarray(node.start + copyStart, node.start + copyEnd),
+      writeState.offset
+    );
+    writeState.offset += copyEnd - copyStart;
   }
 
   // Recurse into right subtree if needed
   if (end > pieceEnd) {
-    collectBytesInRange(state, node.right, pieceEnd, start, end, result);
+    collectBytesInRange(state, node.right, pieceEnd, start, end, result, writeState);
   }
 }
 

@@ -159,7 +159,7 @@ describe('Editor Use Cases', () => {
     it('should set cursor position', () => {
       const store = createDocumentStore({ content: 'Hello World' });
 
-      store.dispatch(DocumentActions.setSelection([{ anchor: 5, head: 5 }]));
+      store.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(5), head: byteOffset(5) }]));
 
       const state = store.getSnapshot();
       expect(state.selection.ranges[0].anchor).toBe(5);
@@ -170,7 +170,7 @@ describe('Editor Use Cases', () => {
       const store = createDocumentStore({ content: 'Hello World' });
 
       // Select "World"
-      store.dispatch(DocumentActions.setSelection([{ anchor: 6, head: 11 }]));
+      store.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(6), head: byteOffset(11) }]));
 
       const state = store.getSnapshot();
       expect(state.selection.ranges[0].anchor).toBe(6);
@@ -181,8 +181,8 @@ describe('Editor Use Cases', () => {
       const store = createDocumentStore({ content: 'Hello World' });
 
       store.dispatch(DocumentActions.setSelection([
-        { anchor: 0, head: 0 },
-        { anchor: 6, head: 6 },
+        { anchor: byteOffset(0), head: byteOffset(0) },
+        { anchor: byteOffset(6), head: byteOffset(6) },
       ]));
 
       const state = store.getSnapshot();
@@ -371,7 +371,7 @@ describe('Editor Use Cases', () => {
       store.dispatch(DocumentActions.insert(byteOffset(0), 'Hello World'));
 
       // Select "World" (positions 6-11)
-      store.dispatch(DocumentActions.setSelection([{ anchor: 6, head: 11 }]));
+      store.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(6), head: byteOffset(11) }]));
 
       // Delete selection (simulating backspace/delete with selection)
       store.dispatch(DocumentActions.delete(byteOffset(6), byteOffset(11)));

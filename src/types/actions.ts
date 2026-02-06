@@ -16,8 +16,8 @@ import type { ByteOffset } from './branded.ts';
  */
 export interface InsertAction {
   readonly type: 'INSERT';
-  /** Position to insert at (0-based byte offset) */
-  readonly position: ByteOffset;
+  /** Start position to insert at (0-based byte offset) */
+  readonly start: ByteOffset;
   /** Text to insert */
   readonly text: string;
 }
@@ -121,7 +121,7 @@ export interface TransactionRollbackAction {
  */
 export interface RemoteChange {
   readonly type: 'insert' | 'delete';
-  readonly position: ByteOffset;
+  readonly start: ByteOffset;
   readonly text?: string;
   readonly length?: number;
 }
@@ -243,7 +243,7 @@ export function isDocumentAction(value: unknown): value is DocumentAction {
   switch (action.type) {
     case 'INSERT':
       return (
-        typeof (action as InsertAction).position === 'number' &&
+        typeof (action as InsertAction).start === 'number' &&
         typeof (action as InsertAction).text === 'string'
       );
     case 'DELETE':
@@ -332,13 +332,13 @@ export function validateAction(
   switch (action.type) {
     case 'INSERT': {
       const insertAction = action as Partial<InsertAction>;
-      if (typeof insertAction.position !== 'number') {
-        errors.push('INSERT action requires a numeric "position" property');
-      } else if (insertAction.position < 0) {
-        errors.push(`INSERT position cannot be negative: ${insertAction.position}`);
-      } else if (documentLength !== undefined && insertAction.position > documentLength) {
+      if (typeof insertAction.start !== 'number') {
+        errors.push('INSERT action requires a numeric "start" property');
+      } else if (insertAction.start < 0) {
+        errors.push(`INSERT start cannot be negative: ${insertAction.start}`);
+      } else if (documentLength !== undefined && insertAction.start > documentLength) {
         errors.push(
-          `INSERT position ${insertAction.position} exceeds document length ${documentLength}`
+          `INSERT start ${insertAction.start} exceeds document length ${documentLength}`
         );
       }
       if (typeof insertAction.text !== 'string') {

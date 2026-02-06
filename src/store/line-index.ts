@@ -11,10 +11,38 @@ import type {
 } from '../types/state.ts';
 import type { ByteOffset } from '../types/branded.ts';
 import { createLineIndexNode, withLineIndexNode } from './state.ts';
-import { fixInsert, type WithNodeFn } from './rb-tree.ts';
+import { fixInsert, fixRedViolations, isRed, type WithNodeFn } from './rb-tree.ts';
 
 // Type-safe wrapper for withLineIndexNode to use with generic R-B tree functions
 const withLine: WithNodeFn<LineIndexNode> = withLineIndexNode;
+
+// =============================================================================
+// Shared Helpers
+// =============================================================================
+
+/**
+ * Find positions of all newline characters in text.
+ * Shared between eager and lazy insert/delete operations.
+ */
+function findNewlinePositions(text: string): number[] {
+  const positions: number[] = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '\n') positions.push(i);
+  }
+  return positions;
+}
+
+/**
+ * Count newline characters in text.
+ * Shared between eager and lazy delete operations.
+ */
+function countNewlines(text: string): number {
+  let count = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '\n') count++;
+  }
+  return count;
+}
 
 // =============================================================================
 // Types
@@ -149,7 +177,7 @@ export function getLineStartOffset(
 /**
  * Collect all lines in order (in-order traversal).
  */
-export function collectLines(root: LineIndexNode | null): LineIndexNode[] {
+export function collectLines(root: LineIndexNode | null): readonly LineIndexNode[] {
   const result: LineIndexNode[] = [];
 
   function inOrder(node: LineIndexNode | null) {
@@ -236,13 +264,7 @@ export function lineIndexInsert(
 ): LineIndexState {
   if (text.length === 0) return state;
 
-  // Count newlines and find their positions
-  const newlinePositions: number[] = [];
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === '\n') {
-      newlinePositions.push(i);
-    }
-  }
+  const newlinePositions = findNewlinePositions(text);
 
   // If no newlines, just update the length of the affected line
   if (newlinePositions.length === 0) {
@@ -608,14 +630,7 @@ export function lineIndexDelete(
   if (state.root === null) return state;
 
   const deleteLength = end - start;
-
-  // Count newlines in deleted text
-  let deletedNewlines = 0;
-  for (let i = 0; i < deletedText.length; i++) {
-    if (deletedText[i] === '\n') {
-      deletedNewlines++;
-    }
-  }
+  const deletedNewlines = countNewlines(deletedText);
 
   // If no newlines deleted, just update line length
   if (deletedNewlines === 0) {
@@ -688,11 +703,11 @@ function deleteLineRange(
 /**
  * Rebuild tree with a range of lines deleted and merged.
  *
- * Optimized approach:
- * - For small deletions (<=3 lines), uses incremental tree modification
- * - For larger deletions, uses efficient single-pass reconstruction
+ * Uses incremental O(k * log n) approach:
+ * 1. Update the start line to the merged length
+ * 2. Remove deleted lines one by one via R-B tree deletion
  *
- * This avoids O(n) full rebuilds for the common case of small edits.
+ * Falls back to O(n) rebuild only when removing most lines from the tree.
  */
 function rebuildWithDeletedRange(
   root: LineIndexNode,
@@ -714,132 +729,166 @@ function rebuildWithDeletedRange(
     });
   }
 
-  // For small deletions (1-3 lines), use optimized incremental approach
-  // This avoids full tree traversal when only a few lines are affected
-  if (deletedCount <= 3 && totalLines > 10) {
-    return rebuildWithSmallDeletion(root, startLine, endLine, mergedLength, totalLines);
+  // Use incremental deletion: O(k * log n) where k = deletedCount
+  // 1. Update the start line's length to the merged length
+  let newRoot: LineIndexNode | null = updateLineAtNumber(root, startLine, mergedLength);
+
+  // 2. Remove deleted lines from endLine down to startLine+1
+  //    (delete in reverse to keep line numbers stable)
+  for (let i = endLine; i > startLine; i--) {
+    if (newRoot === null) break;
+    newRoot = rbDeleteLineByNumber(newRoot, startLine + 1);
   }
 
-  // For larger deletions, pre-allocate exact array size to reduce memory churn
-  const newLines: { offset: number; length: number }[] = new Array(newLineCount);
-  const state = { writeIndex: 0, currentOffset: 0 };
+  if (newRoot === null) {
+    return Object.freeze({
+      root: null,
+      lineCount: 1,
+      dirtyRanges: Object.freeze([]),
+      lastReconciledVersion: 0,
+      rebuildPending: false,
+    });
+  }
 
-  // Single-pass collection with direct indexing
-  collectLinesForRebuild(root, 0, startLine, endLine, mergedLength, newLines, state);
+  // Ensure root is black
+  if (newRoot.color !== 'black') {
+    newRoot = withLineIndexNode(newRoot, { color: 'black' });
+  }
 
-  // Update final values from the collection pass
-  for (let i = 0; i < newLines.length; i++) {
-    if (newLines[i] === undefined) {
-      // Shouldn't happen, but handle gracefully
-      newLines.length = i;
-      break;
+  return Object.freeze({
+    root: newRoot,
+    lineCount: newLineCount,
+    dirtyRanges: Object.freeze([]),
+    lastReconciledVersion: 0,
+    rebuildPending: false,
+  });
+}
+
+// =============================================================================
+// R-B Tree Deletion (Immutable)
+// =============================================================================
+
+/**
+ * Delete a line by its line number from the R-B tree.
+ * Returns the new root, or null if the tree becomes empty.
+ * Uses immutable path-copying approach.
+ */
+function rbDeleteLineByNumber(
+  root: LineIndexNode,
+  lineNumber: number
+): LineIndexNode | null {
+  const result = deleteNode(root, lineNumber);
+  if (result === null) return null;
+  // Ensure root is black
+  if (result.color === 'red') {
+    return withLineIndexNode(result, { color: 'black' });
+  }
+  return result;
+}
+
+/**
+ * Recursively delete a node by line number.
+ * Returns { node, needsFixup } where needsFixup indicates a double-black case.
+ */
+function deleteNode(
+  node: LineIndexNode | null,
+  lineNumber: number
+): LineIndexNode | null {
+  if (node === null) return null;
+
+  const leftLineCount = node.left?.subtreeLineCount ?? 0;
+
+  if (lineNumber < leftLineCount) {
+    // Target is in left subtree
+    const newLeft = deleteNode(node.left, lineNumber);
+    const result = withLineIndexNode(node, { left: newLeft });
+    return fixDeleteViolations(result);
+  } else if (lineNumber > leftLineCount) {
+    // Target is in right subtree
+    const newRight = deleteNode(node.right, lineNumber - leftLineCount - 1);
+    const result = withLineIndexNode(node, { right: newRight });
+    return fixDeleteViolations(result);
+  } else {
+    // This is the node to delete
+    return removeNode(node);
+  }
+}
+
+/**
+ * Remove a specific node from the tree.
+ * Handles the three cases: leaf, one child, two children.
+ */
+function removeNode(node: LineIndexNode): LineIndexNode | null {
+  // Case 1: Leaf node
+  if (node.left === null && node.right === null) {
+    return null;
+  }
+
+  // Case 2: One child
+  if (node.left === null) {
+    // Replace with right child, make it black
+    return withLineIndexNode(node.right!, { color: 'black' });
+  }
+  if (node.right === null) {
+    // Replace with left child, make it black
+    return withLineIndexNode(node.left!, { color: 'black' });
+  }
+
+  // Case 3: Two children - replace with in-order successor (leftmost of right subtree)
+  const { successor, newRight } = extractMin(node.right);
+
+  // Create new node with successor's data but current node's children
+  const replacement = createLineIndexNode(
+    successor.documentOffset,
+    successor.lineLength,
+    node.color,
+    node.left,
+    newRight
+  );
+
+  return fixDeleteViolations(replacement);
+}
+
+/**
+ * Extract the minimum (leftmost) node from a subtree.
+ * Returns the extracted node and the remaining tree.
+ */
+function extractMin(
+  node: LineIndexNode
+): { successor: LineIndexNode; newRight: LineIndexNode | null } {
+  if (node.left === null) {
+    // This is the minimum
+    return { successor: node, newRight: node.right };
+  }
+
+  const { successor, newRight: newLeft } = extractMin(node.left);
+  const result = withLineIndexNode(node, { left: newLeft });
+  return { successor, newRight: fixDeleteViolations(result) };
+}
+
+/**
+ * Fix R-B tree violations after deletion.
+ * Handles double-black cases using rotations and recoloring.
+ */
+function fixDeleteViolations(node: LineIndexNode | null): LineIndexNode | null {
+  if (node === null) return null;
+
+  // Case: Red sibling on the left
+  if (isRed(node.left) && node.left !== null) {
+    // Check for red-red violations in left subtree
+    if (isRed(node.left.left) || isRed(node.left.right)) {
+      return fixRedViolations(node, withLine);
     }
   }
 
-  if (newLines.length === 0) {
-    return Object.freeze({
-      root: null,
-      lineCount: 1,
-      dirtyRanges: Object.freeze([]),
-      lastReconciledVersion: 0,
-      rebuildPending: false,
-    });
+  // Case: Red sibling on the right
+  if (isRed(node.right) && node.right !== null) {
+    if (isRed(node.right.left) || isRed(node.right.right)) {
+      return fixRedViolations(node, withLine);
+    }
   }
 
-  const newRoot = buildBalancedTree(newLines, 0, newLines.length - 1);
-  return Object.freeze({
-    root: newRoot,
-    lineCount: newLines.length,
-    dirtyRanges: Object.freeze([]),
-    lastReconciledVersion: 0,
-    rebuildPending: false,
-  });
-}
-
-/**
- * Helper for collecting lines during rebuild, avoiding intermediate array.
- */
-function collectLinesForRebuild(
-  node: LineIndexNode | null,
-  lineNumber: number,
-  startLine: number,
-  endLine: number,
-  mergedLength: number,
-  result: { offset: number; length: number }[],
-  state: { writeIndex: number; currentOffset: number }
-): void {
-  if (node === null) return;
-
-  const leftCount = node.left?.subtreeLineCount ?? 0;
-  const currentLineNumber = lineNumber + leftCount;
-
-  // Process left subtree
-  collectLinesForRebuild(node.left, lineNumber, startLine, endLine, mergedLength, result, state);
-
-  // Process current node
-  if (currentLineNumber < startLine) {
-    // Line before deletion - keep as is
-    result[state.writeIndex++] = { offset: state.currentOffset, length: node.lineLength };
-    state.currentOffset += node.lineLength;
-  } else if (currentLineNumber === startLine) {
-    // Merged line - use merged length
-    result[state.writeIndex++] = { offset: state.currentOffset, length: mergedLength };
-    state.currentOffset += mergedLength;
-  } else if (currentLineNumber > endLine) {
-    // Line after deletion - keep as is
-    result[state.writeIndex++] = { offset: state.currentOffset, length: node.lineLength };
-    state.currentOffset += node.lineLength;
-  }
-  // Lines between startLine+1 and endLine are skipped (deleted)
-
-  // Process right subtree
-  collectLinesForRebuild(node.right, currentLineNumber + 1, startLine, endLine, mergedLength, result, state);
-}
-
-/**
- * Optimized rebuild for small deletions (1-3 lines).
- * Preserves most of the tree structure, only modifying affected nodes.
- */
-function rebuildWithSmallDeletion(
-  root: LineIndexNode,
-  startLine: number,
-  endLine: number,
-  mergedLength: number,
-  totalLines: number
-): LineIndexState {
-  // For small deletions, we still need to rebuild but can optimize by:
-  // 1. Reusing line length data without full collection
-  // 2. Only recalculating offsets for affected portion
-
-  const newLineCount = totalLines - (endLine - startLine);
-  const newLines: { offset: number; length: number }[] = new Array(newLineCount);
-  const state = { writeIndex: 0, currentOffset: 0 };
-
-  collectLinesForRebuild(root, 0, startLine, endLine, mergedLength, newLines, state);
-
-  if (state.writeIndex === 0) {
-    return Object.freeze({
-      root: null,
-      lineCount: 1,
-      dirtyRanges: Object.freeze([]),
-      lastReconciledVersion: 0,
-      rebuildPending: false,
-    });
-  }
-
-  // Trim array if needed (defensive)
-  if (state.writeIndex < newLines.length) {
-    newLines.length = state.writeIndex;
-  }
-
-  const newRoot = buildBalancedTree(newLines, 0, newLines.length - 1);
-  return Object.freeze({
-    root: newRoot,
-    lineCount: newLines.length,
-    dirtyRanges: Object.freeze([]),
-    lastReconciledVersion: 0,
-    rebuildPending: false,
-  });
+  return node;
 }
 
 /**
@@ -926,7 +975,7 @@ export function getLineRange(
  */
 export function mergeDirtyRanges(
   ranges: readonly DirtyLineRange[]
-): DirtyLineRange[] {
+): readonly DirtyLineRange[] {
   if (ranges.length <= 1) return [...ranges];
 
   // Sort by startLine
@@ -1020,11 +1069,7 @@ export function lineIndexInsertLazy(
 ): LineIndexState {
   if (text.length === 0) return state;
 
-  // Count newlines
-  const newlinePositions: number[] = [];
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === '\n') newlinePositions.push(i);
-  }
+  const newlinePositions = findNewlinePositions(text);
 
   // No newlines: simple length update (O(log n), no lazy needed)
   if (newlinePositions.length === 0) {
@@ -1042,34 +1087,8 @@ export function lineIndexInsertLazy(
   return insertLinesAtPositionLazy(state, location, text, newlinePositions, currentVersion);
 }
 
-/**
- * Update line length when inserting text without newlines (lazy version).
- */
-function updateLineLengthLazy(
-  state: LineIndexState,
-  position: ByteOffset,
-  lengthDelta: number
-): LineIndexState {
-  if (state.root === null) {
-    const root = createLineIndexNode(0, lengthDelta, 'black');
-    return Object.freeze({
-      root,
-      lineCount: 1,
-      dirtyRanges: Object.freeze([]),
-      lastReconciledVersion: state.lastReconciledVersion,
-      rebuildPending: false,
-    });
-  }
-
-  const newRoot = updateLineLengthInTree(state.root, position as number, lengthDelta);
-  return Object.freeze({
-    root: newRoot,
-    lineCount: state.lineCount,
-    dirtyRanges: state.dirtyRanges,
-    lastReconciledVersion: state.lastReconciledVersion,
-    rebuildPending: state.rebuildPending,
-  });
-}
+// updateLineLengthLazy is identical to updateLineLength - reuse it directly
+const updateLineLengthLazy = updateLineLength;
 
 /**
  * Append lines at the end with lazy tracking.
@@ -1209,12 +1228,7 @@ export function lineIndexDeleteLazy(
   if (state.root === null) return state;
 
   const deleteLength = end - start;
-
-  // Count newlines
-  let deletedNewlines = 0;
-  for (let i = 0; i < deletedText.length; i++) {
-    if (deletedText[i] === '\n') deletedNewlines++;
-  }
+  const deletedNewlines = countNewlines(deletedText);
 
   // No newlines: just update line length
   if (deletedNewlines === 0) {

@@ -1,6 +1,7 @@
 # Reed Text Editor - Code Analysis Report
 
 **Date:** 2026-02-03
+**Updated:** 2026-02-06 (issues 6.3, 7.1-7.4, 8.1-8.3, 8.5 resolved)
 
 ## 1. Code Organization and Structure
 
@@ -64,7 +65,7 @@ DocumentState (Root)
 │   ├── dirtyRanges: DirtyLineRange[]
 │   └── rebuildPending: boolean
 ├── selection: SelectionState
-│   ├── ranges: SelectionRange[]
+│   ├── ranges: SelectionRange[]  (anchor: ByteOffset, head: ByteOffset)
 │   └── primaryIndex: number
 ├── history: HistoryState
 │   ├── undoStack: HistoryEntry[]
@@ -246,9 +247,10 @@ Both `PieceNode` and `LineIndexNode` use these via `WithNodeFn<N>` callback patt
 **Issue**: Each action creates a separate history entry; no auto-grouping of rapid keystrokes.
 **Recommendation**: Add a `coalesceTimeout` option to group edits within a time window.
 
-### 6.3 Line Index Rebuild is O(n)
-**Issue**: `deleteRange` with newlines triggers full tree rebuild via `rebuildWithDeletedRange`.
-**Recommendation**: Implement incremental R-B tree deletion to maintain O(log n).
+### 6.3 ~~Line Index Rebuild is O(n)~~ [RESOLVED 2026-02-06]
+~~**Issue**: `deleteRange` with newlines triggers full tree rebuild via `rebuildWithDeletedRange`.~~
+~~**Recommendation**: Implement incremental R-B tree deletion to maintain O(log n).~~
+**Resolution**: Replaced `rebuildWithDeletedRange` with O(k log n) incremental R-B tree deletion. Added `rbDeleteLineByNumber`, `deleteNode`, `removeNode`, `extractMin`, and `fixDeleteViolations` functions in `src/store/line-index.ts`. Deleted lines are removed one-by-one from the tree rather than collecting all lines and rebuilding.
 
 ### 6.4 No Memory Pressure Handling
 **Issue**: Large files load entirely into memory (originalBuffer + addBuffer).
@@ -262,30 +264,23 @@ Both `PieceNode` and `LineIndexNode` use these via `WithNodeFn<N>` callback patt
 
 ## 7. Improvement Points (Types/Interfaces)
 
-### 7.1 `position` Field Inconsistency
-**Issue**: Actions use `position` (INSERT), `start/end` (DELETE, REPLACE) inconsistently.
-```typescript
-InsertAction: { position: ByteOffset, text: string }
-DeleteAction: { start: ByteOffset, end: ByteOffset }
-```
-**Recommendation**: Unify to `{ start, end?, text? }` or `{ range: [start, end], text? }`.
+### 7.1 ~~`position` Field Inconsistency~~ [RESOLVED 2026-02-06]
+~~**Issue**: Actions use `position` (INSERT), `start/end` (DELETE, REPLACE) inconsistently.~~
+**Resolution**: Unified `InsertAction.position` → `InsertAction.start` and `RemoteChange.position` → `RemoteChange.start` in `src/types/actions.ts`. Updated all consumers: `src/store/actions.ts`, `src/store/reducer.ts`, `src/store/events.ts`, and test files. All action types now consistently use `start`/`end` fields.
 
-### 7.2 Missing Generic Constraints on RBNode
-**Issue**: `RBNode<any>` default allows unsafe operations.
-**Recommendation**: Remove default: `interface RBNode<T extends RBNode<T>>`.
+### 7.2 ~~Missing Generic Constraints on RBNode~~ [RESOLVED 2026-02-06]
+~~**Issue**: `RBNode<any>` default allows unsafe operations.~~
+~~**Recommendation**: Remove default: `interface RBNode<T extends RBNode<T>>`.~~
+**Resolution**: Changed `RBNode<T>` to `RBNode<T extends RBNode<T>>` in `src/types/state.ts`. Updated all generic functions in `src/store/rb-tree.ts` to use the properly bounded constraint `<N extends RBNode<N>>`.
 
-### 7.3 SelectionRange Should Use Branded Types
-**Issue**: `SelectionRange` uses raw `number` instead of `ByteOffset`.
-```typescript
-interface SelectionRange {
-  readonly anchor: number;  // Should be ByteOffset
-  readonly head: number;    // Should be ByteOffset
-}
-```
+### 7.3 ~~SelectionRange Should Use Branded Types~~ [RESOLVED 2026-02-06]
+~~**Issue**: `SelectionRange` uses raw `number` instead of `ByteOffset`.~~
+**Resolution**: Changed `SelectionRange.anchor` and `SelectionRange.head` from `number` to `ByteOffset` in `src/types/state.ts`. Updated `src/store/reducer.ts` (`computeSelectionAfterChange`, `setSelection`), `src/store/state.ts` (`createInitialSelectionState`), and all test files to use `byteOffset()` wrapper.
 
-### 7.4 Missing `readonly` on Array Returns
-**Issue**: Some functions return mutable arrays that could be accidentally modified.
-**Example**: `collectPieces()` returns `PieceNode[]`, not `readonly PieceNode[]`.
+### 7.4 ~~Missing `readonly` on Array Returns~~ [RESOLVED 2026-02-06]
+~~**Issue**: Some functions return mutable arrays that could be accidentally modified.~~
+~~**Example**: `collectPieces()` returns `PieceNode[]`, not `readonly PieceNode[]`.~~
+**Resolution**: Changed return types to `readonly` for `collectPieces()` in `src/store/piece-table.ts`, `collectLines()` and `mergeDirtyRanges()` in `src/store/line-index.ts`.
 
 ### 7.5 Discriminated Union for BufferReference
 **Strength**: Good use of discriminated union with `kind` field.
@@ -295,29 +290,34 @@ interface SelectionRange {
 
 ## 8. Improvement Points (Implementations)
 
-### 8.1 TextEncoder/Decoder Reuse
-**Good**: Module-level singletons are used (e.g., `src/store/piece-table.ts:21-22`).
-**Issue**: Some files create new instances in hot paths (e.g., `src/store/events.ts:295`).
-**Recommendation**: Use shared encoders throughout.
+### 8.1 ~~TextEncoder/Decoder Reuse~~ [RESOLVED 2026-02-06]
+~~**Good**: Module-level singletons are used (e.g., `src/store/piece-table.ts:21-22`).~~
+~~**Issue**: Some files create new instances in hot paths (e.g., `src/store/events.ts:295`).~~
+~~**Recommendation**: Use shared encoders throughout.~~
+**Resolution**: Added module-level `TextEncoder` singletons to `src/store/events.ts`, `src/store/diff.ts`, and `src/store/state.ts`. Removed all local `new TextEncoder()` instantiations in hot paths.
 
-### 8.2 collectBytesInRange Uses Push Loop
-**Location**: `src/store/piece-table.ts:660-694`
-**Issue**: `result.push()` in a loop can be slow for large ranges.
-**Recommendation**: Pre-allocate array or use `Uint8Array.set()`.
+### 8.2 ~~collectBytesInRange Uses Push Loop~~ [RESOLVED 2026-02-06]
+~~**Location**: `src/store/piece-table.ts:660-694`~~
+~~**Issue**: `result.push()` in a loop can be slow for large ranges.~~
+~~**Recommendation**: Pre-allocate array or use `Uint8Array.set()`.~~
+**Resolution**: Rewrote `getText` and `collectBytesInRange` in `src/store/piece-table.ts` to pre-allocate a `Uint8Array` of the target range size and use `result.set(buffer.subarray(...), writeState.offset)` instead of individual byte pushes.
 
-### 8.3 Myers Diff Memory Allocation
-**Location**: `src/store/diff.ts:163-196`
-**Issue**: Creates new arrays for each trace step: `trace.push([...v])`.
-**Recommendation**: Use typed arrays or optimize for common cases.
+### 8.3 ~~Myers Diff Memory Allocation~~ [RESOLVED 2026-02-06]
+~~**Location**: `src/store/diff.ts:163-196`~~
+~~**Issue**: Creates new arrays for each trace step: `trace.push([...v])`.~~
+~~**Recommendation**: Use typed arrays or optimize for common cases.~~
+**Resolution**: Changed `v` from `number[]` to `Int32Array` and `trace` from `number[][]` to `Int32Array[]` in `myersDiff()` in `src/store/diff.ts`. Trace snapshots now use `new Int32Array(v)` instead of spread-copy. Updated `backtrack` signature accordingly.
 
-### 8.4 Line Index Deletion Still O(n)
-**Location**: `src/store/line-index.ts:697-757`
-**Issue**: `rebuildWithDeletedRange` collects all lines then rebuilds tree.
-**Recommendation**: Implement true R-B tree node deletion.
+### 8.4 ~~Line Index Deletion Still O(n)~~ [RESOLVED 2026-02-06]
+~~**Location**: `src/store/line-index.ts:697-757`~~
+~~**Issue**: `rebuildWithDeletedRange` collects all lines then rebuilds tree.~~
+~~**Recommendation**: Implement true R-B tree node deletion.~~
+**Resolution**: Same fix as 6.3. Replaced full-rebuild approach with incremental R-B tree node deletion via `rbDeleteLineByNumber`.
 
-### 8.5 Duplicate Code in Lazy vs Eager Operations
-**Issue**: `lineIndexInsert` and `lineIndexInsertLazy` share 80% code.
-**Recommendation**: Extract shared logic into internal functions.
+### 8.5 ~~Duplicate Code in Lazy vs Eager Operations~~ [RESOLVED 2026-02-06]
+~~**Issue**: `lineIndexInsert` and `lineIndexInsertLazy` share 80% code.~~
+~~**Recommendation**: Extract shared logic into internal functions.~~
+**Resolution**: Extracted `findNewlinePositions()` and `countNewlines()` shared helpers in `src/store/line-index.ts`. Both `lineIndexInsert`/`lineIndexInsertLazy` and `lineIndexDelete`/`lineIndexDeleteLazy` now call these shared functions. Unified `updateLineLengthLazy` as an alias for `updateLineLength`.
 
 ### 8.6 getBufferStats Iterates All Pieces
 **Location**: `src/store/piece-table.ts:809-830`
@@ -385,16 +385,19 @@ interface SelectionRange {
 - **Redux-like Store** pattern compatible with any framework
 - **Lazy Reconciliation** for viewport-focused performance
 
-**Completion Status**: Phases 1, 2, 4 complete (348 tests passing). Phases 3, 5, 6, 7, 8 not started.
+**Completion Status**: Phases 1, 2, 4 complete (374 tests passing). Phases 3, 5, 6, 7, 8 not started.
 
 **Key Strengths**:
 - Clean separation of concerns (piece table vs line index)
-- Type-safe branded types for position handling
+- Type-safe branded types for position handling (now including `SelectionRange`)
 - Framework-agnostic store interface
 - Comprehensive test coverage
+- Consistent action field naming (`start`/`end` throughout)
+- O(k log n) incremental line index deletion
+- Optimized memory allocation (pre-allocated `Uint8Array`, `Int32Array` for diff)
 
 **Areas for Improvement**:
-- Selection auto-adjustment on edits
-- True O(log n) line index deletion
-- Large file chunk-based loading (Phase 3)
-- Event consolidation during batches
+- Selection auto-adjustment on edits (6.1)
+- Large file chunk-based loading - Phase 3 (6.4)
+- Event consolidation during batches (6.5)
+- Incremental `getBufferStats` tracking (8.6)

@@ -32,7 +32,7 @@ import {
   isDocumentAction,
 } from '../types/actions.ts';
 import { createDocumentStore, isDocumentStore } from './store.ts';
-import { byteOffset } from '../types/branded.ts';
+import { byteOffset, type ByteOffset } from '../types/branded.ts';
 
 // =============================================================================
 // State Factory Tests
@@ -407,7 +407,7 @@ describe('Document Reducer', () => {
       const state = createInitialState({ content: 'Hello' });
       const newState = documentReducer(
         state,
-        DocumentActions.setSelection([{ anchor: 1, head: 4 }])
+        DocumentActions.setSelection([{ anchor: byteOffset(1), head: byteOffset(4) }])
       );
 
       expect(newState.selection.ranges[0].anchor).toBe(1);
@@ -418,7 +418,7 @@ describe('Document Reducer', () => {
       const state = createInitialState();
       const newState = documentReducer(
         state,
-        DocumentActions.setSelection([{ anchor: 0, head: 0 }])
+        DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(0) }])
       );
 
       expect(newState.version).toBe(1);
@@ -428,7 +428,7 @@ describe('Document Reducer', () => {
       const state = createInitialState();
       const newState = documentReducer(
         state,
-        DocumentActions.setSelection([{ anchor: 0, head: 0 }])
+        DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(0) }])
       );
 
       expect(newState.metadata.isDirty).toBe(false);
@@ -489,7 +489,7 @@ describe('Document Reducer', () => {
       const newState = documentReducer(
         state,
         DocumentActions.applyRemote([
-          { type: 'insert', position: byteOffset(0), text: 'Remote' },
+          { type: 'insert', start: byteOffset(0), text: 'Remote' },
         ])
       );
 
@@ -501,7 +501,7 @@ describe('Document Reducer', () => {
       const newState = documentReducer(
         state,
         DocumentActions.applyRemote([
-          { type: 'delete', position: byteOffset(5), length: 6 },
+          { type: 'delete', start: byteOffset(5), length: 6 },
         ])
       );
 
@@ -513,7 +513,7 @@ describe('Document Reducer', () => {
       const newState = documentReducer(
         state,
         DocumentActions.applyRemote([
-          { type: 'insert', position: byteOffset(0), text: 'A' },
+          { type: 'insert', start: byteOffset(0), text: 'A' },
         ])
       );
 
@@ -558,7 +558,7 @@ describe('Document Reducer', () => {
       const state = createInitialState({ content: 'Hello' });
       const newState = documentReducer(
         state,
-        DocumentActions.setSelection([{ anchor: 1, head: 1 }])
+        DocumentActions.setSelection([{ anchor: byteOffset(1), head: byteOffset(1) }])
       );
 
       // pieceTable should be same reference (unchanged)
@@ -603,7 +603,7 @@ describe('Action Creators', () => {
       const action = DocumentActions.insert(byteOffset(5), 'Hello');
 
       expect(action.type).toBe('INSERT');
-      expect(action.position).toBe(5);
+      expect(action.start).toBe(5);
       expect(action.text).toBe('Hello');
     });
 
@@ -625,7 +625,7 @@ describe('Action Creators', () => {
     });
 
     it('should create SET_SELECTION action', () => {
-      const ranges = [{ anchor: 0, head: 5 }];
+      const ranges = [{ anchor: byteOffset(0), head: byteOffset(5) }];
       const action = DocumentActions.setSelection(ranges);
 
       expect(action.type).toBe('SET_SELECTION');
@@ -649,7 +649,7 @@ describe('Action Creators', () => {
     });
 
     it('should create APPLY_REMOTE action', () => {
-      const changes = [{ type: 'insert' as const, position: byteOffset(0), text: 'Hi' }];
+      const changes = [{ type: 'insert' as const, start: byteOffset(0), text: 'Hi' }];
       const action = DocumentActions.applyRemote(changes);
 
       expect(action.type).toBe('APPLY_REMOTE');
@@ -768,9 +768,9 @@ describe('Type Guards', () => {
 
   describe('isDocumentAction', () => {
     it('should validate INSERT action', () => {
-      expect(isDocumentAction({ type: 'INSERT', position: 0, text: 'a' })).toBe(true);
-      expect(isDocumentAction({ type: 'INSERT', position: 'x', text: 'a' })).toBe(false);
-      expect(isDocumentAction({ type: 'INSERT', position: 0 })).toBe(false);
+      expect(isDocumentAction({ type: 'INSERT', start: 0, text: 'a' })).toBe(true);
+      expect(isDocumentAction({ type: 'INSERT', start: 'x', text: 'a' })).toBe(false);
+      expect(isDocumentAction({ type: 'INSERT', start: 0 })).toBe(false);
     });
 
     it('should validate DELETE action', () => {
@@ -865,7 +865,7 @@ describe('Immutability', () => {
     const state = createInitialState();
 
     expect(() => {
-      (state.selection.ranges as { anchor: number; head: number }[]).push({ anchor: 5, head: 5 });
+      (state.selection.ranges as { anchor: ByteOffset; head: ByteOffset }[]).push({ anchor: byteOffset(5), head: byteOffset(5) });
     }).toThrow();
   });
 

@@ -10,6 +10,9 @@ import type { DocumentAction } from '../types/actions.ts';
 import { byteOffset } from '../types/branded.ts';
 import { DocumentActions } from './actions.ts';
 
+// Module-level TextEncoder singleton for efficient reuse
+const textEncoder = new TextEncoder();
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -161,12 +164,12 @@ function myersDiff(
   // Myers algorithm
   const max = n + m;
   const vSize = 2 * max + 1;
-  const v: number[] = new Array(vSize).fill(0);
-  const trace: number[][] = [];
+  const v = new Int32Array(vSize);
+  const trace: Int32Array[] = [];
 
   // Forward phase - find the path
   for (let d = 0; d <= max; d++) {
-    trace.push([...v]);
+    trace.push(new Int32Array(v));
 
     for (let k = -d; k <= d; k += 2) {
       const kIndex = k + max;
@@ -203,7 +206,7 @@ function myersDiff(
  * Backtrack through the trace to build the edit list.
  */
 function backtrack(
-  trace: number[][],
+  trace: Int32Array[],
   oldText: string,
   newText: string,
   oldOffset: number,
@@ -409,7 +412,6 @@ export function computeSetValueActions(
 
   // Process operations, adjusting positions as we go
   // We need to track both string offset and byte offset
-  const encoder = new TextEncoder();
   let stringOffset = 0;
   let byteOffsetDelta = 0;
 
@@ -418,14 +420,14 @@ export function computeSetValueActions(
     const bytePos = stringIndexToByteIndex(oldContent, op.position) + byteOffsetDelta;
 
     if (op.type === 'delete') {
-      const deleteByteLen = encoder.encode(op.text).length;
+      const deleteByteLen = textEncoder.encode(op.text).length;
       actions.push(DocumentActions.delete(byteOffset(bytePos), byteOffset(bytePos + deleteByteLen)));
       stringOffset -= op.text.length;
       byteOffsetDelta -= deleteByteLen;
     } else if (op.type === 'insert') {
       actions.push(DocumentActions.insert(byteOffset(bytePos), op.text));
       stringOffset += op.text.length;
-      byteOffsetDelta += encoder.encode(op.text).length;
+      byteOffsetDelta += textEncoder.encode(op.text).length;
     }
   }
 
@@ -437,8 +439,7 @@ export function computeSetValueActions(
  * This is needed because the piece table works with bytes, not characters.
  */
 function stringIndexToByteIndex(str: string, index: number): number {
-  const encoder = new TextEncoder();
-  return encoder.encode(str.slice(0, index)).length;
+  return textEncoder.encode(str.slice(0, index)).length;
 }
 
 /**

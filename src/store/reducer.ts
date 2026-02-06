@@ -4,7 +4,7 @@
  * No side effects - produces new state from old state + action.
  */
 
-import type { DocumentState, HistoryEntry, HistoryChange, SelectionState } from '../types/state.ts';
+import type { DocumentState, HistoryEntry, HistoryChange, SelectionState, SelectionRange } from '../types/state.ts';
 import type { DocumentAction } from '../types/actions.ts';
 import type { ByteOffset } from '../types/branded.ts';
 import { byteOffset } from '../types/branded.ts';
@@ -203,7 +203,7 @@ function computeSelectionAfterChange(
   }
 
   return Object.freeze({
-    ranges: Object.freeze([Object.freeze({ anchor: newPosition, head: newPosition })]),
+    ranges: Object.freeze([Object.freeze({ anchor: byteOffset(newPosition), head: byteOffset(newPosition) })]),
     primaryIndex: 0,
   });
 }
@@ -363,7 +363,7 @@ function applyInverseChange(state: DocumentState, change: HistoryChange): Docume
  */
 function setSelection(
   state: DocumentState,
-  ranges: readonly { anchor: number; head: number }[]
+  ranges: readonly SelectionRange[]
 ): DocumentState {
   return withState(state, {
     selection: Object.freeze({
@@ -388,7 +388,7 @@ export function documentReducer(
   switch (action.type) {
     case 'INSERT': {
       // Validate position
-      const position = validatePosition(action.position, state.pieceTable.totalLength);
+      const position = validatePosition(action.start, state.pieceTable.totalLength);
 
       // Skip empty inserts
       if (action.text.length === 0) return state;
@@ -530,14 +530,14 @@ export function documentReducer(
       let newState = state;
       for (const change of action.changes) {
         if (change.type === 'insert' && change.text) {
-          newState = pieceTableInsert(newState, change.position, change.text);
-          newState = lineIndexUpdateLazy(newState, change.position, change.text, nextVersion);
+          newState = pieceTableInsert(newState, change.start, change.text);
+          newState = lineIndexUpdateLazy(newState, change.start, change.text, nextVersion);
         } else if (change.type === 'delete' && change.length) {
           // Capture deleted text before deleting for line index update
-          const endPosition = byteOffset(change.position + change.length);
-          const deletedText = getTextRange(newState, change.position, endPosition);
-          newState = pieceTableDelete(newState, change.position, endPosition);
-          newState = lineIndexRemoveLazy(newState, change.position, endPosition, deletedText, nextVersion);
+          const endPosition = byteOffset(change.start + change.length);
+          const deletedText = getTextRange(newState, change.start, endPosition);
+          newState = pieceTableDelete(newState, change.start, endPosition);
+          newState = lineIndexRemoveLazy(newState, change.start, endPosition, deletedText, nextVersion);
         }
       }
       // Remote changes don't push to history (they come from network)

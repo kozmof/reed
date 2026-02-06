@@ -14,6 +14,11 @@ import type {
   HistoryState,
   DocumentMetadata,
 } from '../types/state.ts';
+import { byteOffset } from '../types/branded.ts';
+import type { ByteOffset } from '../types/branded.ts';
+
+// Module-level TextEncoder singleton for efficient reuse
+const textEncoder = new TextEncoder();
 
 /**
  * Default configuration values.
@@ -73,8 +78,7 @@ export function createPieceTableState(content: string): PieceTableState {
   }
 
   // Encode content to original buffer
-  const encoder = new TextEncoder();
-  const originalBuffer = encoder.encode(content);
+  const originalBuffer = textEncoder.encode(content);
 
   // Create single piece spanning entire original buffer
   const root = createPieceNode('original', 0, originalBuffer.length);
@@ -217,7 +221,7 @@ function buildLineIndexTree(
  */
 export function createInitialSelectionState(): SelectionState {
   return Object.freeze({
-    ranges: Object.freeze([Object.freeze({ anchor: 0, head: 0 })]),
+    ranges: Object.freeze([Object.freeze({ anchor: byteOffset(0), head: byteOffset(0) })]),
     primaryIndex: 0,
   });
 }

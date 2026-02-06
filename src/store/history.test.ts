@@ -45,8 +45,8 @@ describe('canUndo', () => {
       undoStack: [
         {
           changes: [{ type: 'insert', position: byteOffset(0), text: 'a' }],
-          selectionBefore: { ranges: [{ anchor: 0, head: 0 }], primaryIndex: 0 },
-          selectionAfter: { ranges: [{ anchor: 1, head: 1 }], primaryIndex: 0 },
+          selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
+          selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
           timestamp: Date.now(),
         },
       ],
@@ -102,8 +102,8 @@ describe('canRedo', () => {
       redoStack: [
         {
           changes: [{ type: 'insert', position: byteOffset(0), text: 'a' }],
-          selectionBefore: { ranges: [{ anchor: 0, head: 0 }], primaryIndex: 0 },
-          selectionAfter: { ranges: [{ anchor: 1, head: 1 }], primaryIndex: 0 },
+          selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
+          selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
           timestamp: Date.now(),
         },
       ],
@@ -150,14 +150,14 @@ describe('getUndoCount', () => {
       undoStack: [
         {
           changes: [{ type: 'insert', position: byteOffset(0), text: 'a' }],
-          selectionBefore: { ranges: [{ anchor: 0, head: 0 }], primaryIndex: 0 },
-          selectionAfter: { ranges: [{ anchor: 1, head: 1 }], primaryIndex: 0 },
+          selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
+          selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
           timestamp: Date.now(),
         },
         {
           changes: [{ type: 'insert', position: byteOffset(1), text: 'b' }],
-          selectionBefore: { ranges: [{ anchor: 1, head: 1 }], primaryIndex: 0 },
-          selectionAfter: { ranges: [{ anchor: 2, head: 2 }], primaryIndex: 0 },
+          selectionBefore: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
+          selectionAfter: { ranges: [{ anchor: byteOffset(2), head: byteOffset(2) }], primaryIndex: 0 },
           timestamp: Date.now(),
         },
       ],
@@ -209,8 +209,8 @@ describe('getRedoCount', () => {
       redoStack: [
         {
           changes: [{ type: 'insert', position: byteOffset(0), text: 'a' }],
-          selectionBefore: { ranges: [{ anchor: 0, head: 0 }], primaryIndex: 0 },
-          selectionAfter: { ranges: [{ anchor: 1, head: 1 }], primaryIndex: 0 },
+          selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
+          selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
           timestamp: Date.now(),
         },
       ],
@@ -264,8 +264,8 @@ describe('isHistoryEmpty', () => {
       undoStack: [
         {
           changes: [{ type: 'insert', position: byteOffset(0), text: 'a' }],
-          selectionBefore: { ranges: [{ anchor: 0, head: 0 }], primaryIndex: 0 },
-          selectionAfter: { ranges: [{ anchor: 1, head: 1 }], primaryIndex: 0 },
+          selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
+          selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
           timestamp: Date.now(),
         },
       ],

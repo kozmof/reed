@@ -52,7 +52,7 @@ export type NodeColor = 'red' | 'black';
  *
  * @template T - The concrete node type extending this interface
  */
-export interface RBNode<T extends RBNode<T> = RBNode<any>> {
+export interface RBNode<T extends RBNode<T>> {
   readonly color: NodeColor;
   readonly left: T | null;
   readonly right: T | null;
@@ -156,10 +156,10 @@ export interface LineIndexState {
  * head: where the selection ends (cursor position)
  */
 export interface SelectionRange {
-  /** Starting position of the selection */
-  readonly anchor: number;
-  /** Ending position (cursor) of the selection */
-  readonly head: number;
+  /** Starting position of the selection (byte offset) */
+  readonly anchor: ByteOffset;
+  /** Ending position (cursor) of the selection (byte offset) */
+  readonly head: ByteOffset;
 }
 
 /**

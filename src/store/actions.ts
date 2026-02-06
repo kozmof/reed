@@ -30,11 +30,11 @@ import type {
 export const DocumentActions = {
   /**
    * Create an insert action.
-   * @param position - Position to insert at (0-based byte offset)
+   * @param start - Start position to insert at (0-based byte offset)
    * @param text - Text to insert
    */
-  insert(position: ByteOffset, text: string): InsertAction {
-    return { type: 'INSERT', position, text };
+  insert(start: ByteOffset, text: string): InsertAction {
+    return { type: 'INSERT', start, text };
   },
 
   /**

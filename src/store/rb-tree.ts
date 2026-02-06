@@ -17,7 +17,7 @@ export type { RBNode };
  * Each concrete node type provides its own implementation that handles
  * recalculating aggregate values (subtreeLength, subtreeLineCount, etc).
  */
-export type WithNodeFn<N extends RBNode> = (
+export type WithNodeFn<N extends RBNode<N>> = (
   node: N,
   updates: Partial<{ color: NodeColor; left: N | null; right: N | null }>
 ) => N;
@@ -30,7 +30,7 @@ export type WithNodeFn<N extends RBNode> = (
  * Check if a node is red.
  * Returns false for null/undefined nodes (they're treated as black).
  */
-export function isRed<N extends RBNode>(node: N | null | undefined): boolean {
+export function isRed<N extends RBNode<N>>(node: N | null | undefined): boolean {
   return node != null && node.color === 'red';
 }
 
@@ -38,7 +38,7 @@ export function isRed<N extends RBNode>(node: N | null | undefined): boolean {
  * Check if a node is black.
  * Null nodes are considered black.
  */
-export function isBlack<N extends RBNode>(node: N | null | undefined): boolean {
+export function isBlack<N extends RBNode<N>>(node: N | null | undefined): boolean {
   return node == null || node.color === 'black';
 }
 
@@ -56,7 +56,7 @@ export function isBlack<N extends RBNode>(node: N | null | undefined): boolean {
  *        / \          / \
  *       b   c        a   b
  */
-export function rotateLeft<N extends RBNode>(
+export function rotateLeft<N extends RBNode<N>>(
   node: N,
   withNode: WithNodeFn<N>
 ): N {
@@ -82,7 +82,7 @@ export function rotateLeft<N extends RBNode>(
  *      / \              / \
  *     a   b            b   c
  */
-export function rotateRight<N extends RBNode>(
+export function rotateRight<N extends RBNode<N>>(
   node: N,
   withNode: WithNodeFn<N>
 ): N {
@@ -105,7 +105,7 @@ export function rotateRight<N extends RBNode>(
 /**
  * Ensure the root is black.
  */
-export function ensureBlackRoot<N extends RBNode>(
+export function ensureBlackRoot<N extends RBNode<N>>(
   node: N,
   withNode: WithNodeFn<N>
 ): N {
@@ -119,7 +119,7 @@ export function ensureBlackRoot<N extends RBNode>(
  * Fix red-red violations at a node.
  * Implements the four rotation cases of Red-Black tree balancing.
  */
-export function fixRedViolations<N extends RBNode>(
+export function fixRedViolations<N extends RBNode<N>>(
   node: N,
   withNode: WithNodeFn<N>
 ): N {
@@ -169,7 +169,7 @@ export function fixRedViolations<N extends RBNode>(
  * Rebalance tree after insert to fix red-red violations.
  * Recursively fixes violations from leaves up to root.
  */
-export function rebalanceAfterInsert<N extends RBNode>(
+export function rebalanceAfterInsert<N extends RBNode<N>>(
   node: N,
   withNode: WithNodeFn<N>
 ): N {
@@ -197,7 +197,7 @@ export function rebalanceAfterInsert<N extends RBNode>(
 /**
  * Complete rebalancing after insert: rebalance and ensure black root.
  */
-export function fixInsert<N extends RBNode>(
+export function fixInsert<N extends RBNode<N>>(
   root: N,
   withNode: WithNodeFn<N>
 ): N {

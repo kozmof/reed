@@ -6,6 +6,9 @@
 import type { DocumentState } from '../types/state.ts';
 import type { DocumentAction } from '../types/actions.ts';
 
+// Module-level TextEncoder singleton for efficient reuse
+const textEncoder = new TextEncoder();
+
 // =============================================================================
 // Event Types
 // =============================================================================
@@ -292,11 +295,11 @@ export function createDirtyChangeEvent(
 export function getAffectedRange(action: DocumentAction): readonly [number, number] {
   switch (action.type) {
     case 'INSERT':
-      return [action.position, action.position + new TextEncoder().encode(action.text).length];
+      return [action.start, action.start + textEncoder.encode(action.text).length];
     case 'DELETE':
       return [action.start, action.end];
     case 'REPLACE': {
-      const insertLength = new TextEncoder().encode(action.text).length;
+      const insertLength = textEncoder.encode(action.text).length;
       const deleteLength = action.end - action.start;
       return [action.start, action.start + Math.max(deleteLength, insertLength)];
     }
