@@ -3,7 +3,7 @@
  * All state structures are read-only and use structural sharing for efficiency.
  */
 
-import type { ByteOffset } from './branded.ts';
+import type { ByteOffset, CharOffset } from './branded.ts';
 
 // =============================================================================
 // Piece Table Types
@@ -19,9 +19,9 @@ export type BufferType = 'original' | 'add';
  * Part of the BufferReference discriminated union.
  */
 export interface OriginalBufferRef {
-  readonly kind: 'original';
-  readonly start: number;
-  readonly length: number;
+  readonly bufferType: 'original';
+  readonly start: ByteOffset;
+  readonly length: ByteOffset;
 }
 
 /**
@@ -29,14 +29,14 @@ export interface OriginalBufferRef {
  * Part of the BufferReference discriminated union.
  */
 export interface AddBufferRef {
-  readonly kind: 'add';
-  readonly start: number;
-  readonly length: number;
+  readonly bufferType: 'add';
+  readonly start: ByteOffset;
+  readonly length: ByteOffset;
 }
 
 /**
  * Discriminated union for type-safe buffer references.
- * Use `kind` field to distinguish between buffer types.
+ * Use `bufferType` field to distinguish between buffer types.
  */
 export type BufferReference = OriginalBufferRef | AddBufferRef;
 
@@ -69,9 +69,9 @@ export interface PieceNode extends RBNode<PieceNode> {
   /** Which buffer this piece references */
   readonly bufferType: BufferType;
   /** Start offset in the buffer */
-  readonly start: number;
+  readonly start: ByteOffset;
   /** Length of this piece */
-  readonly length: number;
+  readonly length: ByteOffset;
   /** Total length of this subtree (for O(log n) position lookups) */
   readonly subtreeLength: number;
 }
@@ -120,8 +120,8 @@ export interface LineIndexNode extends RBNode<LineIndexNode> {
 export interface DirtyLineRange {
   /** First line affected (inclusive, 0-indexed) */
   readonly startLine: number;
-  /** Last line affected (inclusive), -1 means "to end of document" */
-  readonly endLine: number;
+  /** Last line affected (inclusive), or 'end' for to end of document */
+  readonly endLine: number | 'end';
   /** Byte delta to apply to lines in this range */
   readonly offsetDelta: number;
   /** Version when this dirty range was created */
@@ -163,6 +163,16 @@ export interface SelectionRange {
 }
 
 /**
+ * Selection range using character (UTF-16 code unit) offsets.
+ * Use this for user-facing APIs where positions correspond to JavaScript string indices.
+ * Convert to/from SelectionRange using selectionToCharOffsets/charOffsetsToSelection.
+ */
+export interface CharSelectionRange {
+  readonly anchor: CharOffset;
+  readonly head: CharOffset;
+}
+
+/**
  * Immutable selection state supporting multiple cursors.
  */
 export interface SelectionState {
@@ -186,8 +196,12 @@ export interface HistoryChange {
   readonly position: ByteOffset;
   /** Text that was inserted or deleted */
   readonly text: string;
+  /** Pre-computed UTF-8 byte length of `text` */
+  readonly byteLength: number;
   /** For replace: the original text that was replaced */
   readonly oldText?: string;
+  /** For replace: pre-computed UTF-8 byte length of `oldText` */
+  readonly oldTextByteLength?: number;
 }
 
 /**

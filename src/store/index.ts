@@ -119,6 +119,8 @@ export {
   estimateTotalHeight,
   positionToLineColumn,
   lineColumnToPosition,
+  selectionToCharOffsets,
+  charOffsetsToSelection,
 } from './rendering.ts';
 export type {
   VisibleLine,

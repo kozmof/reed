@@ -985,14 +985,14 @@ export function mergeDirtyRanges(
 
   for (let i = 1; i < sorted.length; i++) {
     const next = sorted[i];
-    const currentEnd = current.endLine === -1 ? Infinity : current.endLine;
-    const nextEnd = next.endLine === -1 ? Infinity : next.endLine;
+    const currentEnd = current.endLine === 'end' ? Infinity : current.endLine;
+    const nextEnd = next.endLine === 'end' ? Infinity : next.endLine;
 
     // Adjacent or overlapping ranges with same delta can merge
     if (next.startLine <= currentEnd + 1 && next.offsetDelta === current.offsetDelta) {
       current = Object.freeze({
         startLine: current.startLine,
-        endLine: currentEnd === Infinity || nextEnd === Infinity ? -1 : Math.max(currentEnd, nextEnd),
+        endLine: currentEnd === Infinity || nextEnd === Infinity ? 'end' as const : Math.max(currentEnd, nextEnd),
         offsetDelta: current.offsetDelta,
         createdAtVersion: Math.max(current.createdAtVersion, next.createdAtVersion),
       });
@@ -1014,7 +1014,7 @@ export function isLineDirty(
   lineNumber: number
 ): boolean {
   return dirtyRanges.some(
-    r => lineNumber >= r.startLine && (r.endLine === -1 || lineNumber <= r.endLine)
+    r => lineNumber >= r.startLine && (r.endLine === 'end' || lineNumber <= r.endLine)
   );
 }
 
@@ -1028,7 +1028,7 @@ export function getOffsetDeltaForLine(
   let delta = 0;
   for (const range of dirtyRanges) {
     if (lineNumber >= range.startLine &&
-        (range.endLine === -1 || lineNumber <= range.endLine)) {
+        (range.endLine === 'end' || lineNumber <= range.endLine)) {
       delta += range.offsetDelta;
     }
   }
@@ -1040,7 +1040,7 @@ export function getOffsetDeltaForLine(
  */
 function createDirtyRange(
   startLine: number,
-  endLine: number,
+  endLine: number | 'end',
   offsetDelta: number,
   version: number
 ): DirtyLineRange {
@@ -1198,7 +1198,7 @@ function insertLinesAtPositionLazy(
   // Mark all lines after the insertion as dirty (they have stale offsets)
   const newDirtyRange = createDirtyRange(
     lineNumber + 1, // First inserted line and all after
-    -1, // To end of document
+    'end', // To end of document
     text.length, // Offset delta
     currentVersion
   );
@@ -1286,7 +1286,7 @@ function deleteLineRangeLazy(
   // Mark lines after deletion as dirty
   const newDirtyRange = createDirtyRange(
     startLine + 1,
-    -1,
+    'end',
     -deleteLength,
     currentVersion
   );
@@ -1369,13 +1369,13 @@ export function reconcileRange(
 
   // Filter out ranges that are now reconciled
   const remainingRanges = state.dirtyRanges.filter(range => {
-    const rangeEnd = range.endLine === -1 ? state.lineCount - 1 : range.endLine;
+    const rangeEnd = range.endLine === 'end' ? state.lineCount - 1 : range.endLine;
     // Keep if range extends beyond reconciled area
     return rangeEnd > endLine || range.startLine < startLine;
   }).map(range => {
     // Adjust ranges that partially overlap
     if (range.startLine <= endLine &&
-        (range.endLine === -1 || range.endLine > endLine)) {
+        (range.endLine === 'end' || range.endLine > endLine)) {
       return Object.freeze({
         ...range,
         startLine: endLine + 1,
@@ -1480,7 +1480,7 @@ export function reconcileViewport(
 
   // Check if any viewport lines are dirty
   const viewportDirty = state.dirtyRanges.some(range => {
-    const rangeEnd = range.endLine === -1 ? Infinity : range.endLine;
+    const rangeEnd = range.endLine === 'end' ? Infinity : range.endLine;
     return range.startLine <= endLine && rangeEnd >= startLine;
   });
 

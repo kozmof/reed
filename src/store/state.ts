@@ -49,8 +49,8 @@ export function createEmptyPieceTableState(): PieceTableState {
  */
 export function createPieceNode(
   bufferType: 'original' | 'add',
-  start: number,
-  length: number,
+  start: ByteOffset,
+  length: ByteOffset,
   color: 'red' | 'black' = 'black',
   left: PieceNode | null = null,
   right: PieceNode | null = null
@@ -81,7 +81,7 @@ export function createPieceTableState(content: string): PieceTableState {
   const originalBuffer = textEncoder.encode(content);
 
   // Create single piece spanning entire original buffer
-  const root = createPieceNode('original', 0, originalBuffer.length);
+  const root = createPieceNode('original', byteOffset(0), byteOffset(originalBuffer.length));
 
   return Object.freeze({
     root,

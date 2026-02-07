@@ -16,6 +16,7 @@ export type {
   LineIndexState,
   DirtyLineRange,
   SelectionRange,
+  CharSelectionRange,
   SelectionState,
   HistoryChange,
   HistoryEntry,

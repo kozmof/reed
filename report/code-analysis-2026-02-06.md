@@ -399,29 +399,41 @@ The current manual `Object.freeze()` + spread pattern is verbose. While it avoid
 
 ## 7. Improvement Points 2 (Types, Interfaces)
 
-### T1: `BufferType` vs `BufferReference.kind`
+### ~~T1: `BufferType` vs `BufferReference.kind`~~ (Fixed)
 
-There are two ways to express buffer type: `BufferType = 'original' | 'add'` and `BufferReference.kind = 'original' | 'add'`. `PieceNode.bufferType` uses `BufferType` while `BufferReference` uses `kind`. This inconsistency means code must translate between the two representations.
+~~There are two ways to express buffer type: `BufferType = 'original' | 'add'` and `BufferReference.kind = 'original' | 'add'`. `PieceNode.bufferType` uses `BufferType` while `BufferReference` uses `kind`. This inconsistency means code must translate between the two representations.~~
 
-### T2: `PieceNode.start` and `PieceNode.length` Are Unbranded
+**Resolution**: Renamed `BufferReference.kind` → `BufferReference.bufferType` in `OriginalBufferRef` and `AddBufferRef` (`src/types/state.ts`). Updated all usages in `getBuffer()`, `getBufferSlice()`, and simplified `getPieceBufferRef()` to a single object construction (`src/store/piece-table.ts`).
 
-These are raw `number` values representing byte offsets into buffers, but they're not typed as `ByteOffset`. Since the piece table operates entirely in byte space, branding these fields would prevent accidental mixing with character offsets.
+### ~~T2: `PieceNode.start` and `PieceNode.length` Are Unbranded~~ (Fixed)
 
-### T3: `HistoryChange.position` Is `ByteOffset` But Text Is `string`
+~~These are raw `number` values representing byte offsets into buffers, but they're not typed as `ByteOffset`. Since the piece table operates entirely in byte space, branding these fields would prevent accidental mixing with character offsets.~~
 
-The `HistoryChange` type stores `position` as `ByteOffset` but `text` as a JavaScript string. During undo/redo, `textEncoder.encode(change.text).length` is called repeatedly to convert string length to byte length. Pre-computing and storing `byteLength` would eliminate this repeated encoding.
+**Resolution**: Branded `PieceNode.start` and `PieceNode.length` as `ByteOffset` in `src/types/state.ts`. Also branded `OriginalBufferRef.start`/`length` and `AddBufferRef.start`/`length` for consistency. Updated `createPieceNode()` signature (`src/store/state.ts`), `rbInsertPiece()`/`insertWithSplit()` signatures, and all arithmetic call sites in `src/store/piece-table.ts` with `byteOffset()` wrapping.
 
-### T4: `DirtyLineRange.endLine` Uses `-1` as Sentinel
+### ~~T3: `HistoryChange.position` Is `ByteOffset` But Text Is `string`~~ (Fixed)
 
-The `endLine: number` field uses `-1` to mean "to end of document". A more type-safe approach would use `endLine: number | 'end'` or a separate `DirtyLineRangeToEnd` variant.
+~~The `HistoryChange` type stores `position` as `ByteOffset` but `text` as a JavaScript string. During undo/redo, `textEncoder.encode(change.text).length` is called repeatedly to convert string length to byte length. Pre-computing and storing `byteLength` would eliminate this repeated encoding.~~
 
-### T5: `SelectionRange` Uses `ByteOffset` for Anchor/Head
+**Resolution**: Added `byteLength: number` and `oldTextByteLength?: number` fields to `HistoryChange` (`src/types/state.ts`). Pre-computed at creation time in the reducer's INSERT/DELETE/REPLACE handlers — notably DELETE uses `end - start` directly, avoiding encoding entirely. Replaced all 7 `textEncoder.encode(change.text).length` call sites in `computeSelectionAfterChange()`, `applyChange()`, and `applyInverseChange()` with the pre-computed fields (`src/store/reducer.ts`).
 
-Selection positions are stored as byte offsets, but users typically think in character positions. The API should consider providing a `CharSelectionRange` type alongside, or making byte ↔ char conversion more prominent.
+### ~~T4: `DirtyLineRange.endLine` Uses `-1` as Sentinel~~ (Fixed)
 
-### T6: Missing `Readonly` on Action Creator Return Types
+~~The `endLine: number` field uses `-1` to mean "to end of document". A more type-safe approach would use `endLine: number | 'end'` or a separate `DirtyLineRangeToEnd` variant.~~
 
-The `DocumentActions` object methods return mutable action objects (e.g., `{ type: 'INSERT', start, text }`). While the type declarations mark fields as `readonly`, the runtime objects are not frozen. This could lead to accidental mutation.
+**Resolution**: Changed `endLine: number` → `endLine: number | 'end'` in `DirtyLineRange` (`src/types/state.ts`). Replaced all `-1` sentinel literals and `=== -1` checks with `'end'` across `mergeDirtyRanges()`, `isLineDirty()`, `getOffsetDeltaForLine()`, `reconcileRange()`, `reconcileViewport()`, and the lazy insert/delete creation sites (`src/store/line-index.ts`).
+
+### ~~T5: `SelectionRange` Uses `ByteOffset` for Anchor/Head~~
+
+~~Selection positions are stored as byte offsets, but users typically think in character positions. The API should consider providing a `CharSelectionRange` type alongside, or making byte ↔ char conversion more prominent.~~
+
+**Resolution:** Added `CharSelectionRange` type (using `CharOffset` branded type) in `src/types/state.ts`. Added document-aware conversion helpers `selectionToCharOffsets()` and `charOffsetsToSelection()` in `src/store/rendering.ts`. Both are exported through the public API.
+
+### ~~T6: Missing `Readonly` on Action Creator Return Types~~ (Fixed)
+
+~~The `DocumentActions` object methods return mutable action objects (e.g., `{ type: 'INSERT', start, text }`). While the type declarations mark fields as `readonly`, the runtime objects are not frozen. This could lead to accidental mutation.~~
+
+**Resolution:** Added `Object.freeze()` to all 12 action creator return values in `src/store/actions.ts`. Actions are now runtime-immutable, consistent with the rest of the codebase where state objects, history entries, and selections are all frozen.
 
 ---
 

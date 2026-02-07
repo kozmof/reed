@@ -131,7 +131,7 @@ describe('State Factories', () => {
 
   describe('createPieceNode', () => {
     it('should create node with default values', () => {
-      const node = createPieceNode('original', 0, 10);
+      const node = createPieceNode('original', byteOffset(0), byteOffset(10));
 
       expect(node.bufferType).toBe('original');
       expect(node.start).toBe(0);
@@ -143,15 +143,15 @@ describe('State Factories', () => {
     });
 
     it('should calculate subtreeLength with children', () => {
-      const left = createPieceNode('original', 0, 5);
-      const right = createPieceNode('add', 0, 3);
-      const parent = createPieceNode('original', 5, 10, 'black', left, right);
+      const left = createPieceNode('original', byteOffset(0), byteOffset(5));
+      const right = createPieceNode('add', byteOffset(0), byteOffset(3));
+      const parent = createPieceNode('original', byteOffset(5), byteOffset(10), 'black', left, right);
 
       expect(parent.subtreeLength).toBe(18); // 5 + 10 + 3
     });
 
     it('should support red color', () => {
-      const node = createPieceNode('add', 0, 5, 'red');
+      const node = createPieceNode('add', byteOffset(0), byteOffset(5), 'red');
       expect(node.color).toBe('red');
     });
   });
@@ -278,8 +278,8 @@ describe('State Factories', () => {
 
   describe('withPieceNode', () => {
     it('should recalculate subtreeLength on child change', () => {
-      const node = createPieceNode('original', 0, 10);
-      const newLeft = createPieceNode('add', 0, 5);
+      const node = createPieceNode('original', byteOffset(0), byteOffset(10));
+      const newLeft = createPieceNode('add', byteOffset(0), byteOffset(5));
       const newNode = withPieceNode(node, { left: newLeft });
 
       expect(newNode.subtreeLength).toBe(15); // 10 + 5

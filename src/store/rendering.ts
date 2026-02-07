@@ -3,11 +3,11 @@
  * Provides efficient computation of visible lines and viewport management.
  */
 
-import type { DocumentState } from '../types/state.ts';
+import type { DocumentState, SelectionRange, CharSelectionRange } from '../types/state.ts';
 import type { ByteOffset } from '../types/branded.ts';
-import { byteOffset } from '../types/branded.ts';
+import { byteOffset, charOffset } from '../types/branded.ts';
 import { findLineAtPosition, getLineRange, getLineRangePrecise, getLineCountFromIndex } from './line-index.ts';
-import { getText } from './piece-table.ts';
+import { getText, getValue, charToByteOffset, byteToCharOffset } from './piece-table.ts';
 
 // Module-level TextEncoder singleton for efficient reuse
 const textEncoder = new TextEncoder();
@@ -349,4 +349,38 @@ export function lineColumnToPosition(
   const columnByteLen = textEncoder.encode(lineContent.slice(0, clampedColumn)).length;
 
   return byteOffset(startOffset + columnByteLen);
+}
+
+// =============================================================================
+// Selection Offset Conversion
+// =============================================================================
+
+/**
+ * Convert a byte-offset SelectionRange to a character-offset CharSelectionRange.
+ * Useful for user-facing APIs where positions correspond to JavaScript string indices.
+ */
+export function selectionToCharOffsets(
+  state: DocumentState,
+  range: SelectionRange
+): CharSelectionRange {
+  const text = getValue(state.pieceTable);
+  return Object.freeze({
+    anchor: charOffset(byteToCharOffset(text, range.anchor)),
+    head: charOffset(byteToCharOffset(text, range.head)),
+  });
+}
+
+/**
+ * Convert a character-offset CharSelectionRange to a byte-offset SelectionRange.
+ * Useful for dispatching SET_SELECTION actions from user-facing character positions.
+ */
+export function charOffsetsToSelection(
+  state: DocumentState,
+  range: CharSelectionRange
+): SelectionRange {
+  const text = getValue(state.pieceTable);
+  return Object.freeze({
+    anchor: byteOffset(charToByteOffset(text, range.anchor)),
+    head: byteOffset(charToByteOffset(text, range.head)),
+  });
 }

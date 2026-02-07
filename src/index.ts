@@ -22,6 +22,7 @@ export type {
   LineIndexState,
   DirtyLineRange,
   SelectionRange,
+  CharSelectionRange,
   SelectionState,
   HistoryChange,
   HistoryEntry,
@@ -244,6 +245,8 @@ export {
   estimateTotalHeight,
   positionToLineColumn,
   lineColumnToPosition,
+  selectionToCharOffsets,
+  charOffsetsToSelection,
 } from './store/index.ts';
 export type {
   VisibleLine,

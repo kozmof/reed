@@ -188,7 +188,7 @@ function computeSelectionAfterChange(
   switch (change.type) {
     case 'insert':
       // After insert, cursor should be at end of inserted text
-      newPosition = change.position + textEncoder.encode(change.text).length;
+      newPosition = change.position + change.byteLength;
       break;
     case 'delete':
       // After delete, cursor should be at the deletion point
@@ -196,7 +196,7 @@ function computeSelectionAfterChange(
       break;
     case 'replace':
       // After replace, cursor should be at end of inserted text
-      newPosition = change.position + textEncoder.encode(change.text).length;
+      newPosition = change.position + change.byteLength;
       break;
     default:
       return state.selection;
@@ -316,13 +316,10 @@ function applyChange(state: DocumentState, change: HistoryChange): DocumentState
   switch (change.type) {
     case 'insert':
       return pieceTableInsert(state, change.position, change.text);
-    case 'delete': {
-      const textByteLength = textEncoder.encode(change.text).length;
-      return pieceTableDelete(state, change.position, byteOffset(change.position + textByteLength));
-    }
+    case 'delete':
+      return pieceTableDelete(state, change.position, byteOffset(change.position + change.byteLength));
     case 'replace': {
-      const oldTextByteLength = textEncoder.encode(change.oldText ?? '').length;
-      const deleted = pieceTableDelete(state, change.position, byteOffset(change.position + oldTextByteLength));
+      const deleted = pieceTableDelete(state, change.position, byteOffset(change.position + (change.oldTextByteLength ?? 0)));
       return pieceTableInsert(deleted, change.position, change.text);
     }
     default:
@@ -335,18 +332,15 @@ function applyChange(state: DocumentState, change: HistoryChange): DocumentState
  */
 function applyInverseChange(state: DocumentState, change: HistoryChange): DocumentState {
   switch (change.type) {
-    case 'insert': {
+    case 'insert':
       // Inverse of insert is delete
-      const textByteLength = textEncoder.encode(change.text).length;
-      return pieceTableDelete(state, change.position, byteOffset(change.position + textByteLength));
-    }
+      return pieceTableDelete(state, change.position, byteOffset(change.position + change.byteLength));
     case 'delete':
       // Inverse of delete is insert
       return pieceTableInsert(state, change.position, change.text);
     case 'replace': {
       // Inverse of replace is replace with old text
-      const textByteLength = textEncoder.encode(change.text).length;
-      const deleted = pieceTableDelete(state, change.position, byteOffset(change.position + textByteLength));
+      const deleted = pieceTableDelete(state, change.position, byteOffset(change.position + change.byteLength));
       return pieceTableInsert(deleted, change.position, change.oldText ?? '');
     }
     default:
@@ -404,6 +398,7 @@ export function documentReducer(
         type: 'insert',
         position,
         text: action.text,
+        byteLength: textEncoder.encode(action.text).length,
       });
 
       // Mark as dirty and increment version
@@ -438,6 +433,7 @@ export function documentReducer(
         type: 'delete',
         position: start,
         text: deletedText,
+        byteLength: end - start,
       });
 
       // Mark as dirty and increment version
@@ -471,7 +467,9 @@ export function documentReducer(
         type: 'replace',
         position: start,
         text: action.text,
+        byteLength: textEncoder.encode(action.text).length,
         oldText,
+        oldTextByteLength: end - start,
       });
 
       // Mark as dirty and increment version
