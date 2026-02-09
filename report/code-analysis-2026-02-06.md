@@ -320,19 +320,23 @@ Transactions provide atomic batching:
 
 ## 5. Pitfalls
 
-### P1: Line Index Text Length vs Byte Length Mismatch
+### ~~P1: Line Index Text Length vs Byte Length Mismatch~~ (Fixed)
 
-In `line-index.ts`, the `findNewlinePositions()` and `countNewlines()` functions operate on **string (UTF-16) positions**, but the line index stores **byte lengths**. When text contains multi-byte UTF-8 characters (CJK, emoji), `text.length` (UTF-16 code units) differs from the byte length. Functions like `insertLinesAtPosition()` use `text.length` directly as byte delta for `insertedBytes`, which is incorrect for non-ASCII content.
+~~In `line-index.ts`, the `findNewlinePositions()` and `countNewlines()` functions operate on **string (UTF-16) positions**, but the line index stores **byte lengths**. When text contains multi-byte UTF-8 characters (CJK, emoji), `text.length` (UTF-16 code units) differs from the byte length. Functions like `insertLinesAtPosition()` use `text.length` directly as byte delta for `insertedBytes`, which is incorrect for non-ASCII content.~~
 
-**Affected areas**: `lineIndexInsert`, `lineIndexInsertLazy`, `lineIndexDelete`, `lineIndexDeleteLazy`
+**Resolution**: Replaced `findNewlinePositions()` with `findNewlineBytePositions()` in `src/store/line-index.ts`, which encodes text to UTF-8 via `TextEncoder` and scans the byte array for `0x0A`, returning both byte-offset newline positions and total byte length. Fixed all 8 affected functions (`lineIndexInsert`, `appendLines`, `insertLinesAtPosition`, `buildLineIndexFromText`, `lineIndexInsertLazy`, `appendLinesLazy`, `insertLinesAtPositionLazy`, and all `text.length` → `byteLength` replacements). Also fixed `createLineIndexState()` in `src/store/state.ts` which had the same character-index-based line scanning bug. Added 14 multi-byte character tests (CJK, emoji) to `src/store/line-index.test.ts`.
 
-### P2: Delete Range Complexity for Multi-Line Deletions
+### ~~P2: Delete Range Complexity for Multi-Line Deletions~~ (Fixed)
 
-The `deleteRange()` function in `piece-table.ts` recursively processes the entire tree for deletions. While the RB-tree gives O(log n) for lookups, the delete operation traverses all nodes, making it effectively O(n) where n is the number of pieces. For large documents with many pieces, this can degrade performance.
+~~The `deleteRange()` function in `piece-table.ts` recursively processes the entire tree for deletions. While the RB-tree gives O(log n) for lookups, the delete operation traverses all nodes, making it effectively O(n) where n is the number of pieces. For large documents with many pieces, this can degrade performance.~~
 
-### P3: History Undo/Redo Uses Eager Line Index Updates
+**Resolution**: Added subtree-range pruning to `deleteRange()` in `src/store/piece-table.ts` — an early return skips entire subtrees whose document range `[offset, offset + subtreeLength)` doesn't overlap the delete range, and child recursion is conditional on overlap. This reduces complexity from O(n) to O(k + log n) where k = overlapping pieces (typically 1-3 for normal edits). Also fixed `mergeTrees()` to call `fixRedViolations()` along the merge path and ensure a black root, maintaining RB-tree balance properties after piece deletion.
+
+### ~~P3~~: History Undo/Redo Uses Eager Line Index Updates (Fixed)
 
 The `applyChange()` and `applyInverseChange()` functions in `reducer.ts` only update the piece table but do not update the line index. After undo/redo, the line index may be stale until the next reconciliation.
+
+**Resolution**: Updated `applyChange()` and `applyInverseChange()` in `src/store/reducer.ts` to call `eagerLineIndex.insert()`/`eagerLineIndex.delete()` alongside the piece table operations. The eager strategy immediately recomputes all line offsets, ensuring the line index is accurate after undo/redo without waiting for background reconciliation. `historyUndo()` and `historyRedo()` now pass the next version number through to these functions. Added 5 tests verifying line count correctness through undo/redo cycles for insert, delete, and replace operations.
 
 ### P4: Transaction Rollback Doesn't Notify Listeners
 
@@ -374,7 +378,7 @@ The add buffer growth logic (doubling strategy) is embedded in `pieceTableInsert
 - Enable memory pooling for large files
 - Simplify the piece table code
 
-### D3: Formalize the Eager/Lazy Duality
+### ~~D3~~: Formalize the Eager/Lazy Duality (Implemented)
 
 The line index has parallel implementations (eager + lazy) for insert and delete. This pattern could be formalized with a `LineIndexStrategy` interface:
 ```
@@ -384,6 +388,8 @@ interface LineIndexStrategy {
 }
 ```
 This would make it easier to swap strategies (e.g., always-eager for small files).
+
+**Resolution**: Defined a `LineIndexStrategy` interface in `src/types/store.ts` and created two exported strategy objects (`eagerLineIndex`, `lazyLineIndex`) in `src/store/reducer.ts`. Replaced the 4 individual wrapper functions (`lineIndexUpdate`, `lineIndexUpdateLazy`, `lineIndexRemove`, `lineIndexRemoveLazy`) with these two strategy objects. Normal editing uses `lazyLineIndex` (defers offset recalculation), while undo/redo uses `eagerLineIndex` (immediate accuracy). Both strategies and the type are exported from the public API for consumers who need direct access.
 
 ### D4: Consider Immutable.js or Immer Alternative
 
@@ -439,14 +445,16 @@ The current manual `Object.freeze()` + spread pattern is verbose. While it avoid
 
 ## 8. Improvement Points 3 (Implementations)
 
-### I1: `deleteRange()` Full Tree Traversal
+### ~~I1: `deleteRange()` Full Tree Traversal~~ (Addressed in P2)
 
-The piece table's `deleteRange()` rebuilds the entire tree by visiting every node. An alternative approach would be:
-1. Split the tree at `deleteStart` → (left, right₁)
-2. Split right₁ at `deleteEnd - deleteStart` → (deleted, right)
-3. Merge left + right
+~~The piece table's `deleteRange()` rebuilds the entire tree by visiting every node. An alternative approach would be:~~
+~~1. Split the tree at `deleteStart` → (left, right₁)~~
+~~2. Split right₁ at `deleteEnd - deleteStart` → (deleted, right)~~
+~~3. Merge left + right~~
 
-This "split-merge" approach is O(log n) for balanced trees.
+~~This "split-merge" approach is O(log n) for balanced trees.~~
+
+**Resolution**: Addressed via subtree-range pruning in the P2 fix rather than the split-merge approach. The pruning optimization achieves O(k + log n) where k = overlapping pieces, which is effectively O(log n) for typical editing operations (k is usually 1-3). A full split-merge rewrite could further reduce worst-case complexity to O(log n) for large selection deletions spanning many pieces, but is not needed for practical editing workloads.
 
 ### I2: `byteToCharOffset()` Linear Scan
 

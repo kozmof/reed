@@ -368,8 +368,8 @@ describe('lineColumnToPosition', () => {
       content: '世界\nHello',
     });
 
-    // Line index uses character positions, not byte positions
-    // '世界\n' is 3 characters, so line 1 starts at character position 3
-    expect(lineColumnToPosition(state, 1, 0)).toBe(3);
+    // Line index uses byte positions (UTF-8)
+    // '世界\n' is 7 bytes (3+3+1), so line 1 starts at byte position 7
+    expect(lineColumnToPosition(state, 1, 0)).toBe(7);
   });
 });

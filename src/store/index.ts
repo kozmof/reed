@@ -25,8 +25,8 @@ export {
   withLineIndexNode,
 } from './state.ts';
 
-// Reducer
-export { documentReducer } from './reducer.ts';
+// Reducer and line index strategies
+export { documentReducer, eagerLineIndex, lazyLineIndex } from './reducer.ts';
 
 // Piece table operations
 export {

@@ -32,6 +32,7 @@ import {
   isDocumentAction,
 } from '../types/actions.ts';
 import { createDocumentStore, isDocumentStore } from './store.ts';
+import { getLineCountFromIndex, getLineRange } from './line-index.ts';
 import { byteOffset, type ByteOffset } from '../types/branded.ts';
 
 // =============================================================================
@@ -480,6 +481,79 @@ describe('Document Reducer', () => {
       const newState = documentReducer(state, DocumentActions.redo());
 
       expect(newState).toBe(state);
+    });
+  });
+
+  describe('Undo/Redo line index correctness (P3 fix)', () => {
+    it('should update line count after undoing an insert with newlines', () => {
+      let state = createInitialState();
+      state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Line 1\nLine 2\nLine 3'));
+      expect(getLineCountFromIndex(state.lineIndex)).toBe(3);
+
+      state = documentReducer(state, DocumentActions.undo());
+      expect(state.pieceTable.totalLength).toBe(0);
+      expect(getLineCountFromIndex(state.lineIndex)).toBe(1);
+    });
+
+    it('should update line count after redoing an insert with newlines', () => {
+      let state = createInitialState();
+      state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'A\nB\nC\nD'));
+      expect(getLineCountFromIndex(state.lineIndex)).toBe(4);
+
+      state = documentReducer(state, DocumentActions.undo());
+      expect(getLineCountFromIndex(state.lineIndex)).toBe(1);
+
+      state = documentReducer(state, DocumentActions.redo());
+      expect(getLineCountFromIndex(state.lineIndex)).toBe(4);
+    });
+
+    it('should update line count after undoing a delete that removed newlines', () => {
+      let state = createInitialState({ content: 'Line 1\nLine 2\nLine 3' });
+      expect(getLineCountFromIndex(state.lineIndex)).toBe(3);
+
+      // Delete "Line 2\n" (bytes 7-14)
+      state = documentReducer(state, DocumentActions.delete(byteOffset(7), byteOffset(14)));
+      expect(getLineCountFromIndex(state.lineIndex)).toBe(2);
+
+      state = documentReducer(state, DocumentActions.undo());
+      expect(getLineCountFromIndex(state.lineIndex)).toBe(3);
+    });
+
+    it('should update line count after undoing a replace that changed line structure', () => {
+      let state = createInitialState({ content: 'Hello World' });
+      expect(getLineCountFromIndex(state.lineIndex)).toBe(1);
+
+      // Replace "World" (bytes 6-11) with "A\nB\nC"
+      state = documentReducer(state, DocumentActions.replace(byteOffset(6), byteOffset(11), 'A\nB\nC'));
+      expect(getLineCountFromIndex(state.lineIndex)).toBe(3);
+
+      state = documentReducer(state, DocumentActions.undo());
+      expect(getLineCountFromIndex(state.lineIndex)).toBe(1);
+    });
+
+    it('should maintain correct line count through multiple undo/redo cycles', () => {
+      let state = createInitialState();
+      state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'A\nB'));
+      expect(getLineCountFromIndex(state.lineIndex)).toBe(2);
+
+      state = documentReducer(state, DocumentActions.insert(byteOffset(3), '\nC\nD'));
+      expect(getLineCountFromIndex(state.lineIndex)).toBe(4);
+
+      // Undo second insert
+      state = documentReducer(state, DocumentActions.undo());
+      expect(getLineCountFromIndex(state.lineIndex)).toBe(2);
+
+      // Undo first insert
+      state = documentReducer(state, DocumentActions.undo());
+      expect(getLineCountFromIndex(state.lineIndex)).toBe(1);
+
+      // Redo first insert
+      state = documentReducer(state, DocumentActions.redo());
+      expect(getLineCountFromIndex(state.lineIndex)).toBe(2);
+
+      // Redo second insert
+      state = documentReducer(state, DocumentActions.redo());
+      expect(getLineCountFromIndex(state.lineIndex)).toBe(4);
     });
   });
 

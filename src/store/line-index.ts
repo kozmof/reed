@@ -16,20 +16,28 @@ import { fixInsert, fixRedViolations, isRed, type WithNodeFn } from './rb-tree.t
 // Type-safe wrapper for withLineIndexNode to use with generic R-B tree functions
 const withLine: WithNodeFn<LineIndexNode> = withLineIndexNode;
 
+// Module-level TextEncoder singleton for UTF-8 byte length calculations
+const textEncoder = new TextEncoder();
+
 // =============================================================================
 // Shared Helpers
 // =============================================================================
 
 /**
- * Find positions of all newline characters in text.
- * Shared between eager and lazy insert/delete operations.
+ * Find byte-offset positions of all newline characters in text,
+ * and compute the total UTF-8 byte length.
+ *
+ * Encodes text to UTF-8 bytes once, then scans for 0x0A.
+ * This is correct because '\n' is always a single byte (0x0A) in UTF-8
+ * and never appears as part of a multi-byte sequence.
  */
-function findNewlinePositions(text: string): number[] {
+function findNewlineBytePositions(text: string): { positions: number[]; byteLength: number } {
+  const bytes = textEncoder.encode(text);
   const positions: number[] = [];
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === '\n') positions.push(i);
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] === 0x0A) positions.push(i);
   }
-  return positions;
+  return { positions, byteLength: bytes.length };
 }
 
 /**
@@ -264,22 +272,22 @@ export function lineIndexInsert(
 ): LineIndexState {
   if (text.length === 0) return state;
 
-  const newlinePositions = findNewlinePositions(text);
+  const { positions: newlinePositions, byteLength } = findNewlineBytePositions(text);
 
   // If no newlines, just update the length of the affected line
   if (newlinePositions.length === 0) {
-    return updateLineLength(state, position, text.length);
+    return updateLineLength(state, position, byteLength);
   }
 
   // Find the line where insertion happens
   const location = findLineAtPosition(state.root, position);
   if (location === null) {
     // Position is at or past end - append to last line or create new
-    return appendLines(state, position, text, newlinePositions);
+    return appendLines(state, position, text, newlinePositions, byteLength);
   }
 
   // Split the current line and insert new lines
-  return insertLinesAtPosition(state, location, text, newlinePositions);
+  return insertLinesAtPosition(state, location, text, newlinePositions, byteLength);
 }
 
 /**
@@ -349,7 +357,8 @@ function appendLines(
   state: LineIndexState,
   position: number,
   text: string,
-  newlinePositions: number[]
+  newlinePositions: number[],
+  byteLength: number
 ): LineIndexState {
   // Get total document length from root
   const totalLength = state.root?.subtreeByteLength ?? 0;
@@ -385,7 +394,7 @@ function appendLines(
   }
 
   // Insert final line (text after last newline)
-  const textAfterLastNewline = text.length - newlinePositions[newlinePositions.length - 1] - 1;
+  const textAfterLastNewline = byteLength - newlinePositions[newlinePositions.length - 1] - 1;
   if (textAfterLastNewline > 0 || newlinePositions.length > 0) {
     newRoot = rbInsertLine(newRoot, lineCount, currentOffset, textAfterLastNewline);
     lineCount++;
@@ -421,7 +430,8 @@ function insertLinesAtPosition(
   state: LineIndexState,
   location: LineLocation,
   text: string,
-  newlinePositions: number[]
+  newlinePositions: number[],
+  byteLength: number
 ): LineIndexState {
   const { lineNumber, offsetInLine, node } = location;
 
@@ -451,7 +461,7 @@ function insertLinesAtPosition(
   }
 
   // Last line: text after last newline + remaining original text
-  const textAfterLastNewline = text.length - newlinePositions[newlinePositions.length - 1] - 1;
+  const textAfterLastNewline = byteLength - newlinePositions[newlinePositions.length - 1] - 1;
   const lastLineLength = textAfterLastNewline + afterInsert;
 
   newRoot = rbInsertLine(
@@ -463,7 +473,7 @@ function insertLinesAtPosition(
   lineCount++;
 
   // Update offsets for all lines after the inserted ones
-  const insertedBytes = text.length;
+  const insertedBytes = byteLength;
   newRoot = updateOffsetsAfterLine(
     newRoot,
     lineNumber + newlinePositions.length,
@@ -547,11 +557,12 @@ function updateOffsetsAfterLine(
  * Build a line index from text content.
  */
 function buildLineIndexFromText(text: string, startOffset: number): LineIndexState {
+  const bytes = textEncoder.encode(text);
   const lines: { offset: number; length: number }[] = [];
   let lineStart = 0;
 
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === '\n') {
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] === 0x0A) {
       lines.push({
         offset: startOffset + lineStart,
         length: i - lineStart + 1,
@@ -561,10 +572,10 @@ function buildLineIndexFromText(text: string, startOffset: number): LineIndexSta
   }
 
   // Add final line
-  if (lineStart <= text.length) {
+  if (lineStart <= bytes.length) {
     lines.push({
       offset: startOffset + lineStart,
-      length: text.length - lineStart,
+      length: bytes.length - lineStart,
     });
   }
 
@@ -1069,22 +1080,22 @@ export function lineIndexInsertLazy(
 ): LineIndexState {
   if (text.length === 0) return state;
 
-  const newlinePositions = findNewlinePositions(text);
+  const { positions: newlinePositions, byteLength } = findNewlineBytePositions(text);
 
   // No newlines: simple length update (O(log n), no lazy needed)
   if (newlinePositions.length === 0) {
-    return updateLineLengthLazy(state, position, text.length);
+    return updateLineLengthLazy(state, position, byteLength);
   }
 
   // Find affected line
   const location = findLineAtPosition(state.root, position);
   if (location === null) {
     // Position at or past end - use eager approach for simplicity
-    return appendLinesLazy(state, position as number, text, newlinePositions, currentVersion);
+    return appendLinesLazy(state, position as number, text, newlinePositions, byteLength, currentVersion);
   }
 
   // Insert new lines and mark downstream as dirty
-  return insertLinesAtPositionLazy(state, location, text, newlinePositions, currentVersion);
+  return insertLinesAtPositionLazy(state, location, text, newlinePositions, byteLength, currentVersion);
 }
 
 // updateLineLengthLazy is identical to updateLineLength - reuse it directly
@@ -1098,6 +1109,7 @@ function appendLinesLazy(
   position: number,
   text: string,
   newlinePositions: number[],
+  byteLength: number,
   currentVersion: number
 ): LineIndexState {
   const totalLength = state.root?.subtreeByteLength ?? 0;
@@ -1134,7 +1146,7 @@ function appendLinesLazy(
     currentOffset += lineLength;
   }
 
-  const textAfterLastNewline = text.length - newlinePositions[newlinePositions.length - 1] - 1;
+  const textAfterLastNewline = byteLength - newlinePositions[newlinePositions.length - 1] - 1;
   if (textAfterLastNewline > 0 || newlinePositions.length > 0) {
     newRoot = rbInsertLine(newRoot, lineCount, currentOffset, textAfterLastNewline);
     lineCount++;
@@ -1157,6 +1169,7 @@ function insertLinesAtPositionLazy(
   location: LineLocation,
   text: string,
   newlinePositions: number[],
+  byteLength: number,
   currentVersion: number
 ): LineIndexState {
   const { lineNumber, offsetInLine, node } = location;
@@ -1184,7 +1197,7 @@ function insertLinesAtPositionLazy(
   }
 
   // Last line
-  const textAfterLastNewline = text.length - newlinePositions[newlinePositions.length - 1] - 1;
+  const textAfterLastNewline = byteLength - newlinePositions[newlinePositions.length - 1] - 1;
   const lastLineLength = textAfterLastNewline + afterInsert;
 
   newRoot = rbInsertLine(
@@ -1199,7 +1212,7 @@ function insertLinesAtPositionLazy(
   const newDirtyRange = createDirtyRange(
     lineNumber + 1, // First inserted line and all after
     'end', // To end of document
-    text.length, // Offset delta
+    byteLength, // Offset delta
     currentVersion
   );
 

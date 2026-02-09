@@ -7,6 +7,7 @@
 import type { DocumentState, HistoryEntry, HistoryChange, SelectionState, SelectionRange } from '../types/state.ts';
 import type { DocumentAction } from '../types/actions.ts';
 import type { ByteOffset } from '../types/branded.ts';
+import type { LineIndexStrategy } from '../types/store.ts';
 import { byteOffset } from '../types/branded.ts';
 import { withState } from './state.ts';
 import {
@@ -104,72 +105,38 @@ function getTextRange(state: DocumentState, start: ByteOffset, end: ByteOffset):
 }
 
 // =============================================================================
-// Line Index Operations
+// Line Index Strategies (D3: Formalized Eager/Lazy Duality)
 // =============================================================================
 
 /**
- * Update line index after text insertion (eager version).
+ * Eager strategy: updates all line offsets immediately.
  * Used for undo/redo where we need immediate accuracy.
  */
-function lineIndexUpdate(
-  state: DocumentState,
-  position: ByteOffset,
-  text: string
-): DocumentState {
-  const newLineIndex = liInsert(state.lineIndex, position, text);
-  return withState(state, {
-    lineIndex: newLineIndex,
-  });
-}
+export const eagerLineIndex: LineIndexStrategy = {
+  insert: (state, position, text, _version) => {
+    const newLineIndex = liInsert(state.lineIndex, position, text);
+    return withState(state, { lineIndex: newLineIndex });
+  },
+  delete: (state, start, end, deletedText, _version) => {
+    const newLineIndex = liDelete(state.lineIndex, start, end, deletedText);
+    return withState(state, { lineIndex: newLineIndex });
+  },
+};
 
 /**
- * Update line index after text insertion (lazy version).
- * Defers offset recalculation to idle time.
+ * Lazy strategy: defers offset recalculation to idle time.
+ * Used for normal editing where throughput matters more than immediate accuracy.
  */
-function lineIndexUpdateLazy(
-  state: DocumentState,
-  position: ByteOffset,
-  text: string,
-  version: number
-): DocumentState {
-  const newLineIndex = liInsertLazy(state.lineIndex, position, text, version);
-  return withState(state, {
-    lineIndex: newLineIndex,
-  });
-}
-
-/**
- * Update line index after text deletion (eager version).
- * Used for undo/redo where we need immediate accuracy.
- */
-function lineIndexRemove(
-  state: DocumentState,
-  start: ByteOffset,
-  end: ByteOffset,
-  deletedText: string
-): DocumentState {
-  const newLineIndex = liDelete(state.lineIndex, start, end, deletedText);
-  return withState(state, {
-    lineIndex: newLineIndex,
-  });
-}
-
-/**
- * Update line index after text deletion (lazy version).
- * Defers offset recalculation to idle time.
- */
-function lineIndexRemoveLazy(
-  state: DocumentState,
-  start: ByteOffset,
-  end: ByteOffset,
-  deletedText: string,
-  version: number
-): DocumentState {
-  const newLineIndex = liDeleteLazy(state.lineIndex, start, end, deletedText, version);
-  return withState(state, {
-    lineIndex: newLineIndex,
-  });
-}
+export const lazyLineIndex: LineIndexStrategy = {
+  insert: (state, position, text, version) => {
+    const newLineIndex = liInsertLazy(state.lineIndex, position, text, version);
+    return withState(state, { lineIndex: newLineIndex });
+  },
+  delete: (state, start, end, deletedText, version) => {
+    const newLineIndex = liDeleteLazy(state.lineIndex, start, end, deletedText, version);
+    return withState(state, { lineIndex: newLineIndex });
+  },
+};
 
 // =============================================================================
 // History Operations
@@ -244,8 +211,9 @@ function historyPush(
 
 /**
  * Perform undo operation.
+ * Uses eager line index strategy for immediate accuracy.
  */
-function historyUndo(state: DocumentState): DocumentState {
+function historyUndo(state: DocumentState, version: number): DocumentState {
   const history = state.history;
   if (history.undoStack.length === 0) return state;
 
@@ -262,10 +230,10 @@ function historyUndo(state: DocumentState): DocumentState {
     }),
   });
 
-  // Apply inverse of each change (in reverse order)
+  // Apply inverse of each change (in reverse order) with eager line index updates
   for (let i = entry.changes.length - 1; i >= 0; i--) {
     const change = entry.changes[i];
-    newState = applyInverseChange(newState, change);
+    newState = applyInverseChange(newState, change, version);
   }
 
   // Restore selection
@@ -278,8 +246,9 @@ function historyUndo(state: DocumentState): DocumentState {
 
 /**
  * Perform redo operation.
+ * Uses eager line index strategy for immediate accuracy.
  */
-function historyRedo(state: DocumentState): DocumentState {
+function historyRedo(state: DocumentState, version: number): DocumentState {
   const history = state.history;
   if (history.redoStack.length === 0) return state;
 
@@ -296,9 +265,9 @@ function historyRedo(state: DocumentState): DocumentState {
     }),
   });
 
-  // Apply each change
+  // Apply each change with eager line index updates
   for (const change of entry.changes) {
-    newState = applyChange(newState, change);
+    newState = applyChange(newState, change, version);
   }
 
   // Restore selection
@@ -311,16 +280,25 @@ function historyRedo(state: DocumentState): DocumentState {
 
 /**
  * Apply a single change (for redo).
+ * Uses eager line index strategy for immediate accuracy after redo.
  */
-function applyChange(state: DocumentState, change: HistoryChange): DocumentState {
+function applyChange(state: DocumentState, change: HistoryChange, version: number): DocumentState {
   switch (change.type) {
-    case 'insert':
-      return pieceTableInsert(state, change.position, change.text);
-    case 'delete':
-      return pieceTableDelete(state, change.position, byteOffset(change.position + change.byteLength));
+    case 'insert': {
+      let s = pieceTableInsert(state, change.position, change.text);
+      return eagerLineIndex.insert(s, change.position, change.text, version);
+    }
+    case 'delete': {
+      const end = byteOffset(change.position + change.byteLength);
+      let s = pieceTableDelete(state, change.position, end);
+      return eagerLineIndex.delete(s, change.position, end, change.text, version);
+    }
     case 'replace': {
-      const deleted = pieceTableDelete(state, change.position, byteOffset(change.position + (change.oldTextByteLength ?? 0)));
-      return pieceTableInsert(deleted, change.position, change.text);
+      const deleteEnd = byteOffset(change.position + (change.oldTextByteLength ?? 0));
+      let s = pieceTableDelete(state, change.position, deleteEnd);
+      s = pieceTableInsert(s, change.position, change.text);
+      s = eagerLineIndex.delete(s, change.position, deleteEnd, change.oldText ?? '', version);
+      return eagerLineIndex.insert(s, change.position, change.text, version);
     }
     default:
       return state;
@@ -329,19 +307,28 @@ function applyChange(state: DocumentState, change: HistoryChange): DocumentState
 
 /**
  * Apply inverse of a change (for undo).
+ * Uses eager line index strategy for immediate accuracy after undo.
  */
-function applyInverseChange(state: DocumentState, change: HistoryChange): DocumentState {
+function applyInverseChange(state: DocumentState, change: HistoryChange, version: number): DocumentState {
   switch (change.type) {
-    case 'insert':
+    case 'insert': {
       // Inverse of insert is delete
-      return pieceTableDelete(state, change.position, byteOffset(change.position + change.byteLength));
-    case 'delete':
+      const end = byteOffset(change.position + change.byteLength);
+      let s = pieceTableDelete(state, change.position, end);
+      return eagerLineIndex.delete(s, change.position, end, change.text, version);
+    }
+    case 'delete': {
       // Inverse of delete is insert
-      return pieceTableInsert(state, change.position, change.text);
+      let s = pieceTableInsert(state, change.position, change.text);
+      return eagerLineIndex.insert(s, change.position, change.text, version);
+    }
     case 'replace': {
-      // Inverse of replace is replace with old text
-      const deleted = pieceTableDelete(state, change.position, byteOffset(change.position + change.byteLength));
-      return pieceTableInsert(deleted, change.position, change.oldText ?? '');
+      // Inverse of replace: delete new text, insert old text
+      const deleteEnd = byteOffset(change.position + change.byteLength);
+      let s = pieceTableDelete(state, change.position, deleteEnd);
+      s = pieceTableInsert(s, change.position, change.oldText ?? '');
+      s = eagerLineIndex.delete(s, change.position, deleteEnd, change.text, version);
+      return eagerLineIndex.insert(s, change.position, change.oldText ?? '', version);
     }
     default:
       return state;
@@ -389,9 +376,9 @@ export function documentReducer(
 
       const nextVersion = state.version + 1;
 
-      // Insert text and update line index (using lazy version)
+      // Insert text and update line index (lazy: defers offset recalculation)
       let newState = pieceTableInsert(state, position, action.text);
-      newState = lineIndexUpdateLazy(newState, position, action.text, nextVersion);
+      newState = lazyLineIndex.insert(newState, position, action.text, nextVersion);
 
       // Push to history
       newState = historyPush(newState, {
@@ -424,9 +411,9 @@ export function documentReducer(
       // Capture deleted text for undo BEFORE deleting
       const deletedText = getTextRange(state, start, end);
 
-      // Delete from piece table and update line index (using lazy version)
+      // Delete from piece table and update line index (lazy: defers offset recalculation)
       let newState = pieceTableDelete(state, start, end);
-      newState = lineIndexRemoveLazy(newState, start, end, deletedText, nextVersion);
+      newState = lazyLineIndex.delete(newState, start, end, deletedText, nextVersion);
 
       // Push to history with actual deleted text
       newState = historyPush(newState, {
@@ -456,11 +443,11 @@ export function documentReducer(
       // Capture old text for undo BEFORE replacing
       const oldText = getTextRange(state, start, end);
 
-      // Replace is delete + insert (using lazy versions)
+      // Replace is delete + insert (lazy: defers offset recalculation)
       let newState = pieceTableDelete(state, start, end);
       newState = pieceTableInsert(newState, start, action.text);
-      newState = lineIndexRemoveLazy(newState, start, end, oldText, nextVersion);
-      newState = lineIndexUpdateLazy(newState, start, action.text, nextVersion);
+      newState = lazyLineIndex.delete(newState, start, end, oldText, nextVersion);
+      newState = lazyLineIndex.insert(newState, start, action.text, nextVersion);
 
       // Push to history with actual old text
       newState = historyPush(newState, {
@@ -489,18 +476,20 @@ export function documentReducer(
     }
 
     case 'UNDO': {
-      const newState = historyUndo(state);
+      const nextVersion = state.version + 1;
+      const newState = historyUndo(state, nextVersion);
       if (newState === state) return state; // No undo available
       return withState(newState, {
-        version: state.version + 1,
+        version: nextVersion,
       });
     }
 
     case 'REDO': {
-      const newState = historyRedo(state);
+      const nextVersion = state.version + 1;
+      const newState = historyRedo(state, nextVersion);
       if (newState === state) return state; // No redo available
       return withState(newState, {
-        version: state.version + 1,
+        version: nextVersion,
       });
     }
 
@@ -529,13 +518,13 @@ export function documentReducer(
       for (const change of action.changes) {
         if (change.type === 'insert' && change.text) {
           newState = pieceTableInsert(newState, change.start, change.text);
-          newState = lineIndexUpdateLazy(newState, change.start, change.text, nextVersion);
+          newState = lazyLineIndex.insert(newState, change.start, change.text, nextVersion);
         } else if (change.type === 'delete' && change.length) {
           // Capture deleted text before deleting for line index update
           const endPosition = byteOffset(change.start + change.length);
           const deletedText = getTextRange(newState, change.start, endPosition);
           newState = pieceTableDelete(newState, change.start, endPosition);
-          newState = lineIndexRemoveLazy(newState, change.start, endPosition, deletedText, nextVersion);
+          newState = lazyLineIndex.delete(newState, change.start, endPosition, deletedText, nextVersion);
         }
       }
       // Remote changes don't push to history (they come from network)

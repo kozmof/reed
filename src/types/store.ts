@@ -6,6 +6,7 @@
 
 import type { DocumentState } from './state.ts';
 import type { DocumentAction } from './actions.ts';
+import type { ByteOffset } from './branded.ts';
 import type {
   DocumentEventEmitter,
   DocumentEventMap,
@@ -154,4 +155,16 @@ export interface DocumentStoreWithEvents extends DocumentStore {
    * Prefer addEventListener/removeEventListener for typical usage.
    */
   readonly events: DocumentEventEmitter;
+}
+
+/**
+ * Strategy interface for line index updates.
+ * Formalizes the eager/lazy duality for line index maintenance.
+ *
+ * - Eager: updates all line offsets immediately (used for undo/redo)
+ * - Lazy: defers offset recalculation to idle time (used for normal editing)
+ */
+export interface LineIndexStrategy {
+  insert(state: DocumentState, position: ByteOffset, text: string, version: number): DocumentState;
+  delete(state: DocumentState, start: ByteOffset, end: ByteOffset, deletedText: string, version: number): DocumentState;
 }

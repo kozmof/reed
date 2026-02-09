@@ -61,6 +61,7 @@ export type {
   DocumentStoreWithEvents,
   ReadonlyDocumentStore,
   DocumentReducer,
+  LineIndexStrategy,
 } from './types/index.ts';
 
 // Branded position types
@@ -118,6 +119,8 @@ export {
   serializeAction,
   deserializeAction,
   documentReducer,
+  eagerLineIndex,
+  lazyLineIndex,
 } from './store/index.ts';
 
 // =============================================================================

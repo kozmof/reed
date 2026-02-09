@@ -11,7 +11,7 @@ import type {
 } from '../types/state.ts';
 import { byteOffset, type ByteOffset } from '../types/branded.ts';
 import { createPieceNode, withPieceNode } from './state.ts';
-import { fixInsert, type WithNodeFn } from './rb-tree.ts';
+import { fixInsert, fixRedViolations, isRed, type WithNodeFn } from './rb-tree.ts';
 
 // Type-safe wrapper for withPieceNode to use with generic R-B tree functions
 const withPiece: WithNodeFn<PieceNode> = withPieceNode;
@@ -497,13 +497,24 @@ function deleteRange(
 ): PieceNode | null {
   if (node === null) return null;
 
+  // Early return: entire subtree is outside delete range
+  const subtreeEnd = offset + node.subtreeLength;
+  if (subtreeEnd <= deleteStart || offset >= deleteEnd) {
+    return node;
+  }
+
   const leftLength = node.left?.subtreeLength ?? 0;
   const pieceStart = offset + leftLength;
   const pieceEnd = pieceStart + node.length;
 
-  // Process children
-  const newLeft = deleteRange(node.left, offset, deleteStart, deleteEnd);
-  const newRight = deleteRange(node.right, pieceEnd, deleteStart, deleteEnd);
+  // Only recurse into children whose ranges overlap the delete range
+  const newLeft = (node.left !== null && deleteStart < pieceStart && deleteEnd > offset)
+    ? deleteRange(node.left, offset, deleteStart, deleteEnd)
+    : node.left;
+
+  const newRight = (node.right !== null && deleteStart < subtreeEnd && deleteEnd > pieceEnd)
+    ? deleteRange(node.right, pieceEnd, deleteStart, deleteEnd)
+    : node.right;
 
   // Check if this piece overlaps with delete range
   if (pieceEnd <= deleteStart || pieceStart >= deleteEnd) {
@@ -588,14 +599,20 @@ function mergeTrees(
   }
 
   // Attach right tree as right child of rightmost
-  let newRightmost = withPieceNode(rightmost, { right });
+  let current = withPieceNode(rightmost, { right });
 
-  // Rebuild path
+  // Rebuild path, fixing red-red violations at each level
   for (let i = path.length - 1; i >= 0; i--) {
-    newRightmost = withPieceNode(path[i], { right: newRightmost });
+    current = withPieceNode(path[i], { right: current });
+    current = fixRedViolations(current, withPiece);
   }
 
-  return newRightmost;
+  // Ensure root is black
+  if (isRed(current)) {
+    current = withPieceNode(current, { color: 'black' });
+  }
+
+  return current;
 }
 
 // =============================================================================

@@ -302,6 +302,67 @@ describe('Piece Table Operations', () => {
     });
   });
 
+  describe('multi-piece deletion (pruning optimization)', () => {
+    it('should delete a small range from a document with many pieces', () => {
+      // Build a document with many pieces via sequential inserts
+      let state = createPieceTableState('A');
+      state = pieceTableInsert(state, byteOffset(1), 'B');
+      state = pieceTableInsert(state, byteOffset(2), 'C');
+      state = pieceTableInsert(state, byteOffset(3), 'D');
+      state = pieceTableInsert(state, byteOffset(4), 'E');
+      state = pieceTableInsert(state, byteOffset(5), 'F');
+      state = pieceTableInsert(state, byteOffset(6), 'G');
+      state = pieceTableInsert(state, byteOffset(7), 'H');
+      expect(getValue(state)).toBe('ABCDEFGH');
+
+      // Delete a small range in the middle (should skip most pieces)
+      state = pieceTableDelete(state, byteOffset(3), byteOffset(5));
+      expect(getValue(state)).toBe('ABCFGH');
+    });
+
+    it('should delete spanning multiple pieces', () => {
+      let state = createPieceTableState('Hello');
+      state = pieceTableInsert(state, byteOffset(5), ' Beautiful');
+      state = pieceTableInsert(state, byteOffset(15), ' World');
+      expect(getValue(state)).toBe('Hello Beautiful World');
+
+      // Delete ' Beautiful' which spans the second piece entirely
+      state = pieceTableDelete(state, byteOffset(5), byteOffset(15));
+      expect(getValue(state)).toBe('Hello World');
+    });
+
+    it('should handle delete at start with many pieces', () => {
+      let state = createPieceTableState('AAA');
+      state = pieceTableInsert(state, byteOffset(3), 'BBB');
+      state = pieceTableInsert(state, byteOffset(6), 'CCC');
+      state = pieceTableInsert(state, byteOffset(9), 'DDD');
+      expect(getValue(state)).toBe('AAABBBCCCDDD');
+
+      state = pieceTableDelete(state, byteOffset(0), byteOffset(3));
+      expect(getValue(state)).toBe('BBBCCCDDD');
+    });
+
+    it('should handle delete at end with many pieces', () => {
+      let state = createPieceTableState('AAA');
+      state = pieceTableInsert(state, byteOffset(3), 'BBB');
+      state = pieceTableInsert(state, byteOffset(6), 'CCC');
+      state = pieceTableInsert(state, byteOffset(9), 'DDD');
+      expect(getValue(state)).toBe('AAABBBCCCDDD');
+
+      state = pieceTableDelete(state, byteOffset(9), byteOffset(12));
+      expect(getValue(state)).toBe('AAABBBCCC');
+    });
+
+    it('should handle repeated insert-delete cycles', () => {
+      let state = createPieceTableState('base');
+      for (let i = 0; i < 10; i++) {
+        state = pieceTableInsert(state, byteOffset(4), `_${i}`);
+        state = pieceTableDelete(state, byteOffset(4), byteOffset(6));
+      }
+      expect(getValue(state)).toBe('base');
+    });
+  });
+
   describe('findPieceAtPosition', () => {
     it('should return null for empty tree', () => {
       const state = createEmptyPieceTableState();

@@ -140,21 +140,22 @@ export function createLineIndexState(content: string): LineIndexState {
     return createEmptyLineIndexState();
   }
 
-  // Find all line breaks
+  // Encode to UTF-8 bytes and scan for line breaks.
+  // Line lengths and offsets must be in bytes, not UTF-16 code units.
+  const bytes = textEncoder.encode(content);
   const lineStarts: { offset: number; length: number }[] = [];
   let lineStart = 0;
 
-  for (let i = 0; i < content.length; i++) {
-    const char = content[i];
-    if (char === '\n') {
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] === 0x0A) { // '\n'
       lineStarts.push({
         offset: lineStart,
         length: i - lineStart + 1, // Include newline
       });
       lineStart = i + 1;
-    } else if (char === '\r') {
+    } else if (bytes[i] === 0x0D) { // '\r'
       // Handle CRLF
-      if (i + 1 < content.length && content[i + 1] === '\n') {
+      if (i + 1 < bytes.length && bytes[i + 1] === 0x0A) {
         lineStarts.push({
           offset: lineStart,
           length: i - lineStart + 2, // Include \r\n
@@ -173,10 +174,10 @@ export function createLineIndexState(content: string): LineIndexState {
   }
 
   // Add last line (may not end with newline)
-  if (lineStart <= content.length) {
+  if (lineStart <= bytes.length) {
     lineStarts.push({
       offset: lineStart,
-      length: content.length - lineStart,
+      length: bytes.length - lineStart,
     });
   }
 
