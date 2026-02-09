@@ -144,6 +144,7 @@ export function createDocumentStore(
       transaction.depth = 0;
       transaction.snapshotBeforeTransaction = null;
       transaction.pendingActions = [];
+      notifyListeners();
       return state;
     }
 
@@ -210,6 +211,7 @@ export function createDocumentStore(
           transaction.depth = 0;
           transaction.snapshotBeforeTransaction = null;
           transaction.pendingActions = [];
+          notifyListeners();
         }
       }
     }
@@ -245,12 +247,13 @@ export function createDocumentStore(
       reconciliation.isReconciling = true;
 
       try {
-        const newLineIndex = reconcileFull(state.lineIndex);
+        const nextVersion = state.version + 1;
+        const newLineIndex = reconcileFull(state.lineIndex, nextVersion);
         if (newLineIndex !== state.lineIndex) {
           state = Object.freeze({
             ...state,
             lineIndex: newLineIndex,
-            version: state.version + 1,
+            version: nextVersion,
           });
           // Don't notify listeners - this is a background optimization
           // that doesn't change visible content
@@ -287,12 +290,13 @@ export function createDocumentStore(
 
     if (!state.lineIndex.rebuildPending) return;
 
-    const newLineIndex = reconcileFull(state.lineIndex);
+    const nextVersion = state.version + 1;
+    const newLineIndex = reconcileFull(state.lineIndex, nextVersion);
     if (newLineIndex !== state.lineIndex) {
       state = Object.freeze({
         ...state,
         lineIndex: newLineIndex,
-        version: state.version + 1,
+        version: nextVersion,
       });
     }
   }
@@ -301,7 +305,7 @@ export function createDocumentStore(
    * Set viewport bounds and ensure those lines are accurate.
    */
   function setViewport(startLine: number, endLine: number): void {
-    const newLineIndex = reconcileViewport(state.lineIndex, startLine, endLine);
+    const newLineIndex = reconcileViewport(state.lineIndex, startLine, endLine, state.version);
     if (newLineIndex !== state.lineIndex) {
       state = Object.freeze({
         ...state,

@@ -236,6 +236,19 @@ describe('Editor Use Cases', () => {
       expect(store.getSnapshot()).toBe(originalState);
     });
 
+    it('should notify listeners on transaction rollback', () => {
+      const store = createDocumentStore({ content: 'Original' });
+      const listener = vi.fn();
+
+      store.dispatch(DocumentActions.transactionStart());
+      store.dispatch(DocumentActions.insert(byteOffset(8), ' text'));
+
+      store.subscribe(listener);
+      store.dispatch(DocumentActions.transactionRollback());
+
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
     it('should support nested transactions', () => {
       const store = createDocumentStore({ content: '' });
       const listener = vi.fn();

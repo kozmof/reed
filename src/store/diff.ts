@@ -9,9 +9,7 @@
 import type { DocumentAction } from '../types/actions.ts';
 import { byteOffset } from '../types/branded.ts';
 import { DocumentActions } from './actions.ts';
-
-// Module-level TextEncoder singleton for efficient reuse
-const textEncoder = new TextEncoder();
+import { textEncoder } from './encoding.ts';
 
 // =============================================================================
 // Types

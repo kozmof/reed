@@ -8,9 +8,7 @@ import type { ByteOffset } from '../types/branded.ts';
 import { byteOffset, charOffset } from '../types/branded.ts';
 import { findLineAtPosition, getLineRange, getLineRangePrecise, getLineCountFromIndex } from './line-index.ts';
 import { getText, getValue, charToByteOffset, byteToCharOffset } from './piece-table.ts';
-
-// Module-level TextEncoder singleton for efficient reuse
-const textEncoder = new TextEncoder();
+import { textEncoder } from './encoding.ts';
 
 // =============================================================================
 // Types

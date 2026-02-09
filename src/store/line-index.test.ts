@@ -13,6 +13,9 @@ import {
   getLineCountFromIndex,
   collectLines,
   rebuildLineIndex,
+  lineIndexInsertLazy,
+  reconcileFull,
+  reconcileRange,
 } from './line-index.ts';
 import { createLineIndexState, createEmptyLineIndexState } from './state.ts';
 import { byteOffset } from '../types/branded.ts';
@@ -406,5 +409,28 @@ describe('Line Index Operations', () => {
       const state = createLineIndexState('Hello\nWorld');
       expect(Object.isFrozen(state)).toBe(true);
     });
+  });
+});
+
+describe('Reconciliation version tracking (P6 fix)', () => {
+  it('reconcileFull should update lastReconciledVersion', () => {
+    const initial = createLineIndexState('Line 1\nLine 2');
+    // Insert lazily to create dirty ranges
+    const dirty = lineIndexInsertLazy(initial, byteOffset(13), '\nLine 3', 5);
+    expect(dirty.dirtyRanges.length).toBeGreaterThan(0);
+    expect(dirty.lastReconciledVersion).toBe(0);
+
+    const reconciled = reconcileFull(dirty, 10);
+    expect(reconciled.lastReconciledVersion).toBe(10);
+    expect(reconciled.dirtyRanges.length).toBe(0);
+  });
+
+  it('reconcileRange should update lastReconciledVersion', () => {
+    const initial = createLineIndexState('Line 1\nLine 2');
+    const dirty = lineIndexInsertLazy(initial, byteOffset(13), '\nLine 3', 5);
+    expect(dirty.lastReconciledVersion).toBe(0);
+
+    const reconciled = reconcileRange(dirty, 0, 2, 7);
+    expect(reconciled.lastReconciledVersion).toBe(7);
   });
 });

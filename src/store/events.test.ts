@@ -263,12 +263,20 @@ describe('getAffectedRange', () => {
     expect(range[1]).toBe(15);
   });
 
-  it('should calculate range for REPLACE', () => {
+  it('should calculate range for REPLACE using new content length', () => {
     const action = DocumentActions.replace(byteOffset(5), byteOffset(15), 'Hi'); // start=5, end=15, text='Hi' (2 bytes)
     const range = getAffectedRange(action);
 
     expect(range[0]).toBe(5);
-    expect(range[1]).toBe(15); // max(10 deleted, 2 inserted) = 10, so 5 + 10 = 15
+    expect(range[1]).toBe(7); // 5 + 2 (insertLength), not max(deleteLength, insertLength)
+  });
+
+  it('should calculate range for REPLACE when insert is longer than delete', () => {
+    const action = DocumentActions.replace(byteOffset(0), byteOffset(2), 'Hello World'); // delete 2 bytes, insert 11
+    const range = getAffectedRange(action);
+
+    expect(range[0]).toBe(0);
+    expect(range[1]).toBe(11); // 0 + 11 (insertLength)
   });
 
   it('should handle unicode in INSERT', () => {

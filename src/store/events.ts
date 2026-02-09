@@ -5,9 +5,7 @@
 
 import type { DocumentState } from '../types/state.ts';
 import type { DocumentAction } from '../types/actions.ts';
-
-// Module-level TextEncoder singleton for efficient reuse
-const textEncoder = new TextEncoder();
+import { textEncoder } from './encoding.ts';
 
 // =============================================================================
 // Event Types
@@ -300,8 +298,7 @@ export function getAffectedRange(action: DocumentAction): readonly [number, numb
       return [action.start, action.end];
     case 'REPLACE': {
       const insertLength = textEncoder.encode(action.text).length;
-      const deleteLength = action.end - action.start;
-      return [action.start, action.start + Math.max(deleteLength, insertLength)];
+      return [action.start, action.start + insertLength];
     }
     default:
       return [0, 0];

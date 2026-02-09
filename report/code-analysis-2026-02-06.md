@@ -338,25 +338,35 @@ The `applyChange()` and `applyInverseChange()` functions in `reducer.ts` only up
 
 **Resolution**: Updated `applyChange()` and `applyInverseChange()` in `src/store/reducer.ts` to call `eagerLineIndex.insert()`/`eagerLineIndex.delete()` alongside the piece table operations. The eager strategy immediately recomputes all line offsets, ensuring the line index is accurate after undo/redo without waiting for background reconciliation. `historyUndo()` and `historyRedo()` now pass the next version number through to these functions. Added 5 tests verifying line count correctness through undo/redo cycles for insert, delete, and replace operations.
 
-### P4: Transaction Rollback Doesn't Notify Listeners
+### ~~P4~~: Transaction Rollback Doesn't Notify Listeners (Fixed)
 
 When `TRANSACTION_ROLLBACK` restores the snapshot, no listeners are notified. If external state depends on tracking all state transitions, rollbacks create a silent state change.
 
-### P5: `batch()` Error Recovery
+**Resolution**: Added `notifyListeners()` call to the `TRANSACTION_ROLLBACK` handler in `src/store/store.ts`. Listeners are now notified after rollback restores the pre-transaction snapshot, keeping UI components in sync.
+
+### ~~P5~~: `batch()` Error Recovery (Fixed)
 
 If an action within `batch()` throws, the catch block in `finally` tries to rollback. If rollback itself fails, it manually resets transaction state. However, the piece table and line index may be in an inconsistent intermediate state.
 
-### P6: `reconcileFull()` Doesn't Update `lastReconciledVersion`
+**Resolution**: The `TRANSACTION_ROLLBACK` dispatch path now notifies listeners (via P4 fix). Additionally, the manual recovery catch block in `batch()` now calls `notifyListeners()` after restoring state, ensuring both error recovery paths notify subscribers.
+
+### ~~P6~~: `reconcileFull()` Doesn't Update `lastReconciledVersion` (Fixed)
 
 The `reconcileFull()` function clears dirty ranges but doesn't update `lastReconciledVersion` to the current version. It preserves the old value from `state.lastReconciledVersion`. This could cause stale version tracking.
 
-### P7: `getAffectedRange` for REPLACE Uses `Math.max`
+**Resolution**: Added a `version` parameter to `reconcileFull()`, `reconcileRange()`, and `reconcileViewport()` in `src/store/line-index.ts`. All return sites now set `lastReconciledVersion` to the passed version. Callers in `src/store/store.ts` (`scheduleReconciliation`, `reconcileNow`, `setViewport`) pass the appropriate version number.
+
+### ~~P7~~: `getAffectedRange` for REPLACE Uses `Math.max` (Fixed)
 
 The `getAffectedRange()` function for `REPLACE` actions computes the affected end as `start + Math.max(deleteLength, insertLength)`. This means if the replacement text is shorter than the deleted range, the reported "affected range" extends beyond the actual changed content, which could cause unnecessary re-renders.
 
-### P8: Module-level `TextEncoder`/`TextDecoder` Duplication
+**Resolution**: Changed REPLACE case in `getAffectedRange()` in `src/store/events.ts` to return `[start, start + insertLength]` instead of `[start, start + Math.max(deleteLength, insertLength)]`. The affected range now reflects the new content range in the post-edit document, consistent with INSERT behavior.
+
+### ~~P8~~: Module-level `TextEncoder`/`TextDecoder` Duplication (Fixed)
 
 `textEncoder` is instantiated as a module-level singleton in 5 different files: `reducer.ts`, `piece-table.ts`, `state.ts`, `events.ts`, and `diff.ts`. While each instance is lightweight (~100 bytes), this pattern creates unnecessary redundancy.
+
+**Resolution**: Created `src/store/encoding.ts` exporting shared `textEncoder` and `textDecoder` singletons. Updated all 7 files (`reducer.ts`, `piece-table.ts`, `state.ts`, `events.ts`, `diff.ts`, `rendering.ts`, `line-index.ts`) to import from the shared module instead of instantiating their own.
 
 ---
 

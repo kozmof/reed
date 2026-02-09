@@ -14,10 +14,9 @@ import { createLineIndexNode, withLineIndexNode } from './state.ts';
 import { fixInsert, fixRedViolations, isRed, type WithNodeFn } from './rb-tree.ts';
 
 // Type-safe wrapper for withLineIndexNode to use with generic R-B tree functions
-const withLine: WithNodeFn<LineIndexNode> = withLineIndexNode;
+import { textEncoder } from './encoding.ts';
 
-// Module-level TextEncoder singleton for UTF-8 byte length calculations
-const textEncoder = new TextEncoder();
+const withLine: WithNodeFn<LineIndexNode> = withLineIndexNode;
 
 // =============================================================================
 // Shared Helpers
@@ -1367,7 +1366,8 @@ export function getLineRangePrecise(
 export function reconcileRange(
   state: LineIndexState,
   startLine: number,
-  endLine: number
+  endLine: number,
+  version: number
 ): LineIndexState {
   if (state.root === null || state.dirtyRanges.length === 0) return state;
 
@@ -1401,7 +1401,7 @@ export function reconcileRange(
     root: newRoot,
     lineCount: state.lineCount,
     dirtyRanges: Object.freeze(remainingRanges),
-    lastReconciledVersion: state.lastReconciledVersion,
+    lastReconciledVersion: version,
     rebuildPending: remainingRanges.length > 0,
   });
 }
@@ -1436,14 +1436,14 @@ function updateLineOffsetByNumber(
  * Rebuilds tree with correct offsets.
  * Intended to be called from idle callback.
  */
-export function reconcileFull(state: LineIndexState): LineIndexState {
+export function reconcileFull(state: LineIndexState, version: number): LineIndexState {
   if (state.dirtyRanges.length === 0) return state;
   if (state.root === null) {
     return Object.freeze({
       root: null,
       lineCount: 1,
       dirtyRanges: Object.freeze([]),
-      lastReconciledVersion: state.lastReconciledVersion,
+      lastReconciledVersion: version,
       rebuildPending: false,
     });
   }
@@ -1455,7 +1455,7 @@ export function reconcileFull(state: LineIndexState): LineIndexState {
       root: null,
       lineCount: 1,
       dirtyRanges: Object.freeze([]),
-      lastReconciledVersion: state.lastReconciledVersion,
+      lastReconciledVersion: version,
       rebuildPending: false,
     });
   }
@@ -1475,7 +1475,7 @@ export function reconcileFull(state: LineIndexState): LineIndexState {
     root: newRoot,
     lineCount: correctedLines.length,
     dirtyRanges: Object.freeze([]),
-    lastReconciledVersion: state.lastReconciledVersion,
+    lastReconciledVersion: version,
     rebuildPending: false,
   });
 }
@@ -1487,7 +1487,8 @@ export function reconcileFull(state: LineIndexState): LineIndexState {
 export function reconcileViewport(
   state: LineIndexState,
   startLine: number,
-  endLine: number
+  endLine: number,
+  version: number
 ): LineIndexState {
   if (state.dirtyRanges.length === 0) return state;
 
@@ -1500,5 +1501,5 @@ export function reconcileViewport(
   if (!viewportDirty) return state;
 
   // Reconcile only the viewport range
-  return reconcileRange(state, startLine, endLine);
+  return reconcileRange(state, startLine, endLine, version);
 }

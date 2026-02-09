@@ -16,9 +16,7 @@ import type {
 } from '../types/state.ts';
 import { byteOffset } from '../types/branded.ts';
 import type { ByteOffset } from '../types/branded.ts';
-
-// Module-level TextEncoder singleton for efficient reuse
-const textEncoder = new TextEncoder();
+import { textEncoder } from './encoding.ts';
 
 /**
  * Default configuration values.

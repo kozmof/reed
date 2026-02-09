@@ -12,13 +12,10 @@ import type {
 import { byteOffset, type ByteOffset } from '../types/branded.ts';
 import { createPieceNode, withPieceNode } from './state.ts';
 import { fixInsert, fixRedViolations, isRed, type WithNodeFn } from './rb-tree.ts';
+import { textEncoder, textDecoder } from './encoding.ts';
 
 // Type-safe wrapper for withPieceNode to use with generic R-B tree functions
 const withPiece: WithNodeFn<PieceNode> = withPieceNode;
-
-// Module-level TextEncoder/TextDecoder singletons for efficient reuse
-const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
 
 // =============================================================================
 // Buffer Access Helpers

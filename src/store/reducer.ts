@@ -21,9 +21,7 @@ import {
   lineIndexInsertLazy as liInsertLazy,
   lineIndexDeleteLazy as liDeleteLazy,
 } from './line-index.ts';
-
-// Module-level TextEncoder singleton for efficient reuse
-const textEncoder = new TextEncoder();
+import { textEncoder } from './encoding.ts';
 
 // =============================================================================
 // Position Validation
