@@ -244,6 +244,7 @@ export {
   getVisibleLineRange,
   getVisibleLines,
   getVisibleLine,
+  getLineContent,
   estimateLineHeight,
   estimateTotalHeight,
   positionToLineColumn,

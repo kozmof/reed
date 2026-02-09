@@ -154,7 +154,7 @@ function myersDiff(
     return [{ type: 'delete', text: oldText, oldPos: oldOffset, newPos: newOffset }];
   }
 
-  // For small strings, use simple approach
+  // For small strings, use simple DP approach (threshold: n*m < 10000 cells)
   if (n * m < 10000) {
     return simpleDiff(oldText, newText, oldOffset, newOffset);
   }
@@ -273,19 +273,20 @@ function simpleDiff(
   oldOffset: number,
   newOffset: number
 ): DiffEdit[] {
-  // Use dynamic programming LCS approach
+  // Use dynamic programming LCS approach with flat typed array
   const n = oldText.length;
   const m = newText.length;
+  const cols = m + 1;
 
-  // Build LCS table
-  const dp: number[][] = Array(n + 1).fill(null).map(() => Array(m + 1).fill(0));
+  // Flat Int32Array: dp[i][j] accessed as dp[i * cols + j], zero-initialized
+  const dp = new Int32Array((n + 1) * cols);
 
   for (let i = 1; i <= n; i++) {
     for (let j = 1; j <= m; j++) {
       if (oldText[i - 1] === newText[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1;
+        dp[i * cols + j] = dp[(i - 1) * cols + (j - 1)] + 1;
       } else {
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+        dp[i * cols + j] = Math.max(dp[(i - 1) * cols + j], dp[i * cols + (j - 1)]);
       }
     }
   }
@@ -297,7 +298,6 @@ function simpleDiff(
 
   while (i > 0 || j > 0) {
     if (i > 0 && j > 0 && oldText[i - 1] === newText[j - 1]) {
-      // Equal - move diagonally
       edits.unshift({
         type: 'equal',
         text: oldText[i - 1],
@@ -306,8 +306,7 @@ function simpleDiff(
       });
       i--;
       j--;
-    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-      // Insert
+    } else if (j > 0 && (i === 0 || dp[i * cols + (j - 1)] >= dp[(i - 1) * cols + j])) {
       edits.unshift({
         type: 'insert',
         text: newText[j - 1],
@@ -316,7 +315,6 @@ function simpleDiff(
       });
       j--;
     } else {
-      // Delete
       edits.unshift({
         type: 'delete',
         text: oldText[i - 1],

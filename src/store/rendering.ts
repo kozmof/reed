@@ -94,6 +94,23 @@ export function getVisibleLineRange(
 }
 
 /**
+ * Get the text content of a specific line using the line index for O(log n) lookup.
+ *
+ * Unlike `getLine()` from piece-table.ts which scans the entire document O(n),
+ * this leverages the line index tree for efficient random access.
+ *
+ * @param state - The full document state (needs both pieceTable and lineIndex)
+ * @param lineNum - 0-indexed line number
+ * @returns The line text (without trailing newline), or empty string if out of range
+ */
+export function getLineContent(state: DocumentState, lineNum: number): string {
+  const range = getLineRange(state.lineIndex, lineNum);
+  if (range === null) return '';
+  const raw = getText(state.pieceTable, byteOffset(range.start) as ByteOffset, byteOffset(range.start + range.length) as ByteOffset);
+  return raw.endsWith('\n') ? raw.slice(0, -1) : raw;
+}
+
+/**
  * Compute visible lines for rendering.
  * Returns line content and metadata for efficient virtualized rendering.
  */

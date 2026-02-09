@@ -466,37 +466,53 @@ The current manual `Object.freeze()` + spread pattern is verbose. While it avoid
 
 **Resolution**: Addressed via subtree-range pruning in the P2 fix rather than the split-merge approach. The pruning optimization achieves O(k + log n) where k = overlapping pieces, which is effectively O(log n) for typical editing operations (k is usually 1-3). A full split-merge rewrite could further reduce worst-case complexity to O(log n) for large selection deletions spanning many pieces, but is not needed for practical editing workloads.
 
-### I2: `byteToCharOffset()` Linear Scan
+### ~~I2~~: `byteToCharOffset()` Linear Scan (Fixed)
 
 The function uses a linear scan from the beginning of the string. For large strings, this is O(n). A binary search approach (doubling the position until past the target, then binary searching) would be O(log n).
 
-### I3: `findLineOffsets()` Is O(n)
+**Resolution**: Replaced per-character `textEncoder.encode(text[charPos]).length` loop with single `textEncoder.encode(text)` + UTF-8 byte sequence scanning. Eliminates O(n) `Uint8Array` allocations. Still O(n) asymptotically but with dramatically lower constant factor.
+
+### ~~I3~~: `findLineOffsets()` Is O(n) (Fixed)
 
 The `getLine()` function scans the entire document to find line boundaries. For documents with a line index, it should use the line index tree instead. The function even has a comment suggesting this.
 
-### I4: `simpleDiff()` Memory Usage
+**Resolution**: Added `getLineContent(state: DocumentState, lineNum: number)` to `rendering.ts` that uses `getLineRange()` from the line index for O(log n) lookup. Updated `getLine()` JSDoc to point users to the new function. Exported from index files.
+
+### ~~I4~~: `simpleDiff()` Memory Usage (Fixed)
 
 The DP-based LCS in `simpleDiff()` allocates an `(n+1) × (m+1)` matrix. For strings up to ~100 characters (where n*m < 10000), this is fine. But the threshold should be documented, and the allocation pattern `Array(n+1).fill(null).map(...)` creates garbage.
 
-### I5: `mergeDirtyRanges()` Only Merges Same-Delta Ranges
+**Resolution**: Replaced 2D `Array` allocation with flat `Int32Array((n+1) * (m+1))`, accessed as `dp[i * cols + j]`. Zero-initialized by default, eliminates `(n+1)` array objects. Added threshold documentation comment in `myersDiff()`.
+
+### ~~I5~~: `mergeDirtyRanges()` Only Merges Same-Delta Ranges (Fixed)
 
 Two adjacent dirty ranges with different `offsetDelta` values won't be merged. While this is correct for precise tracking, it means rapid editing can accumulate many small dirty ranges, degrading reconciliation performance.
 
-### I6: Event Emission in Batch Mode
+**Resolution**: Added same-start delta summing: overlapping ranges with the same `startLine` but different deltas are merged by summing their `offsetDelta` values. Added safety cap: if merged ranges exceed 32, collapse to a single `[0, 'end']` range with `offsetDelta: 0` to trigger full reconciliation.
+
+### ~~I6~~: Event Emission in Batch Mode (Fixed)
 
 `createDocumentStoreWithEvents().batch()` emits events for each action with the *overall* `prevState` and `nextState`. This means each event gets the same before/after states, losing intermediate state information. For consumers tracking individual changes, this could be misleading.
 
-### I7: `replacePieceInTree()` Receives Unused `_root` Parameter
+**Resolution**: Batch now replays actions through `documentReducer` to capture intermediate states. Each event receives accurate `prevState`/`nextState` for its specific action, enabling consumers to track individual changes within a batch.
+
+### ~~I7~~: `replacePieceInTree()` Receives Unused `_root` Parameter (Fixed)
 
 The function signature includes `_root: PieceNode` which is never used. The path-based reconstruction doesn't need the original root since the last path entry leads to it.
 
-### I8: `compactAddBuffer()` Uses Two Passes
+**Resolution**: Removed `_root` parameter from `replacePieceInTree()` and updated the call site in `insertWithSplit()`.
+
+### ~~I8~~: `compactAddBuffer()` Uses Two Passes (Fixed)
 
 The buffer compaction builds an offset map in one pass then copies data in another. These could be combined into a single pass, reducing memory allocation.
 
-### I9: `fixInsert()` Calls `rebalanceAfterInsert()` Which Traverses Full Tree
+**Resolution**: Combined into a single pass that builds the offset map and copies data simultaneously. Uses `stats.addBufferUsed` for buffer size estimation.
+
+### ~~I9~~: `fixInsert()` Calls `rebalanceAfterInsert()` Which Traverses Full Tree (Fixed)
 
 The `rebalanceAfterInsert()` function in `rb-tree.ts` recursively visits the entire tree to find and fix violations, making it O(n). Standard RB-tree insertion fix-up is O(log n) by only walking from the inserted node to the root. This is the most significant performance issue in the codebase.
+
+**Resolution**: Implemented `fixInsertWithPath()` in `rb-tree.ts` that walks only the insertion path (O(log n) nodes). BST insert functions in `piece-table.ts` and `line-index.ts` now return the path of newly-created nodes. Added proper color-flip handling for the uncle-red case (the original `fixRedViolations` only did rotations). The new `fixInsertViolation` helper handles both rotation (uncle-black) and color-flip (uncle-red) cases, with child-syncing to propagate changes through the path.
 
 ---
 

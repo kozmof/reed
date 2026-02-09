@@ -428,12 +428,15 @@ export function createDocumentStoreWithEvents(
     const prevState = baseStore.getSnapshot();
     const nextState = baseStore.batch(actions);
 
-    // Emit events for each action that contributed to the change
     if (nextState !== prevState) {
+      // Replay through reducer to capture intermediate states for accurate events
+      let intermediateState = prevState;
       for (const action of actions) {
-        // For batched actions, we emit with the overall prev/next state
-        // This is a simplification - individual intermediate states are not tracked
-        emitEventsForAction(action, prevState, nextState);
+        const afterAction = documentReducer(intermediateState, action);
+        if (afterAction !== intermediateState) {
+          emitEventsForAction(action, intermediateState, afterAction);
+        }
+        intermediateState = afterAction;
       }
     }
 

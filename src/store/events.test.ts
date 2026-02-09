@@ -14,6 +14,7 @@ import {
 } from './events.ts';
 import { createInitialState } from './state.ts';
 import { DocumentActions } from './actions.ts';
+import { createDocumentStoreWithEvents } from './store.ts';
 import { byteOffset } from '../types/branded.ts';
 
 describe('Event Emitter', () => {
@@ -292,5 +293,34 @@ describe('getAffectedRange', () => {
     const range = getAffectedRange(action);
 
     expect(range).toEqual([0, 0]);
+  });
+});
+
+describe('Batch event emission with intermediate states', () => {
+  it('should emit events with correct intermediate states during batch', () => {
+    // This tests that the store's batch() emits events with per-action
+    // intermediate states, not the same overall prev/next state for all actions.
+    const store = createDocumentStoreWithEvents();
+    const events: Array<{ prevLength: number; nextLength: number }> = [];
+
+    store.addEventListener('content-change', (event: any) => {
+      events.push({
+        prevLength: event.prevState.pieceTable.totalLength,
+        nextLength: event.nextState.pieceTable.totalLength,
+      });
+    });
+
+    // Batch two inserts
+    store.batch([
+      DocumentActions.insert(byteOffset(0), 'Hello'),
+      DocumentActions.insert(byteOffset(5), ' World'),
+    ]);
+
+    // With intermediate states, first event should show 0→5, second 5→11
+    expect(events).toHaveLength(2);
+    expect(events[0].prevLength).toBe(0);
+    expect(events[0].nextLength).toBe(5);
+    expect(events[1].prevLength).toBe(5);
+    expect(events[1].nextLength).toBe(11);
   });
 });

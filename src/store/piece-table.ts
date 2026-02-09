@@ -11,7 +11,7 @@ import type {
 } from '../types/state.ts';
 import { byteOffset, type ByteOffset } from '../types/branded.ts';
 import { createPieceNode, withPieceNode } from './state.ts';
-import { fixInsert, fixRedViolations, isRed, type WithNodeFn } from './rb-tree.ts';
+import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 import { textEncoder, textDecoder } from './encoding.ts';
 
 // Type-safe wrapper for withPieceNode to use with generic R-B tree functions
@@ -202,47 +202,54 @@ export function rbInsertPiece(
     return withPieceNode(newPiece, { color: 'black' });
   }
 
-  // Insert using standard BST insertion, tracking the path
-  const { newRoot } = bstInsert(root, position, newPiece);
+  // Insert using standard BST insertion, collecting new nodes along insertion path
+  const insertPath = bstInsert(root, position, newPiece);
 
-  // Fix Red-Black violations using shared R-B tree utilities
-  return fixInsert(newRoot, withPiece);
+  // Fix Red-Black violations using path-based O(log n) approach
+  return fixInsertWithPath(insertPath, withPiece);
 }
 
 /**
- * BST insertion with path tracking.
+ * BST insertion that returns the insertion path of newly-created nodes.
+ * The path is ordered root-to-leaf-parent, with each entry containing
+ * the new node and the direction taken to descend.
  */
 function bstInsert(
   root: PieceNode,
   position: number,
   newNode: PieceNode
-): { newRoot: PieceNode; path: PathEntry[] } {
-  const path: PathEntry[] = [];
+): InsertionPathEntry<PieceNode>[] {
+  const insertPath: InsertionPathEntry<PieceNode>[] = [];
 
   function insert(node: PieceNode, offset: number): PieceNode {
     const leftLength = node.left?.subtreeLength ?? 0;
     const pieceStart = offset + leftLength;
 
+    let result: PieceNode;
+    let direction: 'left' | 'right';
     if (position <= pieceStart) {
-      // Insert in left subtree
-      path.push({ node, direction: 'left' });
+      direction = 'left';
       if (node.left === null) {
-        return withPieceNode(node, { left: newNode });
+        result = withPieceNode(node, { left: newNode });
+      } else {
+        result = withPieceNode(node, { left: insert(node.left, offset) });
       }
-      return withPieceNode(node, { left: insert(node.left, offset) });
     } else {
-      // Insert in right subtree
-      path.push({ node, direction: 'right' });
+      direction = 'right';
       const newOffset = pieceStart + node.length;
       if (node.right === null) {
-        return withPieceNode(node, { right: newNode });
+        result = withPieceNode(node, { right: newNode });
+      } else {
+        result = withPieceNode(node, { right: insert(node.right, newOffset) });
       }
-      return withPieceNode(node, { right: insert(node.right, newOffset) });
     }
+    insertPath.push({ node: result, direction });
+    return result;
   }
 
-  const newRoot = insert(root, 0);
-  return { newRoot, path };
+  insert(root, 0);
+  insertPath.reverse(); // root-to-leaf-parent order
+  return insertPath;
 }
 
 // =============================================================================
@@ -404,7 +411,6 @@ function insertWithSplit(
 
   // Rebuild the tree with the split
   const replaceResult = replacePieceInTree(
-    root,
     location.path,
     location.node,
     leftPart
@@ -430,7 +436,6 @@ function insertWithSplit(
  * that was built during findPieceAtPosition, creating only O(log n) new nodes.
  */
 function replacePieceInTree(
-  _root: PieceNode,
   path: PathEntry[],
   oldNode: PieceNode,
   newNode: PieceNode
@@ -747,9 +752,8 @@ export function getLineCount(state: PieceTableState): number {
  * Get a specific line by line number (0-indexed).
  * Returns the line content including the trailing newline if present.
  *
- * Note: This scans the document to find line boundaries.
- * For O(log n) line access, use `getVisibleLine()` from rendering.ts
- * or `getLineRange()` from line-index.ts when you have DocumentState.
+ * Note: This scans the document to find line boundaries — O(n).
+ * For O(log n) line access with DocumentState, use `getLineContent()` from rendering.ts.
  */
 export function getLine(state: PieceTableState, lineNumber: number): string {
   if (state.root === null) return '';
@@ -881,25 +885,14 @@ export function compactAddBuffer(
 
   const pieces = collectPieces(state.root);
 
-  // Build mapping from old offsets to new offsets
+  // Single pass: build offset map and copy live data simultaneously
   const offsetMap = new Map<number, number>();
-  let newOffset = 0;
-
-  // First pass: calculate new offsets for each add buffer piece
-  for (const piece of pieces) {
-    if (piece.bufferType === 'add') {
-      offsetMap.set(piece.start, newOffset);
-      newOffset += piece.length;
-    }
-  }
-
-  // Create new compact buffer
-  const newBuffer = new Uint8Array(Math.max(newOffset * 2, 1024)); // Leave room to grow
+  const newBuffer = new Uint8Array(Math.max(stats.addBufferUsed * 2, 1024));
   let writeOffset = 0;
 
-  // Second pass: copy live data to new buffer
   for (const piece of pieces) {
     if (piece.bufferType === 'add') {
+      offsetMap.set(piece.start, writeOffset);
       newBuffer.set(
         state.addBuffer.subarray(piece.start, piece.start + piece.length),
         writeOffset
@@ -1000,16 +993,22 @@ export function byteToCharOffset(text: string, byteOffset: number): number {
   const bytes = textEncoder.encode(text);
   if (byteOffset >= bytes.length) return text.length;
 
-  // Linear scan to find character boundary
-  // For most text this is fast; for very long strings, could optimize with binary search
+  // Single encode + byte scanning using UTF-8 sequence length detection
   let charPos = 0;
   let bytePos = 0;
 
-  while (bytePos < byteOffset && charPos < text.length) {
-    const charBytes = textEncoder.encode(text[charPos]).length;
-    if (bytePos + charBytes > byteOffset) break;
-    bytePos += charBytes;
-    charPos++;
+  while (bytePos < byteOffset) {
+    const b = bytes[bytePos];
+    let seqLen: number;
+    if (b < 0x80) seqLen = 1;
+    else if ((b & 0xE0) === 0xC0) seqLen = 2;
+    else if ((b & 0xF0) === 0xE0) seqLen = 3;
+    else seqLen = 4;
+
+    if (bytePos + seqLen > byteOffset) break;
+    bytePos += seqLen;
+    // 4-byte UTF-8 sequences map to 2 JS chars (surrogate pairs)
+    charPos += seqLen === 4 ? 2 : 1;
   }
 
   return charPos;

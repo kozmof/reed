@@ -8,6 +8,7 @@ import {
   getVisibleLineRange,
   getVisibleLines,
   getVisibleLine,
+  getLineContent,
   estimateLineHeight,
   estimateTotalHeight,
   positionToLineColumn,
@@ -371,5 +372,40 @@ describe('lineColumnToPosition', () => {
     // Line index uses byte positions (UTF-8)
     // '世界\n' is 7 bytes (3+3+1), so line 1 starts at byte position 7
     expect(lineColumnToPosition(state, 1, 0)).toBe(7);
+  });
+});
+
+describe('getLineContent (optimization)', () => {
+  it('should get line content by number using line index', () => {
+    const state = createInitialState({
+      content: 'Line 1\nLine 2\nLine 3',
+    });
+
+    expect(getLineContent(state, 0)).toBe('Line 1');
+    expect(getLineContent(state, 1)).toBe('Line 2');
+    expect(getLineContent(state, 2)).toBe('Line 3');
+  });
+
+  it('should return empty string for out-of-range line', () => {
+    const state = createInitialState({
+      content: 'Hello',
+    });
+
+    expect(getLineContent(state, -1)).toBe('');
+    expect(getLineContent(state, 5)).toBe('');
+  });
+
+  it('should handle empty document', () => {
+    const state = createInitialState();
+    expect(getLineContent(state, 0)).toBe('');
+  });
+
+  it('should handle unicode content', () => {
+    const state = createInitialState({
+      content: '你好\nworld',
+    });
+
+    expect(getLineContent(state, 0)).toBe('你好');
+    expect(getLineContent(state, 1)).toBe('world');
   });
 });

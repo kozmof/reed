@@ -196,10 +196,97 @@ export function rebalanceAfterInsert<N extends RBNode<N>>(
 
 /**
  * Complete rebalancing after insert: rebalance and ensure black root.
+ * Note: This traverses the entire tree — O(n). Prefer fixInsertWithPath for O(log n).
  */
 export function fixInsert<N extends RBNode<N>>(
   root: N,
   withNode: WithNodeFn<N>
 ): N {
   return ensureBlackRoot(rebalanceAfterInsert(root, withNode), withNode);
+}
+
+// =============================================================================
+// Path-based Insert Fix (O(log n))
+// =============================================================================
+
+/**
+ * An entry in the insertion path: a newly-created node and the direction
+ * we descended from it to reach the next node in the path.
+ */
+export interface InsertionPathEntry<N extends RBNode<N>> {
+  node: N;
+  direction: 'left' | 'right';
+}
+
+/**
+ * Fix a red-red violation at a node during insertion.
+ * Unlike fixRedViolations (which only rotates), this also handles
+ * the color-flip case when both children are red (uncle-red case).
+ *
+ * Returns the fixed node and whether the violation may propagate upward
+ * (true for color flips where the node becomes red).
+ */
+function fixInsertViolation<N extends RBNode<N>>(
+  node: N,
+  withNode: WithNodeFn<N>
+): { fixed: N; propagate: boolean } {
+  const leftRed = isRed(node.left);
+  const rightRed = isRed(node.right);
+
+  const hasLeftViolation = leftRed && (isRed((node.left as N)?.left) || isRed((node.left as N)?.right));
+  const hasRightViolation = rightRed && (isRed((node.right as N)?.right) || isRed((node.right as N)?.left));
+
+  if (!hasLeftViolation && !hasRightViolation) {
+    return { fixed: node, propagate: false };
+  }
+
+  // Both children red: color flip (uncle-red case in standard RB insertion)
+  if (leftRed && rightRed) {
+    return {
+      fixed: withNode(node, {
+        color: 'red' as NodeColor,
+        left: withNode(node.left as N, { color: 'black' }),
+        right: withNode(node.right as N, { color: 'black' }),
+      }),
+      propagate: true,
+    };
+  }
+
+  // Uncle is black: rotation (terminal — subtree root becomes black)
+  return { fixed: fixRedViolations(node, withNode), propagate: false };
+}
+
+/**
+ * Fix Red-Black violations after insert using only the insertion path.
+ * Walks from the leaf-parent to the root, syncing child references and
+ * applying fix-up (color flips or rotations) at each level.
+ * O(log n) since the path length is bounded by tree height.
+ *
+ * @param insertPath - Array of new nodes from root (index 0) to leaf-parent (last index),
+ *                     each annotated with the direction taken to reach the next level.
+ * @param withNode - Function to create new nodes with updated properties.
+ * @returns The balanced root node.
+ */
+export function fixInsertWithPath<N extends RBNode<N>>(
+  insertPath: InsertionPathEntry<N>[],
+  withNode: WithNodeFn<N>
+): N {
+  for (let i = insertPath.length - 1; i >= 0; i--) {
+    // Sync: if the child below was modified, update this node's reference to it
+    if (i < insertPath.length - 1) {
+      const childBelow = insertPath[i + 1].node;
+      const dir = insertPath[i].direction;
+      const myChild = dir === 'left' ? insertPath[i].node.left : insertPath[i].node.right;
+      if (myChild !== childBelow) {
+        insertPath[i].node = dir === 'left'
+          ? withNode(insertPath[i].node, { left: childBelow })
+          : withNode(insertPath[i].node, { right: childBelow });
+      }
+    }
+
+    const { fixed } = fixInsertViolation(insertPath[i].node, withNode);
+    insertPath[i].node = fixed;
+  }
+
+  return ensureBlackRoot(insertPath[0].node, withNode);
 }

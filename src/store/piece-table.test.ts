@@ -15,6 +15,9 @@ import {
   collectPieces,
   getBufferStats,
   compactAddBuffer,
+  byteToCharOffset,
+  charToByteOffset,
+  rbInsertPiece,
 } from './piece-table.ts';
 import {
   createEmptyPieceTableState,
@@ -536,6 +539,99 @@ describe('Piece Table Operations', () => {
 
       const compacted = compactAddBuffer(state, 0);
       expect(getValue(compacted)).toBe('');
+    });
+  });
+
+  describe('byteToCharOffset (optimization)', () => {
+    it('should handle ASCII text', () => {
+      expect(byteToCharOffset('Hello', 0)).toBe(0);
+      expect(byteToCharOffset('Hello', 2)).toBe(2);
+      expect(byteToCharOffset('Hello', 5)).toBe(5);
+    });
+
+    it('should handle CJK characters (3-byte UTF-8)', () => {
+      // '你好' = 6 bytes (3+3)
+      expect(byteToCharOffset('你好', 0)).toBe(0);
+      expect(byteToCharOffset('你好', 3)).toBe(1);
+      expect(byteToCharOffset('你好', 6)).toBe(2);
+    });
+
+    it('should handle mid-character byte offset by returning start of char', () => {
+      // '你好' — byte offset 1 or 2 is mid-character, should return 0
+      expect(byteToCharOffset('你好', 1)).toBe(0);
+      expect(byteToCharOffset('你好', 2)).toBe(0);
+      expect(byteToCharOffset('你好', 4)).toBe(1);
+    });
+
+    it('should handle 2-byte UTF-8 characters', () => {
+      // 'é' = 2 bytes (0xC3 0xA9)
+      expect(byteToCharOffset('élan', 0)).toBe(0);
+      expect(byteToCharOffset('élan', 2)).toBe(1);
+      expect(byteToCharOffset('élan', 3)).toBe(2);
+    });
+
+    it('should handle emoji (4-byte UTF-8 → surrogate pair)', () => {
+      // '😀' = 4 bytes UTF-8, 2 chars in JS (surrogate pair)
+      expect(byteToCharOffset('😀', 4)).toBe(2);
+      expect(byteToCharOffset('a😀b', 1)).toBe(1);
+      expect(byteToCharOffset('a😀b', 5)).toBe(3);
+      expect(byteToCharOffset('a😀b', 6)).toBe(4);
+    });
+
+    it('should handle negative and overflow offsets', () => {
+      expect(byteToCharOffset('Hello', -1)).toBe(0);
+      expect(byteToCharOffset('Hello', 100)).toBe(5);
+    });
+  });
+
+  describe('RB tree properties after insert (path-based fixInsert)', () => {
+    function verifyRBProperties(node: ReturnType<typeof collectPieces>[0] | null, visited: Set<any> = new Set()): { blackHeight: number; valid: boolean } {
+      if (node === null) return { blackHeight: 1, valid: true };
+
+      // Check for red-red violation between this node and its children
+      // (only checking parent-child, not grandparent, for basic validation)
+      if (node.color === 'red') {
+        if (node.left?.color === 'red' || node.right?.color === 'red') {
+          return { blackHeight: 0, valid: false };
+        }
+      }
+
+      const leftResult = verifyRBProperties(node.left as any, visited);
+      const rightResult = verifyRBProperties(node.right as any, visited);
+
+      if (!leftResult.valid || !rightResult.valid) return { blackHeight: 0, valid: false };
+      if (leftResult.blackHeight !== rightResult.blackHeight) return { blackHeight: 0, valid: false };
+
+      const bh = leftResult.blackHeight + (node.color === 'black' ? 1 : 0);
+      return { blackHeight: bh, valid: true };
+    }
+
+    it('should maintain RB properties after many inserts', () => {
+      let state = createEmptyPieceTableState();
+      // Insert 20 pieces to stress-test balancing
+      for (let i = 0; i < 20; i++) {
+        state = pieceTableInsert(state, byteOffset(i), String.fromCharCode(65 + (i % 26)));
+      }
+
+      expect(state.root).not.toBeNull();
+      expect(state.root!.color).toBe('black');
+
+      const { valid } = verifyRBProperties(state.root);
+      expect(valid).toBe(true);
+      expect(getValue(state)).toHaveLength(20);
+    });
+
+    it('should maintain balanced black-height after sequential inserts', () => {
+      let state = createEmptyPieceTableState();
+      for (let i = 0; i < 50; i++) {
+        state = pieceTableInsert(state, byteOffset(i), 'x');
+      }
+
+      const { valid, blackHeight } = verifyRBProperties(state.root);
+      expect(valid).toBe(true);
+      // Black height should be reasonable (log2(50) ~ 6, so BH should be <= ~7)
+      expect(blackHeight).toBeLessThanOrEqual(10);
+      expect(getValue(state)).toBe('x'.repeat(50));
     });
   });
 });

@@ -11,7 +11,7 @@ import type {
 } from '../types/state.ts';
 import type { ByteOffset } from '../types/branded.ts';
 import { createLineIndexNode, withLineIndexNode } from './state.ts';
-import { fixInsert, fixRedViolations, isRed, type WithNodeFn } from './rb-tree.ts';
+import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 
 // Type-safe wrapper for withLineIndexNode to use with generic R-B tree functions
 import { textEncoder } from './encoding.ts';
@@ -217,39 +217,55 @@ function rbInsertLine(
     return withLineIndexNode(newNode, { color: 'black' });
   }
 
-  const newRoot = bstInsertLine(root, lineNumber, newNode);
-  // Use shared R-B tree balancing utilities
-  return fixInsert(newRoot, withLine);
+  // Insert using BST, collecting new nodes along insertion path
+  const insertPath = bstInsertLine(root, lineNumber, newNode);
+  // Fix Red-Black violations using path-based O(log n) approach
+  return fixInsertWithPath(insertPath, withLine);
 }
 
 /**
- * BST insertion for line index.
+ * BST insertion for line index that returns the insertion path of newly-created nodes.
+ * The path is ordered root-to-leaf-parent.
  */
 function bstInsertLine(
-  node: LineIndexNode,
+  root: LineIndexNode,
   lineNumber: number,
   newNode: LineIndexNode
-): LineIndexNode {
-  const leftLineCount = node.left?.subtreeLineCount ?? 0;
+): InsertionPathEntry<LineIndexNode>[] {
+  const insertPath: InsertionPathEntry<LineIndexNode>[] = [];
 
-  if (lineNumber <= leftLineCount) {
-    // Insert in left subtree
-    if (node.left === null) {
-      return withLineIndexNode(node, { left: newNode });
+  function insert(node: LineIndexNode, lineNum: number): LineIndexNode {
+    const leftLineCount = node.left?.subtreeLineCount ?? 0;
+
+    let result: LineIndexNode;
+    let direction: 'left' | 'right';
+    if (lineNum <= leftLineCount) {
+      direction = 'left';
+      if (node.left === null) {
+        result = withLineIndexNode(node, { left: newNode });
+      } else {
+        result = withLineIndexNode(node, {
+          left: insert(node.left, lineNum),
+        });
+      }
+    } else {
+      direction = 'right';
+      const rightLineNumber = lineNum - leftLineCount - 1;
+      if (node.right === null) {
+        result = withLineIndexNode(node, { right: newNode });
+      } else {
+        result = withLineIndexNode(node, {
+          right: insert(node.right, rightLineNumber),
+        });
+      }
     }
-    return withLineIndexNode(node, {
-      left: bstInsertLine(node.left, lineNumber, newNode),
-    });
-  } else {
-    // Insert in right subtree
-    const rightLineNumber = lineNumber - leftLineCount - 1;
-    if (node.right === null) {
-      return withLineIndexNode(node, { right: newNode });
-    }
-    return withLineIndexNode(node, {
-      right: bstInsertLine(node.right, rightLineNumber, newNode),
-    });
+    insertPath.push({ node: result, direction });
+    return result;
   }
+
+  insert(root, lineNumber);
+  insertPath.reverse(); // root-to-leaf-parent order
+  return insertPath;
 }
 
 // =============================================================================
@@ -998,20 +1014,44 @@ export function mergeDirtyRanges(
     const currentEnd = current.endLine === 'end' ? Infinity : current.endLine;
     const nextEnd = next.endLine === 'end' ? Infinity : next.endLine;
 
-    // Adjacent or overlapping ranges with same delta can merge
-    if (next.startLine <= currentEnd + 1 && next.offsetDelta === current.offsetDelta) {
-      current = Object.freeze({
-        startLine: current.startLine,
-        endLine: currentEnd === Infinity || nextEnd === Infinity ? 'end' as const : Math.max(currentEnd, nextEnd),
-        offsetDelta: current.offsetDelta,
-        createdAtVersion: Math.max(current.createdAtVersion, next.createdAtVersion),
-      });
+    if (next.startLine <= currentEnd + 1) {
+      if (next.offsetDelta === current.offsetDelta) {
+        // Same delta — merge as before
+        current = Object.freeze({
+          startLine: current.startLine,
+          endLine: currentEnd === Infinity || nextEnd === Infinity ? 'end' as const : Math.max(currentEnd, nextEnd),
+          offsetDelta: current.offsetDelta,
+          createdAtVersion: Math.max(current.createdAtVersion, next.createdAtVersion),
+        });
+      } else if (next.startLine === current.startLine) {
+        // Same start, different delta — sum deltas (equivalent to applying both)
+        current = Object.freeze({
+          startLine: current.startLine,
+          endLine: currentEnd === Infinity || nextEnd === Infinity ? 'end' as const : Math.max(currentEnd, nextEnd),
+          offsetDelta: current.offsetDelta + next.offsetDelta,
+          createdAtVersion: Math.max(current.createdAtVersion, next.createdAtVersion),
+        });
+      } else {
+        merged.push(current);
+        current = next;
+      }
     } else {
       merged.push(current);
       current = next;
     }
   }
   merged.push(current);
+
+  // Safety cap: if too many ranges accumulated, collapse to full-document rebuild
+  if (merged.length > 32) {
+    const maxVersion = merged.reduce((v, r) => Math.max(v, r.createdAtVersion), 0);
+    return [Object.freeze({
+      startLine: 0,
+      endLine: 'end' as const,
+      offsetDelta: 0,
+      createdAtVersion: maxVersion,
+    })];
+  }
 
   return merged;
 }

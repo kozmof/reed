@@ -16,6 +16,7 @@ import {
   lineIndexInsertLazy,
   reconcileFull,
   reconcileRange,
+  mergeDirtyRanges,
 } from './line-index.ts';
 import { createLineIndexState, createEmptyLineIndexState } from './state.ts';
 import { byteOffset } from '../types/branded.ts';
@@ -432,5 +433,52 @@ describe('Reconciliation version tracking (P6 fix)', () => {
 
     const reconciled = reconcileRange(dirty, 0, 2, 7);
     expect(reconciled.lastReconciledVersion).toBe(7);
+  });
+});
+
+describe('mergeDirtyRanges improvements', () => {
+  it('should merge same-start ranges with different deltas by summing', () => {
+    const ranges = [
+      Object.freeze({ startLine: 5, endLine: 10 as number | 'end', offsetDelta: 3, createdAtVersion: 1 }),
+      Object.freeze({ startLine: 5, endLine: 12 as number | 'end', offsetDelta: -2, createdAtVersion: 2 }),
+    ];
+
+    const merged = mergeDirtyRanges(ranges);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].startLine).toBe(5);
+    expect(merged[0].endLine).toBe(12);
+    expect(merged[0].offsetDelta).toBe(1); // 3 + (-2)
+    expect(merged[0].createdAtVersion).toBe(2);
+  });
+
+  it('should collapse to single range when exceeding 32 ranges', () => {
+    const ranges = [];
+    for (let i = 0; i < 40; i++) {
+      ranges.push(Object.freeze({
+        startLine: i * 10,
+        endLine: (i * 10 + 5) as number | 'end',
+        offsetDelta: i % 2 === 0 ? 1 : -1,
+        createdAtVersion: i,
+      }));
+    }
+
+    const merged = mergeDirtyRanges(ranges);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].startLine).toBe(0);
+    expect(merged[0].endLine).toBe('end');
+    expect(merged[0].offsetDelta).toBe(0);
+    expect(merged[0].createdAtVersion).toBe(39);
+  });
+
+  it('should still merge adjacent same-delta ranges normally', () => {
+    const ranges = [
+      Object.freeze({ startLine: 0, endLine: 5 as number | 'end', offsetDelta: 2, createdAtVersion: 1 }),
+      Object.freeze({ startLine: 6, endLine: 10 as number | 'end', offsetDelta: 2, createdAtVersion: 2 }),
+    ];
+
+    const merged = mergeDirtyRanges(ranges);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].startLine).toBe(0);
+    expect(merged[0].endLine).toBe(10);
   });
 });

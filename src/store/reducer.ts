@@ -103,7 +103,7 @@ function getTextRange(state: DocumentState, start: ByteOffset, end: ByteOffset):
 }
 
 // =============================================================================
-// Line Index Strategies (D3: Formalized Eager/Lazy Duality)
+// Line Index Strategies (Formalized Eager/Lazy Duality)
 // =============================================================================
 
 /**
