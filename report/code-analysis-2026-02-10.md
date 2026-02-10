@@ -382,6 +382,54 @@ In the reducer's INSERT handler, `textEncoder.encode(action.text)` is called onc
 
 ---
 
+## 10. Carry-Forward Issues from Previous Reports
+
+The following issues were identified in earlier analysis reports (2026-01-31, 2026-02-03, 2026-02-06) and remain unfixed in the current codebase.
+
+### 10.1 Selection Not Auto-Updated on Edit (from 02-03: 5.5, 6.1)
+
+When an INSERT or DELETE action modifies the document, the reducer does **not** automatically adjust the selection/cursor position. Consumers must manually dispatch `SET_SELECTION` after every edit to keep the cursor in the correct position. This is error-prone for integrators—a standard text editor expectation is that inserting text moves the cursor to the end of the inserted content, and deleting text moves the cursor to the start of the deleted range.
+
+**Recommendation**: Add a selection transformation step inside the reducer for INSERT, DELETE, and REPLACE actions that automatically adjusts `anchor`/`active` positions based on the edit range and length delta.
+
+### 10.2 No Undo Grouping Timeout (from 02-03: 6.2)
+
+Each dispatched action creates a separate `HistoryEntry`. In typical editors, rapid keystrokes (e.g., typing a word) are coalesced into a single undo entry using a timeout (e.g., 300ms). Currently, pressing undo after typing "hello" would undo one character at a time rather than the whole word.
+
+**Recommendation**: Add a `coalesceTimeout` option to `DocumentStoreConfig` that merges consecutive same-type actions (e.g., sequential `INSERT` at adjacent positions) into a single history entry when they occur within the timeout window.
+
+### 10.3 Nested Transaction Rollback Shares Outermost Snapshot (from 02-03: 5.3)
+
+The transaction system uses a single `snapshot` captured at `TRANSACTION_START` with a `depth` counter for nesting. Rolling back an inner transaction restores the snapshot from the *outermost* transaction, discarding all changes—including those from successfully committed intermediate transactions.
+
+**Example**: `begin() → edit A → begin() → edit B → rollback()` discards both A and B, even though only the inner transaction was rolled back.
+
+**Recommendation**: Maintain a snapshot stack (`snapshot[]`) so each nested `TRANSACTION_START` captures its own restore point. Rollback pops only the most recent snapshot.
+
+### 10.4 `getBufferStats` Iterates All Pieces (from 02-03: 8.6)
+
+`getBufferStats()` in `piece-table.ts` performs an in-order traversal of the entire piece tree to count the number of pieces and compute total text size. This is O(n) in the number of pieces.
+
+**Recommendation**: Track `pieceCount` and aggregate sizes incrementally in `PieceTableState`, updated on insert/delete. This would make `getBufferStats` O(1).
+
+### 10.5 Separate "Core" from "Features" (from 02-06: D1)
+
+All implementation code resides in a flat `store/` directory. As the codebase grows (plugin system, chunk management, CRDT), this structure will make it harder to identify what is core vs. optional. Separating into `core/` (rb-tree, piece-table, state, reducer) and `features/` (events, rendering, diff, history helpers) would:
+
+- Enable tree-shaking for consumers who only need the core
+- Clarify the dependency hierarchy (features depend on core, not vice versa)
+- Make it easier to enforce layering rules
+
+### 10.6 Extract Buffer Management (from 02-06: D2)
+
+The add buffer growth logic is embedded inside `pieceTableInsert` in `piece-table.ts`. Extracting it into a dedicated `GrowableBuffer` abstraction would:
+
+- Make the growth strategy configurable (e.g., different strategies for small vs. large documents)
+- Enable unit testing of buffer management independently of the piece table
+- Prepare for chunk management integration where buffer lifecycle becomes more complex
+
+---
+
 ## Summary
 
 Reed's core data layer is well-architected with clean type safety, immutable state management, and a sound piece table + RB-tree foundation. The codebase demonstrates strong TypeScript practices (branded types, discriminated unions, F-bounded polymorphism) and thoughtful performance tradeoffs (lazy/eager line indexing, streaming, virtualization support).
@@ -393,3 +441,7 @@ The main areas needing attention for production readiness are:
 3. **RB-tree invariant maintenance** during delete operations
 4. **Performance hot spots** (redundant encoding, full-document materialization in getValue/selectionToCharOffsets)
 5. **Plugin/middleware extensibility** foundation for the spec's plugin system goals
+6. **Selection auto-adjustment** on edit actions (carry-forward from 02-03)
+7. **Undo grouping** with coalesce timeout for natural undo behavior (carry-forward from 02-03)
+8. **Nested transaction rollback** should use a snapshot stack (carry-forward from 02-03)
+9. **Module separation** into core/features for tree-shaking and clarity (carry-forward from 02-06)
