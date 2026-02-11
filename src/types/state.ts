@@ -226,6 +226,8 @@ export interface HistoryState {
   readonly redoStack: readonly HistoryEntry[];
   /** Maximum number of entries to keep */
   readonly limit: number;
+  /** Timeout in ms for coalescing consecutive same-type changes (0 = disabled) */
+  readonly coalesceTimeout: number;
 }
 
 // =============================================================================
@@ -289,4 +291,6 @@ export interface DocumentStoreConfig {
   encoding?: string;
   /** Line ending style (default: 'lf') */
   lineEnding?: 'lf' | 'crlf' | 'cr';
+  /** Timeout in ms for grouping consecutive undo entries (default: 0, disabled) */
+  undoGroupTimeout?: number;
 }

@@ -27,6 +27,7 @@ const DEFAULT_CONFIG: Required<DocumentStoreConfig> = {
   chunkSize: 65536,
   encoding: 'utf-8',
   lineEnding: 'lf',
+  undoGroupTimeout: 0,
 };
 
 /**
@@ -228,11 +229,12 @@ export function createInitialSelectionState(): SelectionState {
 /**
  * Create initial history state.
  */
-export function createInitialHistoryState(limit: number = 1000): HistoryState {
+export function createInitialHistoryState(limit: number = 1000, coalesceTimeout: number = 0): HistoryState {
   return Object.freeze({
     undoStack: Object.freeze([]),
     redoStack: Object.freeze([]),
     limit,
+    coalesceTimeout,
   });
 }
 
@@ -265,7 +267,7 @@ export function createInitialState(
     pieceTable: createPieceTableState(content),
     lineIndex: createLineIndexState(content),
     selection: createInitialSelectionState(),
-    history: createInitialHistoryState(mergedConfig.historyLimit),
+    history: createInitialHistoryState(mergedConfig.historyLimit, mergedConfig.undoGroupTimeout),
     metadata: createInitialMetadata(config),
   });
 }

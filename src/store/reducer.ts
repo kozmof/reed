@@ -174,7 +174,81 @@ function computeSelectionAfterChange(
 }
 
 /**
+ * Check if a new change can be coalesced with the last history entry.
+ * Coalescing merges consecutive same-type changes within a timeout window
+ * into a single undo entry (e.g., typing a word becomes one undo step).
+ */
+function canCoalesce(
+  lastEntry: HistoryEntry,
+  newChange: HistoryChange,
+  timeout: number
+): boolean {
+  if (timeout <= 0) return false;
+  if (Date.now() - lastEntry.timestamp > timeout) return false;
+  if (lastEntry.changes.length !== 1) return false;
+
+  const last = lastEntry.changes[0];
+  if (last.type !== newChange.type) return false;
+
+  switch (newChange.type) {
+    case 'insert':
+      // Contiguous typing: new insert starts where last insert ended
+      return newChange.position === last.position + last.byteLength;
+    case 'delete': {
+      // Backspace: new delete ends where last delete starts
+      if (newChange.position + newChange.byteLength === last.position) return true;
+      // Forward delete: same position as last delete
+      if (newChange.position === last.position) return true;
+      return false;
+    }
+    default:
+      return false;
+  }
+}
+
+/**
+ * Merge two changes into a single coalesced change.
+ * Assumes canCoalesce() returned true for these changes.
+ */
+function coalesceChanges(
+  existing: HistoryChange,
+  incoming: HistoryChange
+): HistoryChange {
+  switch (incoming.type) {
+    case 'insert':
+      // Append: concatenate text, sum byte lengths, keep earlier position
+      return Object.freeze({
+        type: 'insert',
+        position: existing.position,
+        text: existing.text + incoming.text,
+        byteLength: existing.byteLength + incoming.byteLength,
+      });
+    case 'delete': {
+      if (incoming.position + incoming.byteLength === existing.position) {
+        // Backspace: prepend text, use earlier position
+        return Object.freeze({
+          type: 'delete',
+          position: incoming.position,
+          text: incoming.text + existing.text,
+          byteLength: existing.byteLength + incoming.byteLength,
+        });
+      }
+      // Forward delete: append text, keep position
+      return Object.freeze({
+        type: 'delete',
+        position: existing.position,
+        text: existing.text + incoming.text,
+        byteLength: existing.byteLength + incoming.byteLength,
+      });
+    }
+    default:
+      return incoming;
+  }
+}
+
+/**
  * Push a change to the history stack.
+ * May coalesce with the previous entry if within the coalesce timeout.
  */
 function historyPush(
   state: DocumentState,
@@ -184,6 +258,26 @@ function historyPush(
 
   // Compute expected selection after the change for proper redo
   const selectionAfter = computeSelectionAfterChange(state, change);
+
+  // Try to coalesce with the last entry
+  const lastEntry = history.undoStack[history.undoStack.length - 1];
+  if (lastEntry && canCoalesce(lastEntry, change, history.coalesceTimeout)) {
+    const merged = coalesceChanges(lastEntry.changes[0], change);
+    const mergedEntry: HistoryEntry = Object.freeze({
+      changes: Object.freeze([merged]),
+      selectionBefore: lastEntry.selectionBefore,
+      selectionAfter,
+      timestamp: Date.now(),
+    });
+    const undoStack = [...history.undoStack.slice(0, -1), mergedEntry];
+    return withState(state, {
+      history: Object.freeze({
+        ...history,
+        undoStack: Object.freeze(undoStack),
+        redoStack: Object.freeze([]),
+      }),
+    });
+  }
 
   const entry: HistoryEntry = Object.freeze({
     changes: Object.freeze([change]),
@@ -375,7 +469,9 @@ export function documentReducer(
       const nextVersion = state.version + 1;
 
       // Insert text and update line index (lazy: defers offset recalculation)
+      const totalLengthBefore = state.pieceTable.totalLength;
       let newState = pieceTableInsert(state, position, action.text);
+      const insertedByteLength = newState.pieceTable.totalLength - totalLengthBefore;
       newState = lazyLineIndex.insert(newState, position, action.text, nextVersion);
 
       // Push to history
@@ -383,7 +479,7 @@ export function documentReducer(
         type: 'insert',
         position,
         text: action.text,
-        byteLength: textEncoder.encode(action.text).length,
+        byteLength: insertedByteLength,
       });
 
       // Mark as dirty and increment version
@@ -443,7 +539,9 @@ export function documentReducer(
 
       // Replace is delete + insert (lazy: defers offset recalculation)
       let newState = pieceTableDelete(state, start, end);
+      const totalLengthAfterDelete = newState.pieceTable.totalLength;
       newState = pieceTableInsert(newState, start, action.text);
+      const insertedByteLength = newState.pieceTable.totalLength - totalLengthAfterDelete;
       newState = lazyLineIndex.delete(newState, start, end, oldText, nextVersion);
       newState = lazyLineIndex.insert(newState, start, action.text, nextVersion);
 
@@ -452,7 +550,7 @@ export function documentReducer(
         type: 'replace',
         position: start,
         text: action.text,
-        byteLength: textEncoder.encode(action.text).length,
+        byteLength: insertedByteLength,
         oldText,
       });
 
@@ -491,12 +589,13 @@ export function documentReducer(
     }
 
     case 'HISTORY_CLEAR': {
-      // Clear both undo and redo stacks while preserving the limit
+      // Clear both undo and redo stacks while preserving config
       return withState(state, {
         history: Object.freeze({
           undoStack: Object.freeze([]),
           redoStack: Object.freeze([]),
           limit: state.history.limit,
+          coalesceTimeout: state.history.coalesceTimeout,
         }),
         version: state.version + 1,
       });

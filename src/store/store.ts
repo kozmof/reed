@@ -25,8 +25,8 @@ import { isTextEditAction } from '../types/actions.ts';
 interface TransactionState {
   /** Depth of nested transactions */
   depth: number;
-  /** State snapshot before transaction started (for rollback) */
-  snapshotBeforeTransaction: DocumentState | null;
+  /** Stack of state snapshots for each nesting level (for rollback) */
+  snapshotStack: DocumentState[];
   /** Actions accumulated during transaction */
   pendingActions: DocumentAction[];
 }
@@ -59,7 +59,7 @@ export function createDocumentStore(
   const listeners = new Set<StoreListener>();
   const transaction: TransactionState = {
     depth: 0,
-    snapshotBeforeTransaction: null,
+    snapshotStack: [],
     pendingActions: [],
   };
   const reconciliation: ReconciliationState = {
@@ -117,8 +117,8 @@ export function createDocumentStore(
   function dispatch(action: DocumentAction): DocumentState {
     // Handle transaction control actions
     if (action.type === 'TRANSACTION_START') {
+      transaction.snapshotStack.push(state);
       if (transaction.depth === 0) {
-        transaction.snapshotBeforeTransaction = state;
         transaction.pendingActions = [];
       }
       transaction.depth++;
@@ -128,8 +128,8 @@ export function createDocumentStore(
     if (action.type === 'TRANSACTION_COMMIT') {
       if (transaction.depth > 0) {
         transaction.depth--;
+        transaction.snapshotStack.pop();
         if (transaction.depth === 0) {
-          transaction.snapshotBeforeTransaction = null;
           transaction.pendingActions = [];
           notifyListeners();
         }
@@ -138,12 +138,16 @@ export function createDocumentStore(
     }
 
     if (action.type === 'TRANSACTION_ROLLBACK') {
-      if (transaction.depth > 0 && transaction.snapshotBeforeTransaction) {
-        state = transaction.snapshotBeforeTransaction;
+      if (transaction.depth > 0) {
+        const snapshot = transaction.snapshotStack.pop();
+        if (snapshot) {
+          state = snapshot;
+        }
+        transaction.depth--;
+        if (transaction.depth === 0) {
+          transaction.pendingActions = [];
+        }
       }
-      transaction.depth = 0;
-      transaction.snapshotBeforeTransaction = null;
-      transaction.pendingActions = [];
       notifyListeners();
       return state;
     }
@@ -205,11 +209,11 @@ export function createDocumentStore(
           dispatch({ type: 'TRANSACTION_ROLLBACK' });
         } catch {
           // If rollback fails, manually reset transaction state to prevent corruption
-          if (transaction.snapshotBeforeTransaction) {
-            state = transaction.snapshotBeforeTransaction;
+          if (transaction.snapshotStack.length > 0) {
+            state = transaction.snapshotStack[0];
           }
           transaction.depth = 0;
-          transaction.snapshotBeforeTransaction = null;
+          transaction.snapshotStack = [];
           transaction.pendingActions = [];
           notifyListeners();
         }

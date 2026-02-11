@@ -270,6 +270,26 @@ describe('Editor Use Cases', () => {
 
       expect(listener).toHaveBeenCalledTimes(1);
     });
+
+    it('should rollback only inner transaction in nested transactions', () => {
+      const store = createDocumentStore({ content: '' });
+
+      // Outer transaction
+      store.dispatch(DocumentActions.transactionStart());
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'A'));
+
+      // Inner transaction
+      store.dispatch(DocumentActions.transactionStart());
+      store.dispatch(DocumentActions.insert(byteOffset(1), 'B'));
+
+      // Rollback inner only — should keep 'A'
+      store.dispatch(DocumentActions.transactionRollback());
+      expect(store.getSnapshot().pieceTable.totalLength).toBe(1);
+
+      // Commit outer
+      store.dispatch(DocumentActions.transactionCommit());
+      expect(store.getSnapshot().pieceTable.totalLength).toBe(1);
+    });
   });
 
   describe('Multiline Editing', () => {

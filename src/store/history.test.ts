@@ -3,7 +3,7 @@
  * Tests canUndo, canRedo, getUndoCount, getRedoCount, isHistoryEmpty, and HISTORY_CLEAR action.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   canUndo,
   canRedo,
@@ -52,6 +52,7 @@ describe('canUndo', () => {
       ],
       redoStack: [],
       limit: 1000,
+      coalesceTimeout: 0,
     };
     expect(canUndo(historyState)).toBe(true);
   });
@@ -108,6 +109,7 @@ describe('canRedo', () => {
         },
       ],
       limit: 1000,
+      coalesceTimeout: 0,
     };
     expect(canRedo(historyState)).toBe(true);
   });
@@ -163,6 +165,7 @@ describe('getUndoCount', () => {
       ],
       redoStack: [],
       limit: 1000,
+      coalesceTimeout: 0,
     };
     expect(getUndoCount(historyState)).toBe(2);
   });
@@ -215,6 +218,7 @@ describe('getRedoCount', () => {
         },
       ],
       limit: 1000,
+      coalesceTimeout: 0,
     };
     expect(getRedoCount(historyState)).toBe(1);
   });
@@ -257,6 +261,7 @@ describe('isHistoryEmpty', () => {
       undoStack: [],
       redoStack: [],
       limit: 1000,
+      coalesceTimeout: 0,
     };
     expect(isHistoryEmpty(emptyHistory)).toBe(true);
 
@@ -271,6 +276,7 @@ describe('isHistoryEmpty', () => {
       ],
       redoStack: [],
       limit: 1000,
+      coalesceTimeout: 0,
     };
     expect(isHistoryEmpty(nonEmptyHistory)).toBe(false);
   });
@@ -410,5 +416,125 @@ describe('History helpers integration', () => {
 
     expect(getRedoCount(state)).toBe(0);
     expect(canRedo(state)).toBe(false);
+  });
+});
+
+// =============================================================================
+// Undo Coalescing Tests
+// =============================================================================
+
+describe('Undo coalescing', () => {
+  it('should not coalesce when timeout is 0 (default)', () => {
+    let state = createInitialState();
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'a'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(1), 'b'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(2), 'c'));
+
+    expect(getUndoCount(state)).toBe(3);
+  });
+
+  it('should coalesce contiguous inserts within timeout', () => {
+    let state = createInitialState({ undoGroupTimeout: 300 });
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'a'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(1), 'b'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(2), 'c'));
+
+    // All three inserts should be coalesced into one entry
+    expect(getUndoCount(state)).toBe(1);
+
+    // Undo should remove all three characters at once
+    state = documentReducer(state, DocumentActions.undo());
+    expect(state.pieceTable.totalLength).toBe(0);
+  });
+
+  it('should not coalesce non-contiguous inserts', () => {
+    let state = createInitialState({ undoGroupTimeout: 300 });
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'a'));
+    // Insert at position 0 instead of 1 (not contiguous with previous insert end)
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'b'));
+
+    expect(getUndoCount(state)).toBe(2);
+  });
+
+  it('should not coalesce different change types', () => {
+    let state = createInitialState({ undoGroupTimeout: 300 });
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'abc'));
+    state = documentReducer(state, DocumentActions.delete(byteOffset(2), byteOffset(3)));
+
+    expect(getUndoCount(state)).toBe(2);
+  });
+
+  it('should not coalesce when timeout has expired', () => {
+    let state = createInitialState({ undoGroupTimeout: 300 });
+
+    // Insert first character
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'a'));
+
+    // Mock Date.now to return a time beyond the timeout
+    const originalNow = Date.now;
+    vi.spyOn(Date, 'now').mockReturnValue(originalNow() + 500);
+
+    state = documentReducer(state, DocumentActions.insert(byteOffset(1), 'b'));
+
+    vi.restoreAllMocks();
+
+    expect(getUndoCount(state)).toBe(2);
+  });
+
+  it('should coalesce backspace deletes', () => {
+    let state = createInitialState({ undoGroupTimeout: 300, content: 'abcd' });
+
+    // Delete 'd' (backspace from end)
+    state = documentReducer(state, DocumentActions.delete(byteOffset(3), byteOffset(4)));
+    // Delete 'c' (backspace)
+    state = documentReducer(state, DocumentActions.delete(byteOffset(2), byteOffset(3)));
+    // Delete 'b' (backspace)
+    state = documentReducer(state, DocumentActions.delete(byteOffset(1), byteOffset(2)));
+
+    // All three backspaces should coalesce into one entry
+    expect(getUndoCount(state)).toBe(1);
+
+    // Undo should restore all three characters
+    state = documentReducer(state, DocumentActions.undo());
+    expect(state.pieceTable.totalLength).toBe(4);
+  });
+
+  it('should coalesce forward deletes', () => {
+    let state = createInitialState({ undoGroupTimeout: 300, content: 'abcd' });
+
+    // Forward delete at position 1 (delete 'b')
+    state = documentReducer(state, DocumentActions.delete(byteOffset(1), byteOffset(2)));
+    // Forward delete at same position (delete 'c', which shifted into position 1)
+    state = documentReducer(state, DocumentActions.delete(byteOffset(1), byteOffset(2)));
+
+    // Both forward deletes should coalesce
+    expect(getUndoCount(state)).toBe(1);
+
+    // Undo should restore both characters
+    state = documentReducer(state, DocumentActions.undo());
+    expect(state.pieceTable.totalLength).toBe(4);
+  });
+
+  it('should preserve coalesceTimeout across HISTORY_CLEAR', () => {
+    let state = createInitialState({ undoGroupTimeout: 300 });
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'a'));
+    state = documentReducer(state, DocumentActions.historyClear());
+
+    expect(state.history.coalesceTimeout).toBe(300);
+  });
+
+  it('should coalesce multi-byte characters correctly', () => {
+    let state = createInitialState({ undoGroupTimeout: 300 });
+    // Insert emoji (4 bytes in UTF-8)
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), '\u{1F600}'));
+    const firstByteLength = state.pieceTable.totalLength;
+    // Insert another emoji contiguously
+    state = documentReducer(state, DocumentActions.insert(byteOffset(firstByteLength), '\u{1F601}'));
+
+    expect(getUndoCount(state)).toBe(1);
+
+    // Undo removes both emojis
+    state = documentReducer(state, DocumentActions.undo());
+    expect(state.pieceTable.totalLength).toBe(0);
   });
 });

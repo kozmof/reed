@@ -327,9 +327,11 @@ The event-emitting `batch()` method (lines 427-443) first calls `baseStore.batch
 
 Most state factories apply `Object.freeze()`, but `withState()` uses `Object.freeze({ ...state, ...changes })` which only freezes the top level. Nested objects (e.g., a new `metadata` object passed in `changes`) may not be frozen. This is mostly safe because concrete factories freeze their outputs, but the pattern is fragile if callers construct nested objects inline.
 
-### 8.8 `textEncoder.encode()` Called Multiple Times for Same Text
+### 8.8 `textEncoder.encode()` Called Multiple Times for Same Text — **Fixed 2026-02-11**
 
 In the reducer's INSERT handler, `textEncoder.encode(action.text)` is called once inside `pieceTableInsert` (to copy bytes to the add buffer) and again in `historyPush` (to compute `byteLength`). Passing the pre-computed byte length would avoid the redundant encoding.
+
+**Resolution**: Eliminated redundant encoding by deriving `byteLength` from `PieceTableState.totalLength` differences before/after insert. Applied to both INSERT and REPLACE handlers in `reducer.ts`. Zero API changes.
 
 ---
 
@@ -379,19 +381,23 @@ When an INSERT or DELETE action modifies the document, the reducer does **not** 
 
 **Recommendation**: Add a selection transformation step inside the reducer for INSERT, DELETE, and REPLACE actions that automatically adjusts `anchor`/`active` positions based on the edit range and length delta.
 
-### 10.2 No Undo Grouping Timeout (from 02-03: 6.2)
+### 10.2 No Undo Grouping Timeout (from 02-03: 6.2) — **Fixed 2026-02-11**
 
 Each dispatched action creates a separate `HistoryEntry`. In typical editors, rapid keystrokes (e.g., typing a word) are coalesced into a single undo entry using a timeout (e.g., 300ms). Currently, pressing undo after typing "hello" would undo one character at a time rather than the whole word.
 
 **Recommendation**: Add a `coalesceTimeout` option to `DocumentStoreConfig` that merges consecutive same-type actions (e.g., sequential `INSERT` at adjacent positions) into a single history entry when they occur within the timeout window.
 
-### 10.3 Nested Transaction Rollback Shares Outermost Snapshot (from 02-03: 5.3)
+**Resolution**: Added `undoGroupTimeout` config option (default: 0, opt-in) and `coalesceTimeout` field on `HistoryState`. `historyPush` in `reducer.ts` now merges consecutive same-type changes (contiguous inserts, backspace deletes, forward deletes) within the timeout window. 10 new tests cover coalescing behavior.
+
+### 10.3 Nested Transaction Rollback Shares Outermost Snapshot (from 02-03: 5.3) — **Fixed 2026-02-11**
 
 The transaction system uses a single `snapshot` captured at `TRANSACTION_START` with a `depth` counter for nesting. Rolling back an inner transaction restores the snapshot from the *outermost* transaction, discarding all changes—including those from successfully committed intermediate transactions.
 
 **Example**: `begin() → edit A → begin() → edit B → rollback()` discards both A and B, even though only the inner transaction was rolled back.
 
 **Recommendation**: Maintain a snapshot stack (`snapshot[]`) so each nested `TRANSACTION_START` captures its own restore point. Rollback pops only the most recent snapshot.
+
+**Resolution**: Replaced `snapshotBeforeTransaction: DocumentState | null` with `snapshotStack: DocumentState[]` in `store.ts`. Each `TRANSACTION_START` pushes, `COMMIT` pops (discard), `ROLLBACK` pops (restore) and decrements depth by 1 instead of resetting to 0. New test verifies inner rollback preserves outer changes.
 
 ### 10.4 `getBufferStats` Iterates All Pieces (from 02-03: 8.6)
 
