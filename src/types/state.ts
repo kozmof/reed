@@ -3,7 +3,7 @@
  * All state structures are read-only and use structural sharing for efficiency.
  */
 
-import type { ByteOffset, CharOffset } from './branded.ts';
+import type { ByteOffset, ByteLength, CharOffset } from './branded.ts';
 
 // =============================================================================
 // Piece Table Types
@@ -21,7 +21,7 @@ export type BufferType = 'original' | 'add';
 export interface OriginalBufferRef {
   readonly bufferType: 'original';
   readonly start: ByteOffset;
-  readonly length: ByteOffset;
+  readonly length: ByteLength;
 }
 
 /**
@@ -31,7 +31,7 @@ export interface OriginalBufferRef {
 export interface AddBufferRef {
   readonly bufferType: 'add';
   readonly start: ByteOffset;
-  readonly length: ByteOffset;
+  readonly length: ByteLength;
 }
 
 /**
@@ -71,7 +71,7 @@ export interface PieceNode extends RBNode<PieceNode> {
   /** Start offset in the buffer */
   readonly start: ByteOffset;
   /** Length of this piece */
-  readonly length: ByteOffset;
+  readonly length: ByteLength;
   /** Total length of this subtree (for O(log n) position lookups) */
   readonly subtreeLength: number;
 }
@@ -102,8 +102,8 @@ export interface PieceTableState {
  * Maps line numbers to absolute byte offsets.
  */
 export interface LineIndexNode extends RBNode<LineIndexNode> {
-  /** Byte offset in document where this line starts */
-  readonly documentOffset: number;
+  /** Byte offset in document where this line starts. 'pending' when using lazy mode before reconciliation. */
+  readonly documentOffset: number | 'pending';
   /** Length of this line including newline character(s) */
   readonly lineLength: number;
 
@@ -120,8 +120,8 @@ export interface LineIndexNode extends RBNode<LineIndexNode> {
 export interface DirtyLineRange {
   /** First line affected (inclusive, 0-indexed) */
   readonly startLine: number;
-  /** Last line affected (inclusive), or 'end' for to end of document */
-  readonly endLine: number | 'end';
+  /** Last line affected (inclusive). Use Number.MAX_SAFE_INTEGER for "to end of document" */
+  readonly endLine: number;
   /** Byte delta to apply to lines in this range */
   readonly offsetDelta: number;
   /** Version when this dirty range was created */
@@ -200,8 +200,6 @@ export interface HistoryChange {
   readonly byteLength: number;
   /** For replace: the original text that was replaced */
   readonly oldText?: string;
-  /** For replace: pre-computed UTF-8 byte length of `oldText` */
-  readonly oldTextByteLength?: number;
 }
 
 /**

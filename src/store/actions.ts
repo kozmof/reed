@@ -34,7 +34,7 @@ export const DocumentActions = {
    * @param text - Text to insert
    */
   insert(start: ByteOffset, text: string): InsertAction {
-    return Object.freeze({ type: 'INSERT', start, text } as const);
+    return Object.freeze({ type: 'INSERT', start, text });
   },
 
   /**
@@ -43,7 +43,7 @@ export const DocumentActions = {
    * @param end - End position of deletion (exclusive, byte offset)
    */
   delete(start: ByteOffset, end: ByteOffset): DeleteAction {
-    return Object.freeze({ type: 'DELETE', start, end } as const);
+    return Object.freeze({ type: 'DELETE', start, end });
   },
 
   /**
@@ -53,7 +53,7 @@ export const DocumentActions = {
    * @param text - New text to insert
    */
   replace(start: ByteOffset, end: ByteOffset, text: string): ReplaceAction {
-    return Object.freeze({ type: 'REPLACE', start, end, text } as const);
+    return Object.freeze({ type: 'REPLACE', start, end, text });
   },
 
   /**
@@ -61,49 +61,49 @@ export const DocumentActions = {
    * @param ranges - New selection ranges
    */
   setSelection(ranges: readonly SelectionRange[]): SetSelectionAction {
-    return Object.freeze({ type: 'SET_SELECTION', ranges } as const);
+    return Object.freeze({ type: 'SET_SELECTION', ranges });
   },
 
   /**
    * Create an undo action.
    */
   undo(): UndoAction {
-    return Object.freeze({ type: 'UNDO' } as const);
+    return Object.freeze({ type: 'UNDO' });
   },
 
   /**
    * Create a redo action.
    */
   redo(): RedoAction {
-    return Object.freeze({ type: 'REDO' } as const);
+    return Object.freeze({ type: 'REDO' });
   },
 
   /**
    * Clear all history (both undo and redo stacks).
    */
   historyClear(): HistoryClearAction {
-    return Object.freeze({ type: 'HISTORY_CLEAR' } as const);
+    return Object.freeze({ type: 'HISTORY_CLEAR' });
   },
 
   /**
    * Create a transaction start action.
    */
   transactionStart(): TransactionStartAction {
-    return Object.freeze({ type: 'TRANSACTION_START' } as const);
+    return Object.freeze({ type: 'TRANSACTION_START' });
   },
 
   /**
    * Create a transaction commit action.
    */
   transactionCommit(): TransactionCommitAction {
-    return Object.freeze({ type: 'TRANSACTION_COMMIT' } as const);
+    return Object.freeze({ type: 'TRANSACTION_COMMIT' });
   },
 
   /**
    * Create a transaction rollback action.
    */
   transactionRollback(): TransactionRollbackAction {
-    return Object.freeze({ type: 'TRANSACTION_ROLLBACK' } as const);
+    return Object.freeze({ type: 'TRANSACTION_ROLLBACK' });
   },
 
   /**
@@ -111,7 +111,7 @@ export const DocumentActions = {
    * @param changes - Remote changes from collaboration
    */
   applyRemote(changes: readonly RemoteChange[]): ApplyRemoteAction {
-    return Object.freeze({ type: 'APPLY_REMOTE', changes } as const);
+    return Object.freeze({ type: 'APPLY_REMOTE', changes });
   },
 
   /**
@@ -120,7 +120,7 @@ export const DocumentActions = {
    * @param data - Chunk data
    */
   loadChunk(chunkIndex: number, data: Uint8Array): LoadChunkAction {
-    return Object.freeze({ type: 'LOAD_CHUNK', chunkIndex, data } as const);
+    return Object.freeze({ type: 'LOAD_CHUNK', chunkIndex, data });
   },
 
   /**
@@ -128,9 +128,9 @@ export const DocumentActions = {
    * @param chunkIndex - Index of the chunk to evict
    */
   evictChunk(chunkIndex: number): EvictChunkAction {
-    return Object.freeze({ type: 'EVICT_CHUNK', chunkIndex } as const);
+    return Object.freeze({ type: 'EVICT_CHUNK', chunkIndex });
   },
-} as const;
+};
 
 /**
  * Serialize an action to JSON string.

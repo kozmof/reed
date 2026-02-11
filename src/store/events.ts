@@ -15,7 +15,7 @@ import { textEncoder } from './encoding.ts';
  * Base event interface.
  */
 export interface DocumentEvent {
-  readonly type: string;
+  readonly type: keyof DocumentEventMap;
   readonly timestamp: number;
 }
 

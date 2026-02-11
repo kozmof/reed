@@ -69,6 +69,7 @@ export type {
 // Branded position types
 export type {
   ByteOffset,
+  ByteLength,
   CharOffset,
   LineNumber,
   ColumnNumber,
@@ -76,6 +77,7 @@ export type {
 
 export {
   byteOffset,
+  byteLength,
   charOffset,
   lineNumber,
   columnNumber,
@@ -92,6 +94,7 @@ export {
   clampByteOffset,
   clampCharOffset,
   ZERO_BYTE_OFFSET,
+  ZERO_BYTE_LENGTH,
   ZERO_CHAR_OFFSET,
   LINE_ZERO,
   COLUMN_ZERO,

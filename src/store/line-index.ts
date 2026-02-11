@@ -208,7 +208,7 @@ export function collectLines(root: LineIndexNode | null): readonly LineIndexNode
 function rbInsertLine(
   root: LineIndexNode | null,
   lineNumber: number,
-  documentOffset: number,
+  documentOffset: number | 'pending',
   lineLength: number
 ): LineIndexNode {
   const newNode = createLineIndexNode(documentOffset, lineLength, 'red');
@@ -547,9 +547,9 @@ function updateOffsetsAfterLine(
     newLeft = updateOffsetsAfterLine(node.left, afterLineNumber, offsetDelta);
   }
 
-  // Update this node if it's after the threshold
-  if (currentLineNumber > afterLineNumber) {
-    newOffset = node.documentOffset + offsetDelta;
+  // Update this node if it's after the threshold (skip 'pending' nodes)
+  if (currentLineNumber > afterLineNumber && newOffset !== 'pending') {
+    newOffset = newOffset + offsetDelta;
   }
 
   // Update right subtree (all lines in right are after current)
@@ -1011,15 +1011,12 @@ export function mergeDirtyRanges(
 
   for (let i = 1; i < sorted.length; i++) {
     const next = sorted[i];
-    const currentEnd = current.endLine === 'end' ? Infinity : current.endLine;
-    const nextEnd = next.endLine === 'end' ? Infinity : next.endLine;
-
-    if (next.startLine <= currentEnd + 1) {
+    if (next.startLine <= current.endLine + 1) {
       if (next.offsetDelta === current.offsetDelta) {
         // Same delta — merge as before
         current = Object.freeze({
           startLine: current.startLine,
-          endLine: currentEnd === Infinity || nextEnd === Infinity ? 'end' as const : Math.max(currentEnd, nextEnd),
+          endLine: Math.max(current.endLine, next.endLine),
           offsetDelta: current.offsetDelta,
           createdAtVersion: Math.max(current.createdAtVersion, next.createdAtVersion),
         });
@@ -1027,7 +1024,7 @@ export function mergeDirtyRanges(
         // Same start, different delta — sum deltas (equivalent to applying both)
         current = Object.freeze({
           startLine: current.startLine,
-          endLine: currentEnd === Infinity || nextEnd === Infinity ? 'end' as const : Math.max(currentEnd, nextEnd),
+          endLine: Math.max(current.endLine, next.endLine),
           offsetDelta: current.offsetDelta + next.offsetDelta,
           createdAtVersion: Math.max(current.createdAtVersion, next.createdAtVersion),
         });
@@ -1047,7 +1044,7 @@ export function mergeDirtyRanges(
     const maxVersion = merged.reduce((v, r) => Math.max(v, r.createdAtVersion), 0);
     return [Object.freeze({
       startLine: 0,
-      endLine: 'end' as const,
+      endLine: Number.MAX_SAFE_INTEGER,
       offsetDelta: 0,
       createdAtVersion: maxVersion,
     })];
@@ -1064,7 +1061,7 @@ export function isLineDirty(
   lineNumber: number
 ): boolean {
   return dirtyRanges.some(
-    r => lineNumber >= r.startLine && (r.endLine === 'end' || lineNumber <= r.endLine)
+    r => lineNumber >= r.startLine && lineNumber <= r.endLine
   );
 }
 
@@ -1077,8 +1074,7 @@ export function getOffsetDeltaForLine(
 ): number {
   let delta = 0;
   for (const range of dirtyRanges) {
-    if (lineNumber >= range.startLine &&
-        (range.endLine === 'end' || lineNumber <= range.endLine)) {
+    if (lineNumber >= range.startLine && lineNumber <= range.endLine) {
       delta += range.offsetDelta;
     }
   }
@@ -1090,7 +1086,7 @@ export function getOffsetDeltaForLine(
  */
 function createDirtyRange(
   startLine: number,
-  endLine: number | 'end',
+  endLine: number,
   offsetDelta: number,
   version: number
 ): DirtyLineRange {
@@ -1224,9 +1220,9 @@ function insertLinesAtPositionLazy(
   let newRoot = updateLineAtNumber(state.root!, lineNumber, firstLineLength);
   let lineCount = state.lineCount;
 
-  // Use placeholder offset (0) for new lines - will be corrected during reconciliation
+  // Use 'pending' placeholder for new lines - will be corrected during reconciliation
   // This makes insertion O(log n) instead of O(n)
-  const placeholderOffset = 0;
+  const placeholderOffset: number | 'pending' = 'pending';
 
   // Insert middle lines
   for (let i = 1; i < newlinePositions.length; i++) {
@@ -1250,7 +1246,7 @@ function insertLinesAtPositionLazy(
   // Mark all lines after the insertion as dirty (they have stale offsets)
   const newDirtyRange = createDirtyRange(
     lineNumber + 1, // First inserted line and all after
-    'end', // To end of document
+    Number.MAX_SAFE_INTEGER, // To end of document
     byteLength, // Offset delta
     currentVersion
   );
@@ -1338,7 +1334,7 @@ function deleteLineRangeLazy(
   // Mark lines after deletion as dirty
   const newDirtyRange = createDirtyRange(
     startLine + 1,
-    'end',
+    Number.MAX_SAFE_INTEGER,
     -deleteLength,
     currentVersion
   );
@@ -1422,13 +1418,13 @@ export function reconcileRange(
 
   // Filter out ranges that are now reconciled
   const remainingRanges = state.dirtyRanges.filter(range => {
-    const rangeEnd = range.endLine === 'end' ? state.lineCount - 1 : range.endLine;
+    const rangeEnd = Math.min(range.endLine, state.lineCount - 1);
     // Keep if range extends beyond reconciled area
     return rangeEnd > endLine || range.startLine < startLine;
   }).map(range => {
     // Adjust ranges that partially overlap
     if (range.startLine <= endLine &&
-        (range.endLine === 'end' || range.endLine > endLine)) {
+        range.endLine > endLine) {
       return Object.freeze({
         ...range,
         startLine: endLine + 1,
@@ -1466,7 +1462,7 @@ function updateLineOffsetByNumber(
     });
   } else {
     return withLineIndexNode(node, {
-      documentOffset: node.documentOffset + offsetDelta,
+      documentOffset: node.documentOffset === 'pending' ? offsetDelta : node.documentOffset + offsetDelta,
     });
   }
 }
@@ -1534,7 +1530,7 @@ export function reconcileViewport(
 
   // Check if any viewport lines are dirty
   const viewportDirty = state.dirtyRanges.some(range => {
-    const rangeEnd = range.endLine === 'end' ? Infinity : range.endLine;
+    const rangeEnd = range.endLine;
     return range.startLine <= endLine && rangeEnd >= startLine;
   });
 

@@ -14,8 +14,8 @@ import type {
   HistoryState,
   DocumentMetadata,
 } from '../types/state.ts';
-import { byteOffset } from '../types/branded.ts';
-import type { ByteOffset } from '../types/branded.ts';
+import { byteOffset, byteLength } from '../types/branded.ts';
+import type { ByteOffset, ByteLength } from '../types/branded.ts';
 import { textEncoder } from './encoding.ts';
 
 /**
@@ -48,7 +48,7 @@ export function createEmptyPieceTableState(): PieceTableState {
 export function createPieceNode(
   bufferType: 'original' | 'add',
   start: ByteOffset,
-  length: ByteOffset,
+  length: ByteLength,
   color: 'red' | 'black' = 'black',
   left: PieceNode | null = null,
   right: PieceNode | null = null
@@ -79,7 +79,7 @@ export function createPieceTableState(content: string): PieceTableState {
   const originalBuffer = textEncoder.encode(content);
 
   // Create single piece spanning entire original buffer
-  const root = createPieceNode('original', byteOffset(0), byteOffset(originalBuffer.length));
+  const root = createPieceNode('original', byteOffset(0), byteLength(originalBuffer.length));
 
   return Object.freeze({
     root,
@@ -107,7 +107,7 @@ export function createEmptyLineIndexState(): LineIndexState {
  * Create a line index node. Used internally by line index operations.
  */
 export function createLineIndexNode(
-  documentOffset: number,
+  documentOffset: number | 'pending',
   lineLength: number,
   color: 'red' | 'black' = 'black',
   left: LineIndexNode | null = null,

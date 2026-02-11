@@ -33,7 +33,7 @@ import {
 } from '../types/actions.ts';
 import { createDocumentStore, isDocumentStore } from './store.ts';
 import { getLineCountFromIndex, getLineRange } from './line-index.ts';
-import { byteOffset, type ByteOffset } from '../types/branded.ts';
+import { byteOffset, byteLength, type ByteOffset } from '../types/branded.ts';
 
 // =============================================================================
 // State Factory Tests
@@ -132,7 +132,7 @@ describe('State Factories', () => {
 
   describe('createPieceNode', () => {
     it('should create node with default values', () => {
-      const node = createPieceNode('original', byteOffset(0), byteOffset(10));
+      const node = createPieceNode('original', byteOffset(0), byteLength(10));
 
       expect(node.bufferType).toBe('original');
       expect(node.start).toBe(0);
@@ -144,15 +144,15 @@ describe('State Factories', () => {
     });
 
     it('should calculate subtreeLength with children', () => {
-      const left = createPieceNode('original', byteOffset(0), byteOffset(5));
-      const right = createPieceNode('add', byteOffset(0), byteOffset(3));
-      const parent = createPieceNode('original', byteOffset(5), byteOffset(10), 'black', left, right);
+      const left = createPieceNode('original', byteOffset(0), byteLength(5));
+      const right = createPieceNode('add', byteOffset(0), byteLength(3));
+      const parent = createPieceNode('original', byteOffset(5), byteLength(10), 'black', left, right);
 
       expect(parent.subtreeLength).toBe(18); // 5 + 10 + 3
     });
 
     it('should support red color', () => {
-      const node = createPieceNode('add', byteOffset(0), byteOffset(5), 'red');
+      const node = createPieceNode('add', byteOffset(0), byteLength(5), 'red');
       expect(node.color).toBe('red');
     });
   });
@@ -279,8 +279,8 @@ describe('State Factories', () => {
 
   describe('withPieceNode', () => {
     it('should recalculate subtreeLength on child change', () => {
-      const node = createPieceNode('original', byteOffset(0), byteOffset(10));
-      const newLeft = createPieceNode('add', byteOffset(0), byteOffset(5));
+      const node = createPieceNode('original', byteOffset(0), byteLength(10));
+      const newLeft = createPieceNode('add', byteOffset(0), byteLength(5));
       const newNode = withPieceNode(node, { left: newLeft });
 
       expect(newNode.subtreeLength).toBe(15); // 10 + 5

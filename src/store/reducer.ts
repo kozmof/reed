@@ -292,7 +292,7 @@ function applyChange(state: DocumentState, change: HistoryChange, version: numbe
       return eagerLineIndex.delete(s, change.position, end, change.text, version);
     }
     case 'replace': {
-      const deleteEnd = byteOffset(change.position + (change.oldTextByteLength ?? 0));
+      const deleteEnd = byteOffset(change.position + textEncoder.encode(change.oldText ?? '').length);
       let s = pieceTableDelete(state, change.position, deleteEnd);
       s = pieceTableInsert(s, change.position, change.text);
       s = eagerLineIndex.delete(s, change.position, deleteEnd, change.oldText ?? '', version);
@@ -454,7 +454,6 @@ export function documentReducer(
         text: action.text,
         byteLength: textEncoder.encode(action.text).length,
         oldText,
-        oldTextByteLength: end - start,
       });
 
       // Mark as dirty and increment version

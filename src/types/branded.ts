@@ -70,6 +70,15 @@ export type ByteOffset = Branded<number, 'ByteOffset'>;
 export type CharOffset = Branded<number, 'CharOffset'>;
 
 /**
+ * Byte length (size/count of bytes).
+ * Represents a length in terms of UTF-8 bytes.
+ *
+ * Semantically distinct from ByteOffset: an offset is a position,
+ * a length is a size/count.
+ */
+export type ByteLength = Branded<number, 'ByteLength'>;
+
+/**
  * Line number (0-indexed).
  * Represents a line in the document.
  */
@@ -99,6 +108,14 @@ export function byteOffset(value: number): ByteOffset {
  */
 export function charOffset(value: number): CharOffset {
   return value as CharOffset;
+}
+
+/**
+ * Create a ByteLength from a number.
+ * Use this for explicit conversions from raw numbers.
+ */
+export function byteLength(value: number): ByteLength {
+  return value as ByteLength;
 }
 
 /**
@@ -240,6 +257,11 @@ export const ZERO_BYTE_OFFSET: ByteOffset = 0 as ByteOffset;
  * Zero char offset - useful as a starting point.
  */
 export const ZERO_CHAR_OFFSET: CharOffset = 0 as CharOffset;
+
+/**
+ * Zero byte length.
+ */
+export const ZERO_BYTE_LENGTH: ByteLength = 0 as ByteLength;
 
 /**
  * Line zero - the first line.

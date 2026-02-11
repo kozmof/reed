@@ -9,7 +9,7 @@ import type {
   BufferType,
   BufferReference,
 } from '../types/state.ts';
-import { byteOffset, type ByteOffset } from '../types/branded.ts';
+import { byteOffset, byteLength, type ByteOffset, type ByteLength } from '../types/branded.ts';
 import { createPieceNode, withPieceNode } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 import { textEncoder, textDecoder } from './encoding.ts';
@@ -192,7 +192,7 @@ export function rbInsertPiece(
   position: number,
   bufferType: BufferType,
   start: ByteOffset,
-  length: ByteOffset
+  length: ByteLength
 ): PieceNode {
   // Create the new node (always red initially)
   const newPiece = createPieceNode(bufferType, start, length, 'red');
@@ -274,7 +274,7 @@ export function splitPiece(
   const leftPiece = createPieceNode(
     piece.bufferType,
     piece.start,
-    byteOffset(offsetInPiece),
+    byteLength(offsetInPiece),
     piece.color,
     piece.left,
     null
@@ -283,7 +283,7 @@ export function splitPiece(
   const rightPiece = createPieceNode(
     piece.bufferType,
     byteOffset(piece.start + offsetInPiece),
-    byteOffset(piece.length - offsetInPiece),
+    byteLength(piece.length - offsetInPiece),
     'red', // New nodes start red
     null,
     piece.right
@@ -330,7 +330,7 @@ export function pieceTableInsert(
 
   // Handle empty tree
   if (state.root === null) {
-    const newRoot = createPieceNode('add', byteOffset(newAddStart), byteOffset(textBytes.length), 'black');
+    const newRoot = createPieceNode('add', byteOffset(newAddStart), byteLength(textBytes.length), 'black');
     return Object.freeze({
       root: newRoot,
       originalBuffer: state.originalBuffer,
@@ -352,7 +352,7 @@ export function pieceTableInsert(
       state.totalLength,
       'add',
       byteOffset(newAddStart),
-      byteOffset(textBytes.length)
+      byteLength(textBytes.length)
     );
   } else if (location.offsetInPiece === 0) {
     // Insert at the beginning of a piece
@@ -361,7 +361,7 @@ export function pieceTableInsert(
       location.pieceStartOffset,
       'add',
       byteOffset(newAddStart),
-      byteOffset(textBytes.length)
+      byteLength(textBytes.length)
     );
   } else if (location.offsetInPiece === location.node.length) {
     // Insert at the end of a piece
@@ -370,7 +370,7 @@ export function pieceTableInsert(
       location.pieceStartOffset + location.node.length,
       'add',
       byteOffset(newAddStart),
-      byteOffset(textBytes.length)
+      byteLength(textBytes.length)
     );
   } else {
     // Split the piece and insert in between
@@ -379,7 +379,7 @@ export function pieceTableInsert(
       location,
       'add',
       byteOffset(newAddStart),
-      byteOffset(textBytes.length)
+      byteLength(textBytes.length)
     );
   }
 
@@ -400,7 +400,7 @@ function insertWithSplit(
   location: PieceLocation,
   bufferType: BufferType,
   start: ByteOffset,
-  length: ByteOffset
+  length: ByteLength
 ): PieceNode {
   // We need to:
   // 1. Replace the found piece with its left part
@@ -541,7 +541,7 @@ function deleteRange(
     const leftPiece = createPieceNode(
       node.bufferType,
       node.start,
-      byteOffset(keepBefore),
+      byteLength(keepBefore),
       node.color,
       newLeft,
       null
@@ -550,7 +550,7 @@ function deleteRange(
     const rightPiece = createPieceNode(
       node.bufferType,
       byteOffset(node.start + node.length - keepAfter),
-      byteOffset(keepAfter),
+      byteLength(keepAfter),
       'red',
       null,
       newRight
@@ -568,7 +568,7 @@ function deleteRange(
       left: newLeft,
       right: newRight,
       start: node.start,
-      length: byteOffset(keepBefore),
+      length: byteLength(keepBefore),
     });
   }
 
@@ -577,7 +577,7 @@ function deleteRange(
     left: newLeft,
     right: newRight,
     start: byteOffset(node.start + (node.length - keepAfter)),
-    length: byteOffset(keepAfter),
+    length: byteLength(keepAfter),
   });
 }
 

@@ -264,42 +264,29 @@ Instead of `reconcileFull` rebuilding all line offsets, an incremental approach 
 
 ## 7. Improvement Points 2 (Types and Interfaces)
 
-### 7.1 `LineIndexNode.documentOffset` Is Unused in Lazy Mode
+### 7.1 ~~`LineIndexNode.documentOffset` Is Unused in Lazy Mode~~ (Fixed 2026-02-11)
 
-When using lazy line index, newly inserted lines get `documentOffset: 0` (a placeholder). The field is only meaningful after reconciliation. Consider making this explicit in the type system, e.g., `documentOffset: number | 'pending'`, or removing it in favor of computing offsets from `subtreeByteLength` at query time.
+**Resolution**: Changed `documentOffset` type from `number` to `number | 'pending'` in `LineIndexNode`. Lazy-inserted lines now use `'pending'` instead of placeholder `0`. Read sites in `updateOffsetsAfterLine` and `updateLineOffsetByNumber` guard against `'pending'` values. Factory functions (`createLineIndexNode`, `rbInsertLine`) updated to accept `number | 'pending'`.
 
-### 7.2 `HistoryChange.byteLength` Is Redundant
+### 7.2 ~~`HistoryChange.byteLength` Is Redundant~~ (Fixed 2026-02-11)
 
-`byteLength` is always `textEncoder.encode(text).length`, which could be computed on demand. Storing it duplicates data and creates an invariant that must be maintained. If caching is needed for performance, a lazy getter or memoization would be safer.
+**Resolution**: Removed the redundant `oldTextByteLength` field from `HistoryChange`. The `byteLength` field is retained as a cached computation for the primary text. The redo path for REPLACE now computes old text byte length on demand via `textEncoder.encode(change.oldText ?? '').length`, which is acceptable since redo is not a hot path.
 
-### 7.3 `BufferReference.length` Uses `ByteOffset` Type
+### 7.3 ~~`BufferReference.length` Uses `ByteOffset` Type~~ (Fixed 2026-02-11)
 
-`OriginalBufferRef.length` and `AddBufferRef.length` are typed as `ByteOffset`, but semantically they represent a *length*, not an *offset*. A `ByteLength` branded type (or just `number`) would be more precise:
+**Resolution**: Added `ByteLength = Branded<number, 'ByteLength'>` branded type to `branded.ts` with constructor `byteLength()` and constant `ZERO_BYTE_LENGTH`. Updated `OriginalBufferRef.length`, `AddBufferRef.length`, and `PieceNode.length` from `ByteOffset` to `ByteLength`. Updated `createPieceNode`, `rbInsertPiece`, `insertWithSplit`, `splitPiece`, and `deleteRange` to use `byteLength()` for length values. Exported from both barrel files.
 
-```typescript
-// Currently:
-readonly length: ByteOffset;  // confusing: length is not an offset
+### 7.4 ~~`DocumentEvent.type` Should Be a String Literal Union~~ (Fixed 2026-02-11)
 
-// Better:
-type ByteLength = Branded<number, 'ByteLength'>;
-readonly length: ByteLength;
-```
+**Resolution**: Changed `DocumentEvent.type` from `string` to `keyof DocumentEventMap`, narrowing it to `'content-change' | 'selection-change' | 'history-change' | 'save' | 'dirty-change'`.
 
-### 7.4 `DocumentEvent.type` Should Be a String Literal Union
+### 7.5 ~~`DirtyLineRange.endLine` Dual Type~~ (Fixed 2026-02-11)
 
-The base `DocumentEvent` interface declares `type: string`, but all concrete events use literal types (`'content-change'`, etc.). Tightening the base to `type: keyof DocumentEventMap` would make the union exhaustive.
+**Resolution**: Changed `endLine` from `number | 'end'` to `number`. All creation sites now use `Number.MAX_SAFE_INTEGER` instead of the `'end'` string sentinel. Removed all `=== 'end'` guard checks from `mergeDirtyRanges`, `isLineDirty`, `getOffsetDeltaForLine`, `reconcileRange`, and `reconcileViewport`, simplifying numeric comparisons throughout.
 
-### 7.5 `DirtyLineRange.endLine` Dual Type
+### 7.6 ~~Strengthen Action Creator Return Types~~ (Fixed 2026-02-11)
 
-`endLine: number | 'end'` uses a string sentinel for "to end of document". This mixes numeric and string domains. A dedicated type or `Infinity` would integrate more naturally with numeric comparisons:
-
-```typescript
-readonly endLine: number;  // Use Number.MAX_SAFE_INTEGER for "to end"
-```
-
-### 7.6 Strengthen Action Creator Return Types
-
-`DocumentActions.insert()` returns `InsertAction`, but the implementation uses `as const` assertion plus `Object.freeze()`. The explicit interface return type is correct, but the `as const` is redundant when the return type is already specified. This is a minor style inconsistency.
+**Resolution**: Removed redundant `as const` assertions from all 13 action creator return statements and from the `DocumentActions` object itself. The explicit return type annotations (e.g., `InsertAction`) already constrain literal types, making `as const` unnecessary. `Object.freeze()` still provides runtime immutability.
 
 ---
 
