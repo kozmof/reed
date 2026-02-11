@@ -238,13 +238,9 @@ The spec targets 100MB files, but `LOAD_CHUNK`/`EVICT_CHUNK` are not implemented
 - LRU eviction policy with a configurable memory budget
 - Integration with the piece table's `originalBuffer` (make it chunk-aware)
 
-### 6.3 Extract Transaction Logic from Store to a Standalone Module
+### 6.3 ~~Extract Transaction Logic from Store to a Standalone Module~~ (Fixed 2026-02-11)
 
-Transaction management (depth tracking, snapshot/rollback) is embedded in the store closure. Extracting it into a composable `TransactionManager` would:
-
-- Make it testable in isolation
-- Allow reuse in `setValue()` which currently calls the reducer directly (bypassing store transactions)
-- Enable nested transaction semantics for plugin batching
+**Resolution**: Extracted transaction management into a standalone `TransactionManager` module (`src/store/transaction.ts`) with `createTransactionManager()` factory. `store.ts` now delegates all transaction operations (`begin`, `commit`, `rollback`, `trackAction`, `emergencyReset`) to the manager. Removed dead `TRANSACTION_START`/`COMMIT` wrapping and the `asTransaction` option from `setValue()` in `diff.ts` (was a no-op since the reducer ignores transaction actions). 24 new isolated unit tests in `transaction.test.ts`.
 
 ### 6.4 Add a Plugin System Foundation
 

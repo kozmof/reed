@@ -9,6 +9,7 @@ import type { DocumentStore, DocumentStoreWithEvents, StoreListener, Unsubscribe
 import { createInitialState } from './state.ts';
 import { documentReducer } from './reducer.ts';
 import { reconcileFull, reconcileViewport } from './line-index.ts';
+import { createTransactionManager } from './transaction.ts';
 import {
   createEventEmitter,
   createContentChangeEvent,
@@ -18,18 +19,6 @@ import {
   getAffectedRange,
 } from './events.ts';
 import { isTextEditAction } from '../types/actions.ts';
-
-/**
- * Transaction state tracked by the store.
- */
-interface TransactionState {
-  /** Depth of nested transactions */
-  depth: number;
-  /** Stack of state snapshots for each nesting level (for rollback) */
-  snapshotStack: DocumentState[];
-  /** Actions accumulated during transaction */
-  pendingActions: DocumentAction[];
-}
 
 /**
  * Background reconciliation state.
@@ -57,11 +46,7 @@ export function createDocumentStore(
   // Internal mutable state
   let state = createInitialState(config);
   const listeners = new Set<StoreListener>();
-  const transaction: TransactionState = {
-    depth: 0,
-    snapshotStack: [],
-    pendingActions: [],
-  };
+  const transaction = createTransactionManager();
   const reconciliation: ReconciliationState = {
     idleCallbackId: null,
     isReconciling: false,
@@ -117,36 +102,22 @@ export function createDocumentStore(
   function dispatch(action: DocumentAction): DocumentState {
     // Handle transaction control actions
     if (action.type === 'TRANSACTION_START') {
-      transaction.snapshotStack.push(state);
-      if (transaction.depth === 0) {
-        transaction.pendingActions = [];
-      }
-      transaction.depth++;
+      transaction.begin(state);
       return state;
     }
 
     if (action.type === 'TRANSACTION_COMMIT') {
-      if (transaction.depth > 0) {
-        transaction.depth--;
-        transaction.snapshotStack.pop();
-        if (transaction.depth === 0) {
-          transaction.pendingActions = [];
-          notifyListeners();
-        }
+      const result = transaction.commit();
+      if (result.isOutermost) {
+        notifyListeners();
       }
       return state;
     }
 
     if (action.type === 'TRANSACTION_ROLLBACK') {
-      if (transaction.depth > 0) {
-        const snapshot = transaction.snapshotStack.pop();
-        if (snapshot) {
-          state = snapshot;
-        }
-        transaction.depth--;
-        if (transaction.depth === 0) {
-          transaction.pendingActions = [];
-        }
+      const result = transaction.rollback();
+      if (result.snapshot) {
+        state = result.snapshot;
       }
       notifyListeners();
       return state;
@@ -159,9 +130,8 @@ export function createDocumentStore(
     if (newState !== state) {
       state = newState;
 
-      // Track pending actions if in transaction
-      if (transaction.depth > 0) {
-        transaction.pendingActions.push(action);
+      if (transaction.isActive) {
+        transaction.trackAction(action);
       } else {
         // Notify listeners immediately if not in transaction
         notifyListeners();
@@ -208,13 +178,11 @@ export function createDocumentStore(
         try {
           dispatch({ type: 'TRANSACTION_ROLLBACK' });
         } catch {
-          // If rollback fails, manually reset transaction state to prevent corruption
-          if (transaction.snapshotStack.length > 0) {
-            state = transaction.snapshotStack[0];
+          // If rollback fails, reset transaction state to prevent corruption
+          const earliest = transaction.emergencyReset();
+          if (earliest) {
+            state = earliest;
           }
-          transaction.depth = 0;
-          transaction.snapshotStack = [];
-          transaction.pendingActions = [];
           notifyListeners();
         }
       }
@@ -236,7 +204,7 @@ export function createDocumentStore(
       reconciliation.idleCallbackId = null;
 
       // Don't reconcile during active transaction
-      if (transaction.depth > 0) {
+      if (transaction.isActive) {
         scheduleReconciliation();
         return;
       }

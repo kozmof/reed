@@ -532,8 +532,6 @@ import { getValue } from './piece-table.ts';
 export interface SetValueOptions {
   /** Use optimized single REPLACE action instead of minimal diff */
   useReplace?: boolean;
-  /** Wrap all changes in a transaction (single undo unit) */
-  asTransaction?: boolean;
 }
 
 /**
@@ -550,7 +548,7 @@ export function setValue(
   newContent: string,
   options: SetValueOptions = {}
 ): DocumentState {
-  const { useReplace = true, asTransaction = true } = options;
+  const { useReplace = true } = options;
 
   // Get current content
   const oldContent = getValue(state.pieceTable);
@@ -568,20 +566,11 @@ export function setValue(
     return state;
   }
 
-  // Apply actions
+  // Apply actions directly through the reducer.
+  // For transaction semantics (single undo unit), callers should use store.batch().
   let newState = state;
-
-  if (asTransaction && actions.length > 1) {
-    // Wrap in transaction for single undo
-    newState = documentReducer(newState, DocumentActions.transactionStart());
-  }
-
   for (const action of actions) {
     newState = documentReducer(newState, action);
-  }
-
-  if (asTransaction && actions.length > 1) {
-    newState = documentReducer(newState, DocumentActions.transactionCommit());
   }
 
   return newState;

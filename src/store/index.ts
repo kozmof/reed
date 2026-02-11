@@ -131,6 +131,10 @@ export type {
   LineHeightConfig,
 } from './rendering.ts';
 
+// Transaction management
+export { createTransactionManager } from './transaction.ts';
+export type { TransactionManager, TransactionResult } from './transaction.ts';
+
 // History helpers
 export {
   canUndo,
