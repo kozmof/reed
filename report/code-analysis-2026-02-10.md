@@ -395,11 +395,11 @@ The transaction system uses a single `snapshot` captured at `TRANSACTION_START` 
 
 **Resolution**: Replaced `snapshotBeforeTransaction: DocumentState | null` with `snapshotStack: DocumentState[]` in `store.ts`. Each `TRANSACTION_START` pushes, `COMMIT` pops (discard), `ROLLBACK` pops (restore) and decrements depth by 1 instead of resetting to 0. New test verifies inner rollback preserves outer changes.
 
-### 10.4 `getBufferStats` Iterates All Pieces (from 02-03: 8.6)
+### 10.4 ~~`getBufferStats` Iterates All Pieces~~ (from 02-03: 8.6) — **RESOLVED**
 
-`getBufferStats()` in `piece-table.ts` performs an in-order traversal of the entire piece tree to count the number of pieces and compute total text size. This is O(n) in the number of pieces.
+~~`getBufferStats()` in `piece-table.ts` performs an in-order traversal of the entire piece tree to count the number of pieces and compute total text size. This is O(n) in the number of pieces.~~
 
-**Recommendation**: Track `pieceCount` and aggregate sizes incrementally in `PieceTableState`, updated on insert/delete. This would make `getBufferStats` O(1).
+**Resolution**: Added `subtreeAddLength` aggregate field to `PieceNode`, mirroring the existing `subtreeLength` pattern. The field is computed in `createPieceNode` and recalculated in `withPieceNode` whenever children or length change, so all tree mutations (insert, delete, rotations) maintain it automatically. `getBufferStats` now reads `root.subtreeAddLength` directly — O(1) with no tree traversal.
 
 ### 10.5 Separate "Core" from "Features" (from 02-06: D1)
 

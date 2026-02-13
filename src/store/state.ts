@@ -45,6 +45,9 @@ export function createEmptyPieceTableState(): PieceTableState {
 
 /**
  * Create a piece node. Used internally by piece table operations.
+ *
+ * All node creation (insert, split, compaction) flows through this function,
+ * ensuring subtreeAddLength is always computed correctly from the start.
  */
 export function createPieceNode(
   bufferType: 'original' | 'add',
@@ -56,6 +59,9 @@ export function createPieceNode(
 ): PieceNode {
   const leftLength = left?.subtreeLength ?? 0;
   const rightLength = right?.subtreeLength ?? 0;
+  const selfAddLength = bufferType === 'add' ? length : 0;
+  const leftAddLength = left?.subtreeAddLength ?? 0;
+  const rightAddLength = right?.subtreeAddLength ?? 0;
 
   return Object.freeze({
     color,
@@ -65,6 +71,7 @@ export function createPieceNode(
     start,
     length,
     subtreeLength: length + leftLength + rightLength,
+    subtreeAddLength: selfAddLength + leftAddLength + rightAddLength,
   });
 }
 
@@ -285,6 +292,10 @@ export function withState(
 
 /**
  * Helper to create modified piece node with structural sharing.
+ *
+ * All tree mutations (insert, delete, rotations) flow through this function,
+ * so subtreeAddLength is automatically maintained without changes to
+ * rbInsertPiece, deleteRange, rotateLeft/rotateRight, or fixup logic.
  */
 export function withPieceNode(
   node: PieceNode,
@@ -292,11 +303,16 @@ export function withPieceNode(
 ): PieceNode {
   const newNode = { ...node, ...changes };
 
-  // Recalculate subtreeLength if children changed
+  // Recalculate subtree aggregates if children or length changed
   if ('left' in changes || 'right' in changes || 'length' in changes) {
     const leftLength = newNode.left?.subtreeLength ?? 0;
     const rightLength = newNode.right?.subtreeLength ?? 0;
     newNode.subtreeLength = newNode.length + leftLength + rightLength;
+
+    const selfAddLength = newNode.bufferType === 'add' ? newNode.length : 0;
+    const leftAddLength = newNode.left?.subtreeAddLength ?? 0;
+    const rightAddLength = newNode.right?.subtreeAddLength ?? 0;
+    newNode.subtreeAddLength = selfAddLength + leftAddLength + rightAddLength;
   }
 
   return Object.freeze(newNode);

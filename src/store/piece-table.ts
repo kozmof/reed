@@ -825,28 +825,17 @@ export interface BufferStats {
 /**
  * Get statistics about buffer usage.
  * Useful for deciding when to compact.
+ *
+ * O(1) via subtreeAddLength maintained on every PieceNode by
+ * createPieceNode/withPieceNode — no tree traversal needed.
  */
 export function getBufferStats(state: PieceTableState): BufferStats {
-  const pieces = collectPieces(state.root);
-
-  // Calculate bytes actually used in add buffer
-  let addBufferUsed = 0;
-  for (const piece of pieces) {
-    if (piece.bufferType === 'add') {
-      addBufferUsed += piece.length;
-    }
-  }
-
+  const addBufferUsed = state.root?.subtreeAddLength ?? 0;
   const addBufferSize = state.addBufferLength;
   const addBufferWaste = addBufferSize - addBufferUsed;
   const wasteRatio = addBufferSize > 0 ? addBufferWaste / addBufferSize : 0;
 
-  return {
-    addBufferSize,
-    addBufferUsed,
-    addBufferWaste,
-    wasteRatio,
-  };
+  return { addBufferSize, addBufferUsed, addBufferWaste, wasteRatio };
 }
 
 /**

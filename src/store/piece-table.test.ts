@@ -542,6 +542,37 @@ describe('Piece Table Operations', () => {
     });
   });
 
+  describe('subtreeAddLength tracking', () => {
+    it('should report zero addBufferUsed for original-only content', () => {
+      const state = createPieceTableState('Hello World');
+      const stats = getBufferStats(state);
+      expect(stats.addBufferUsed).toBe(0);
+      expect(state.root?.subtreeAddLength).toBe(0);
+    });
+
+    it('should track addBufferUsed correctly through mixed operations', () => {
+      let state = createPieceTableState('Original'); // 8 bytes original
+      state = pieceTableInsert(state, byteOffset(8), ' Added'); // 6 bytes add
+      expect(getBufferStats(state).addBufferUsed).toBe(6);
+
+      // Delete from original buffer only
+      state = pieceTableDelete(state, byteOffset(0), byteOffset(4)); // Delete "Orig"
+      expect(getBufferStats(state).addBufferUsed).toBe(6); // Add portion unchanged
+
+      // Delete spanning into add buffer
+      state = pieceTableDelete(state, byteOffset(4), byteOffset(7)); // Delete " Ad"
+      expect(getBufferStats(state).addBufferUsed).toBe(3); // "ded" remains
+    });
+
+    it('should report zero addBufferUsed after deleting all add-buffer content', () => {
+      let state = createEmptyPieceTableState();
+      state = pieceTableInsert(state, byteOffset(0), 'Temp');
+      expect(getBufferStats(state).addBufferUsed).toBe(4);
+      state = pieceTableDelete(state, byteOffset(0), byteOffset(4));
+      expect(getBufferStats(state).addBufferUsed).toBe(0);
+    });
+  });
+
   describe('byteToCharOffset (optimization)', () => {
     it('should handle ASCII text', () => {
       expect(byteToCharOffset('Hello', 0)).toBe(0);

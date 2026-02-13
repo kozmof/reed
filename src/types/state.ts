@@ -74,6 +74,8 @@ export interface PieceNode extends RBNode<PieceNode> {
   readonly length: ByteLength;
   /** Total length of this subtree (for O(log n) position lookups) */
   readonly subtreeLength: number;
+  /** Total add-buffer bytes in this subtree (for O(1) buffer stats) */
+  readonly subtreeAddLength: number;
 }
 
 /**
