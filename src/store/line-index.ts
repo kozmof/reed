@@ -704,16 +704,11 @@ function deleteLineRange(
   // How much of the deletion falls on the start line (after startOffset)
   const deleteOnStartLine = startLineLength - startOffset;
 
-  // Calculate remaining delete that falls on middle lines and end line
-  let remainingDelete = deleteLength - deleteOnStartLine;
-
-  // Subtract middle lines' lengths
-  for (let i = startLine + 1; i < endLine; i++) {
-    const middleNode = findLineByNumber(state.root, i);
-    if (middleNode) {
-      remainingDelete -= middleNode.lineLength;
-    }
-  }
+  // Compute middle lines total via line start offsets — O(log n) instead of O(k * log n) loop
+  const startLineStart = getLineStartOffset(state.root, startLine);
+  const endLineStart = getLineStartOffset(state.root, endLine);
+  const middleLinesTotal = endLineStart - startLineStart - startLineLength;
+  const remainingDelete = deleteLength - deleteOnStartLine - middleLinesTotal;
 
   // What's left is deleted from the end line
   const deleteOnEndLine = Math.max(0, remainingDelete);
@@ -1317,11 +1312,11 @@ function deleteLineRangeLazy(
   const endLineLength = endNode.lineLength;
   const deleteOnStartLine = startLineLength - startOffset;
 
-  let remainingDelete = deleteLength - deleteOnStartLine;
-  for (let i = startLine + 1; i < endLine; i++) {
-    const middleNode = findLineByNumber(state.root, i);
-    if (middleNode) remainingDelete -= middleNode.lineLength;
-  }
+  // Compute middle lines total via line start offsets — O(log n) instead of O(k * log n) loop
+  const startLineStart = getLineStartOffset(state.root, startLine);
+  const endLineStart = getLineStartOffset(state.root, endLine);
+  const middleLinesTotal = endLineStart - startLineStart - startLineLength;
+  const remainingDelete = deleteLength - deleteOnStartLine - middleLinesTotal;
 
   const deleteOnEndLine = Math.max(0, remainingDelete);
   const keepFromEndLine = Math.max(0, endLineLength - deleteOnEndLine);
@@ -1468,8 +1463,49 @@ function updateLineOffsetByNumber(
 }
 
 /**
+ * Compute total number of dirty lines across all ranges, clamped to lineCount.
+ */
+function computeTotalDirtyLines(
+  dirtyRanges: readonly DirtyLineRange[],
+  lineCount: number
+): number {
+  let total = 0;
+  for (const range of dirtyRanges) {
+    const end = Math.min(range.endLine, lineCount - 1);
+    total += Math.max(0, end - range.startLine + 1);
+  }
+  return total;
+}
+
+/**
+ * Walk the tree in-order and update offsets by accumulating line lengths.
+ * Uses structural sharing — only nodes with incorrect offsets get new allocations.
+ */
+function reconcileInPlace(
+  node: LineIndexNode | null,
+  acc: { offset: number }
+): LineIndexNode | null {
+  if (node === null) return null;
+
+  const newLeft = reconcileInPlace(node.left, acc);
+  const correctOffset = acc.offset;
+  acc.offset += node.lineLength;
+  const newRight = reconcileInPlace(node.right, acc);
+
+  if (newLeft !== node.left || newRight !== node.right || node.documentOffset !== correctOffset) {
+    return withLineIndexNode(node, {
+      left: newLeft,
+      right: newRight,
+      documentOffset: correctOffset,
+    });
+  }
+  return node;
+}
+
+/**
  * Perform full reconciliation of all dirty ranges.
- * Rebuilds tree with correct offsets.
+ * Uses incremental updates for small dirty ranges (O(k * log n)),
+ * and an in-place tree walk for large ranges (O(n) with structural sharing).
  * Intended to be called from idle callback.
  */
 export function reconcileFull(state: LineIndexState, version: number): LineIndexState {
@@ -1484,32 +1520,25 @@ export function reconcileFull(state: LineIndexState, version: number): LineIndex
     });
   }
 
-  // Collect all lines and recalculate offsets
-  const lines = collectLines(state.root);
-  if (lines.length === 0) {
-    return Object.freeze({
-      root: null,
-      lineCount: 1,
-      dirtyRanges: Object.freeze([]),
-      lastReconciledVersion: version,
-      rebuildPending: false,
-    });
+  // Fast path: incremental for small dirty ranges — O(k * log n)
+  const totalDirty = computeTotalDirtyLines(state.dirtyRanges, state.lineCount);
+  const threshold = Math.max(64, Math.floor(state.lineCount / Math.log2(state.lineCount + 1)));
+
+  if (totalDirty <= threshold) {
+    let current: LineIndexState = state;
+    for (const range of state.dirtyRanges) {
+      const endLine = Math.min(range.endLine, current.lineCount - 1);
+      current = reconcileRange(current, range.startLine, endLine, version);
+    }
+    return current;
   }
 
-  // Recalculate all offsets from scratch
-  const correctedLines: { offset: number; length: number }[] = [];
-  let currentOffset = 0;
-
-  for (const line of lines) {
-    correctedLines.push({ offset: currentOffset, length: line.lineLength });
-    currentOffset += line.lineLength;
-  }
-
-  const newRoot = buildBalancedTree(correctedLines, 0, correctedLines.length - 1);
+  // Slow path: in-place O(n) walk with structural sharing (no collect-rebuild)
+  const newRoot = reconcileInPlace(state.root, { offset: 0 });
 
   return Object.freeze({
     root: newRoot,
-    lineCount: correctedLines.length,
+    lineCount: state.lineCount,
     dirtyRanges: Object.freeze([]),
     lastReconciledVersion: version,
     rebuildPending: false,

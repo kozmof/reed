@@ -199,17 +199,21 @@ The `deleteRange` function in `piece-table.ts` rebuilds the tree by recursively 
 
 `HistoryChange` stores the full `text` (and optionally `oldText`) as strings. For large deletions or replacements, this can consume significant memory, especially since the undo stack defaults to 1000 entries. The piece table itself is already append-only, so a more memory-efficient approach could reference piece table buffer ranges instead of duplicating text.
 
-### 5.4 `reconcileFull` Is O(n) Full Rebuild
+### 5.4 `reconcileFull` Is O(n) Full Rebuild — **Fixed 2026-02-14** (see 6.5)
 
 When reconciling dirty ranges, `reconcileFull` collects all lines and rebuilds the entire balanced tree from scratch. For documents with millions of lines, this is expensive even during idle time. The incremental `reconcileRange` is available but currently only used for viewport reconciliation.
+
+**Resolution**: See 6.5. `reconcileFull` now uses incremental O(k * log n) for small dirty ranges, and an in-place O(n) tree walk with structural sharing (no collect-rebuild) for large ranges.
 
 ### 5.5 `LOAD_CHUNK` and `EVICT_CHUNK` Are No-ops
 
 These actions are declared in the type system and accepted by the reducer, but their handler bodies simply `return state`. Consumers may expect chunk management to work but it silently does nothing.
 
-### 5.6 `selectionToCharOffsets`/`charOffsetsToSelection` Call `getValue()` Each Time
+### 5.6 `selectionToCharOffsets`/`charOffsetsToSelection` Call `getValue()` Each Time — **Fixed 2026-02-14**
 
 Both selection-conversion functions call `getValue(state.pieceTable)` which materializes the *entire document* as a string. For large documents, this is O(n) per call and should be avoided in hot paths (e.g., per-keystroke selection updates).
+
+**Resolution**: Replaced `getValue()` with `getText(0, maxNeededOffset)` in both functions. `selectionToCharOffsets` reads only up to `max(anchor, head)` bytes. `charOffsetsToSelection` uses an upper bound of `maxChar * 4` bytes (UTF-8 worst case), clamped to `totalLength`. Both are now O(k) where k = max selection offset, instead of O(n). Removed unused `getValue` import from `rendering.ts`.
 
 ### 5.7 Serialization Uses `btoa`/`atob` for Binary Data
 
@@ -252,9 +256,11 @@ type Middleware = (state, action, next) => DocumentState;
 
 This would allow interception without modifying the core reducer.
 
-### 6.5 Consider Replacing Full-Tree Reconciliation with Incremental
+### 6.5 ~~Consider Replacing Full-Tree Reconciliation with Incremental~~ (Fixed 2026-02-14)
 
 Instead of `reconcileFull` rebuilding all line offsets, an incremental approach that walks dirty ranges and adjusts offsets in-place (via `updateLineOffsetByNumber`) would be O(k * log n) where k is the number of dirty lines, avoiding the O(n) collect-and-rebuild.
+
+**Resolution**: Rewrote `reconcileFull` with a two-path strategy. **Fast path**: when dirty lines are few (< `lineCount / log2(lineCount)`), delegates to `reconcileRange` for each dirty range — O(k * log n). **Slow path**: when dirty ranges are large, uses a new `reconcileInPlace` helper that walks the tree in-order once, computing correct offsets by accumulating `lineLength` with structural sharing — O(n) but without the `collectLines` array allocation or `buildBalancedTree` rebuild of the previous implementation.
 
 ---
 
@@ -295,9 +301,11 @@ Instead of `reconcileFull` rebuilding all line offsets, an incremental approach 
 - Consider a lazy `toString()` with caching (invalidated on edit).
 - For consumers that only need a range, always prefer `getText(start, end)`.
 
-### 8.2 `getLineCount()` in `piece-table.ts` Scans All Bytes
+### 8.2 `getLineCount()` in `piece-table.ts` Scans All Bytes — **Fixed 2026-02-14**
 
 This O(n) function scans every byte for `0x0A`. The line index already maintains `lineCount` in O(1). The piece-table-level `getLineCount` should only be used when no line index is available. Adding a deprecation note or redirecting to `getLineCountFromIndex` would prevent misuse.
+
+**Resolution**: Removed the O(n) `getLineCount()` function from `piece-table.ts` entirely. Removed its export from both barrel files (`src/store/index.ts`, `src/index.ts`) and removed 4 associated tests from `piece-table.test.ts`. Consumers should use `getLineCountFromIndex(state.lineIndex)` which reads a pre-maintained count in O(1).
 
 ### 8.3 `addBuffer` Growth Strategy
 
@@ -307,9 +315,11 @@ The add buffer doubles in size when full (`Math.max(buffer.length * 2, needed)`)
 - The buffer is never shrunk. After large deletions, the add buffer retains its peak size.
 - `compactAddBuffer` exists but is never called automatically. Consider triggering it when `wasteRatio > threshold` during idle time.
 
-### 8.4 `deleteLineRange` Calls `findLineByNumber` in a Loop
+### 8.4 `deleteLineRange` Calls `findLineByNumber` in a Loop — **Fixed 2026-02-14**
 
 In `line-index.ts`, `deleteLineRange` (lines 700-727) calls `findLineByNumber` for each middle line in a loop. Each call is O(log n), making the total O(k * log n). For large multi-line deletions, this could be improved by collecting all needed data in a single tree traversal.
+
+**Resolution**: Replaced the O(k * log n) loop in both `deleteLineRange` and `deleteLineRangeLazy` with O(log n) computation using two `getLineStartOffset` calls. The middle lines' total byte length is derived as `endLineStart - startLineStart - startLineLength`, eliminating the per-line `findLineByNumber` calls entirely.
 
 ### 8.5 `createDocumentStoreWithEvents.batch()` Replays Reducer
 

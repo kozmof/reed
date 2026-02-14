@@ -722,33 +722,6 @@ export function getLength(state: PieceTableState): number {
 }
 
 /**
- * Get the number of lines in the document.
- * Counts newline characters + 1.
- *
- * Note: This is O(n) as it scans the entire document.
- * For O(1) line count, use `getLineCountFromIndex(state.lineIndex)` instead
- * when you have access to DocumentState.
- */
-export function getLineCount(state: PieceTableState): number {
-  if (state.root === null) return 1;
-
-  // Optimized path: count newlines by scanning pieces directly
-  // instead of building the full string
-  const pieces = collectPieces(state.root);
-  let count = 1;
-
-  for (const piece of pieces) {
-    const buffer = getPieceBuffer(state, piece);
-    for (let i = piece.start; i < piece.start + piece.length; i++) {
-      // Check for newline byte (0x0A)
-      if (buffer[i] === 0x0A) count++;
-    }
-  }
-
-  return count;
-}
-
-/**
  * Get a specific line by line number (0-indexed).
  * Returns the line content including the trailing newline if present.
  *

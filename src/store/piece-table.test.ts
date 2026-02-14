@@ -9,7 +9,6 @@ import {
   getValue,
   getText,
   getLength,
-  getLineCount,
   getLine,
   findPieceAtPosition,
   collectPieces,
@@ -88,28 +87,6 @@ describe('Piece Table Operations', () => {
     it('should return correct length', () => {
       const state = createPieceTableState('Hello, World!');
       expect(getLength(state)).toBe(13);
-    });
-  });
-
-  describe('getLineCount', () => {
-    it('should return 1 for empty state', () => {
-      const state = createEmptyPieceTableState();
-      expect(getLineCount(state)).toBe(1);
-    });
-
-    it('should return 1 for single line', () => {
-      const state = createPieceTableState('Hello');
-      expect(getLineCount(state)).toBe(1);
-    });
-
-    it('should count lines correctly', () => {
-      const state = createPieceTableState('Line 1\nLine 2\nLine 3');
-      expect(getLineCount(state)).toBe(3);
-    });
-
-    it('should handle trailing newline', () => {
-      const state = createPieceTableState('Line 1\n');
-      expect(getLineCount(state)).toBe(2);
     });
   });
 

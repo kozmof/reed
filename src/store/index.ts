@@ -35,7 +35,6 @@ export {
   getValue,
   getText,
   getLength,
-  getLineCount,
   getLine,
   getValueStream,
   findPieceAtPosition,

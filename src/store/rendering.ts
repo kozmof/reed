@@ -7,7 +7,7 @@ import type { DocumentState, SelectionRange, CharSelectionRange } from '../types
 import type { ByteOffset } from '../types/branded.ts';
 import { byteOffset, charOffset } from '../types/branded.ts';
 import { findLineAtPosition, getLineRange, getLineRangePrecise, getLineCountFromIndex } from './line-index.ts';
-import { getText, getValue, charToByteOffset, byteToCharOffset } from './piece-table.ts';
+import { getText, charToByteOffset, byteToCharOffset } from './piece-table.ts';
 import { textEncoder } from './encoding.ts';
 
 // =============================================================================
@@ -378,7 +378,9 @@ export function selectionToCharOffsets(
   state: DocumentState,
   range: SelectionRange
 ): CharSelectionRange {
-  const text = getValue(state.pieceTable);
+  // Only read text up to the max needed byte offset — O(k) instead of O(n)
+  const maxByte = Math.max(range.anchor as number, range.head as number);
+  const text = getText(state.pieceTable, byteOffset(0), byteOffset(maxByte));
   return Object.freeze({
     anchor: charOffset(byteToCharOffset(text, range.anchor)),
     head: charOffset(byteToCharOffset(text, range.head)),
@@ -393,7 +395,10 @@ export function charOffsetsToSelection(
   state: DocumentState,
   range: CharSelectionRange
 ): SelectionRange {
-  const text = getValue(state.pieceTable);
+  // Read text with upper bound: each char is at most 4 UTF-8 bytes — O(k) instead of O(n)
+  const maxChar = Math.max(range.anchor as number, range.head as number);
+  const upperBoundBytes = Math.min(maxChar * 4, state.pieceTable.totalLength);
+  const text = getText(state.pieceTable, byteOffset(0), byteOffset(upperBoundBytes));
   return Object.freeze({
     anchor: byteOffset(charToByteOffset(text, range.anchor)),
     head: byteOffset(charToByteOffset(text, range.head)),
