@@ -98,6 +98,7 @@ export function createPieceTableState(content: string): PieceTableState {
   });
 }
 
+// TODO(formalization-4.8): Inconsistent sentinel — lineCount:1 but root:null means findLineByNumber(root,0) returns null
 /**
  * Create an empty line index state.
  */
@@ -291,6 +292,24 @@ export function withState(
 }
 
 /**
+ * Helper to create modified line index state with structural sharing.
+ * Centralizes LineIndexState construction to ensure consistency.
+ */
+export function withLineIndexState(
+  state: LineIndexState,
+  changes: Partial<LineIndexState>
+): LineIndexState {
+  return Object.freeze({ ...state, ...changes });
+}
+
+/**
+ * Settable fields on a PieceNode.
+ * subtreeLength and subtreeAddLength are always recomputed from children and length,
+ * so they cannot be set directly.
+ */
+export type PieceNodeUpdates = Partial<Pick<PieceNode, 'color' | 'left' | 'right' | 'bufferType' | 'start' | 'length'>>;
+
+/**
  * Helper to create modified piece node with structural sharing.
  *
  * All tree mutations (insert, delete, rotations) flow through this function,
@@ -299,7 +318,7 @@ export function withState(
  */
 export function withPieceNode(
   node: PieceNode,
-  changes: Partial<PieceNode>
+  changes: PieceNodeUpdates
 ): PieceNode {
   const newNode = { ...node, ...changes };
 
@@ -319,11 +338,18 @@ export function withPieceNode(
 }
 
 /**
+ * Settable fields on a LineIndexNode.
+ * subtreeLineCount and subtreeByteLength are always recomputed from children and lineLength,
+ * so they cannot be set directly.
+ */
+export type LineIndexNodeUpdates = Partial<Pick<LineIndexNode, 'color' | 'left' | 'right' | 'documentOffset' | 'lineLength'>>;
+
+/**
  * Helper to create modified line index node with structural sharing.
  */
 export function withLineIndexNode(
   node: LineIndexNode,
-  changes: Partial<LineIndexNode>
+  changes: LineIndexNodeUpdates
 ): LineIndexNode {
   const newNode = { ...node, ...changes };
 

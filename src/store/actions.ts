@@ -22,6 +22,7 @@ import type {
   LoadChunkAction,
   EvictChunkAction,
 } from '../types/actions.ts';
+import { isDocumentAction } from '../types/actions.ts';
 
 /**
  * Action creators for document mutations.
@@ -153,14 +154,17 @@ export function serializeAction(action: DocumentAction): string {
  * Note: base64 data in LOAD_CHUNK is converted back to Uint8Array.
  */
 export function deserializeAction(json: string): DocumentAction {
-  const parsed = JSON.parse(json) as DocumentAction & { data?: string };
-  if (parsed.type === 'LOAD_CHUNK' && typeof parsed.data === 'string') {
+  const parsed = JSON.parse(json);
+  if (parsed && typeof parsed === 'object' && parsed.type === 'LOAD_CHUNK' && typeof parsed.data === 'string') {
     const binary = atob(parsed.data);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {
       bytes[i] = binary.charCodeAt(i);
     }
-    return { ...parsed, data: bytes } as LoadChunkAction;
+    parsed.data = bytes;
   }
-  return parsed as DocumentAction;
+  if (!isDocumentAction(parsed)) {
+    throw new Error(`Invalid deserialized action: ${JSON.stringify(parsed)}`);
+  }
+  return parsed;
 }

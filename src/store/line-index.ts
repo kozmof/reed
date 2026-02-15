@@ -9,8 +9,9 @@ import type {
   LineIndexState,
   DirtyLineRange,
 } from '../types/state.ts';
-import type { ByteOffset } from '../types/branded.ts';
-import { createLineIndexNode, withLineIndexNode } from './state.ts';
+import type { ByteOffset, ByteLength } from '../types/branded.ts';
+import { byteOffset, byteLength as toByteLengthBrand } from '../types/branded.ts';
+import { createLineIndexNode, withLineIndexNode, withLineIndexState } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 
 // Type-safe wrapper for withLineIndexNode to use with generic R-B tree functions
@@ -316,22 +317,17 @@ function updateLineLength(
   if (state.root === null) {
     // Create first line
     const root = createLineIndexNode(0, lengthDelta, 'black');
-    return Object.freeze({
+    return withLineIndexState(state, {
       root,
       lineCount: 1,
       dirtyRanges: Object.freeze([]),
-      lastReconciledVersion: state.lastReconciledVersion,
       rebuildPending: false,
     });
   }
 
   const newRoot = updateLineLengthInTree(state.root, position as number, lengthDelta);
-  return Object.freeze({
+  return withLineIndexState(state, {
     root: newRoot,
-    lineCount: state.lineCount,
-    dirtyRanges: state.dirtyRanges,
-    lastReconciledVersion: state.lastReconciledVersion,
-    rebuildPending: state.rebuildPending,
   });
 }
 
@@ -366,36 +362,29 @@ function updateLineLengthInTree(
 }
 
 /**
- * Append lines at the end of the document.
+ * Shared structural append: updates first line, inserts middle/last lines.
+ * Handles the core logic shared between eager and lazy append operations.
+ * Caller must handle the null-root case before calling this.
  */
-function appendLines(
-  state: LineIndexState,
+function appendLinesStructural(
+  root: LineIndexNode,
+  lineCount: number,
   position: number,
-  text: string,
   newlinePositions: number[],
   byteLength: number
-): LineIndexState {
-  // Get total document length from root
-  const totalLength = state.root?.subtreeByteLength ?? 0;
-
-  if (state.root === null) {
-    // Build tree from scratch
-    return buildLineIndexFromText(text, 0);
-  }
+): { root: LineIndexNode; lineCount: number } {
+  const totalLength = root.subtreeByteLength;
 
   // Update the last line's length for text before first newline
   const firstNewlinePos = newlinePositions[0];
   const textBeforeFirstNewline = firstNewlinePos + 1; // Include the newline
 
-  let newRoot = state.root;
-  let lineCount = state.lineCount;
+  let newRoot = root;
 
   // If inserting at end, we need to add to the last line
   if (position >= totalLength) {
-    // Find and update the last line
     newRoot = addToLastLine(newRoot, textBeforeFirstNewline);
   } else {
-    // Update the line at position
     newRoot = updateLineLengthInTree(newRoot, position, textBeforeFirstNewline);
   }
 
@@ -415,12 +404,28 @@ function appendLines(
     lineCount++;
   }
 
-  return Object.freeze({
-    root: newRoot,
-    lineCount,
-    dirtyRanges: state.dirtyRanges,
-    lastReconciledVersion: state.lastReconciledVersion,
-    rebuildPending: state.rebuildPending,
+  return { root: newRoot, lineCount };
+}
+
+/**
+ * Append lines at the end of the document.
+ */
+function appendLines(
+  state: LineIndexState,
+  position: number,
+  text: string,
+  newlinePositions: number[],
+  byteLength: number
+): LineIndexState {
+  if (state.root === null) {
+    return buildLineIndexFromText(text, 0);
+  }
+
+  const result = appendLinesStructural(state.root, state.lineCount, position, newlinePositions, byteLength);
+
+  return withLineIndexState(state, {
+    root: result.root,
+    lineCount: result.lineCount,
   });
 }
 
@@ -439,15 +444,17 @@ function addToLastLine(node: LineIndexNode, lengthDelta: number): LineIndexNode 
 }
 
 /**
- * Insert lines at a specific position (splitting existing line).
+ * Shared structural insert: splits line at location, inserts middle/last lines.
+ * `computeOffset` controls whether exact offsets or 'pending' placeholders are used.
  */
-function insertLinesAtPosition(
-  state: LineIndexState,
+function insertLinesStructural(
+  root: LineIndexNode,
+  lineCount: number,
   location: LineLocation,
-  text: string,
   newlinePositions: number[],
-  byteLength: number
-): LineIndexState {
+  byteLength: number,
+  computeOffset: (lineNumber: number, prevOffset: number) => number | 'pending'
+): { root: LineIndexNode; lineCount: number } {
   const { lineNumber, offsetInLine, node } = location;
 
   // Calculate the parts of the split line
@@ -460,47 +467,68 @@ function insertLinesAtPosition(
   const firstLineLength = beforeInsert + firstNewlinePos + 1;
 
   // Update the current line to be the first part
-  let newRoot = updateLineAtNumber(state.root!, lineNumber, firstLineLength);
-  let lineCount = state.lineCount;
+  let newRoot = updateLineAtNumber(root, lineNumber, firstLineLength);
 
-  // Get the document offset for new lines
-  const lineStartOffset = getLineStartOffset(state.root, lineNumber);
-  let currentOffset = lineStartOffset + firstLineLength;
+  // Track cumulative offset for middle/last line insertion
+  let prevOffset = firstLineLength;
 
   // Insert middle lines (between first and last newline)
   for (let i = 1; i < newlinePositions.length; i++) {
     const lineLength = newlinePositions[i] - newlinePositions[i - 1];
-    newRoot = rbInsertLine(newRoot, lineNumber + i, currentOffset, lineLength);
+    const offset = computeOffset(lineNumber + i, prevOffset);
+    newRoot = rbInsertLine(newRoot, lineNumber + i, offset, lineLength);
     lineCount++;
-    currentOffset += lineLength;
+    prevOffset += lineLength;
   }
 
   // Last line: text after last newline + remaining original text
   const textAfterLastNewline = byteLength - newlinePositions[newlinePositions.length - 1] - 1;
   const lastLineLength = textAfterLastNewline + afterInsert;
 
+  const lastOffset = computeOffset(lineNumber + newlinePositions.length, prevOffset);
   newRoot = rbInsertLine(
     newRoot,
     lineNumber + newlinePositions.length,
-    currentOffset,
+    lastOffset,
     lastLineLength
   );
   lineCount++;
 
-  // Update offsets for all lines after the inserted ones
-  const insertedBytes = byteLength;
-  newRoot = updateOffsetsAfterLine(
-    newRoot,
-    lineNumber + newlinePositions.length,
-    insertedBytes
+  return { root: newRoot, lineCount };
+}
+
+/**
+ * Insert lines at a specific position (splitting existing line).
+ */
+function insertLinesAtPosition(
+  state: LineIndexState,
+  location: LineLocation,
+  text: string,
+  newlinePositions: number[],
+  byteLength: number
+): LineIndexState {
+  // Eager: compute real offsets relative to line start
+  const lineStart = getLineStartOffset(state.root, location.lineNumber);
+
+  const result = insertLinesStructural(
+    state.root!,
+    state.lineCount,
+    location,
+    newlinePositions,
+    byteLength,
+    (_lineNumber, cumulativeFromFirstLine) => lineStart + cumulativeFromFirstLine
   );
 
-  return Object.freeze({
+  // Update offsets for all lines after the inserted ones
+  const newRoot = updateOffsetsAfterLine(
+    result.root,
+    location.lineNumber + newlinePositions.length,
+    byteLength
+  );
+
+  return withLineIndexState(state, {
     root: newRoot,
-    lineCount,
-    dirtyRanges: state.dirtyRanges,
-    lastReconciledVersion: state.lastReconciledVersion,
-    rebuildPending: state.rebuildPending,
+    lineCount: result.lineCount,
   });
 }
 
@@ -935,7 +963,7 @@ function removeLinesToEnd(
   }
 
   if (newLines.length === 0) {
-    return Object.freeze({
+    return withLineIndexState(state, {
       root: null,
       lineCount: 1,
       dirtyRanges: Object.freeze([]),
@@ -945,7 +973,7 @@ function removeLinesToEnd(
   }
 
   const root = buildBalancedTree(newLines, 0, newLines.length - 1);
-  return Object.freeze({
+  return withLineIndexState(state, {
     root,
     lineCount: newLines.length,
     dirtyRanges: Object.freeze([]),
@@ -979,12 +1007,12 @@ export function getLineCountFromIndex(state: LineIndexState): number {
 export function getLineRange(
   state: LineIndexState,
   lineNumber: number
-): { start: number; length: number } | null {
+): { start: ByteOffset; length: ByteLength } | null {
   const node = findLineByNumber(state.root, lineNumber);
   if (node === null) return null;
 
   const start = getLineStartOffset(state.root, lineNumber);
-  return { start, length: node.lineLength };
+  return { start: byteOffset(start), length: toByteLengthBrand(node.lineLength) };
 }
 
 // =============================================================================
@@ -1142,11 +1170,9 @@ function appendLinesLazy(
   byteLength: number,
   currentVersion: number
 ): LineIndexState {
-  const totalLength = state.root?.subtreeByteLength ?? 0;
-
   if (state.root === null) {
     const newState = buildLineIndexFromText(text, 0);
-    return Object.freeze({
+    return withLineIndexState(state, {
       root: newState.root,
       lineCount: newState.lineCount,
       dirtyRanges: Object.freeze([]),
@@ -1155,39 +1181,12 @@ function appendLinesLazy(
     });
   }
 
-  const firstNewlinePos = newlinePositions[0];
-  const textBeforeFirstNewline = firstNewlinePos + 1;
-
-  let newRoot = state.root;
-  let lineCount = state.lineCount;
-
-  if (position >= totalLength) {
-    newRoot = addToLastLine(newRoot, textBeforeFirstNewline);
-  } else {
-    newRoot = updateLineLengthInTree(newRoot, position, textBeforeFirstNewline);
-  }
-
   // For appending at end, offsets are naturally correct (no dirty ranges needed)
-  let currentOffset = position + textBeforeFirstNewline;
-  for (let i = 1; i < newlinePositions.length; i++) {
-    const lineLength = newlinePositions[i] - newlinePositions[i - 1];
-    newRoot = rbInsertLine(newRoot, lineCount, currentOffset, lineLength);
-    lineCount++;
-    currentOffset += lineLength;
-  }
+  const result = appendLinesStructural(state.root, state.lineCount, position, newlinePositions, byteLength);
 
-  const textAfterLastNewline = byteLength - newlinePositions[newlinePositions.length - 1] - 1;
-  if (textAfterLastNewline > 0 || newlinePositions.length > 0) {
-    newRoot = rbInsertLine(newRoot, lineCount, currentOffset, textAfterLastNewline);
-    lineCount++;
-  }
-
-  return Object.freeze({
-    root: newRoot,
-    lineCount,
-    dirtyRanges: state.dirtyRanges,
-    lastReconciledVersion: state.lastReconciledVersion,
-    rebuildPending: state.rebuildPending,
+  return withLineIndexState(state, {
+    root: result.root,
+    lineCount: result.lineCount,
   });
 }
 
@@ -1202,45 +1201,19 @@ function insertLinesAtPositionLazy(
   byteLength: number,
   currentVersion: number
 ): LineIndexState {
-  const { lineNumber, offsetInLine, node } = location;
-
-  const originalLineLength = node.lineLength;
-  const beforeInsert = offsetInLine;
-  const afterInsert = originalLineLength - offsetInLine;
-
-  const firstNewlinePos = newlinePositions[0];
-  const firstLineLength = beforeInsert + firstNewlinePos + 1;
-
-  // Update the current line to be the first part
-  let newRoot = updateLineAtNumber(state.root!, lineNumber, firstLineLength);
-  let lineCount = state.lineCount;
-
-  // Use 'pending' placeholder for new lines - will be corrected during reconciliation
-  // This makes insertion O(log n) instead of O(n)
-  const placeholderOffset: number | 'pending' = 'pending';
-
-  // Insert middle lines
-  for (let i = 1; i < newlinePositions.length; i++) {
-    const lineLength = newlinePositions[i] - newlinePositions[i - 1];
-    newRoot = rbInsertLine(newRoot, lineNumber + i, placeholderOffset, lineLength);
-    lineCount++;
-  }
-
-  // Last line
-  const textAfterLastNewline = byteLength - newlinePositions[newlinePositions.length - 1] - 1;
-  const lastLineLength = textAfterLastNewline + afterInsert;
-
-  newRoot = rbInsertLine(
-    newRoot,
-    lineNumber + newlinePositions.length,
-    placeholderOffset,
-    lastLineLength
+  // Lazy: use 'pending' placeholder for all new line offsets
+  const result = insertLinesStructural(
+    state.root!,
+    state.lineCount,
+    location,
+    newlinePositions,
+    byteLength,
+    () => 'pending'
   );
-  lineCount++;
 
   // Mark all lines after the insertion as dirty (they have stale offsets)
   const newDirtyRange = createDirtyRange(
-    lineNumber + 1, // First inserted line and all after
+    location.lineNumber + 1, // First inserted line and all after
     Number.MAX_SAFE_INTEGER, // To end of document
     byteLength, // Offset delta
     currentVersion
@@ -1248,11 +1221,10 @@ function insertLinesAtPositionLazy(
 
   const mergedRanges = mergeDirtyRanges([...state.dirtyRanges, newDirtyRange]);
 
-  return Object.freeze({
-    root: newRoot,
-    lineCount,
+  return withLineIndexState(state, {
+    root: result.root,
+    lineCount: result.lineCount,
     dirtyRanges: Object.freeze(mergedRanges),
-    lastReconciledVersion: state.lastReconciledVersion,
     rebuildPending: true,
   });
 }
@@ -1336,11 +1308,10 @@ function deleteLineRangeLazy(
 
   const mergedRanges = mergeDirtyRanges([...state.dirtyRanges, newDirtyRange]);
 
-  return Object.freeze({
+  return withLineIndexState(state, {
     root: newState.root,
     lineCount: newState.lineCount,
     dirtyRanges: Object.freeze(mergedRanges),
-    lastReconciledVersion: state.lastReconciledVersion,
     rebuildPending: true,
   });
 }
@@ -1355,7 +1326,7 @@ function removeLinesToEndLazy(
   currentVersion: number
 ): LineIndexState {
   const newState = removeLinesToEnd(state, startLine, startOffset);
-  return Object.freeze({
+  return withLineIndexState(state, {
     root: newState.root,
     lineCount: newState.lineCount,
     dirtyRanges: Object.freeze([]),
@@ -1375,7 +1346,7 @@ function removeLinesToEndLazy(
 export function getLineRangePrecise(
   state: LineIndexState,
   lineNumber: number
-): { start: number; length: number } | null {
+): { start: ByteOffset; length: ByteLength } | null {
   const node = findLineByNumber(state.root, lineNumber);
   if (node === null) return null;
 
@@ -1387,7 +1358,7 @@ export function getLineRangePrecise(
     start += delta;
   }
 
-  return { start, length: node.lineLength };
+  return { start: byteOffset(start), length: toByteLengthBrand(node.lineLength) };
 }
 
 /**
@@ -1428,9 +1399,8 @@ export function reconcileRange(
     return range;
   });
 
-  return Object.freeze({
+  return withLineIndexState(state, {
     root: newRoot,
-    lineCount: state.lineCount,
     dirtyRanges: Object.freeze(remainingRanges),
     lastReconciledVersion: version,
     rebuildPending: remainingRanges.length > 0,
@@ -1508,11 +1478,11 @@ function reconcileInPlace(
  * and an in-place tree walk for large ranges (O(n) with structural sharing).
  * Intended to be called from idle callback.
  */
+// TODO(formalization-3.4): Make threshold formula injectable via ReconciliationConfig
 export function reconcileFull(state: LineIndexState, version: number): LineIndexState {
   if (state.dirtyRanges.length === 0) return state;
   if (state.root === null) {
-    return Object.freeze({
-      root: null,
+    return withLineIndexState(state, {
       lineCount: 1,
       dirtyRanges: Object.freeze([]),
       lastReconciledVersion: version,
@@ -1536,9 +1506,8 @@ export function reconcileFull(state: LineIndexState, version: number): LineIndex
   // Slow path: in-place O(n) walk with structural sharing (no collect-rebuild)
   const newRoot = reconcileInPlace(state.root, { offset: 0 });
 
-  return Object.freeze({
+  return withLineIndexState(state, {
     root: newRoot,
-    lineCount: state.lineCount,
     dirtyRanges: Object.freeze([]),
     lastReconciledVersion: version,
     rebuildPending: false,

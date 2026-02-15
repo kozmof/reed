@@ -5,7 +5,7 @@
 
 import type { DocumentState, SelectionRange, CharSelectionRange } from '../types/state.ts';
 import type { ByteOffset } from '../types/branded.ts';
-import { byteOffset, charOffset } from '../types/branded.ts';
+import { byteOffset, charOffset, addByteOffset } from '../types/branded.ts';
 import { findLineAtPosition, getLineRange, getLineRangePrecise, getLineCountFromIndex } from './line-index.ts';
 import { getText, charToByteOffset, byteToCharOffset } from './piece-table.ts';
 import { textEncoder } from './encoding.ts';
@@ -106,7 +106,7 @@ export function getVisibleLineRange(
 export function getLineContent(state: DocumentState, lineNum: number): string {
   const range = getLineRange(state.lineIndex, lineNum);
   if (range === null) return '';
-  const raw = getText(state.pieceTable, byteOffset(range.start) as ByteOffset, byteOffset(range.start + range.length) as ByteOffset);
+  const raw = getText(state.pieceTable, range.start, addByteOffset(range.start, range.length as number));
   return raw.endsWith('\n') ? raw.slice(0, -1) : raw;
 }
 
@@ -142,8 +142,8 @@ export function getVisibleLines(
     // Use getLineRangePrecise to handle dirty line indices correctly
     const range = getLineRangePrecise(state.lineIndex, lineNum);
     if (range) {
-      const startOffset = byteOffset(range.start);
-      const endOffset = byteOffset(range.start + range.length);
+      const startOffset = range.start;
+      const endOffset = addByteOffset(range.start, range.length as number);
       const rawContent = getText(state.pieceTable, startOffset, endOffset);
 
       // Check if line ends with newline and strip it for display
@@ -187,8 +187,8 @@ export function getVisibleLine(
     return null;
   }
 
-  const startOffset = byteOffset(range.start);
-  const endOffset = byteOffset(range.start + range.length);
+  const startOffset = range.start;
+  const endOffset = addByteOffset(range.start, range.length as number);
   const rawContent = getText(state.pieceTable, startOffset, endOffset);
   const hasNewline = rawContent.endsWith('\n');
   const content = hasNewline ? rawContent.slice(0, -1) : rawContent;
@@ -315,7 +315,7 @@ export function positionToLineColumn(
     // We need to convert to character offset
     const range = getLineRangePrecise(state.lineIndex, lineInfo.lineNumber);
     if (range) {
-      const lineContent = getText(state.pieceTable, byteOffset(range.start), byteOffset(range.start + lineInfo.offsetInLine));
+      const lineContent = getText(state.pieceTable, range.start, addByteOffset(range.start, lineInfo.offsetInLine));
       return {
         line: lineInfo.lineNumber,
         column: lineContent.length,
@@ -326,9 +326,9 @@ export function positionToLineColumn(
   // Check if position is at the very end of document
   const lastLineRange = getLineRangePrecise(state.lineIndex, totalLines - 1);
   if (lastLineRange) {
-    const endOffset = lastLineRange.start + lastLineRange.length;
+    const endOffset = addByteOffset(lastLineRange.start, lastLineRange.length as number);
     if (position === endOffset) {
-      const content = getText(state.pieceTable, byteOffset(lastLineRange.start), byteOffset(endOffset));
+      const content = getText(state.pieceTable, lastLineRange.start, endOffset);
       return {
         line: totalLines - 1,
         column: content.length,
@@ -354,8 +354,8 @@ export function lineColumnToPosition(
   }
 
   const startOffset = range.start;
-  const endOffset = range.start + range.length;
-  const lineContent = getText(state.pieceTable, byteOffset(startOffset), byteOffset(endOffset));
+  const endOffset = addByteOffset(range.start, range.length as number);
+  const lineContent = getText(state.pieceTable, startOffset, endOffset);
 
   // Clamp column to line length
   const clampedColumn = Math.min(column, lineContent.length);
@@ -374,6 +374,7 @@ export function lineColumnToPosition(
  * Convert a byte-offset SelectionRange to a character-offset CharSelectionRange.
  * Useful for user-facing APIs where positions correspond to JavaScript string indices.
  */
+// TODO(formalization-4.6): Reads from byte 0 to maxByte — use line index for O(1) lookup instead
 export function selectionToCharOffsets(
   state: DocumentState,
   range: SelectionRange

@@ -82,6 +82,7 @@ export interface PieceNode extends RBNode<PieceNode> {
  * Immutable piece table state using persistent data structures.
  * Uses structural sharing for O(log n) updates with O(1) snapshot creation.
  */
+// TODO(formalization-1.4): Extract GrowableBuffer class to encapsulate addBuffer's append-only invariant
 export interface PieceTableState {
   /** Root of the Red-Black tree of pieces */
   readonly root: PieceNode | null;
@@ -104,6 +105,7 @@ export interface PieceTableState {
  * Maps line numbers to absolute byte offsets.
  */
 export interface LineIndexNode extends RBNode<LineIndexNode> {
+  // TODO(formalization-1.2): Change to `number | null` — more idiomatic than string literal union
   /** Byte offset in document where this line starts. 'pending' when using lazy mode before reconciliation. */
   readonly documentOffset: number | 'pending';
   /** Length of this line including newline character(s) */
@@ -189,20 +191,51 @@ export interface SelectionState {
 // =============================================================================
 
 /**
- * A single change record for undo/redo.
+ * A single insert change record for undo/redo.
  */
-export interface HistoryChange {
-  /** Type of change */
-  readonly type: 'insert' | 'delete' | 'replace';
+export interface HistoryInsertChange {
+  readonly type: 'insert';
   /** Position where the change occurred (byte offset) */
   readonly position: ByteOffset;
-  /** Text that was inserted or deleted */
+  /** Text that was inserted */
   readonly text: string;
   /** Pre-computed UTF-8 byte length of `text` */
   readonly byteLength: number;
-  /** For replace: the original text that was replaced */
-  readonly oldText?: string;
 }
+
+/**
+ * A single delete change record for undo/redo.
+ */
+export interface HistoryDeleteChange {
+  readonly type: 'delete';
+  /** Position where the change occurred (byte offset) */
+  readonly position: ByteOffset;
+  /** Text that was deleted */
+  readonly text: string;
+  /** Pre-computed UTF-8 byte length of `text` */
+  readonly byteLength: number;
+}
+
+/**
+ * A single replace change record for undo/redo.
+ */
+export interface HistoryReplaceChange {
+  readonly type: 'replace';
+  /** Position where the change occurred (byte offset) */
+  readonly position: ByteOffset;
+  /** Text that was inserted */
+  readonly text: string;
+  /** Pre-computed UTF-8 byte length of `text` */
+  readonly byteLength: number;
+  /** The original text that was replaced */
+  readonly oldText: string;
+}
+
+/**
+ * A single change record for undo/redo.
+ * Discriminated union — `oldText` is only present on 'replace' changes.
+ */
+export type HistoryChange = HistoryInsertChange | HistoryDeleteChange | HistoryReplaceChange;
 
 /**
  * A group of changes that form a single undo unit.

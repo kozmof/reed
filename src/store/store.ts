@@ -5,7 +5,7 @@
 
 import type { DocumentState, DocumentStoreConfig } from '../types/state.ts';
 import type { DocumentAction } from '../types/actions.ts';
-import type { DocumentStore, DocumentStoreWithEvents, StoreListener, Unsubscribe } from '../types/store.ts';
+import type { DocumentStore, ReconcilableDocumentStore, DocumentStoreWithEvents, StoreListener, Unsubscribe } from '../types/store.ts';
 import { createInitialState } from './state.ts';
 import { documentReducer } from './reducer.ts';
 import { reconcileFull, reconcileViewport } from './line-index.ts';
@@ -42,7 +42,7 @@ interface ReconciliationState {
  */
 export function createDocumentStore(
   config: Partial<DocumentStoreConfig> = {}
-): DocumentStore {
+): ReconcilableDocumentStore {
   // Internal mutable state
   let state = createInitialState(config);
   const listeners = new Set<StoreListener>();
@@ -395,24 +395,30 @@ export function createDocumentStoreWithEvents(
 
   /**
    * Enhanced batch that emits events after all actions complete.
+   * Uses the enhanced dispatch (which captures before/after for events)
+   * within a transaction, eliminating the need to replay the reducer.
    */
   function batch(actions: DocumentAction[]): DocumentState {
-    const prevState = baseStore.getSnapshot();
-    const nextState = baseStore.batch(actions);
+    if (actions.length === 0) {
+      return baseStore.getSnapshot();
+    }
 
-    if (nextState !== prevState) {
-      // Replay through reducer to capture intermediate states for accurate events
-      let intermediateState = prevState;
+    // Use base store's transaction management with our event-emitting dispatch
+    baseStore.dispatch({ type: 'TRANSACTION_START' });
+    let success = false;
+    try {
       for (const action of actions) {
-        const afterAction = documentReducer(intermediateState, action);
-        if (afterAction !== intermediateState) {
-          emitEventsForAction(action, intermediateState, afterAction);
-        }
-        intermediateState = afterAction;
+        dispatch(action);
+      }
+      baseStore.dispatch({ type: 'TRANSACTION_COMMIT' });
+      success = true;
+    } finally {
+      if (!success) {
+        baseStore.dispatch({ type: 'TRANSACTION_ROLLBACK' });
       }
     }
 
-    return nextState;
+    return baseStore.getSnapshot();
   }
 
   return {
@@ -429,8 +435,8 @@ export function createDocumentStoreWithEvents(
     batch,
 
     // Event emitter methods
-    addEventListener: emitter.addEventListener.bind(emitter),
-    removeEventListener: emitter.removeEventListener.bind(emitter),
+    addEventListener: emitter.addEventListener,
+    removeEventListener: emitter.removeEventListener,
     events: emitter,
   };
 }

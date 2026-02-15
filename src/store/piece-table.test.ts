@@ -121,34 +121,34 @@ describe('Piece Table Operations', () => {
   describe('pieceTableInsert', () => {
     it('should insert into empty state', () => {
       const state = createEmptyPieceTableState();
-      const newState = pieceTableInsert(state, byteOffset(0), 'Hello');
+      const newState = pieceTableInsert(state, byteOffset(0), 'Hello').state;
       expect(getValue(newState)).toBe('Hello');
       expect(getLength(newState)).toBe(5);
     });
 
     it('should insert at beginning', () => {
       const state = createPieceTableState('World');
-      const newState = pieceTableInsert(state, byteOffset(0), 'Hello ');
+      const newState = pieceTableInsert(state, byteOffset(0), 'Hello ').state;
       expect(getValue(newState)).toBe('Hello World');
     });
 
     it('should insert at end', () => {
       const state = createPieceTableState('Hello');
-      const newState = pieceTableInsert(state, byteOffset(5), ' World');
+      const newState = pieceTableInsert(state, byteOffset(5), ' World').state;
       expect(getValue(newState)).toBe('Hello World');
     });
 
     it('should insert in middle', () => {
       const state = createPieceTableState('Helo');
-      const newState = pieceTableInsert(state, byteOffset(2), 'l');
+      const newState = pieceTableInsert(state, byteOffset(2), 'l').state;
       expect(getValue(newState)).toBe('Hello');
     });
 
     it('should handle multiple inserts', () => {
       let state = createEmptyPieceTableState();
-      state = pieceTableInsert(state, byteOffset(0), 'A');
-      state = pieceTableInsert(state, byteOffset(1), 'B');
-      state = pieceTableInsert(state, byteOffset(2), 'C');
+      state = pieceTableInsert(state, byteOffset(0), 'A').state;
+      state = pieceTableInsert(state, byteOffset(1), 'B').state;
+      state = pieceTableInsert(state, byteOffset(2), 'C').state;
       expect(getValue(state)).toBe('ABC');
     });
 
@@ -156,20 +156,20 @@ describe('Piece Table Operations', () => {
       let state = createEmptyPieceTableState();
       const text = 'Hello, World!';
       for (let i = 0; i < text.length; i++) {
-        state = pieceTableInsert(state, byteOffset(i), text[i]);
+        state = pieceTableInsert(state, byteOffset(i), text[i]).state;
       }
       expect(getValue(state)).toBe(text);
     });
 
     it('should handle insert with unicode', () => {
       const state = createPieceTableState('Hello');
-      const newState = pieceTableInsert(state, byteOffset(5), ' 世界!');
+      const newState = pieceTableInsert(state, byteOffset(5), ' 世界!').state;
       expect(getValue(newState)).toBe('Hello 世界!');
     });
 
     it('should not mutate original state', () => {
       const state = createPieceTableState('Hello');
-      const newState = pieceTableInsert(state, byteOffset(5), ' World');
+      const newState = pieceTableInsert(state, byteOffset(5), ' World').state;
       expect(getValue(state)).toBe('Hello');
       expect(getValue(newState)).toBe('Hello World');
     });
@@ -224,7 +224,7 @@ describe('Piece Table Operations', () => {
   describe('insert and delete combinations', () => {
     it('should handle insert then delete', () => {
       let state = createPieceTableState('Hello');
-      state = pieceTableInsert(state, byteOffset(5), ' World');
+      state = pieceTableInsert(state, byteOffset(5), ' World').state;
       expect(getValue(state)).toBe('Hello World');
       state = pieceTableDelete(state, byteOffset(5), byteOffset(11));
       expect(getValue(state)).toBe('Hello');
@@ -234,7 +234,7 @@ describe('Piece Table Operations', () => {
       let state = createPieceTableState('Hello World');
       state = pieceTableDelete(state, byteOffset(5), byteOffset(11));
       expect(getValue(state)).toBe('Hello');
-      state = pieceTableInsert(state, byteOffset(5), ' Universe');
+      state = pieceTableInsert(state, byteOffset(5), ' Universe').state;
       expect(getValue(state)).toBe('Hello Universe');
     });
 
@@ -242,11 +242,11 @@ describe('Piece Table Operations', () => {
       let state = createEmptyPieceTableState();
 
       // Type "Hello"
-      state = pieceTableInsert(state, byteOffset(0), 'Hello');
+      state = pieceTableInsert(state, byteOffset(0), 'Hello').state;
       expect(getValue(state)).toBe('Hello');
 
       // Type " World"
-      state = pieceTableInsert(state, byteOffset(5), ' World');
+      state = pieceTableInsert(state, byteOffset(5), ' World').state;
       expect(getValue(state)).toBe('Hello World');
 
       // Delete " World"
@@ -254,12 +254,12 @@ describe('Piece Table Operations', () => {
       expect(getValue(state)).toBe('Hello');
 
       // Insert " there"
-      state = pieceTableInsert(state, byteOffset(5), ' there');
+      state = pieceTableInsert(state, byteOffset(5), ' there').state;
       expect(getValue(state)).toBe('Hello there');
 
       // Delete "there" and insert "everyone"
       state = pieceTableDelete(state, byteOffset(6), byteOffset(11));
-      state = pieceTableInsert(state, byteOffset(6), 'everyone');
+      state = pieceTableInsert(state, byteOffset(6), 'everyone').state;
       expect(getValue(state)).toBe('Hello everyone');
     });
 
@@ -286,13 +286,13 @@ describe('Piece Table Operations', () => {
     it('should delete a small range from a document with many pieces', () => {
       // Build a document with many pieces via sequential inserts
       let state = createPieceTableState('A');
-      state = pieceTableInsert(state, byteOffset(1), 'B');
-      state = pieceTableInsert(state, byteOffset(2), 'C');
-      state = pieceTableInsert(state, byteOffset(3), 'D');
-      state = pieceTableInsert(state, byteOffset(4), 'E');
-      state = pieceTableInsert(state, byteOffset(5), 'F');
-      state = pieceTableInsert(state, byteOffset(6), 'G');
-      state = pieceTableInsert(state, byteOffset(7), 'H');
+      state = pieceTableInsert(state, byteOffset(1), 'B').state;
+      state = pieceTableInsert(state, byteOffset(2), 'C').state;
+      state = pieceTableInsert(state, byteOffset(3), 'D').state;
+      state = pieceTableInsert(state, byteOffset(4), 'E').state;
+      state = pieceTableInsert(state, byteOffset(5), 'F').state;
+      state = pieceTableInsert(state, byteOffset(6), 'G').state;
+      state = pieceTableInsert(state, byteOffset(7), 'H').state;
       expect(getValue(state)).toBe('ABCDEFGH');
 
       // Delete a small range in the middle (should skip most pieces)
@@ -302,8 +302,8 @@ describe('Piece Table Operations', () => {
 
     it('should delete spanning multiple pieces', () => {
       let state = createPieceTableState('Hello');
-      state = pieceTableInsert(state, byteOffset(5), ' Beautiful');
-      state = pieceTableInsert(state, byteOffset(15), ' World');
+      state = pieceTableInsert(state, byteOffset(5), ' Beautiful').state;
+      state = pieceTableInsert(state, byteOffset(15), ' World').state;
       expect(getValue(state)).toBe('Hello Beautiful World');
 
       // Delete ' Beautiful' which spans the second piece entirely
@@ -313,9 +313,9 @@ describe('Piece Table Operations', () => {
 
     it('should handle delete at start with many pieces', () => {
       let state = createPieceTableState('AAA');
-      state = pieceTableInsert(state, byteOffset(3), 'BBB');
-      state = pieceTableInsert(state, byteOffset(6), 'CCC');
-      state = pieceTableInsert(state, byteOffset(9), 'DDD');
+      state = pieceTableInsert(state, byteOffset(3), 'BBB').state;
+      state = pieceTableInsert(state, byteOffset(6), 'CCC').state;
+      state = pieceTableInsert(state, byteOffset(9), 'DDD').state;
       expect(getValue(state)).toBe('AAABBBCCCDDD');
 
       state = pieceTableDelete(state, byteOffset(0), byteOffset(3));
@@ -324,9 +324,9 @@ describe('Piece Table Operations', () => {
 
     it('should handle delete at end with many pieces', () => {
       let state = createPieceTableState('AAA');
-      state = pieceTableInsert(state, byteOffset(3), 'BBB');
-      state = pieceTableInsert(state, byteOffset(6), 'CCC');
-      state = pieceTableInsert(state, byteOffset(9), 'DDD');
+      state = pieceTableInsert(state, byteOffset(3), 'BBB').state;
+      state = pieceTableInsert(state, byteOffset(6), 'CCC').state;
+      state = pieceTableInsert(state, byteOffset(9), 'DDD').state;
       expect(getValue(state)).toBe('AAABBBCCCDDD');
 
       state = pieceTableDelete(state, byteOffset(9), byteOffset(12));
@@ -336,7 +336,7 @@ describe('Piece Table Operations', () => {
     it('should handle repeated insert-delete cycles', () => {
       let state = createPieceTableState('base');
       for (let i = 0; i < 10; i++) {
-        state = pieceTableInsert(state, byteOffset(4), `_${i}`);
+        state = pieceTableInsert(state, byteOffset(4), `_${i}`).state;
         state = pieceTableDelete(state, byteOffset(4), byteOffset(6));
       }
       expect(getValue(state)).toBe('base');
@@ -390,7 +390,7 @@ describe('Piece Table Operations', () => {
 
     it('should collect pieces after insert', () => {
       let state = createPieceTableState('Hello');
-      state = pieceTableInsert(state, byteOffset(5), ' World');
+      state = pieceTableInsert(state, byteOffset(5), ' World').state;
       const pieces = collectPieces(state.root);
       expect(pieces.length).toBeGreaterThanOrEqual(1);
 
@@ -403,7 +403,7 @@ describe('Piece Table Operations', () => {
   describe('structural sharing', () => {
     it('should share original buffer', () => {
       const state = createPieceTableState('Hello');
-      const newState = pieceTableInsert(state, byteOffset(5), ' World');
+      const newState = pieceTableInsert(state, byteOffset(5), ' World').state;
       expect(newState.originalBuffer).toBe(state.originalBuffer);
     });
 
@@ -411,7 +411,7 @@ describe('Piece Table Operations', () => {
       const state = createPieceTableState('Hello');
       expect(Object.isFrozen(state)).toBe(true);
 
-      const newState = pieceTableInsert(state, byteOffset(5), ' World');
+      const newState = pieceTableInsert(state, byteOffset(5), ' World').state;
       expect(Object.isFrozen(newState)).toBe(true);
     });
   });
@@ -427,7 +427,7 @@ describe('Piece Table Operations', () => {
     it('should handle many inserts', () => {
       let state = createEmptyPieceTableState();
       for (let i = 0; i < 1000; i++) {
-        state = pieceTableInsert(state, byteOffset(i), 'x');
+        state = pieceTableInsert(state, byteOffset(i), 'x').state;
       }
       expect(getLength(state)).toBe(1000);
       expect(getValue(state)).toBe('x'.repeat(1000));
@@ -437,7 +437,7 @@ describe('Piece Table Operations', () => {
   describe('buffer compaction', () => {
     it('should return stats with zero waste for fresh insert', () => {
       let state = createEmptyPieceTableState();
-      state = pieceTableInsert(state, byteOffset(0), 'Hello');
+      state = pieceTableInsert(state, byteOffset(0), 'Hello').state;
       const stats = getBufferStats(state);
       expect(stats.addBufferUsed).toBe(5);
       expect(stats.addBufferWaste).toBe(0);
@@ -446,7 +446,7 @@ describe('Piece Table Operations', () => {
 
     it('should detect waste after deletion', () => {
       let state = createEmptyPieceTableState();
-      state = pieceTableInsert(state, byteOffset(0), 'Hello World');
+      state = pieceTableInsert(state, byteOffset(0), 'Hello World').state;
       state = pieceTableDelete(state, byteOffset(0), byteOffset(6)); // Delete "Hello "
 
       const stats = getBufferStats(state);
@@ -458,7 +458,7 @@ describe('Piece Table Operations', () => {
 
     it('should compact buffer when waste exceeds threshold', () => {
       let state = createEmptyPieceTableState();
-      state = pieceTableInsert(state, byteOffset(0), 'Hello World');
+      state = pieceTableInsert(state, byteOffset(0), 'Hello World').state;
       state = pieceTableDelete(state, byteOffset(0), byteOffset(6)); // Delete "Hello "
 
       // Compact with 0 threshold (always compact)
@@ -472,7 +472,7 @@ describe('Piece Table Operations', () => {
 
     it('should not compact when waste is below threshold', () => {
       let state = createEmptyPieceTableState();
-      state = pieceTableInsert(state, byteOffset(0), 'Hello');
+      state = pieceTableInsert(state, byteOffset(0), 'Hello').state;
 
       // Try to compact with 0.5 threshold (no waste, so shouldn't compact)
       const result = compactAddBuffer(state, 0.5);
@@ -483,9 +483,9 @@ describe('Piece Table Operations', () => {
     it('should preserve content after compaction', () => {
       let state = createEmptyPieceTableState();
       // Create fragmented state with insertions and deletions
-      state = pieceTableInsert(state, byteOffset(0), 'AAA');
-      state = pieceTableInsert(state, byteOffset(3), 'BBB');
-      state = pieceTableInsert(state, byteOffset(6), 'CCC');
+      state = pieceTableInsert(state, byteOffset(0), 'AAA').state;
+      state = pieceTableInsert(state, byteOffset(3), 'BBB').state;
+      state = pieceTableInsert(state, byteOffset(6), 'CCC').state;
       state = pieceTableDelete(state, byteOffset(3), byteOffset(6)); // Delete "BBB"
 
       const before = getValue(state);
@@ -498,7 +498,7 @@ describe('Piece Table Operations', () => {
 
     it('should handle compaction with original buffer content', () => {
       const state = createPieceTableState('Original');
-      let modified = pieceTableInsert(state, byteOffset(8), ' Added');
+      let modified = pieceTableInsert(state, byteOffset(8), ' Added').state;
       modified = pieceTableDelete(modified, byteOffset(8), byteOffset(14)); // Delete " Added"
 
       const compacted = compactAddBuffer(modified, 0);
@@ -508,7 +508,7 @@ describe('Piece Table Operations', () => {
 
     it('should handle empty add buffer after all deletions', () => {
       let state = createEmptyPieceTableState();
-      state = pieceTableInsert(state, byteOffset(0), 'Hello');
+      state = pieceTableInsert(state, byteOffset(0), 'Hello').state;
       state = pieceTableDelete(state, byteOffset(0), byteOffset(5));
 
       const stats = getBufferStats(state);
@@ -529,7 +529,7 @@ describe('Piece Table Operations', () => {
 
     it('should track addBufferUsed correctly through mixed operations', () => {
       let state = createPieceTableState('Original'); // 8 bytes original
-      state = pieceTableInsert(state, byteOffset(8), ' Added'); // 6 bytes add
+      state = pieceTableInsert(state, byteOffset(8), ' Added').state; // 6 bytes add
       expect(getBufferStats(state).addBufferUsed).toBe(6);
 
       // Delete from original buffer only
@@ -543,7 +543,7 @@ describe('Piece Table Operations', () => {
 
     it('should report zero addBufferUsed after deleting all add-buffer content', () => {
       let state = createEmptyPieceTableState();
-      state = pieceTableInsert(state, byteOffset(0), 'Temp');
+      state = pieceTableInsert(state, byteOffset(0), 'Temp').state;
       expect(getBufferStats(state).addBufferUsed).toBe(4);
       state = pieceTableDelete(state, byteOffset(0), byteOffset(4));
       expect(getBufferStats(state).addBufferUsed).toBe(0);
@@ -618,7 +618,7 @@ describe('Piece Table Operations', () => {
       let state = createEmptyPieceTableState();
       // Insert 20 pieces to stress-test balancing
       for (let i = 0; i < 20; i++) {
-        state = pieceTableInsert(state, byteOffset(i), String.fromCharCode(65 + (i % 26)));
+        state = pieceTableInsert(state, byteOffset(i), String.fromCharCode(65 + (i % 26))).state;
       }
 
       expect(state.root).not.toBeNull();
@@ -632,7 +632,7 @@ describe('Piece Table Operations', () => {
     it('should maintain balanced black-height after sequential inserts', () => {
       let state = createEmptyPieceTableState();
       for (let i = 0; i < 50; i++) {
-        state = pieceTableInsert(state, byteOffset(i), 'x');
+        state = pieceTableInsert(state, byteOffset(i), 'x').state;
       }
 
       const { valid, blackHeight } = verifyRBProperties(state.root);

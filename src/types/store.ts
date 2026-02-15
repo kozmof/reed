@@ -24,7 +24,7 @@ export type StoreListener = () => void;
 export type Unsubscribe = () => void;
 
 /**
- * Framework-agnostic store interface.
+ * Core framework-agnostic store interface.
  * Compatible with React's useSyncExternalStore, Redux, Zustand, etc.
  */
 export interface DocumentStore {
@@ -67,19 +67,25 @@ export interface DocumentStore {
    * @returns New state after applying all actions
    */
   batch(actions: DocumentAction[]): DocumentState;
+}
 
+/**
+ * Store with reconciliation capabilities.
+ * Returned by createDocumentStore — reconciliation methods are always present.
+ */
+export interface ReconcilableDocumentStore extends DocumentStore {
   /**
    * Schedule background reconciliation of the line index.
    * Uses requestIdleCallback when available, falls back to setTimeout.
    * Does nothing if no reconciliation is pending.
    */
-  scheduleReconciliation?(): void;
+  scheduleReconciliation(): void;
 
   /**
    * Force immediate synchronous reconciliation of the line index.
    * Use sparingly - prefer scheduleReconciliation() for non-critical updates.
    */
-  reconcileNow?(): void;
+  reconcileNow(): void;
 
   /**
    * Set viewport bounds and ensure those lines have accurate offsets.
@@ -87,7 +93,7 @@ export interface DocumentStore {
    * @param startLine - First visible line (0-indexed)
    * @param endLine - Last visible line (0-indexed)
    */
-  setViewport?(startLine: number, endLine: number): void;
+  setViewport(startLine: number, endLine: number): void;
 }
 
 /**
@@ -117,7 +123,7 @@ export type DocumentReducer = (
  * (content changes, selection changes, history changes) rather than
  * just knowing that "something changed".
  */
-export interface DocumentStoreWithEvents extends DocumentStore {
+export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
   /**
    * Subscribe to typed document events.
    * More specific than subscribe() - you get detailed event information.

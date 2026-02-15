@@ -66,17 +66,18 @@ function validateRange(
 
 /**
  * Insert text into piece table at position.
- * Returns new document state with updated piece table.
+ * Returns new document state with updated piece table and inserted byte length.
  */
 function pieceTableInsert(
   state: DocumentState,
   position: ByteOffset,
   text: string
-): DocumentState {
-  const newPieceTable = ptInsert(state.pieceTable, position, text);
-  return withState(state, {
-    pieceTable: newPieceTable,
-  });
+): { state: DocumentState; insertedByteLength: number } {
+  const result = ptInsert(state.pieceTable, position, text);
+  return {
+    state: withState(state, { pieceTable: result.state }),
+    insertedByteLength: result.insertedByteLength,
+  };
 }
 
 /**
@@ -178,6 +179,7 @@ function computeSelectionAfterChange(
  * Coalescing merges consecutive same-type changes within a timeout window
  * into a single undo entry (e.g., typing a word becomes one undo step).
  */
+// TODO(formalization-3.5): Accept timestamp from action instead of Date.now() for deterministic replay
 function canCoalesce(
   lastEntry: HistoryEntry,
   newChange: HistoryChange,
@@ -371,13 +373,45 @@ function historyRedo(state: DocumentState, version: number): DocumentState {
 }
 
 /**
+ * Invert a history change.
+ * insert ↔ delete, replace swaps text/oldText.
+ * This formalizes the duality between applyChange and applyInverseChange.
+ */
+function invertChange(change: HistoryChange): HistoryChange {
+  switch (change.type) {
+    case 'insert':
+      return Object.freeze({
+        type: 'delete' as const,
+        position: change.position,
+        text: change.text,
+        byteLength: change.byteLength,
+      });
+    case 'delete':
+      return Object.freeze({
+        type: 'insert' as const,
+        position: change.position,
+        text: change.text,
+        byteLength: change.byteLength,
+      });
+    case 'replace':
+      return Object.freeze({
+        type: 'replace' as const,
+        position: change.position,
+        text: change.oldText,
+        byteLength: textEncoder.encode(change.oldText).length,
+        oldText: change.text,
+      });
+  }
+}
+
+/**
  * Apply a single change (for redo).
  * Uses eager line index strategy for immediate accuracy after redo.
  */
 function applyChange(state: DocumentState, change: HistoryChange, version: number): DocumentState {
   switch (change.type) {
     case 'insert': {
-      let s = pieceTableInsert(state, change.position, change.text);
+      const { state: s } = pieceTableInsert(state, change.position, change.text);
       return eagerLineIndex.insert(s, change.position, change.text, version);
     }
     case 'delete': {
@@ -386,11 +420,11 @@ function applyChange(state: DocumentState, change: HistoryChange, version: numbe
       return eagerLineIndex.delete(s, change.position, end, change.text, version);
     }
     case 'replace': {
-      const deleteEnd = byteOffset(change.position + textEncoder.encode(change.oldText ?? '').length);
+      const deleteEnd = byteOffset(change.position + textEncoder.encode(change.oldText).length);
       let s = pieceTableDelete(state, change.position, deleteEnd);
-      s = pieceTableInsert(s, change.position, change.text);
-      s = eagerLineIndex.delete(s, change.position, deleteEnd, change.oldText ?? '', version);
-      return eagerLineIndex.insert(s, change.position, change.text, version);
+      const { state: s2 } = pieceTableInsert(s, change.position, change.text);
+      const s3 = eagerLineIndex.delete(s2, change.position, deleteEnd, change.oldText, version);
+      return eagerLineIndex.insert(s3, change.position, change.text, version);
     }
     default:
       return state;
@@ -399,32 +433,10 @@ function applyChange(state: DocumentState, change: HistoryChange, version: numbe
 
 /**
  * Apply inverse of a change (for undo).
- * Uses eager line index strategy for immediate accuracy after undo.
+ * Delegates to applyChange(invertChange(change)) — the structural dual.
  */
 function applyInverseChange(state: DocumentState, change: HistoryChange, version: number): DocumentState {
-  switch (change.type) {
-    case 'insert': {
-      // Inverse of insert is delete
-      const end = byteOffset(change.position + change.byteLength);
-      let s = pieceTableDelete(state, change.position, end);
-      return eagerLineIndex.delete(s, change.position, end, change.text, version);
-    }
-    case 'delete': {
-      // Inverse of delete is insert
-      let s = pieceTableInsert(state, change.position, change.text);
-      return eagerLineIndex.insert(s, change.position, change.text, version);
-    }
-    case 'replace': {
-      // Inverse of replace: delete new text, insert old text
-      const deleteEnd = byteOffset(change.position + change.byteLength);
-      let s = pieceTableDelete(state, change.position, deleteEnd);
-      s = pieceTableInsert(s, change.position, change.oldText ?? '');
-      s = eagerLineIndex.delete(s, change.position, deleteEnd, change.text, version);
-      return eagerLineIndex.insert(s, change.position, change.oldText ?? '', version);
-    }
-    default:
-      return state;
-  }
+  return applyChange(state, invertChange(change), version);
 }
 
 // =============================================================================
@@ -447,6 +459,87 @@ function setSelection(
 }
 
 // =============================================================================
+// Unified Edit Pipeline
+// =============================================================================
+
+/**
+ * Describes an edit operation: an optional delete followed by an optional insert.
+ * INSERT = { position, insertText }
+ * DELETE = { position, deleteEnd, deletedText }
+ * REPLACE = { position, deleteEnd, deletedText, insertText }
+ */
+interface EditOperation {
+  position: ByteOffset;
+  deleteEnd?: ByteOffset;
+  deletedText?: string;
+  insertText: string;
+}
+
+/**
+ * Apply a text edit through the unified pipeline:
+ * 1. Delete phase (if deleteEnd specified)
+ * 2. Insert phase (if insertText non-empty)
+ * 3. Build history change
+ * 4. Push to history
+ * 5. Mark dirty + increment version
+ */
+function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
+  const nextVersion = state.version + 1;
+  let newState: DocumentState = state;
+
+  // Delete phase
+  if (op.deleteEnd !== undefined) {
+    newState = pieceTableDelete(newState, op.position, op.deleteEnd);
+    newState = lazyLineIndex.delete(newState, op.position, op.deleteEnd, op.deletedText!, nextVersion);
+  }
+
+  // Insert phase
+  let insertedByteLength = 0;
+  if (op.insertText.length > 0) {
+    const result = pieceTableInsert(newState, op.position, op.insertText);
+    newState = result.state;
+    insertedByteLength = result.insertedByteLength;
+    newState = lazyLineIndex.insert(newState, op.position, op.insertText, nextVersion);
+  }
+
+  // Build and push history change
+  let historyChange: HistoryChange;
+  if (op.deleteEnd !== undefined && op.insertText.length > 0) {
+    historyChange = Object.freeze({
+      type: 'replace' as const,
+      position: op.position,
+      text: op.insertText,
+      byteLength: insertedByteLength,
+      oldText: op.deletedText!,
+    });
+  } else if (op.deleteEnd !== undefined) {
+    historyChange = Object.freeze({
+      type: 'delete' as const,
+      position: op.position,
+      text: op.deletedText!,
+      byteLength: (op.deleteEnd as number) - (op.position as number),
+    });
+  } else {
+    historyChange = Object.freeze({
+      type: 'insert' as const,
+      position: op.position,
+      text: op.insertText,
+      byteLength: insertedByteLength,
+    });
+  }
+  newState = historyPush(newState, historyChange);
+
+  // Mark as dirty and increment version
+  return withState(newState, {
+    version: nextVersion,
+    metadata: Object.freeze({
+      ...state.metadata,
+      isDirty: true,
+    }),
+  });
+}
+
+// =============================================================================
 // Main Reducer
 // =============================================================================
 
@@ -460,108 +553,24 @@ export function documentReducer(
 ): DocumentState {
   switch (action.type) {
     case 'INSERT': {
-      // Validate position
       const position = validatePosition(action.start, state.pieceTable.totalLength);
-
-      // Skip empty inserts
       if (action.text.length === 0) return state;
-
-      const nextVersion = state.version + 1;
-
-      // Insert text and update line index (lazy: defers offset recalculation)
-      const totalLengthBefore = state.pieceTable.totalLength;
-      let newState = pieceTableInsert(state, position, action.text);
-      const insertedByteLength = newState.pieceTable.totalLength - totalLengthBefore;
-      newState = lazyLineIndex.insert(newState, position, action.text, nextVersion);
-
-      // Push to history
-      newState = historyPush(newState, {
-        type: 'insert',
-        position,
-        text: action.text,
-        byteLength: insertedByteLength,
-      });
-
-      // Mark as dirty and increment version
-      return withState(newState, {
-        version: nextVersion,
-        metadata: Object.freeze({
-          ...state.metadata,
-          isDirty: true,
-        }),
-      });
+      return applyEdit(state, { position, insertText: action.text });
     }
 
     case 'DELETE': {
-      // Validate range
       const { start, end, valid } = validateRange(action.start, action.end, state.pieceTable.totalLength);
       if (!valid) return state;
-
-      const deletedLength = end - start;
-      if (deletedLength <= 0) return state;
-
-      const nextVersion = state.version + 1;
-
-      // Capture deleted text for undo BEFORE deleting
+      if (end - start <= 0) return state;
       const deletedText = getTextRange(state, start, end);
-
-      // Delete from piece table and update line index (lazy: defers offset recalculation)
-      let newState = pieceTableDelete(state, start, end);
-      newState = lazyLineIndex.delete(newState, start, end, deletedText, nextVersion);
-
-      // Push to history with actual deleted text
-      newState = historyPush(newState, {
-        type: 'delete',
-        position: start,
-        text: deletedText,
-        byteLength: end - start,
-      });
-
-      // Mark as dirty and increment version
-      return withState(newState, {
-        version: nextVersion,
-        metadata: Object.freeze({
-          ...state.metadata,
-          isDirty: true,
-        }),
-      });
+      return applyEdit(state, { position: start, deleteEnd: end, deletedText, insertText: '' });
     }
 
     case 'REPLACE': {
-      // Validate range
       const { start, end, valid } = validateRange(action.start, action.end, state.pieceTable.totalLength);
       if (!valid) return state;
-
-      const nextVersion = state.version + 1;
-
-      // Capture old text for undo BEFORE replacing
       const oldText = getTextRange(state, start, end);
-
-      // Replace is delete + insert (lazy: defers offset recalculation)
-      let newState = pieceTableDelete(state, start, end);
-      const totalLengthAfterDelete = newState.pieceTable.totalLength;
-      newState = pieceTableInsert(newState, start, action.text);
-      const insertedByteLength = newState.pieceTable.totalLength - totalLengthAfterDelete;
-      newState = lazyLineIndex.delete(newState, start, end, oldText, nextVersion);
-      newState = lazyLineIndex.insert(newState, start, action.text, nextVersion);
-
-      // Push to history with actual old text
-      newState = historyPush(newState, {
-        type: 'replace',
-        position: start,
-        text: action.text,
-        byteLength: insertedByteLength,
-        oldText,
-      });
-
-      // Mark as dirty and increment version
-      return withState(newState, {
-        version: nextVersion,
-        metadata: Object.freeze({
-          ...state.metadata,
-          isDirty: true,
-        }),
-      });
+      return applyEdit(state, { position: start, deleteEnd: end, deletedText: oldText, insertText: action.text });
     }
 
     case 'SET_SELECTION': {
@@ -613,7 +622,7 @@ export function documentReducer(
       let newState = state;
       for (const change of action.changes) {
         if (change.type === 'insert' && change.text) {
-          newState = pieceTableInsert(newState, change.start, change.text);
+          newState = pieceTableInsert(newState, change.start, change.text).state;
           newState = lazyLineIndex.insert(newState, change.start, change.text, nextVersion);
         } else if (change.type === 'delete' && change.length) {
           // Capture deleted text before deleting for line index update

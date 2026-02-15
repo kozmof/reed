@@ -297,15 +297,25 @@ export function splitPiece(
 // =============================================================================
 
 /**
+ * Result of a piece table insert operation.
+ * Includes the new state and the byte length of the inserted text,
+ * avoiding the need for callers to re-encode text or diff totalLength.
+ */
+export interface PieceTableInsertResult {
+  state: PieceTableState;
+  insertedByteLength: number;
+}
+
+/**
  * Insert text into the piece table at the given position.
- * Returns a new PieceTableState.
+ * Returns the new state and the UTF-8 byte length of the inserted text.
  */
 export function pieceTableInsert(
   state: PieceTableState,
   position: ByteOffset,
   text: string
-): PieceTableState {
-  if (text.length === 0) return state;
+): PieceTableInsertResult {
+  if (text.length === 0) return { state, insertedByteLength: 0 };
 
   const textBytes = textEncoder.encode(text);
 
@@ -331,13 +341,16 @@ export function pieceTableInsert(
   // Handle empty tree
   if (state.root === null) {
     const newRoot = createPieceNode('add', byteOffset(newAddStart), byteLength(textBytes.length), 'black');
-    return Object.freeze({
-      root: newRoot,
-      originalBuffer: state.originalBuffer,
-      addBuffer,
-      addBufferLength: newAddBufferLength,
-      totalLength: textBytes.length,
-    });
+    return {
+      state: Object.freeze({
+        root: newRoot,
+        originalBuffer: state.originalBuffer,
+        addBuffer,
+        addBufferLength: newAddBufferLength,
+        totalLength: textBytes.length,
+      }),
+      insertedByteLength: textBytes.length,
+    };
   }
 
   // Find the piece at the insertion position
@@ -383,13 +396,16 @@ export function pieceTableInsert(
     );
   }
 
-  return Object.freeze({
-    root: newRoot,
-    originalBuffer: state.originalBuffer,
-    addBuffer,
-    addBufferLength: newAddBufferLength,
-    totalLength: state.totalLength + textBytes.length,
-  });
+  return {
+    state: Object.freeze({
+      root: newRoot,
+      originalBuffer: state.originalBuffer,
+      addBuffer,
+      addBufferLength: newAddBufferLength,
+      totalLength: state.totalLength + textBytes.length,
+    }),
+    insertedByteLength: textBytes.length,
+  };
 }
 
 /**
@@ -581,6 +597,7 @@ function deleteRange(
   });
 }
 
+// TODO(formalization-3.3): mergeTrees does not address black-height imbalance between left/right trees
 /**
  * Merge two trees into one (used when a node is deleted).
  */

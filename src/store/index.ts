@@ -48,7 +48,7 @@ export {
   getBufferSlice,
   getPieceBuffer,
 } from './piece-table.ts';
-export type { StreamOptions, DocumentChunk } from './piece-table.ts';
+export type { StreamOptions, DocumentChunk, PieceTableInsertResult } from './piece-table.ts';
 
 // Line index operations
 export {
