@@ -7,7 +7,7 @@ import type { DocumentState, SelectionRange, CharSelectionRange } from '../types
 import type { ByteOffset } from '../types/branded.ts';
 import { byteOffset, charOffset, addByteOffset } from '../types/branded.ts';
 import { findLineAtPosition, getLineRange, getLineRangePrecise, getLineCountFromIndex } from './line-index.ts';
-import { getText, charToByteOffset, byteToCharOffset } from './piece-table.ts';
+import { getText, charToByteOffset } from './piece-table.ts';
 import { textEncoder } from './encoding.ts';
 
 // =============================================================================
@@ -120,16 +120,6 @@ export function getVisibleLines(
 ): VisibleLinesResult {
   const { startLine, visibleLineCount, overscan = 5 } = config;
   const totalLines = getLineCountFromIndex(state.lineIndex);
-
-  // Handle empty document (root is null but lineCount may be 1)
-  if (state.lineIndex.root === null) {
-    return {
-      lines: [],
-      firstLine: 0,
-      lastLine: 0,
-      totalLines: 0,
-    };
-  }
 
   // Calculate actual range with overscan
   // startLine to startLine + visibleLineCount - 1 gives visibleLineCount lines
@@ -298,14 +288,6 @@ export function positionToLineColumn(
   state: DocumentState,
   position: ByteOffset
 ): { line: number; column: number } | null {
-  // Handle empty document (root is null but lineCount is 1)
-  if (state.lineIndex.root === null) {
-    if (position === 0) {
-      return { line: 0, column: 0 };
-    }
-    return null;
-  }
-
   const totalLines = getLineCountFromIndex(state.lineIndex);
 
   // Use findLineAtPosition to locate the line
@@ -371,20 +353,57 @@ export function lineColumnToPosition(
 // =============================================================================
 
 /**
- * Convert a byte-offset SelectionRange to a character-offset CharSelectionRange.
- * Useful for user-facing APIs where positions correspond to JavaScript string indices.
+ * Convert a single byte offset to a character offset using the line index.
+ * Reads only from the start of the containing line rather than from byte 0.
+ * O(line_length + log(n)) instead of O(document_size).
  */
-// TODO(formalization-4.6): Reads from byte 0 to maxByte — use line index for O(1) lookup instead
+function byteOffsetToCharOffset(
+  state: DocumentState,
+  position: ByteOffset
+): number {
+  const posNum = position as number;
+  if (posNum <= 0) return 0;
+
+  const location = findLineAtPosition(state.lineIndex.root, position);
+  if (location === null) {
+    // Fallback: read from start (shouldn't happen with valid positions)
+    const text = getText(state.pieceTable, byteOffset(0), position);
+    return text.length;
+  }
+
+  // Sum char counts of all complete lines before this one
+  let charCount = 0;
+  for (let line = 0; line < location.lineNumber; line++) {
+    const range = getLineRangePrecise(state.lineIndex, line);
+    if (range && range.length > 0) {
+      const lineText = getText(state.pieceTable, range.start, addByteOffset(range.start, range.length));
+      charCount += lineText.length;
+    }
+  }
+
+  // Add chars within the current line up to the offset
+  if (location.offsetInLine > 0) {
+    const range = getLineRangePrecise(state.lineIndex, location.lineNumber);
+    if (range) {
+      const partialText = getText(state.pieceTable, range.start, addByteOffset(range.start, location.offsetInLine));
+      charCount += partialText.length;
+    }
+  }
+
+  return charCount;
+}
+
+/**
+ * Convert a byte-offset SelectionRange to a character-offset CharSelectionRange.
+ * Uses the line index to narrow reads to relevant lines instead of reading from byte 0.
+ */
 export function selectionToCharOffsets(
   state: DocumentState,
   range: SelectionRange
 ): CharSelectionRange {
-  // Only read text up to the max needed byte offset — O(k) instead of O(n)
-  const maxByte = Math.max(range.anchor as number, range.head as number);
-  const text = getText(state.pieceTable, byteOffset(0), byteOffset(maxByte));
   return Object.freeze({
-    anchor: charOffset(byteToCharOffset(text, range.anchor)),
-    head: charOffset(byteToCharOffset(text, range.head)),
+    anchor: charOffset(byteOffsetToCharOffset(state, range.anchor)),
+    head: charOffset(byteOffsetToCharOffset(state, range.head)),
   });
 }
 

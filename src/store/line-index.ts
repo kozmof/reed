@@ -209,7 +209,7 @@ export function collectLines(root: LineIndexNode | null): readonly LineIndexNode
 function rbInsertLine(
   root: LineIndexNode | null,
   lineNumber: number,
-  documentOffset: number | 'pending',
+  documentOffset: number | null,
   lineLength: number
 ): LineIndexNode {
   const newNode = createLineIndexNode(documentOffset, lineLength, 'red');
@@ -445,7 +445,7 @@ function addToLastLine(node: LineIndexNode, lengthDelta: number): LineIndexNode 
 
 /**
  * Shared structural insert: splits line at location, inserts middle/last lines.
- * `computeOffset` controls whether exact offsets or 'pending' placeholders are used.
+ * `computeOffset` controls whether exact offsets or null placeholders are used.
  */
 function insertLinesStructural(
   root: LineIndexNode,
@@ -453,7 +453,7 @@ function insertLinesStructural(
   location: LineLocation,
   newlinePositions: number[],
   byteLength: number,
-  computeOffset: (lineNumber: number, prevOffset: number) => number | 'pending'
+  computeOffset: (lineNumber: number, prevOffset: number) => number | null
 ): { root: LineIndexNode; lineCount: number } {
   const { lineNumber, offsetInLine, node } = location;
 
@@ -575,8 +575,8 @@ function updateOffsetsAfterLine(
     newLeft = updateOffsetsAfterLine(node.left, afterLineNumber, offsetDelta);
   }
 
-  // Update this node if it's after the threshold (skip 'pending' nodes)
-  if (currentLineNumber > afterLineNumber && newOffset !== 'pending') {
+  // Update this node if it's after the threshold (skip null/pending nodes)
+  if (currentLineNumber > afterLineNumber && newOffset !== null) {
     newOffset = newOffset + offsetDelta;
   }
 
@@ -1201,14 +1201,14 @@ function insertLinesAtPositionLazy(
   byteLength: number,
   currentVersion: number
 ): LineIndexState {
-  // Lazy: use 'pending' placeholder for all new line offsets
+  // Lazy: use null placeholder for all new line offsets
   const result = insertLinesStructural(
     state.root!,
     state.lineCount,
     location,
     newlinePositions,
     byteLength,
-    () => 'pending'
+    () => null
   );
 
   // Mark all lines after the insertion as dirty (they have stale offsets)
@@ -1427,7 +1427,7 @@ function updateLineOffsetByNumber(
     });
   } else {
     return withLineIndexNode(node, {
-      documentOffset: node.documentOffset === 'pending' ? offsetDelta : node.documentOffset + offsetDelta,
+      documentOffset: node.documentOffset === null ? offsetDelta : node.documentOffset + offsetDelta,
     });
   }
 }
@@ -1478,8 +1478,25 @@ function reconcileInPlace(
  * and an in-place tree walk for large ranges (O(n) with structural sharing).
  * Intended to be called from idle callback.
  */
-// TODO(formalization-3.4): Make threshold formula injectable via ReconciliationConfig
-export function reconcileFull(state: LineIndexState, version: number): LineIndexState {
+/**
+ * Configuration for reconciliation behavior.
+ */
+export interface ReconciliationConfig {
+  /** Compute the threshold below which incremental reconciliation is used.
+   *  Receives lineCount, returns max dirty lines for incremental path.
+   *  Default: Math.max(64, Math.floor(lineCount / Math.log2(lineCount + 1)))
+   */
+  thresholdFn?: (lineCount: number) => number;
+}
+
+const defaultThresholdFn = (lineCount: number): number =>
+  Math.max(64, Math.floor(lineCount / Math.log2(lineCount + 1)));
+
+export function reconcileFull(
+  state: LineIndexState,
+  version: number,
+  config?: ReconciliationConfig
+): LineIndexState {
   if (state.dirtyRanges.length === 0) return state;
   if (state.root === null) {
     return withLineIndexState(state, {
@@ -1492,7 +1509,8 @@ export function reconcileFull(state: LineIndexState, version: number): LineIndex
 
   // Fast path: incremental for small dirty ranges — O(k * log n)
   const totalDirty = computeTotalDirtyLines(state.dirtyRanges, state.lineCount);
-  const threshold = Math.max(64, Math.floor(state.lineCount / Math.log2(state.lineCount + 1)));
+  const thresholdFn = config?.thresholdFn ?? defaultThresholdFn;
+  const threshold = thresholdFn(state.lineCount);
 
   if (totalDirty <= threshold) {
     let current: LineIndexState = state;

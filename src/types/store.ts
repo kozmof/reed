@@ -4,7 +4,7 @@
  * Redux, Zustand, Vue, Svelte, and vanilla JavaScript.
  */
 
-import type { DocumentState } from './state.ts';
+import type { DocumentState, LineIndexState } from './state.ts';
 import type { DocumentAction } from './actions.ts';
 import type { ByteOffset } from './branded.ts';
 import type {
@@ -165,12 +165,16 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
 
 /**
  * Strategy interface for line index updates.
- * Formalizes the eager/lazy duality for line index maintenance.
+ * Separates structural tree updates from offset computation policy.
  *
- * - Eager: updates all line offsets immediately (used for undo/redo)
- * - Lazy: defers offset recalculation to idle time (used for normal editing)
+ * - Eager: `computeOffset` returns real byte offsets (used for undo/redo)
+ * - Lazy: `computeOffset` returns null/pending (used for normal editing)
+ *
+ * The `insert` and `delete` methods operate on `LineIndexState` directly,
+ * making the structural update explicit. The reducer wraps the result
+ * back into `DocumentState`.
  */
 export interface LineIndexStrategy {
-  insert(state: DocumentState, position: ByteOffset, text: string, version: number): DocumentState;
-  delete(state: DocumentState, start: ByteOffset, end: ByteOffset, deletedText: string, version: number): DocumentState;
+  insert(state: LineIndexState, position: ByteOffset, text: string, version: number): LineIndexState;
+  delete(state: LineIndexState, start: ByteOffset, end: ByteOffset, deletedText: string, version: number): LineIndexState;
 }

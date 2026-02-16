@@ -77,15 +77,17 @@ describe('getVisibleLineRange', () => {
 });
 
 describe('getVisibleLines', () => {
-  it('should return empty for empty document', () => {
+  it('should return sentinel line for empty document', () => {
     const state = createInitialState();
     const result = getVisibleLines(state, {
       startLine: 0,
       visibleLineCount: 10,
     });
 
-    expect(result.lines).toHaveLength(0);
-    expect(result.totalLines).toBe(0);
+    expect(result.lines).toHaveLength(1);
+    expect(result.totalLines).toBe(1);
+    expect(result.lines[0].lineNumber).toBe(0);
+    expect(result.lines[0].content).toBe('');
   });
 
   it('should return visible lines with content', () => {

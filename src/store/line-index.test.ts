@@ -45,9 +45,12 @@ describe('Line Index Operations', () => {
   });
 
   describe('findLineAtPosition', () => {
-    it('should return null for empty state', () => {
+    it('should find zero-length sentinel for empty state', () => {
       const state = createEmptyLineIndexState();
-      expect(findLineAtPosition(state.root, byteOffset(0))).toBeNull();
+      const location = findLineAtPosition(state.root, byteOffset(0));
+      expect(location).not.toBeNull();
+      expect(location!.lineNumber).toBe(0);
+      expect(location!.offsetInLine).toBe(0);
     });
 
     it('should find line at position 0', () => {
@@ -84,9 +87,11 @@ describe('Line Index Operations', () => {
   });
 
   describe('findLineByNumber', () => {
-    it('should return null for empty state', () => {
+    it('should find zero-length sentinel for empty state', () => {
       const state = createEmptyLineIndexState();
-      expect(findLineByNumber(state.root, 0)).toBeNull();
+      const node = findLineByNumber(state.root, 0);
+      expect(node).not.toBeNull();
+      expect(node!.lineLength).toBe(0);
     });
 
     it('should find first line', () => {
@@ -137,9 +142,10 @@ describe('Line Index Operations', () => {
   });
 
   describe('getLineRange', () => {
-    it('should return null for empty state', () => {
+    it('should return zero-length range for empty state', () => {
       const state = createEmptyLineIndexState();
-      expect(getLineRange(state, 0)).toBeNull();
+      const range = getLineRange(state, 0);
+      expect(range).toEqual({ start: 0, length: 0 });
     });
 
     it('should return correct range for first line', () => {
@@ -156,9 +162,11 @@ describe('Line Index Operations', () => {
   });
 
   describe('collectLines', () => {
-    it('should return empty array for empty state', () => {
+    it('should return sentinel node for empty state', () => {
       const state = createEmptyLineIndexState();
-      expect(collectLines(state.root)).toEqual([]);
+      const lines = collectLines(state.root);
+      expect(lines.length).toBe(1);
+      expect(lines[0].lineLength).toBe(0);
     });
 
     it('should collect all lines in order', () => {

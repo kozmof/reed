@@ -201,6 +201,7 @@ export {
   reconcileRange,
   reconcileFull,
   reconcileViewport,
+  type ReconciliationConfig,
 } from './store/index.ts';
 
 // =============================================================================

@@ -13,6 +13,7 @@ import { byteOffset, byteLength, type ByteOffset, type ByteLength } from '../typ
 import { createPieceNode, withPieceNode } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 import { textEncoder, textDecoder } from './encoding.ts';
+import { GrowableBuffer } from './growable-buffer.ts';
 
 // Type-safe wrapper for withPieceNode to use with generic R-B tree functions
 const withPiece: WithNodeFn<PieceNode> = withPieceNode;
@@ -37,7 +38,7 @@ export function getBuffer(
   state: PieceTableState,
   ref: BufferReference
 ): Uint8Array {
-  return ref.bufferType === 'original' ? state.originalBuffer : state.addBuffer;
+  return ref.bufferType === 'original' ? state.originalBuffer : state.addBuffer.bytes;
 }
 
 /**
@@ -48,7 +49,7 @@ export function getBufferSlice(
   state: PieceTableState,
   ref: BufferReference
 ): Uint8Array {
-  const buffer = ref.bufferType === 'original' ? state.originalBuffer : state.addBuffer;
+  const buffer = ref.bufferType === 'original' ? state.originalBuffer : state.addBuffer.bytes;
   return buffer.subarray(ref.start, ref.start + ref.length);
 }
 
@@ -60,7 +61,7 @@ export function getPieceBuffer(
   state: PieceTableState,
   piece: PieceNode
 ): Uint8Array {
-  return piece.bufferType === 'original' ? state.originalBuffer : state.addBuffer;
+  return piece.bufferType === 'original' ? state.originalBuffer : state.addBuffer.bytes;
 }
 
 // =============================================================================
@@ -319,24 +320,9 @@ export function pieceTableInsert(
 
   const textBytes = textEncoder.encode(text);
 
-  // Grow add buffer if needed
-  let addBuffer = state.addBuffer;
-  let addBufferLength = state.addBufferLength;
-
-  if (addBufferLength + textBytes.length > addBuffer.length) {
-    const newSize = Math.max(
-      addBuffer.length * 2,
-      addBufferLength + textBytes.length
-    );
-    const newBuffer = new Uint8Array(newSize);
-    newBuffer.set(addBuffer.subarray(0, addBufferLength));
-    addBuffer = newBuffer;
-  }
-
   // Append text to add buffer
-  addBuffer.set(textBytes, addBufferLength);
-  const newAddStart = addBufferLength;
-  const newAddBufferLength = addBufferLength + textBytes.length;
+  const newAddStart = state.addBuffer.length;
+  const addBuffer = state.addBuffer.append(textBytes);
 
   // Handle empty tree
   if (state.root === null) {
@@ -346,7 +332,6 @@ export function pieceTableInsert(
         root: newRoot,
         originalBuffer: state.originalBuffer,
         addBuffer,
-        addBufferLength: newAddBufferLength,
         totalLength: textBytes.length,
       }),
       insertedByteLength: textBytes.length,
@@ -401,7 +386,6 @@ export function pieceTableInsert(
       root: newRoot,
       originalBuffer: state.originalBuffer,
       addBuffer,
-      addBufferLength: newAddBufferLength,
       totalLength: state.totalLength + textBytes.length,
     }),
     insertedByteLength: textBytes.length,
@@ -499,7 +483,6 @@ export function pieceTableDelete(
     root: newRoot,
     originalBuffer: state.originalBuffer,
     addBuffer: state.addBuffer,
-    addBufferLength: state.addBufferLength,
     totalLength: state.totalLength - deleteLength,
   });
 }
@@ -597,9 +580,50 @@ function deleteRange(
   });
 }
 
-// TODO(formalization-3.3): mergeTrees does not address black-height imbalance between left/right trees
+
+/**
+ * Compute the black-height of a tree (number of black nodes on any root-to-leaf path).
+ */
+function blackHeight(node: PieceNode | null): number {
+  let h = 0;
+  let n = node;
+  while (n !== null) {
+    if (n.color === 'black') h++;
+    n = n.left;
+  }
+  return h;
+}
+
+/**
+ * Extract the minimum node from a tree, returning the node and the remaining tree.
+ */
+function extractMin(node: PieceNode): { min: PieceNode; rest: PieceNode | null } {
+  const path: PieceNode[] = [];
+  let current = node;
+  while (current.left !== null) {
+    path.push(current);
+    current = current.left;
+  }
+
+  // `current` is the minimum; replace it with its right child
+  let rest: PieceNode | null = current.right;
+  for (let i = path.length - 1; i >= 0; i--) {
+    rest = withPieceNode(path[i], { left: rest });
+    rest = fixRedViolations(rest, withPiece);
+  }
+  if (rest !== null && isRed(rest)) {
+    rest = withPieceNode(rest, { color: 'black' });
+  }
+
+  return { min: current, rest };
+}
+
 /**
  * Merge two trees into one (used when a node is deleted).
+ * Uses the "join by black-height rank" algorithm to maintain the
+ * black-height invariant across all root-to-leaf paths.
+ *
+ * All keys in `left` must be less than all keys in `right` (by inorder position).
  */
 function mergeTrees(
   left: PieceNode | null,
@@ -608,30 +632,149 @@ function mergeTrees(
   if (left === null) return right;
   if (right === null) return left;
 
-  // Find the rightmost node of the left tree
-  let rightmost = left;
-  const path: PieceNode[] = [];
+  // Extract the minimum of the right tree as the join key
+  const { min: joinKey, rest: rightRest } = extractMin(right);
 
-  while (rightmost.right !== null) {
-    path.push(rightmost);
-    rightmost = rightmost.right;
+  return joinByBlackHeight(left, joinKey, rightRest);
+}
+
+/**
+ * Join left tree + key node + right tree, respecting black-height.
+ * The key's children and color are overwritten; only its data fields are used.
+ */
+function joinByBlackHeight(
+  left: PieceNode | null,
+  key: PieceNode,
+  right: PieceNode | null
+): PieceNode {
+  const lh = blackHeight(left);
+  const rh = blackHeight(right);
+
+  if (lh === rh) {
+    // Equal black-heights: make key the root (black) with both as children
+    return withPieceNode(key, { left, right, color: 'black' });
   }
 
-  // Attach right tree as right child of rightmost
-  let current = withPieceNode(rightmost, { right });
-
-  // Rebuild path, fixing red-red violations at each level
-  for (let i = path.length - 1; i >= 0; i--) {
-    current = withPieceNode(path[i], { right: current });
-    current = fixRedViolations(current, withPiece);
+  let result: PieceNode;
+  if (lh > rh) {
+    result = joinRight(left!, key, right, lh, rh);
+  } else {
+    result = joinLeft(left, key, right!, lh, rh);
   }
 
   // Ensure root is black
-  if (isRed(current)) {
-    current = withPieceNode(current, { color: 'black' });
+  if (isRed(result)) {
+    result = withPieceNode(result, { color: 'black' });
+  }
+  return result;
+}
+
+/**
+ * Join when left tree is taller. Walk down the right spine of the left tree
+ * to find a black node at matching black-height, then insert the join key there.
+ */
+function joinRight(
+  left: PieceNode,
+  key: PieceNode,
+  right: PieceNode | null,
+  lh: number,
+  rh: number
+): PieceNode {
+  // Walk down right spine of left tree to matching black-height
+  const path: PieceNode[] = [];
+  let node: PieceNode = left;
+  let bh = lh;
+
+  // Descend until we reach a subtree with black-height equal to rh
+  while (bh > rh && node.right !== null) {
+    path.push(node);
+    node = node.right;
+    if (node.color === 'black') bh--;
   }
 
-  return current;
+  // If we haven't reached the target bh, descend one more level
+  if (bh > rh) {
+    path.push(node);
+    // Create join node with node's right (null) and the right tree
+    let joined: PieceNode = withPieceNode(key, {
+      left: null,
+      right,
+      color: 'red',
+    });
+    // Rebuild path
+    for (let i = path.length - 1; i >= 0; i--) {
+      joined = withPieceNode(path[i], { right: joined });
+      joined = fixRedViolations(joined, withPiece);
+    }
+    return joined;
+  }
+
+  // Insert join key as red node: left = current subtree, right = right tree
+  let joined: PieceNode = withPieceNode(key, {
+    left: node,
+    right,
+    color: 'red',
+  });
+
+  // Rebuild path back to root, fixing violations
+  for (let i = path.length - 1; i >= 0; i--) {
+    joined = withPieceNode(path[i], { right: joined });
+    joined = fixRedViolations(joined, withPiece);
+  }
+
+  return joined;
+}
+
+/**
+ * Join when right tree is taller. Walk down the left spine of the right tree
+ * to find a black node at matching black-height, then insert the join key there.
+ */
+function joinLeft(
+  left: PieceNode | null,
+  key: PieceNode,
+  right: PieceNode,
+  lh: number,
+  rh: number
+): PieceNode {
+  // Walk down left spine of right tree to matching black-height
+  const path: PieceNode[] = [];
+  let node: PieceNode = right;
+  let bh = rh;
+
+  while (bh > lh && node.left !== null) {
+    path.push(node);
+    node = node.left;
+    if (node.color === 'black') bh--;
+  }
+
+  if (bh > lh) {
+    path.push(node);
+    let joined: PieceNode = withPieceNode(key, {
+      left,
+      right: null,
+      color: 'red',
+    });
+    for (let i = path.length - 1; i >= 0; i--) {
+      joined = withPieceNode(path[i], { left: joined });
+      joined = fixRedViolations(joined, withPiece);
+    }
+    return joined;
+  }
+
+  // Insert join key as red node: left = left tree, right = current subtree
+  let joined: PieceNode = withPieceNode(key, {
+    left,
+    right: node,
+    color: 'red',
+  });
+
+  // Rebuild path back to root, fixing violations
+  for (let i = path.length - 1; i >= 0; i--) {
+    joined = withPieceNode(path[i], { left: joined });
+    joined = fixRedViolations(joined, withPiece);
+  }
+
+  return joined;
 }
 
 // =============================================================================
@@ -821,7 +964,7 @@ export interface BufferStats {
  */
 export function getBufferStats(state: PieceTableState): BufferStats {
   const addBufferUsed = state.root?.subtreeAddLength ?? 0;
-  const addBufferSize = state.addBufferLength;
+  const addBufferSize = state.addBuffer.length;
   const addBufferWaste = addBufferSize - addBufferUsed;
   const wasteRatio = addBufferSize > 0 ? addBufferWaste / addBufferSize : 0;
 
@@ -856,8 +999,7 @@ export function compactAddBuffer(
     return Object.freeze({
       root: state.root,
       originalBuffer: state.originalBuffer,
-      addBuffer: new Uint8Array(1024), // Start with small buffer
-      addBufferLength: 0,
+      addBuffer: GrowableBuffer.empty(1024),
       totalLength: state.totalLength,
     });
   }
@@ -873,7 +1015,7 @@ export function compactAddBuffer(
     if (piece.bufferType === 'add') {
       offsetMap.set(piece.start, writeOffset);
       newBuffer.set(
-        state.addBuffer.subarray(piece.start, piece.start + piece.length),
+        state.addBuffer.subarray(piece.start as number, (piece.start as number) + (piece.length as number)),
         writeOffset
       );
       writeOffset += piece.length;
@@ -886,8 +1028,7 @@ export function compactAddBuffer(
   return Object.freeze({
     root: newRoot,
     originalBuffer: state.originalBuffer,
-    addBuffer: newBuffer,
-    addBufferLength: writeOffset,
+    addBuffer: new GrowableBuffer(newBuffer, writeOffset),
     totalLength: state.totalLength,
   });
 }

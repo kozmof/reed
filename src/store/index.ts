@@ -73,6 +73,7 @@ export {
   reconcileRange,
   reconcileFull,
   reconcileViewport,
+  type ReconciliationConfig,
 } from './line-index.ts';
 
 // Diff and setValue operations

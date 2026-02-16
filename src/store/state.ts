@@ -17,6 +17,7 @@ import type {
 import { byteOffset, byteLength } from '../types/branded.ts';
 import type { ByteOffset, ByteLength } from '../types/branded.ts';
 import { textEncoder } from './encoding.ts';
+import { GrowableBuffer } from './growable-buffer.ts';
 
 /**
  * Default configuration values.
@@ -37,8 +38,7 @@ export function createEmptyPieceTableState(): PieceTableState {
   return Object.freeze({
     root: null,
     originalBuffer: new Uint8Array(0),
-    addBuffer: new Uint8Array(0),
-    addBufferLength: 0,
+    addBuffer: GrowableBuffer.empty(),
     totalLength: 0,
   });
 }
@@ -92,19 +92,18 @@ export function createPieceTableState(content: string): PieceTableState {
   return Object.freeze({
     root,
     originalBuffer,
-    addBuffer: new Uint8Array(1024), // Pre-allocate some space
-    addBufferLength: 0,
+    addBuffer: GrowableBuffer.empty(1024),
     totalLength: originalBuffer.length,
   });
 }
 
-// TODO(formalization-4.8): Inconsistent sentinel — lineCount:1 but root:null means findLineByNumber(root,0) returns null
 /**
  * Create an empty line index state.
+ * Uses a zero-length sentinel node so root is never null when lineCount >= 1.
  */
 export function createEmptyLineIndexState(): LineIndexState {
   return Object.freeze({
-    root: null,
+    root: createLineIndexNode(0, 0, 'black'),
     lineCount: 1, // Empty document has 1 line
     dirtyRanges: Object.freeze([]),
     lastReconciledVersion: 0,
@@ -116,7 +115,7 @@ export function createEmptyLineIndexState(): LineIndexState {
  * Create a line index node. Used internally by line index operations.
  */
 export function createLineIndexNode(
-  documentOffset: number | 'pending',
+  documentOffset: number | null,
   lineLength: number,
   color: 'red' | 'black' = 'black',
   left: LineIndexNode | null = null,

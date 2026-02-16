@@ -112,13 +112,11 @@ function getTextRange(state: DocumentState, start: ByteOffset, end: ByteOffset):
  * Used for undo/redo where we need immediate accuracy.
  */
 export const eagerLineIndex: LineIndexStrategy = {
-  insert: (state, position, text, _version) => {
-    const newLineIndex = liInsert(state.lineIndex, position, text);
-    return withState(state, { lineIndex: newLineIndex });
+  insert: (lineIndex, position, text, _version) => {
+    return liInsert(lineIndex, position, text);
   },
-  delete: (state, start, end, deletedText, _version) => {
-    const newLineIndex = liDelete(state.lineIndex, start, end, deletedText);
-    return withState(state, { lineIndex: newLineIndex });
+  delete: (lineIndex, start, end, deletedText, _version) => {
+    return liDelete(lineIndex, start, end, deletedText);
   },
 };
 
@@ -127,13 +125,11 @@ export const eagerLineIndex: LineIndexStrategy = {
  * Used for normal editing where throughput matters more than immediate accuracy.
  */
 export const lazyLineIndex: LineIndexStrategy = {
-  insert: (state, position, text, version) => {
-    const newLineIndex = liInsertLazy(state.lineIndex, position, text, version);
-    return withState(state, { lineIndex: newLineIndex });
+  insert: (lineIndex, position, text, version) => {
+    return liInsertLazy(lineIndex, position, text, version);
   },
-  delete: (state, start, end, deletedText, version) => {
-    const newLineIndex = liDeleteLazy(state.lineIndex, start, end, deletedText, version);
-    return withState(state, { lineIndex: newLineIndex });
+  delete: (lineIndex, start, end, deletedText, version) => {
+    return liDeleteLazy(lineIndex, start, end, deletedText, version);
   },
 };
 
@@ -179,14 +175,14 @@ function computeSelectionAfterChange(
  * Coalescing merges consecutive same-type changes within a timeout window
  * into a single undo entry (e.g., typing a word becomes one undo step).
  */
-// TODO(formalization-3.5): Accept timestamp from action instead of Date.now() for deterministic replay
 function canCoalesce(
   lastEntry: HistoryEntry,
   newChange: HistoryChange,
-  timeout: number
+  timeout: number,
+  now: number
 ): boolean {
   if (timeout <= 0) return false;
-  if (Date.now() - lastEntry.timestamp > timeout) return false;
+  if (now - lastEntry.timestamp > timeout) return false;
   if (lastEntry.changes.length !== 1) return false;
 
   const last = lastEntry.changes[0];
@@ -254,7 +250,8 @@ function coalesceChanges(
  */
 function historyPush(
   state: DocumentState,
-  change: HistoryChange
+  change: HistoryChange,
+  now: number
 ): DocumentState {
   const history = state.history;
 
@@ -263,13 +260,13 @@ function historyPush(
 
   // Try to coalesce with the last entry
   const lastEntry = history.undoStack[history.undoStack.length - 1];
-  if (lastEntry && canCoalesce(lastEntry, change, history.coalesceTimeout)) {
+  if (lastEntry && canCoalesce(lastEntry, change, history.coalesceTimeout, now)) {
     const merged = coalesceChanges(lastEntry.changes[0], change);
     const mergedEntry: HistoryEntry = Object.freeze({
       changes: Object.freeze([merged]),
       selectionBefore: lastEntry.selectionBefore,
       selectionAfter,
-      timestamp: Date.now(),
+      timestamp: now,
     });
     const undoStack = [...history.undoStack.slice(0, -1), mergedEntry];
     return withState(state, {
@@ -285,7 +282,7 @@ function historyPush(
     changes: Object.freeze([change]),
     selectionBefore: state.selection,
     selectionAfter,
-    timestamp: Date.now(),
+    timestamp: now,
   });
 
   // Trim undo stack if it exceeds limit
@@ -412,19 +409,22 @@ function applyChange(state: DocumentState, change: HistoryChange, version: numbe
   switch (change.type) {
     case 'insert': {
       const { state: s } = pieceTableInsert(state, change.position, change.text);
-      return eagerLineIndex.insert(s, change.position, change.text, version);
+      const newLineIndex = eagerLineIndex.insert(s.lineIndex, change.position, change.text, version);
+      return withState(s, { lineIndex: newLineIndex });
     }
     case 'delete': {
       const end = byteOffset(change.position + change.byteLength);
-      let s = pieceTableDelete(state, change.position, end);
-      return eagerLineIndex.delete(s, change.position, end, change.text, version);
+      const s = pieceTableDelete(state, change.position, end);
+      const newLineIndex = eagerLineIndex.delete(s.lineIndex, change.position, end, change.text, version);
+      return withState(s, { lineIndex: newLineIndex });
     }
     case 'replace': {
       const deleteEnd = byteOffset(change.position + textEncoder.encode(change.oldText).length);
-      let s = pieceTableDelete(state, change.position, deleteEnd);
+      const s = pieceTableDelete(state, change.position, deleteEnd);
       const { state: s2 } = pieceTableInsert(s, change.position, change.text);
-      const s3 = eagerLineIndex.delete(s2, change.position, deleteEnd, change.oldText, version);
-      return eagerLineIndex.insert(s3, change.position, change.text, version);
+      const li1 = eagerLineIndex.delete(s2.lineIndex, change.position, deleteEnd, change.oldText, version);
+      const li2 = eagerLineIndex.insert(li1, change.position, change.text, version);
+      return withState(s2, { lineIndex: li2 });
     }
     default:
       return state;
@@ -473,6 +473,7 @@ interface EditOperation {
   deleteEnd?: ByteOffset;
   deletedText?: string;
   insertText: string;
+  timestamp?: number;
 }
 
 /**
@@ -490,7 +491,8 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
   // Delete phase
   if (op.deleteEnd !== undefined) {
     newState = pieceTableDelete(newState, op.position, op.deleteEnd);
-    newState = lazyLineIndex.delete(newState, op.position, op.deleteEnd, op.deletedText!, nextVersion);
+    const delLineIndex = lazyLineIndex.delete(newState.lineIndex, op.position, op.deleteEnd, op.deletedText!, nextVersion);
+    newState = withState(newState, { lineIndex: delLineIndex });
   }
 
   // Insert phase
@@ -499,7 +501,8 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
     const result = pieceTableInsert(newState, op.position, op.insertText);
     newState = result.state;
     insertedByteLength = result.insertedByteLength;
-    newState = lazyLineIndex.insert(newState, op.position, op.insertText, nextVersion);
+    const insLineIndex = lazyLineIndex.insert(newState.lineIndex, op.position, op.insertText, nextVersion);
+    newState = withState(newState, { lineIndex: insLineIndex });
   }
 
   // Build and push history change
@@ -527,7 +530,7 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
       byteLength: insertedByteLength,
     });
   }
-  newState = historyPush(newState, historyChange);
+  newState = historyPush(newState, historyChange, op.timestamp ?? Date.now());
 
   // Mark as dirty and increment version
   return withState(newState, {
@@ -555,7 +558,7 @@ export function documentReducer(
     case 'INSERT': {
       const position = validatePosition(action.start, state.pieceTable.totalLength);
       if (action.text.length === 0) return state;
-      return applyEdit(state, { position, insertText: action.text });
+      return applyEdit(state, { position, insertText: action.text, timestamp: action.timestamp });
     }
 
     case 'DELETE': {
@@ -563,14 +566,14 @@ export function documentReducer(
       if (!valid) return state;
       if (end - start <= 0) return state;
       const deletedText = getTextRange(state, start, end);
-      return applyEdit(state, { position: start, deleteEnd: end, deletedText, insertText: '' });
+      return applyEdit(state, { position: start, deleteEnd: end, deletedText, insertText: '', timestamp: action.timestamp });
     }
 
     case 'REPLACE': {
       const { start, end, valid } = validateRange(action.start, action.end, state.pieceTable.totalLength);
       if (!valid) return state;
       const oldText = getTextRange(state, start, end);
-      return applyEdit(state, { position: start, deleteEnd: end, deletedText: oldText, insertText: action.text });
+      return applyEdit(state, { position: start, deleteEnd: end, deletedText: oldText, insertText: action.text, timestamp: action.timestamp });
     }
 
     case 'SET_SELECTION': {
@@ -623,13 +626,15 @@ export function documentReducer(
       for (const change of action.changes) {
         if (change.type === 'insert' && change.text) {
           newState = pieceTableInsert(newState, change.start, change.text).state;
-          newState = lazyLineIndex.insert(newState, change.start, change.text, nextVersion);
+          const li = lazyLineIndex.insert(newState.lineIndex, change.start, change.text, nextVersion);
+          newState = withState(newState, { lineIndex: li });
         } else if (change.type === 'delete' && change.length) {
           // Capture deleted text before deleting for line index update
           const endPosition = byteOffset(change.start + change.length);
           const deletedText = getTextRange(newState, change.start, endPosition);
           newState = pieceTableDelete(newState, change.start, endPosition);
-          newState = lazyLineIndex.delete(newState, change.start, endPosition, deletedText, nextVersion);
+          const li = lazyLineIndex.delete(newState.lineIndex, change.start, endPosition, deletedText, nextVersion);
+          newState = withState(newState, { lineIndex: li });
         }
       }
       // Remote changes don't push to history (they come from network)

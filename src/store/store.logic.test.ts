@@ -96,7 +96,6 @@ describe('State Factories', () => {
       expect(pieceTable.root).toBeNull();
       expect(pieceTable.originalBuffer.length).toBe(0);
       expect(pieceTable.addBuffer.length).toBe(0);
-      expect(pieceTable.addBufferLength).toBe(0);
       expect(pieceTable.totalLength).toBe(0);
     });
 
@@ -125,8 +124,8 @@ describe('State Factories', () => {
     it('should pre-allocate add buffer', () => {
       const pieceTable = createPieceTableState('Hi');
 
-      expect(pieceTable.addBuffer.length).toBeGreaterThan(0);
-      expect(pieceTable.addBufferLength).toBe(0);
+      expect(pieceTable.addBuffer.bytes.length).toBeGreaterThan(0);
+      expect(pieceTable.addBuffer.length).toBe(0);
     });
   });
 
@@ -161,7 +160,8 @@ describe('State Factories', () => {
     it('should create state with 1 line count', () => {
       const lineIndex = createEmptyLineIndexState();
 
-      expect(lineIndex.root).toBeNull();
+      expect(lineIndex.root).not.toBeNull();
+      expect(lineIndex.root!.lineLength).toBe(0);
       expect(lineIndex.lineCount).toBe(1);
     });
   });

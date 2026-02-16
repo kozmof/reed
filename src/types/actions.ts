@@ -20,6 +20,8 @@ export interface InsertAction {
   readonly start: ByteOffset;
   /** Text to insert */
   readonly text: string;
+  /** Optional timestamp for deterministic history coalescing (defaults to Date.now()) */
+  readonly timestamp?: number;
 }
 
 /**
@@ -31,6 +33,8 @@ export interface DeleteAction {
   readonly start: ByteOffset;
   /** End position of deletion (exclusive, byte offset) */
   readonly end: ByteOffset;
+  /** Optional timestamp for deterministic history coalescing (defaults to Date.now()) */
+  readonly timestamp?: number;
 }
 
 /**
@@ -44,6 +48,8 @@ export interface ReplaceAction {
   readonly end: ByteOffset;
   /** New text to insert */
   readonly text: string;
+  /** Optional timestamp for deterministic history coalescing (defaults to Date.now()) */
+  readonly timestamp?: number;
 }
 
 // =============================================================================

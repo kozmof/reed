@@ -4,6 +4,7 @@
  */
 
 import type { ByteOffset, ByteLength, CharOffset } from './branded.ts';
+import type { GrowableBuffer } from '../store/growable-buffer.ts';
 
 // =============================================================================
 // Piece Table Types
@@ -82,16 +83,13 @@ export interface PieceNode extends RBNode<PieceNode> {
  * Immutable piece table state using persistent data structures.
  * Uses structural sharing for O(log n) updates with O(1) snapshot creation.
  */
-// TODO(formalization-1.4): Extract GrowableBuffer class to encapsulate addBuffer's append-only invariant
 export interface PieceTableState {
   /** Root of the Red-Black tree of pieces */
   readonly root: PieceNode | null;
   /** Original buffer: immutable, loaded from file */
   readonly originalBuffer: Uint8Array;
-  /** Add buffer: copy-on-write, grows as user types */
-  readonly addBuffer: Uint8Array;
-  /** Current used length of add buffer */
-  readonly addBufferLength: number;
+  /** Add buffer: append-only growable buffer for user edits */
+  readonly addBuffer: GrowableBuffer;
   /** Total document length (cached for O(1) access) */
   readonly totalLength: number;
 }
@@ -105,9 +103,8 @@ export interface PieceTableState {
  * Maps line numbers to absolute byte offsets.
  */
 export interface LineIndexNode extends RBNode<LineIndexNode> {
-  // TODO(formalization-1.2): Change to `number | null` — more idiomatic than string literal union
-  /** Byte offset in document where this line starts. 'pending' when using lazy mode before reconciliation. */
-  readonly documentOffset: number | 'pending';
+  /** Byte offset in document where this line starts. null when using lazy mode before reconciliation. */
+  readonly documentOffset: number | null;
   /** Length of this line including newline character(s) */
   readonly lineLength: number;
 
