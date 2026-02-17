@@ -126,15 +126,67 @@ If it must remain for backward compatibility, rename it `getLineLinearScan` to m
 
 ---
 
-## 5. Fragility Assessment
+## 5. Type-Level Cost Contracts — Unified Framework
 
-**Most likely to be bypassed**: The `getLineRange` vs `getLineRangePrecise` distinction. A contributor will call `getLineRange` in rendering code (shorter name, appears first in exports) and introduce a subtle stale-offset bug that only manifests under lazy mode with dirty ranges. Nothing in the type system prevents this.
+The four proposals above each address one dimension of a broader pattern: **type-level cost contracts**. Rather than relying on documentation or naming conventions alone, the type system encodes and propagates performance and staleness guarantees as branded contracts, with specific functions serving as discharge points that narrow the contract.
 
-**Most likely to become fragile**: The `byteOffsetToCharOffset` loop in `src/store/rendering.ts:376`. As the document grows, this silently degrades. The per-line loop should be replaced with a tree-aggregate query.
+The following table maps each structural guarantee to its TypeScript-native mechanism:
+
+| Structural Guarantee | TypeScript Mechanism | Where It Applies |
+|---|---|---|
+| **Cost contract** — branded into return type | `Brand<'O(log n)'>` on return types (Proposal A) | `getText`, `getValue`, `getLength`, etc. |
+| **Contract discharge / narrowing point** — a function that narrows a contract from loose to strict | Generic parameter narrowing via return type | `reconcileNow()` narrows `DocumentState<'lazy'>` to `DocumentState<'eager'>` (Proposal C) |
+| **Parametric state mode** — state parameterized over its mode | `DocumentState<M extends EvaluationMode>` | `LineIndexState`, `DocumentState` carry their evaluation mode |
+| **Contract stacking** — orthogonal contracts composed via intersection | `LogCost & CleanRead` as intersection brands | A value can carry both a cost contract and a staleness contract simultaneously |
+| **Contract fidelity** — implementation must satisfy its branded promise | Code review / test invariant | `byteOffsetToCharOffset` violates its contract: the branded return type promises O(log n) but the loop is O(n) |
+| **Cost widening** — a stricter contract satisfies a looser one | Branded-type hierarchy with assignability | `ConstResult<T>` assignable to `LogResult<T>` assignable to `LinearResult<T>` |
+
+### Contract Stacking: Proposals A and C Compose
+
+Proposals A (cost contracts) and C (parametric state mode) are not alternatives — they are orthogonal and should compose. A function's return value can carry both dimensions:
+
+- `getLineRange` on `DocumentState<'eager'>` returns `LogResult<LineRange>` — both the cost and the staleness contract are visible.
+- `getLineRange` on `DocumentState<'lazy'>` is a compile error — the staleness contract is unsatisfied.
+- `getLineRangePrecise` on `DocumentState<'lazy'>` returns `LogResult<LineRange>` — it internally discharges the staleness by applying dirty-range deltas.
+
+In TypeScript, this composes naturally via intersection brands: a value of type `string & Brand<'O(log n)'> & Brand<'clean'>` carries both contracts.
+
+### Contract Fidelity Violations (Sections 3a and 3b)
+
+The algorithm bugs identified in Section 3 are contract fidelity violations — the implementation does not satisfy the cost its type promises:
+
+**(a) `byteOffsetToCharOffset`**: The function's signature and JSDoc promise O(log n + line_length), but the `for (let line = 0; ...)` loop makes it O(n). The `subtreeByteLength` aggregate already exists on `LineIndexNode` — restoring contract fidelity requires either replacing the loop with an O(log n) tree query or adding a `subtreeCharLength` aggregate. This is not merely a performance bug; it is a structural lie in the type contract.
+
+**(b) `charOffsetsToSelection`**: Reading from `byteOffset(0)` delegates a hidden O(n) cost to `getText`. The function claims to handle `CharOffset → ByteOffset` conversion locally, but actually externalizes the cost. Contract fidelity requires handling the conversion via binary search on the tree rather than materializing a substring.
+
+### Cost Widening: Branded Hierarchy
+
+If Proposal A is adopted, the cost brands need a widening relationship so that stricter contracts are assignable to looser ones:
+
+```typescript
+// O(1) satisfies any context expecting O(log n) or O(n)
+// O(log n) satisfies any context expecting O(n)
+type CostLevel = 'O(1)' | 'O(log n)' | 'O(n)';
+
+// Widening via conditional mapped types:
+type SatisfiesCost<Actual extends CostLevel, Required extends CostLevel> =
+  Required extends 'O(n)' ? true :
+  Required extends 'O(log n)' ? (Actual extends 'O(n)' ? false : true) :
+  Actual extends 'O(1)' ? true : false;
+```
+
+Without this, `getLength()` (returning `ConstResult<number>`) would not be assignable where `LogResult<number>` is expected — the type system would reject correct usage.
+
+## 6. Fragility Assessment
+
+**Most likely to be bypassed**: The `getLineRange` vs `getLineRangePrecise` distinction. A contributor will call `getLineRange` in rendering code (shorter name, appears first in exports) and introduce a subtle stale-offset bug that only manifests under lazy mode with dirty ranges. Nothing in the type system prevents this. With Proposal C, this becomes a compile error — the parametric state mode rejects the call entirely.
+
+**Most likely to become fragile**: The `byteOffsetToCharOffset` loop in `src/store/rendering.ts:376`. As the document grows, this silently degrades. This is a contract fidelity violation — the function's type promises sublinear cost but the implementation is linear. The per-line loop should be replaced with a tree-aggregate query.
 
 **Structural recommendation priority**:
 
 1. Remove or rename `getLine` (Proposal D) — eliminates the primary O(n) trap
-2. Fix `byteOffsetToCharOffset` to use tree aggregates — eliminates the hidden O(n) regression
+2. Fix `byteOffsetToCharOffset` and `charOffsetsToSelection` to restore contract fidelity — eliminates hidden O(n) regressions
 3. Namespace stratification (Proposal B) — makes all future additions self-documenting
-4. Evaluation-mode type parameter (Proposal C) — prevents stale-read bugs at compile time
+4. Evaluation-mode type parameter (Proposal C) — prevents stale-read bugs at compile time via contract discharge
+5. Cost contracts with widening (Proposal A + cost hierarchy) — makes cost visible and composable at every call site
