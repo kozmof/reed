@@ -8,9 +8,9 @@ import {
   computeSetValueActions,
   computeSetValueActionsOptimized,
   setValue,
-} from './features/diff.ts';
-import { createInitialState } from './core/state.ts';
-import { getValue } from './core/piece-table.ts';
+} from './diff.ts';
+import { createInitialState } from '../core/state.ts';
+import { getValue } from '../core/piece-table.ts';
 
 describe('Diff Algorithm', () => {
   describe('diff', () => {

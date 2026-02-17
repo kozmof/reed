@@ -17,12 +17,12 @@ import {
   byteToCharOffset,
   charToByteOffset,
   rbInsertPiece,
-} from './core/piece-table.ts';
+} from './piece-table.ts';
 import {
   createEmptyPieceTableState,
   createPieceTableState,
-} from './core/state.ts';
-import { byteOffset } from '../types/branded.ts';
+} from './state.ts';
+import { byteOffset } from '../../types/branded.ts';
 
 describe('Piece Table Operations', () => {
   describe('getValue', () => {

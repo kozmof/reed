@@ -5,12 +5,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { createTransactionManager } from './features/transaction.ts';
-import { createInitialState } from './core/state.ts';
-import { documentReducer } from './features/reducer.ts';
-import { DocumentActions } from './features/actions.ts';
-import { byteOffset } from '../types/branded.ts';
-import type { DocumentState } from '../types/state.ts';
+import { createTransactionManager } from './transaction.ts';
+import { createInitialState } from './../core/state.ts';
+import { documentReducer } from './reducer.ts';
+import { DocumentActions } from './actions.ts';
+import { byteOffset } from '../../types/branded.ts';
+import type { DocumentState } from '../../types/state.ts';
 
 // Helper: create distinct states for snapshot testing
 function makeState(content: string = ''): DocumentState {
