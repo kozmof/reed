@@ -4,8 +4,8 @@
  */
 
 import type { DocumentState, SelectionRange, CharSelectionRange } from '../../types/state.ts';
-import type { ByteOffset, LogResult } from '../../types/branded.ts';
-import { byteOffset, charOffset, addByteOffset, logResult } from '../../types/branded.ts';
+import type { ByteOffset, LogCost } from '../../types/branded.ts';
+import { byteOffset, charOffset, addByteOffset, logCost } from '../../types/branded.ts';
 import { findLineAtPosition, getCharStartOffset, findLineAtCharPosition, getLineRangePrecise, getLineCountFromIndex } from '../core/line-index.ts';
 import { getText, charToByteOffset } from '../core/piece-table.ts';
 import { textEncoder } from '../core/encoding.ts';
@@ -103,11 +103,11 @@ export function getVisibleLineRange(
  * @param lineNum - 0-indexed line number
  * @returns The line text (without trailing newline), or empty string if out of range
  */
-export function getLineContent(state: DocumentState, lineNum: number): LogResult<string> {
+export function getLineContent(state: DocumentState, lineNum: number): LogCost<string> {
   const range = getLineRangePrecise(state.lineIndex, lineNum);
-  if (range === null) return logResult('');
+  if (range === null) return logCost('');
   const raw = getText(state.pieceTable, range.start, addByteOffset(range.start, range.length as number));
-  return logResult(raw.endsWith('\n') ? raw.slice(0, -1) : raw);
+  return logCost(raw.endsWith('\n') ? raw.slice(0, -1) : raw);
 }
 
 /**

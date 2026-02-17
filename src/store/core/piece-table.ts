@@ -9,7 +9,7 @@ import type {
   BufferType,
   BufferReference,
 } from '../../types/state.ts';
-import { byteOffset, byteLength, constResult, logResult, linearResult, type ByteOffset, type ByteLength, type ConstResult, type LogResult, type LinearResult } from '../../types/branded.ts';
+import { byteOffset, byteLength, constCost, logCost, linearCost, type ByteOffset, type ByteLength, type ConstCost, type LogCost, type LinearCost } from '../../types/branded.ts';
 import { createPieceNode, withPieceNode } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 import { textEncoder, textDecoder } from './encoding.ts';
@@ -784,8 +784,8 @@ function joinLeft(
 /**
  * Get the entire document content as a string.
  */
-export function getValue(state: PieceTableState): LinearResult<string> {
-  if (state.root === null) return linearResult('');
+export function getValue(state: PieceTableState): LinearCost<string> {
+  if (state.root === null) return linearCost('');
 
   const pieces = collectPieces(state.root);
 
@@ -805,7 +805,7 @@ export function getValue(state: PieceTableState): LinearResult<string> {
     offset += piece.length;
   }
 
-  return linearResult(textDecoder.decode(result));
+  return linearCost(textDecoder.decode(result));
 }
 
 /**
@@ -815,11 +815,11 @@ export function getText(
   state: PieceTableState,
   start: ByteOffset,
   end: ByteOffset
-): LogResult<string> {
-  if (state.root === null) return logResult('');
-  if (start < 0) return logResult('');
-  if (start >= end) return logResult('');
-  if (start >= state.totalLength) return logResult('');
+): LogCost<string> {
+  if (state.root === null) return logCost('');
+  if (start < 0) return logCost('');
+  if (start >= end) return logCost('');
+  if (start >= state.totalLength) return logCost('');
 
   const actualEnd = Math.min(end, state.totalLength);
 
@@ -829,7 +829,7 @@ export function getText(
   const writeState = { offset: 0 };
   collectBytesInRange(state, state.root, 0, start, actualEnd, result, writeState);
 
-  return logResult(textDecoder.decode(result.subarray(0, writeState.offset)));
+  return logCost(textDecoder.decode(result.subarray(0, writeState.offset)));
 }
 
 /**
@@ -877,8 +877,8 @@ function collectBytesInRange(
 /**
  * Get the total length of the document.
  */
-export function getLength(state: PieceTableState): ConstResult<number> {
-  return constResult(state.totalLength);
+export function getLength(state: PieceTableState): ConstCost<number> {
+  return constCost(state.totalLength);
 }
 
 /**

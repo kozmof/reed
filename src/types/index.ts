@@ -78,9 +78,9 @@ export type {
   CharOffset,
   LineNumber,
   ColumnNumber,
-  ConstResult,
-  LogResult,
-  LinearResult,
+  ConstCost,
+  LogCost,
+  LinearCost,
 } from './branded.ts';
 
 export {
@@ -106,7 +106,7 @@ export {
   ZERO_CHAR_OFFSET,
   LINE_ZERO,
   COLUMN_ZERO,
-  constResult,
-  logResult,
-  linearResult,
+  constCost,
+  logCost,
+  linearCost,
 } from './branded.ts';

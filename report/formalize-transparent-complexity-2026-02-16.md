@@ -6,12 +6,12 @@ The public API previously exported functions like `getValue`, `getText`, and `ge
 
 | Function | Actual Complexity | Visible from signature? |
 |---|---|---|
-| `getValue` | O(n) | **Yes** — returns `LinearResult<string>`, in `scan` namespace |
-| `getText` | O(log n + m) | **Yes** — returns `LogResult<string>`, in `query` namespace |
+| `getValue` | O(n) | **Yes** — returns `LinearCost<string>`, in `scan` namespace |
+| `getText` | O(log n + m) | **Yes** — returns `LogCost<string>`, in `query` namespace |
 | ~~`getLine`~~ (removed) | O(n) | Renamed to `getLineLinearScan`, no longer public |
-| `getLineContent` (rendering) | O(log n) | **Yes** — returns `LogResult<string>`, in `query` namespace |
+| `getLineContent` (rendering) | O(log n) | **Yes** — returns `LogCost<string>`, in `query` namespace |
 | `getBufferStats` | O(1) | In `query` namespace |
-| `getLength` | O(1) | **Yes** — returns `ConstResult<number>`, in `query` namespace |
+| `getLength` | O(1) | **Yes** — returns `ConstCost<number>`, in `query` namespace |
 
 **Resolved**: All complexity contracts are now visible through three complementary mechanisms: cost-branded return types (Proposal A), namespace stratification (Proposal B), and `getLine` removal (Proposal D).
 
@@ -60,9 +60,9 @@ Cost brands encode algorithmic complexity in function return types using a numer
 declare const costLevel: unique symbol;
 type CostBrand<Level extends number> = { readonly [costLevel]: Level };
 
-type ConstResult<T>  = T & CostBrand<0>;         // O(1)
-type LogResult<T>    = T & CostBrand<0 | 1>;      // O(log n)
-type LinearResult<T> = T & CostBrand<0 | 1 | 2>;  // O(n)
+type ConstCost<T>  = T & CostBrand<0>;         // O(1)
+type LogCost<T>    = T & CostBrand<0 | 1>;      // O(log n)
+type LinearCost<T> = T & CostBrand<0 | 1 | 2>;  // O(n)
 ```
 
 Widening is automatic via TypeScript union assignability: `CostBrand<0>` is assignable to `CostBrand<0 | 1>` is assignable to `CostBrand<0 | 1 | 2>`. No conditional types needed.
@@ -71,15 +71,15 @@ Annotated functions:
 
 | Function | Return Type | Cost Level |
 |---|---|---|
-| `getLength` | `ConstResult<number>` | O(1) |
-| `getLineCountFromIndex` | `ConstResult<number>` | O(1) |
-| `getText` | `LogResult<string>` | O(log n + m) |
-| `getLineContent` | `LogResult<string>` | O(log n) |
-| `getLineRange` | `LogResult<{ start, length }> \| null` | O(log n) |
-| `getLineRangePrecise` | `LogResult<{ start, length }> \| null` | O(log n) |
-| `getValue` | `LinearResult<string>` | O(n) |
+| `getLength` | `ConstCost<number>` | O(1) |
+| `getLineCountFromIndex` | `ConstCost<number>` | O(1) |
+| `getText` | `LogCost<string>` | O(log n + m) |
+| `getLineContent` | `LogCost<string>` | O(log n) |
+| `getLineRange` | `LogCost<{ start, length }> \| null` | O(log n) |
+| `getLineRangePrecise` | `LogCost<{ start, length }> \| null` | O(log n) |
+| `getValue` | `LinearCost<string>` | O(n) |
 
-Constructor functions `constResult()`, `logResult()`, `linearResult()` are zero-cost casts exported from `src/types/branded.ts`.
+Constructor functions `constCost()`, `logCost()`, `linearCost()` are zero-cost casts exported from `src/types/branded.ts`.
 
 ### Proposal B: Namespace-Based API Stratification (Done)
 
@@ -140,21 +140,21 @@ The following table maps each structural guarantee to its TypeScript mechanism a
 
 | Structural Guarantee | TypeScript Mechanism | Where It Applies | Status |
 |---|---|---|---|
-| **Cost contract** — branded into return type | `CostBrand<Level>` on return types | `getText` → `LogResult`, `getValue` → `LinearResult`, `getLength` → `ConstResult` | **Done** |
+| **Cost contract** — branded into return type | `CostBrand<Level>` on return types | `getText` → `LogCost`, `getValue` → `LinearCost`, `getLength` → `ConstCost` | **Done** |
 | **Contract discharge / narrowing point** | Generic parameter narrowing via return type | `reconcileNow()` returns `DocumentState<'eager'>` | **Done** |
 | **Parametric state mode** | `DocumentState<M extends EvaluationMode>` | `LineIndexState`, `DocumentState` carry their evaluation mode | **Done** |
-| **Contract stacking** — orthogonal contracts composed via intersection | `LogResult & EagerState` as intersection brands | `getLineRange` on `DocumentState<'eager'>` returns `LogResult<LineRange>` — both cost and staleness are visible | **Done** |
+| **Contract stacking** — orthogonal contracts composed via intersection | `LogCost & EagerState` as intersection brands | `getLineRange` on `DocumentState<'eager'>` returns `LogCost<LineRange>` — both cost and staleness are visible | **Done** |
 | **Contract fidelity** — implementation satisfies its branded promise | `subtreeCharLength` aggregate + tree queries | `byteOffsetToCharOffset` and `charOffsetsToSelection` satisfy their O(log n + line_length) contracts | **Done** |
-| **Cost widening** — a stricter contract satisfies a looser one | Numeric `CostBrand<Level>` union assignability | `ConstResult<T>` assignable to `LogResult<T>` assignable to `LinearResult<T>` | **Done** |
+| **Cost widening** — a stricter contract satisfies a looser one | Numeric `CostBrand<Level>` union assignability | `ConstCost<T>` assignable to `LogCost<T>` assignable to `LinearCost<T>` | **Done** |
 | **Namespace stratification** — cost tier visible at import site | `query.*` vs `scan.*` namespace objects | All O(log n)/O(1) functions in `query`, all O(n) in `scan` | **Done** |
 
 ### Contract Stacking: Proposals A and C Compose
 
 Proposals A (cost contracts) and C (parametric state mode) are orthogonal and compose as designed:
 
-- `getLineRange` on `DocumentState<'eager'>` returns `LogResult<LineRange>` — both the cost and the staleness contract are visible.
+- `getLineRange` on `DocumentState<'eager'>` returns `LogCost<LineRange>` — both the cost and the staleness contract are visible.
 - `getLineRange` on `DocumentState<'lazy'>` is a compile error — the staleness contract is unsatisfied.
-- `getLineRangePrecise` on `DocumentState<'lazy'>` returns `LogResult<LineRange>` — it internally discharges the staleness by applying dirty-range deltas.
+- `getLineRangePrecise` on `DocumentState<'lazy'>` returns `LogCost<LineRange>` — it internally discharges the staleness by applying dirty-range deltas.
 
 ### Contract Fidelity Violations (Sections 3a and 3b) — Resolved
 
@@ -173,12 +173,12 @@ The cost brands use a numeric level scheme where widening is automatic via TypeS
 ```typescript
 type CostBrand<Level extends number> = { readonly [costLevel]: Level };
 
-type ConstResult<T>  = T & CostBrand<0>;         // Level 0
-type LogResult<T>    = T & CostBrand<0 | 1>;      // Level 0 | 1
-type LinearResult<T> = T & CostBrand<0 | 1 | 2>;  // Level 0 | 1 | 2
+type ConstCost<T>  = T & CostBrand<0>;         // Level 0
+type LogCost<T>    = T & CostBrand<0 | 1>;      // Level 0 | 1
+type LinearCost<T> = T & CostBrand<0 | 1 | 2>;  // Level 0 | 1 | 2
 ```
 
-Since `0 extends 0 | 1` in TypeScript, `CostBrand<0>` is assignable to `CostBrand<0 | 1>`, giving `ConstResult<T>` natural assignability to `LogResult<T>`. No conditional mapped types or explicit widening functions are needed.
+Since `0 extends 0 | 1` in TypeScript, `CostBrand<0>` is assignable to `CostBrand<0 | 1>`, giving `ConstCost<T>` natural assignability to `LogCost<T>`. No conditional mapped types or explicit widening functions are needed.
 
 ## 6. Fragility Assessment
 
@@ -192,4 +192,4 @@ Since `0 extends 0 | 1` in TypeScript, `CostBrand<0>` is assignable to `CostBran
 2. ~~Fix `byteOffsetToCharOffset` and `charOffsetsToSelection`~~ — **Done**. Both now use O(log n) tree-aggregate queries via `subtreeCharLength`.
 3. ~~Namespace stratification (Proposal B)~~ — **Done**. `query` and `scan` namespaces in `src/api/`. Flat exports preserved for backward compatibility.
 4. ~~Evaluation-mode type parameter (Proposal C)~~ — **Done**. `EvaluationMode` parameterizes `LineIndexState` and `DocumentState`. `getLineRange` requires eager state. `reconcileNow()` returns `DocumentState<'eager'>`.
-5. ~~Cost contracts with widening (Proposal A)~~ — **Done**. `ConstResult`, `LogResult`, `LinearResult` with numeric `CostBrand<Level>` for automatic widening. Key functions annotated.
+5. ~~Cost contracts with widening (Proposal A)~~ — **Done**. `ConstCost`, `LogCost`, `LinearCost` with numeric `CostBrand<Level>` for automatic widening. Key functions annotated.

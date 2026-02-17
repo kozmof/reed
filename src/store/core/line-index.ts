@@ -11,7 +11,7 @@ import type {
 } from '../../types/state.ts';
 import type { ByteOffset, ByteLength } from '../../types/branded.ts';
 import type { ReadTextFn } from '../../types/store.ts';
-import { byteOffset, byteLength as toByteLengthBrand, constResult, logResult, type ConstResult, type LogResult } from '../../types/branded.ts';
+import { byteOffset, byteLength as toByteLengthBrand, constCost, logCost, type ConstCost, type LogCost } from '../../types/branded.ts';
 import { createLineIndexNode, withLineIndexNode, withLineIndexState } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 
@@ -1139,8 +1139,8 @@ export function rebuildLineIndex(content: string): LineIndexState {
 /**
  * Get line count from the state.
  */
-export function getLineCountFromIndex(state: LineIndexState): ConstResult<number> {
-  return constResult(state.lineCount);
+export function getLineCountFromIndex(state: LineIndexState): ConstCost<number> {
+  return constCost(state.lineCount);
 }
 
 /**
@@ -1151,12 +1151,12 @@ export function getLineCountFromIndex(state: LineIndexState): ConstResult<number
 export function getLineRange(
   state: LineIndexState<'eager'>,
   lineNumber: number
-): LogResult<{ start: ByteOffset; length: ByteLength }> | null {
+): LogCost<{ start: ByteOffset; length: ByteLength }> | null {
   const node = findLineByNumber(state.root, lineNumber);
   if (node === null) return null;
 
   const start = getLineStartOffset(state.root, lineNumber);
-  return logResult({ start: byteOffset(start), length: toByteLengthBrand(node.lineLength) });
+  return logCost({ start: byteOffset(start), length: toByteLengthBrand(node.lineLength) });
 }
 
 // =============================================================================
@@ -1516,7 +1516,7 @@ function removeLinesToEndLazy(
 export function getLineRangePrecise(
   state: LineIndexState,
   lineNumber: number
-): LogResult<{ start: ByteOffset; length: ByteLength }> | null {
+): LogCost<{ start: ByteOffset; length: ByteLength }> | null {
   const node = findLineByNumber(state.root, lineNumber);
   if (node === null) return null;
 
@@ -1528,7 +1528,7 @@ export function getLineRangePrecise(
     start += delta;
   }
 
-  return logResult({ start: byteOffset(start), length: toByteLengthBrand(node.lineLength) });
+  return logCost({ start: byteOffset(start), length: toByteLengthBrand(node.lineLength) });
 }
 
 /**

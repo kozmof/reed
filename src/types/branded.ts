@@ -296,26 +296,26 @@ declare const costLevel: unique symbol;
  */
 type CostBrand<Level extends number> = { readonly [costLevel]: Level };
 
-/** Result from an O(1) operation. Assignable to LogResult and LinearResult. */
-export type ConstResult<T> = T & CostBrand<0>;
+/** Value from an O(1) operation. Assignable to LogCost and LinearCost. */
+export type ConstCost<T> = T & CostBrand<0>;
 
-/** Result from an O(log n) operation. Assignable to LinearResult. */
-export type LogResult<T> = T & CostBrand<0 | 1>;
+/** Value from an O(log n) operation. Assignable to LinearCost. */
+export type LogCost<T> = T & CostBrand<0 | 1>;
 
-/** Result from an O(n) operation. */
-export type LinearResult<T> = T & CostBrand<0 | 1 | 2>;
+/** Value from an O(n) operation. */
+export type LinearCost<T> = T & CostBrand<0 | 1 | 2>;
 
 /** Tag a value as O(1). Zero runtime cost — cast only. */
-export function constResult<T>(value: T): ConstResult<T> {
-  return value as ConstResult<T>;
+export function constCost<T>(value: T): ConstCost<T> {
+  return value as ConstCost<T>;
 }
 
 /** Tag a value as O(log n). Zero runtime cost — cast only. */
-export function logResult<T>(value: T): LogResult<T> {
-  return value as LogResult<T>;
+export function logCost<T>(value: T): LogCost<T> {
+  return value as LogCost<T>;
 }
 
 /** Tag a value as O(n). Zero runtime cost — cast only. */
-export function linearResult<T>(value: T): LinearResult<T> {
-  return value as LinearResult<T>;
+export function linearCost<T>(value: T): LinearCost<T> {
+  return value as LinearCost<T>;
 }
