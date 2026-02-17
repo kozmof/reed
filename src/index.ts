@@ -20,6 +20,7 @@ export type {
   PieceTableState,
   LineIndexNode,
   LineIndexState,
+  EvaluationMode,
   DirtyLineRange,
   SelectionRange,
   CharSelectionRange,
@@ -75,6 +76,9 @@ export type {
   CharOffset,
   LineNumber,
   ColumnNumber,
+  ConstResult,
+  LogResult,
+  LinearResult,
 } from './types/index.ts';
 
 export {
@@ -100,6 +104,9 @@ export {
   ZERO_CHAR_OFFSET,
   LINE_ZERO,
   COLUMN_ZERO,
+  constResult,
+  logResult,
+  linearResult,
 } from './types/index.ts';
 
 // =============================================================================
@@ -279,3 +286,9 @@ export {
   getRedoCount,
   isHistoryEmpty,
 } from './store/index.ts';
+
+// =============================================================================
+// Complexity-Stratified API Namespaces
+// =============================================================================
+
+export { query, scan } from './api/index.ts';

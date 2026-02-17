@@ -272,3 +272,50 @@ export const LINE_ZERO: LineNumber = 0 as LineNumber;
  * Column zero - the first column.
  */
 export const COLUMN_ZERO: ColumnNumber = 0 as ColumnNumber;
+
+// =============================================================================
+// Algorithmic Cost Brands
+// =============================================================================
+
+/**
+ * Phantom symbol for cost-level branding.
+ * Never exists at runtime — zero overhead.
+ */
+declare const costLevel: unique symbol;
+
+/**
+ * Cost brand with numeric level for natural widening.
+ * Level 0 = O(1), Level 1 = O(log n), Level 2 = O(n).
+ *
+ * Widening is automatic via TypeScript's union assignability:
+ * - `CostBrand<0>` (O(1)) is assignable to `CostBrand<0 | 1>` (O(log n))
+ * - `CostBrand<0 | 1>` (O(log n)) is assignable to `CostBrand<0 | 1 | 2>` (O(n))
+ *
+ * This means a value from an O(1) function can be used wherever an O(log n)
+ * or O(n) result is expected — cheaper operations satisfy costlier contracts.
+ */
+type CostBrand<Level extends number> = { readonly [costLevel]: Level };
+
+/** Result from an O(1) operation. Assignable to LogResult and LinearResult. */
+export type ConstResult<T> = T & CostBrand<0>;
+
+/** Result from an O(log n) operation. Assignable to LinearResult. */
+export type LogResult<T> = T & CostBrand<0 | 1>;
+
+/** Result from an O(n) operation. */
+export type LinearResult<T> = T & CostBrand<0 | 1 | 2>;
+
+/** Tag a value as O(1). Zero runtime cost — cast only. */
+export function constResult<T>(value: T): ConstResult<T> {
+  return value as ConstResult<T>;
+}
+
+/** Tag a value as O(log n). Zero runtime cost — cast only. */
+export function logResult<T>(value: T): LogResult<T> {
+  return value as LogResult<T>;
+}
+
+/** Tag a value as O(n). Zero runtime cost — cast only. */
+export function linearResult<T>(value: T): LinearResult<T> {
+  return value as LinearResult<T>;
+}

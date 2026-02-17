@@ -249,7 +249,7 @@ export function createDocumentStore(
    * Force immediate reconciliation (blocking).
    * Use sparingly - prefer scheduleReconciliation().
    */
-  function reconcileNow(): void {
+  function reconcileNow(): DocumentState<'eager'> {
     // Cancel any pending idle callback
     if (reconciliation.idleCallbackId !== null) {
       if (typeof cancelIdleCallback !== 'undefined') {
@@ -260,7 +260,9 @@ export function createDocumentStore(
       reconciliation.idleCallbackId = null;
     }
 
-    if (!state.lineIndex.rebuildPending) return;
+    if (!state.lineIndex.rebuildPending) {
+      return state as DocumentState<'eager'>;
+    }
 
     const nextVersion = state.version + 1;
     const newLineIndex = reconcileFull(state.lineIndex, nextVersion);
@@ -271,6 +273,7 @@ export function createDocumentStore(
         version: nextVersion,
       });
     }
+    return state as DocumentState<'eager'>;
   }
 
   /**

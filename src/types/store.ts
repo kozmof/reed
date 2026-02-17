@@ -4,7 +4,7 @@
  * Redux, Zustand, Vue, Svelte, and vanilla JavaScript.
  */
 
-import type { DocumentState, LineIndexState } from './state.ts';
+import type { DocumentState, LineIndexState, EvaluationMode } from './state.ts';
 import type { DocumentAction } from './actions.ts';
 import type { ByteOffset } from './branded.ts';
 import type {
@@ -83,9 +83,11 @@ export interface ReconcilableDocumentStore extends DocumentStore {
 
   /**
    * Force immediate synchronous reconciliation of the line index.
+   * Returns the reconciled state with evaluation mode narrowed to 'eager',
+   * guaranteeing no dirty ranges remain.
    * Use sparingly - prefer scheduleReconciliation() for non-critical updates.
    */
-  reconcileNow(): void;
+  reconcileNow(): DocumentState<'eager'>;
 
   /**
    * Set viewport bounds and ensure those lines have accurate offsets.
@@ -180,7 +182,7 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
  */
 export type ReadTextFn = (start: ByteOffset, end: ByteOffset) => string;
 
-export interface LineIndexStrategy {
-  insert(state: LineIndexState, position: ByteOffset, text: string, version: number, readText?: ReadTextFn): LineIndexState;
-  delete(state: LineIndexState, start: ByteOffset, end: ByteOffset, deletedText: string, version: number): LineIndexState;
+export interface LineIndexStrategy<M extends EvaluationMode = EvaluationMode> {
+  insert(state: LineIndexState, position: ByteOffset, text: string, version: number, readText?: ReadTextFn): LineIndexState<M>;
+  delete(state: LineIndexState, start: ByteOffset, end: ByteOffset, deletedText: string, version: number): LineIndexState<M>;
 }

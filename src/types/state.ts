@@ -133,22 +133,26 @@ export interface DirtyLineRange {
   readonly createdAtVersion: number;
 }
 
+/** Evaluation mode for the line index: eager has no dirty ranges, lazy may. */
+export type EvaluationMode = 'eager' | 'lazy';
+
 /**
- * Immutable line index state.
- * Maintains a separate Red-Black tree for O(log n) line lookups.
- * Supports lazy maintenance with dirty range tracking.
+ * Immutable line index state, parameterized by evaluation mode.
+ * When `M` is `'eager'`, dirty ranges are guaranteed empty and rebuild is not pending.
+ * When `M` is `'lazy'`, dirty ranges may exist and rebuild may be pending.
+ * The default (union) accepts either mode for backward compatibility.
  */
-export interface LineIndexState {
+export interface LineIndexState<M extends EvaluationMode = EvaluationMode> {
   /** Root of the line index tree */
   readonly root: LineIndexNode | null;
   /** Total line count (cached for O(1) access) */
   readonly lineCount: number;
   /** Dirty ranges awaiting background reconciliation */
-  readonly dirtyRanges: readonly DirtyLineRange[];
+  readonly dirtyRanges: M extends 'eager' ? readonly [] : readonly DirtyLineRange[];
   /** Version number of last full reconciliation */
   readonly lastReconciledVersion: number;
   /** Whether a background rebuild is pending */
-  readonly rebuildPending: boolean;
+  readonly rebuildPending: M extends 'eager' ? false : boolean;
 }
 
 // =============================================================================
@@ -294,13 +298,13 @@ export interface DocumentMetadata {
  * Immutable document state snapshot.
  * All properties are read-only and structurally shared between versions.
  */
-export interface DocumentState {
+export interface DocumentState<M extends EvaluationMode = EvaluationMode> {
   /** Monotonically increasing version number for change detection */
   readonly version: number;
   /** Piece table containing the document content */
   readonly pieceTable: PieceTableState;
   /** Line index for O(log n) line lookups */
-  readonly lineIndex: LineIndexState;
+  readonly lineIndex: LineIndexState<M>;
   /** Current selection state */
   readonly selection: SelectionState;
   /** Undo/redo history */

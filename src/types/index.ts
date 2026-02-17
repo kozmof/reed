@@ -14,6 +14,7 @@ export type {
   PieceTableState,
   LineIndexNode,
   LineIndexState,
+  EvaluationMode,
   DirtyLineRange,
   SelectionRange,
   CharSelectionRange,
@@ -77,6 +78,9 @@ export type {
   CharOffset,
   LineNumber,
   ColumnNumber,
+  ConstResult,
+  LogResult,
+  LinearResult,
 } from './branded.ts';
 
 export {
@@ -102,4 +106,7 @@ export {
   ZERO_CHAR_OFFSET,
   LINE_ZERO,
   COLUMN_ZERO,
+  constResult,
+  logResult,
+  linearResult,
 } from './branded.ts';

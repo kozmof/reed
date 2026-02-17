@@ -11,7 +11,7 @@ import type {
 } from '../../types/state.ts';
 import type { ByteOffset, ByteLength } from '../../types/branded.ts';
 import type { ReadTextFn } from '../../types/store.ts';
-import { byteOffset, byteLength as toByteLengthBrand } from '../../types/branded.ts';
+import { byteOffset, byteLength as toByteLengthBrand, constResult, logResult, type ConstResult, type LogResult } from '../../types/branded.ts';
 import { createLineIndexNode, withLineIndexNode, withLineIndexState } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 
@@ -1139,22 +1139,24 @@ export function rebuildLineIndex(content: string): LineIndexState {
 /**
  * Get line count from the state.
  */
-export function getLineCountFromIndex(state: LineIndexState): number {
-  return state.lineCount;
+export function getLineCountFromIndex(state: LineIndexState): ConstResult<number> {
+  return constResult(state.lineCount);
 }
 
 /**
  * Get a line's content range (start offset and length).
+ * Requires eager state — calling on lazy state with dirty ranges is a compile error.
+ * Use `getLineRangePrecise` for state that may have dirty ranges.
  */
 export function getLineRange(
-  state: LineIndexState,
+  state: LineIndexState<'eager'>,
   lineNumber: number
-): { start: ByteOffset; length: ByteLength } | null {
+): LogResult<{ start: ByteOffset; length: ByteLength }> | null {
   const node = findLineByNumber(state.root, lineNumber);
   if (node === null) return null;
 
   const start = getLineStartOffset(state.root, lineNumber);
-  return { start: byteOffset(start), length: toByteLengthBrand(node.lineLength) };
+  return logResult({ start: byteOffset(start), length: toByteLengthBrand(node.lineLength) });
 }
 
 // =============================================================================
@@ -1514,7 +1516,7 @@ function removeLinesToEndLazy(
 export function getLineRangePrecise(
   state: LineIndexState,
   lineNumber: number
-): { start: ByteOffset; length: ByteLength } | null {
+): LogResult<{ start: ByteOffset; length: ByteLength }> | null {
   const node = findLineByNumber(state.root, lineNumber);
   if (node === null) return null;
 
@@ -1526,7 +1528,7 @@ export function getLineRangePrecise(
     start += delta;
   }
 
-  return { start: byteOffset(start), length: toByteLengthBrand(node.lineLength) };
+  return logResult({ start: byteOffset(start), length: toByteLengthBrand(node.lineLength) });
 }
 
 /**
@@ -1664,15 +1666,15 @@ export function reconcileFull(
   state: LineIndexState,
   version: number,
   config?: ReconciliationConfig
-): LineIndexState {
-  if (state.dirtyRanges.length === 0) return state;
+): LineIndexState<'eager'> {
+  if (state.dirtyRanges.length === 0) return state as LineIndexState<'eager'>;
   if (state.root === null) {
     return withLineIndexState(state, {
       lineCount: 1,
-      dirtyRanges: Object.freeze([]),
+      dirtyRanges: Object.freeze([]) as readonly [],
       lastReconciledVersion: version,
-      rebuildPending: false,
-    });
+      rebuildPending: false as const,
+    }) as LineIndexState<'eager'>;
   }
 
   // Fast path: incremental for small dirty ranges — O(k * log n)
@@ -1686,7 +1688,7 @@ export function reconcileFull(
       const endLine = Math.min(range.endLine, current.lineCount - 1);
       current = reconcileRange(current, range.startLine, endLine, version);
     }
-    return current;
+    return current as LineIndexState<'eager'>;
   }
 
   // Slow path: in-place O(n) walk with structural sharing (no collect-rebuild)
@@ -1694,10 +1696,10 @@ export function reconcileFull(
 
   return withLineIndexState(state, {
     root: newRoot,
-    dirtyRanges: Object.freeze([]),
+    dirtyRanges: Object.freeze([]) as readonly [],
     lastReconciledVersion: version,
-    rebuildPending: false,
-  });
+    rebuildPending: false as const,
+  }) as LineIndexState<'eager'>;
 }
 
 /**

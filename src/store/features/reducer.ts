@@ -111,7 +111,7 @@ function getTextRange(state: DocumentState, start: ByteOffset, end: ByteOffset):
  * Eager strategy: updates all line offsets immediately.
  * Used for undo/redo where we need immediate accuracy.
  */
-export const eagerLineIndex: LineIndexStrategy = {
+export const eagerLineIndex: LineIndexStrategy<'eager'> = {
   insert: (lineIndex, position, text, _version, readText) => {
     return liInsert(lineIndex, position, text, readText);
   },
@@ -124,7 +124,7 @@ export const eagerLineIndex: LineIndexStrategy = {
  * Lazy strategy: defers offset recalculation to idle time.
  * Used for normal editing where throughput matters more than immediate accuracy.
  */
-export const lazyLineIndex: LineIndexStrategy = {
+export const lazyLineIndex: LineIndexStrategy<'lazy'> = {
   insert: (lineIndex, position, text, version, readText) => {
     return liInsertLazy(lineIndex, position, text, version, readText);
   },

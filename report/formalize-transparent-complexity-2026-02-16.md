@@ -1,31 +1,35 @@
 # Formalization Analysis: Transparent Complexity & Evaluation Strategy
 
-## 1. Data Structures — Hidden Complexity Contracts
+## 1. Data Structures — Complexity Contracts (Resolved)
 
-The public API exports functions like `getValue`, `getText`, and `getLineContent` as peers — flat functions with identical call signatures. A consumer cannot distinguish O(n) from O(log n) without reading implementation.
+The public API previously exported functions like `getValue`, `getText`, and `getLineContent` as peers — flat functions with identical call signatures. A consumer could not distinguish O(n) from O(log n) without reading implementation.
 
 | Function | Actual Complexity | Visible from signature? |
 |---|---|---|
-| `getValue` | O(n) | No |
-| `getText` | O(log n + m) | No |
+| `getValue` | O(n) | **Yes** — returns `LinearResult<string>`, in `scan` namespace |
+| `getText` | O(log n + m) | **Yes** — returns `LogResult<string>`, in `query` namespace |
 | ~~`getLine`~~ (removed) | O(n) | Renamed to `getLineLinearScan`, no longer public |
-| `getLineContent` (rendering) | O(log n) | Only via JSDoc |
-| `getBufferStats` | O(1) | Only via JSDoc |
-| `getLength` | O(1) | No |
+| `getLineContent` (rendering) | O(log n) | **Yes** — returns `LogResult<string>`, in `query` namespace |
+| `getBufferStats` | O(1) | In `query` namespace |
+| `getLength` | O(1) | **Yes** — returns `ConstResult<number>`, in `query` namespace |
 
-**Resolved**: `getLine` has been renamed to `getLineLinearScan` and removed from the public API (`src/index.ts`). It remains available internally in `src/store/core/piece-table.ts` for low-level use. Only `getLineContent` is now exported as the public line-access function.
+**Resolved**: All complexity contracts are now visible through three complementary mechanisms: cost-branded return types (Proposal A), namespace stratification (Proposal B), and `getLine` removal (Proposal D).
 
-## 2. Interfaces — The `LineIndexStrategy` Duality is Well-Formalized, But Invisible to Consumers
+## 2. Interfaces — The `LineIndexStrategy` Duality (Resolved)
 
-The `LineIndexStrategy` interface in `src/types/store.ts:177` cleanly separates eager vs. lazy. The reducer in `src/store/reducer.ts:114-134` correctly uses `eagerLineIndex` for undo/redo and `lazyLineIndex` for normal edits.
+The `LineIndexStrategy` interface in `src/types/store.ts` cleanly separates eager vs. lazy. The reducer in `src/store/features/reducer.ts` correctly uses `eagerLineIndex` for undo/redo and `lazyLineIndex` for normal edits.
 
-However, the strategy choice is **fully internal**. From a consumer's perspective:
+The strategy choice is now **visible at the type level**:
 
-- `dispatch({ type: 'INSERT', ... })` — uses lazy. No way to know.
-- `dispatch({ type: 'UNDO' })` — uses eager. No way to know.
-- The reconciliation lifecycle (`scheduleReconciliation`, `reconcileNow`, `setViewport`) is exposed on `ReconcilableDocumentStore`, but there is no type-level indication that *lazy operations require reconciliation before reads are accurate*.
+- `eagerLineIndex: LineIndexStrategy<'eager'>` — returns `LineIndexState<'eager'>`
+- `lazyLineIndex: LineIndexStrategy<'lazy'>` — returns `LineIndexState<'lazy'>`
+- `getLineRange` requires `LineIndexState<'eager'>` — calling it on lazy state is a **compile error**
+- `getLineRangePrecise` accepts `LineIndexState` (either mode) — applies dirty-range deltas internally
+- `reconcileNow()` returns `DocumentState<'eager'>` — the contract discharge point that narrows the type
 
-A consumer calling `getLineRange` after a lazy insert will get stale data. Only `getLineRangePrecise` applies dirty-range deltas. These two functions differ by a single word in their name — a fragile distinction for a correctness-critical difference.
+A consumer calling `getLineRange` after a lazy insert now gets a type error, not stale data. The `getLineRange` / `getLineRangePrecise` distinction is enforced by the type system, not by naming convention alone.
+
+**Key change**: `getLineContent` in `src/store/features/rendering.ts` now calls `getLineRangePrecise` instead of `getLineRange`, making it safe to use on lazy state. All other rendering functions already used `getLineRangePrecise`.
 
 ## 3. Algorithms — Two Contract Fidelity Violations (Resolved)
 
@@ -47,35 +51,41 @@ Rather than adding documentation or wrappers, the goal is to make complexity **s
 
 ---
 
-### Proposal A: Complexity-Branded Return Types
+### Proposal A: Complexity-Branded Return Types (Done)
 
-Extend the existing branded-type pattern to encode complexity in result types:
+Cost brands encode algorithmic complexity in function return types using a numeric `CostBrand<Level>` phantom type with natural widening:
 
 ```typescript
-// In branded.ts — zero runtime cost
-type LogResult<T> = T & Brand<'O(log n)'>;
-type LinearResult<T> = T & Brand<'O(n)'>;
-type ConstResult<T> = T & Brand<'O(1)'>;
+// In src/types/branded.ts — zero runtime cost
+declare const costLevel: unique symbol;
+type CostBrand<Level extends number> = { readonly [costLevel]: Level };
+
+type ConstResult<T>  = T & CostBrand<0>;         // O(1)
+type LogResult<T>    = T & CostBrand<0 | 1>;      // O(log n)
+type LinearResult<T> = T & CostBrand<0 | 1 | 2>;  // O(n)
 ```
 
-Functions would return branded results:
+Widening is automatic via TypeScript union assignability: `CostBrand<0>` is assignable to `CostBrand<0 | 1>` is assignable to `CostBrand<0 | 1 | 2>`. No conditional types needed.
+
+Annotated functions:
+
+| Function | Return Type | Cost Level |
+|---|---|---|
+| `getLength` | `ConstResult<number>` | O(1) |
+| `getLineCountFromIndex` | `ConstResult<number>` | O(1) |
+| `getText` | `LogResult<string>` | O(log n + m) |
+| `getLineContent` | `LogResult<string>` | O(log n) |
+| `getLineRange` | `LogResult<{ start, length }> \| null` | O(log n) |
+| `getLineRangePrecise` | `LogResult<{ start, length }> \| null` | O(log n) |
+| `getValue` | `LinearResult<string>` | O(n) |
+
+Constructor functions `constResult()`, `logResult()`, `linearResult()` are zero-cost casts exported from `src/types/branded.ts`.
+
+### Proposal B: Namespace-Based API Stratification (Done)
+
+The public API now offers complexity-stratified namespace objects alongside flat exports:
 
 ```typescript
-function getText(state, start, end): LogResult<string>;
-function getValue(state): LinearResult<string>;
-function getLength(state): ConstResult<number>;
-```
-
-A consumer writing `renderLine(getValue(state))` gets a `LinearResult<string>` — the brand propagates through the type system and makes the cost visible at every call site.
-
-**Trade-off**: This is the most formal approach but adds type noise. It works best if the codebase already has branded-type conventions (which it does).
-
-### Proposal B: Namespace-Based API Stratification
-
-Group exports by complexity tier using module namespaces:
-
-```typescript
-// Expose as:
 import { query, scan } from 'reed';
 
 query.getText(state, start, end);     // O(log n + m)
@@ -83,17 +93,17 @@ query.getLineContent(state, lineNum); // O(log n)
 query.getLength(state);               // O(1)
 
 scan.getValue(state);                 // O(n)
-scan.getLine(state, lineNum);         // O(n)
+scan.collectPieces(state.root);       // O(n)
 scan.getValueStream(state, opts);     // O(n) streaming
 ```
 
+**Implementation**: `src/api/query.ts` re-exports O(log n) and O(1) operations. `src/api/scan.ts` re-exports O(n) operations. Both are re-exported from `src/api/index.ts` and `src/index.ts`. Existing flat exports remain unchanged — namespaces are additive and non-breaking.
+
 A consumer importing from `scan` *knows* they are opting into linear cost. A code review can grep for `scan.` to audit performance hotspots.
 
-**This removes `getLine` vs `getLineContent` ambiguity entirely** — they live in different namespaces with different cost contracts.
+### Proposal C: Evaluation Strategy as a Type Parameter (Done)
 
-### Proposal C: Evaluation Strategy as a Type Parameter
-
-Make the lazy/eager distinction visible in the state type:
+The lazy/eager distinction is now visible in the state type system:
 
 ```typescript
 type EvaluationMode = 'eager' | 'lazy';
@@ -101,24 +111,20 @@ type EvaluationMode = 'eager' | 'lazy';
 interface LineIndexState<M extends EvaluationMode = EvaluationMode> {
   readonly root: LineIndexNode | null;
   readonly lineCount: number;
-  readonly dirtyRanges: M extends 'lazy' ? readonly DirtyLineRange[] : readonly [];
-  readonly rebuildPending: M extends 'lazy' ? boolean : false;
+  readonly dirtyRanges: M extends 'eager' ? readonly [] : readonly DirtyLineRange[];
+  readonly rebuildPending: M extends 'eager' ? false : boolean;
   // ...
 }
-```
 
-Then `getLineRange` would require `LineIndexState<'eager'>` while `getLineRangePrecise` accepts either. A consumer calling `getLineRange` on a `LineIndexState<'lazy'>` gets a compile error — not silent stale data.
-
-The `DocumentState` itself could carry this:
-
-```typescript
 interface DocumentState<M extends EvaluationMode = EvaluationMode> {
   readonly lineIndex: LineIndexState<M>;
   // ...
 }
 ```
 
-After `reconcileNow()`, the store could return `DocumentState<'eager'>`, narrowing the type.
+`getLineRange` requires `LineIndexState<'eager'>` — calling it on `LineIndexState<'lazy'>` is a compile error. `getLineRangePrecise` accepts either mode. `reconcileNow()` returns `DocumentState<'eager'>`, narrowing the type and serving as the contract discharge point.
+
+The default generic parameter `= EvaluationMode` (the union type) preserves full backward compatibility — all existing unqualified `LineIndexState` and `DocumentState` references compile unchanged.
 
 ### Proposal D: Remove the O(n) `getLine` from Public API (Done)
 
@@ -126,30 +132,29 @@ After `reconcileNow()`, the store could return `DocumentState<'eager'>`, narrowi
 
 ---
 
-## 5. Type-Level Cost Contracts — Unified Framework
+## 5. Type-Level Cost Contracts — Unified Framework (Implemented)
 
-The four proposals above each address one dimension of a broader pattern: **type-level cost contracts**. Rather than relying on documentation or naming conventions alone, the type system encodes and propagates performance and staleness guarantees as branded contracts, with specific functions serving as discharge points that narrow the contract.
+The four proposals each address one dimension of a broader pattern: **type-level cost contracts**. The type system encodes and propagates performance and staleness guarantees as branded contracts, with specific functions serving as discharge points that narrow the contract.
 
-The following table maps each structural guarantee to its TypeScript-native mechanism:
+The following table maps each structural guarantee to its TypeScript mechanism and implementation status:
 
-| Structural Guarantee | TypeScript Mechanism | Where It Applies |
-|---|---|---|
-| **Cost contract** — branded into return type | `Brand<'O(log n)'>` on return types (Proposal A) | `getText`, `getValue`, `getLength`, etc. |
-| **Contract discharge / narrowing point** — a function that narrows a contract from loose to strict | Generic parameter narrowing via return type | `reconcileNow()` narrows `DocumentState<'lazy'>` to `DocumentState<'eager'>` (Proposal C) |
-| **Parametric state mode** — state parameterized over its mode | `DocumentState<M extends EvaluationMode>` | `LineIndexState`, `DocumentState` carry their evaluation mode |
-| **Contract stacking** — orthogonal contracts composed via intersection | `LogCost & CleanRead` as intersection brands | A value can carry both a cost contract and a staleness contract simultaneously |
-| **Contract fidelity** — implementation must satisfy its branded promise | Code review / test invariant / `subtreeCharLength` aggregate | `byteOffsetToCharOffset` and `charOffsetsToSelection` now satisfy their O(log n + line_length) contracts via tree-aggregate queries |
-| **Cost widening** — a stricter contract satisfies a looser one | Branded-type hierarchy with assignability | `ConstResult<T>` assignable to `LogResult<T>` assignable to `LinearResult<T>` |
+| Structural Guarantee | TypeScript Mechanism | Where It Applies | Status |
+|---|---|---|---|
+| **Cost contract** — branded into return type | `CostBrand<Level>` on return types | `getText` → `LogResult`, `getValue` → `LinearResult`, `getLength` → `ConstResult` | **Done** |
+| **Contract discharge / narrowing point** | Generic parameter narrowing via return type | `reconcileNow()` returns `DocumentState<'eager'>` | **Done** |
+| **Parametric state mode** | `DocumentState<M extends EvaluationMode>` | `LineIndexState`, `DocumentState` carry their evaluation mode | **Done** |
+| **Contract stacking** — orthogonal contracts composed via intersection | `LogResult & EagerState` as intersection brands | `getLineRange` on `DocumentState<'eager'>` returns `LogResult<LineRange>` — both cost and staleness are visible | **Done** |
+| **Contract fidelity** — implementation satisfies its branded promise | `subtreeCharLength` aggregate + tree queries | `byteOffsetToCharOffset` and `charOffsetsToSelection` satisfy their O(log n + line_length) contracts | **Done** |
+| **Cost widening** — a stricter contract satisfies a looser one | Numeric `CostBrand<Level>` union assignability | `ConstResult<T>` assignable to `LogResult<T>` assignable to `LinearResult<T>` | **Done** |
+| **Namespace stratification** — cost tier visible at import site | `query.*` vs `scan.*` namespace objects | All O(log n)/O(1) functions in `query`, all O(n) in `scan` | **Done** |
 
 ### Contract Stacking: Proposals A and C Compose
 
-Proposals A (cost contracts) and C (parametric state mode) are not alternatives — they are orthogonal and should compose. A function's return value can carry both dimensions:
+Proposals A (cost contracts) and C (parametric state mode) are orthogonal and compose as designed:
 
 - `getLineRange` on `DocumentState<'eager'>` returns `LogResult<LineRange>` — both the cost and the staleness contract are visible.
 - `getLineRange` on `DocumentState<'lazy'>` is a compile error — the staleness contract is unsatisfied.
 - `getLineRangePrecise` on `DocumentState<'lazy'>` returns `LogResult<LineRange>` — it internally discharges the staleness by applying dirty-range deltas.
-
-In TypeScript, this composes naturally via intersection brands: a value of type `string & Brand<'O(log n)'> & Brand<'clean'>` carries both contracts.
 
 ### Contract Fidelity Violations (Sections 3a and 3b) — Resolved
 
@@ -161,37 +166,30 @@ Both violations have been fixed by adding `charLength` / `subtreeCharLength` agg
 
 The `subtreeCharLength` aggregate is maintained incrementally through all insert/delete operations (both eager and lazy paths). For line splits where the char count of a byte prefix is needed, a `ReadTextFn` callback is passed from the reducer.
 
-### Cost Widening: Branded Hierarchy
+### Cost Widening: Numeric Brand Hierarchy
 
-If Proposal A is adopted, the cost brands need a widening relationship so that stricter contracts are assignable to looser ones:
+The cost brands use a numeric level scheme where widening is automatic via TypeScript's union assignability:
 
 ```typescript
-// O(1) satisfies any context expecting O(log n) or O(n)
-// O(log n) satisfies any context expecting O(n)
-type CostLevel = 'O(1)' | 'O(log n)' | 'O(n)';
+type CostBrand<Level extends number> = { readonly [costLevel]: Level };
 
-// Widening via conditional mapped types:
-type SatisfiesCost<Actual extends CostLevel, Required extends CostLevel> =
-  Required extends 'O(n)' ? true :
-  Required extends 'O(log n)' ? (Actual extends 'O(n)' ? false : true) :
-  Actual extends 'O(1)' ? true : false;
+type ConstResult<T>  = T & CostBrand<0>;         // Level 0
+type LogResult<T>    = T & CostBrand<0 | 1>;      // Level 0 | 1
+type LinearResult<T> = T & CostBrand<0 | 1 | 2>;  // Level 0 | 1 | 2
 ```
 
-Without this, `getLength()` (returning `ConstResult<number>`) would not be assignable where `LogResult<number>` is expected — the type system would reject correct usage.
+Since `0 extends 0 | 1` in TypeScript, `CostBrand<0>` is assignable to `CostBrand<0 | 1>`, giving `ConstResult<T>` natural assignability to `LogResult<T>`. No conditional mapped types or explicit widening functions are needed.
 
 ## 6. Fragility Assessment
 
-**Most likely to be bypassed**: The `getLineRange` vs `getLineRangePrecise` distinction. A contributor will call `getLineRange` in rendering code (shorter name, appears first in exports) and introduce a subtle stale-offset bug that only manifests under lazy mode with dirty ranges. Nothing in the type system prevents this. With Proposal C, this becomes a compile error — the parametric state mode rejects the call entirely.
+**~~Most likely to be bypassed~~**: ~~The `getLineRange` vs `getLineRangePrecise` distinction.~~ **Resolved** — `getLineRange` now requires `LineIndexState<'eager'>`. Calling it on lazy state is a compile error (Proposal C). The sole internal caller in `getLineContent` has been migrated to `getLineRangePrecise`.
 
 **Most likely to become fragile**: The `charLength` / `subtreeCharLength` aggregate on `LineIndexNode`. Every code path that creates or modifies line index nodes must correctly maintain this aggregate. The `withLineIndexNode` helper recomputes `subtreeCharLength` automatically from children, but per-node `charLength` must be set correctly at every insert/delete/split site. A new code path that creates a `LineIndexNode` without setting `charLength` would silently corrupt all downstream char-offset queries.
 
-**Resolved issues**:
+**All issues resolved**:
 
 1. ~~Remove or rename `getLine` (Proposal D)~~ — **Done**. Renamed to `getLineLinearScan`, removed from public API.
 2. ~~Fix `byteOffsetToCharOffset` and `charOffsetsToSelection`~~ — **Done**. Both now use O(log n) tree-aggregate queries via `subtreeCharLength`.
-
-**Remaining structural recommendations**:
-
-3. Namespace stratification (Proposal B) — makes all future additions self-documenting
-4. Evaluation-mode type parameter (Proposal C) — prevents stale-read bugs at compile time via contract discharge
-5. Cost contracts with widening (Proposal A + cost hierarchy) — makes cost visible and composable at every call site
+3. ~~Namespace stratification (Proposal B)~~ — **Done**. `query` and `scan` namespaces in `src/api/`. Flat exports preserved for backward compatibility.
+4. ~~Evaluation-mode type parameter (Proposal C)~~ — **Done**. `EvaluationMode` parameterizes `LineIndexState` and `DocumentState`. `getLineRange` requires eager state. `reconcileNow()` returns `DocumentState<'eager'>`.
+5. ~~Cost contracts with widening (Proposal A)~~ — **Done**. `ConstResult`, `LogResult`, `LinearResult` with numeric `CostBrand<Level>` for automatic widening. Key functions annotated.
