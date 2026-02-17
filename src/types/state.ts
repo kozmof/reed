@@ -4,7 +4,7 @@
  */
 
 import type { ByteOffset, ByteLength, CharOffset } from './branded.ts';
-import type { GrowableBuffer } from '../store/growable-buffer.ts';
+import type { GrowableBuffer } from '../store/core/growable-buffer.ts';
 
 // =============================================================================
 // Piece Table Types

@@ -13,9 +13,9 @@ import type {
   SelectionState,
   HistoryState,
   DocumentMetadata,
-} from '../types/state.ts';
-import { byteOffset, byteLength } from '../types/branded.ts';
-import type { ByteOffset, ByteLength } from '../types/branded.ts';
+} from '../../types/state.ts';
+import { byteOffset, byteLength } from '../../types/branded.ts';
+import type { ByteOffset, ByteLength } from '../../types/branded.ts';
 import { textEncoder } from './encoding.ts';
 import { GrowableBuffer } from './growable-buffer.ts';
 

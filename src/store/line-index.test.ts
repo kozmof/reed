@@ -17,8 +17,8 @@ import {
   reconcileFull,
   reconcileRange,
   mergeDirtyRanges,
-} from './line-index.ts';
-import { createLineIndexState, createEmptyLineIndexState } from './state.ts';
+} from './core/line-index.ts';
+import { createLineIndexState, createEmptyLineIndexState } from './core/state.ts';
 import { byteOffset } from '../types/branded.ts';
 
 describe('Line Index Operations', () => {

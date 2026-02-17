@@ -3,7 +3,7 @@
  * Provides immutable balancing operations for any R-B tree node type.
  */
 
-import type { NodeColor, RBNode } from '../types/state.ts';
+import type { NodeColor, RBNode } from '../../types/state.ts';
 
 // Re-export RBNode for consumers that import from rb-tree
 export type { RBNode };

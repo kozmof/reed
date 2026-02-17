@@ -17,11 +17,11 @@ import {
   byteToCharOffset,
   charToByteOffset,
   rbInsertPiece,
-} from './piece-table.ts';
+} from './core/piece-table.ts';
 import {
   createEmptyPieceTableState,
   createPieceTableState,
-} from './state.ts';
+} from './core/state.ts';
 import { byteOffset } from '../types/branded.ts';
 
 describe('Piece Table Operations', () => {

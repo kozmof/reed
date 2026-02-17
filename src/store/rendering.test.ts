@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { createInitialState } from './state.ts';
+import { createInitialState } from './core/state.ts';
 import {
   getVisibleLineRange,
   getVisibleLines,
@@ -13,8 +13,8 @@ import {
   estimateTotalHeight,
   positionToLineColumn,
   lineColumnToPosition,
-} from './rendering.ts';
-import type { ScrollPosition, LineHeightConfig, VisibleLine } from './rendering.ts';
+} from './features/rendering.ts';
+import type { ScrollPosition, LineHeightConfig, VisibleLine } from './features/rendering.ts';
 import { byteOffset } from '../types/branded.ts';
 
 describe('getVisibleLineRange', () => {

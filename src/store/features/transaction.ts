@@ -3,8 +3,8 @@
  * Extracted from store.ts for testability, reusability, and composability.
  */
 
-import type { DocumentState } from '../types/state.ts';
-import type { DocumentAction } from '../types/actions.ts';
+import type { DocumentState } from '../../types/state.ts';
+import type { DocumentAction } from '../../types/actions.ts';
 
 /**
  * Result of a commit or rollback operation.

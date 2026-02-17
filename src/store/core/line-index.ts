@@ -8,9 +8,9 @@ import type {
   LineIndexNode,
   LineIndexState,
   DirtyLineRange,
-} from '../types/state.ts';
-import type { ByteOffset, ByteLength } from '../types/branded.ts';
-import { byteOffset, byteLength as toByteLengthBrand } from '../types/branded.ts';
+} from '../../types/state.ts';
+import type { ByteOffset, ByteLength } from '../../types/branded.ts';
+import { byteOffset, byteLength as toByteLengthBrand } from '../../types/branded.ts';
 import { createLineIndexNode, withLineIndexNode, withLineIndexState } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 

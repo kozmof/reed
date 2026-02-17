@@ -3,7 +3,7 @@
  * Provides utilities for checking undo/redo availability.
  */
 
-import type { DocumentState, HistoryState } from '../types/state.ts';
+import type { DocumentState, HistoryState } from '../../types/state.ts';
 
 /**
  * Check if undo is available.

@@ -3,12 +3,12 @@
  * Provides efficient computation of visible lines and viewport management.
  */
 
-import type { DocumentState, SelectionRange, CharSelectionRange } from '../types/state.ts';
-import type { ByteOffset } from '../types/branded.ts';
-import { byteOffset, charOffset, addByteOffset } from '../types/branded.ts';
-import { findLineAtPosition, getLineRange, getLineRangePrecise, getLineCountFromIndex } from './line-index.ts';
-import { getText, charToByteOffset } from './piece-table.ts';
-import { textEncoder } from './encoding.ts';
+import type { DocumentState, SelectionRange, CharSelectionRange } from '../../types/state.ts';
+import type { ByteOffset } from '../../types/branded.ts';
+import { byteOffset, charOffset, addByteOffset } from '../../types/branded.ts';
+import { findLineAtPosition, getLineRange, getLineRangePrecise, getLineCountFromIndex } from '../core/line-index.ts';
+import { getText, charToByteOffset } from '../core/piece-table.ts';
+import { textEncoder } from '../core/encoding.ts';
 
 // =============================================================================
 // Types

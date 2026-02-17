@@ -3,10 +3,10 @@
  */
 
 // Store factory
-export { createDocumentStore, createDocumentStoreWithEvents, isDocumentStore } from './store.ts';
+export { createDocumentStore, createDocumentStoreWithEvents, isDocumentStore } from './features/store.ts';
 
 // Action creators
-export { DocumentActions, serializeAction, deserializeAction } from './actions.ts';
+export { DocumentActions, serializeAction, deserializeAction } from './features/actions.ts';
 
 // State factories
 export {
@@ -23,10 +23,10 @@ export {
   withState,
   withPieceNode,
   withLineIndexNode,
-} from './state.ts';
+} from './core/state.ts';
 
 // Reducer and line index strategies
-export { documentReducer, eagerLineIndex, lazyLineIndex } from './reducer.ts';
+export { documentReducer, eagerLineIndex, lazyLineIndex } from './features/reducer.ts';
 
 // Piece table operations
 export {
@@ -47,8 +47,8 @@ export {
   getBuffer,
   getBufferSlice,
   getPieceBuffer,
-} from './piece-table.ts';
-export type { StreamOptions, DocumentChunk, PieceTableInsertResult } from './piece-table.ts';
+} from './core/piece-table.ts';
+export type { StreamOptions, DocumentChunk, PieceTableInsertResult } from './core/piece-table.ts';
 
 // Line index operations
 export {
@@ -74,7 +74,7 @@ export {
   reconcileFull,
   reconcileViewport,
   type ReconciliationConfig,
-} from './line-index.ts';
+} from './core/line-index.ts';
 
 // Diff and setValue operations
 export {
@@ -83,8 +83,8 @@ export {
   computeSetValueActionsOptimized,
   computeSetValueActionsFromState,
   setValue,
-} from './diff.ts';
-export type { DiffEdit, DiffResult, SetValueOptions } from './diff.ts';
+} from './features/diff.ts';
+export type { DiffEdit, DiffResult, SetValueOptions } from './features/diff.ts';
 
 // Event system
 export {
@@ -95,7 +95,7 @@ export {
   createSaveEvent,
   createDirtyChangeEvent,
   getAffectedRange,
-} from './events.ts';
+} from './features/events.ts';
 export type {
   DocumentEvent,
   ContentChangeEvent,
@@ -108,7 +108,7 @@ export type {
   EventHandler,
   Unsubscribe,
   DocumentEventEmitter,
-} from './events.ts';
+} from './features/events.ts';
 
 // Rendering utilities
 export {
@@ -122,18 +122,18 @@ export {
   lineColumnToPosition,
   selectionToCharOffsets,
   charOffsetsToSelection,
-} from './rendering.ts';
+} from './features/rendering.ts';
 export type {
   VisibleLine,
   ViewportConfig,
   VisibleLinesResult,
   ScrollPosition,
   LineHeightConfig,
-} from './rendering.ts';
+} from './features/rendering.ts';
 
 // Transaction management
-export { createTransactionManager } from './transaction.ts';
-export type { TransactionManager, TransactionResult } from './transaction.ts';
+export { createTransactionManager } from './features/transaction.ts';
+export type { TransactionManager, TransactionResult } from './features/transaction.ts';
 
 // History helpers
 export {
@@ -142,4 +142,4 @@ export {
   getUndoCount,
   getRedoCount,
   isHistoryEmpty,
-} from './history.ts';
+} from './features/history.ts';

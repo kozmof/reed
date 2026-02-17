@@ -6,10 +6,10 @@
  * http://www.xmailserver.org/diff2.pdf
  */
 
-import type { DocumentAction } from '../types/actions.ts';
-import { byteOffset } from '../types/branded.ts';
+import type { DocumentAction } from '../../types/actions.ts';
+import { byteOffset } from '../../types/branded.ts';
 import { DocumentActions } from './actions.ts';
-import { textEncoder } from './encoding.ts';
+import { textEncoder } from '../core/encoding.ts';
 
 // =============================================================================
 // Types
@@ -522,9 +522,9 @@ export function computeSetValueActionsOptimized(
 // High-level setValue function
 // =============================================================================
 
-import type { DocumentState, PieceTableState } from '../types/state.ts';
+import type { DocumentState, PieceTableState } from '../../types/state.ts';
 import { documentReducer } from './reducer.ts';
-import { getValue } from './piece-table.ts';
+import { getValue } from '../core/piece-table.ts';
 
 /**
  * Options for setValue operation.

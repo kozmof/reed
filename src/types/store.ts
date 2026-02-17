@@ -11,7 +11,7 @@ import type {
   DocumentEventEmitter,
   DocumentEventMap,
   EventHandler,
-} from '../store/events.ts';
+} from '../store/features/events.ts';
 
 /**
  * Listener function type for store subscriptions.

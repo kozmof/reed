@@ -3,9 +3,9 @@
  * Provides a pub/sub mechanism for document changes and editor events.
  */
 
-import type { DocumentState } from '../types/state.ts';
-import type { DocumentAction } from '../types/actions.ts';
-import { textEncoder } from './encoding.ts';
+import type { DocumentState } from '../../types/state.ts';
+import type { DocumentAction } from '../../types/actions.ts';
+import { textEncoder } from '../core/encoding.ts';
 
 // =============================================================================
 // Event Types

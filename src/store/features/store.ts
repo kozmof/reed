@@ -3,12 +3,12 @@
  * Factory function that creates a DocumentStore with encapsulated state.
  */
 
-import type { DocumentState, DocumentStoreConfig } from '../types/state.ts';
-import type { DocumentAction } from '../types/actions.ts';
-import type { DocumentStore, ReconcilableDocumentStore, DocumentStoreWithEvents, StoreListener, Unsubscribe } from '../types/store.ts';
-import { createInitialState } from './state.ts';
+import type { DocumentState, DocumentStoreConfig } from '../../types/state.ts';
+import type { DocumentAction } from '../../types/actions.ts';
+import type { DocumentStore, ReconcilableDocumentStore, DocumentStoreWithEvents, StoreListener, Unsubscribe } from '../../types/store.ts';
+import { createInitialState } from '../core/state.ts';
 import { documentReducer } from './reducer.ts';
-import { reconcileFull, reconcileViewport } from './line-index.ts';
+import { reconcileFull, reconcileViewport } from '../core/line-index.ts';
 import { createTransactionManager } from './transaction.ts';
 import {
   createEventEmitter,
@@ -18,7 +18,7 @@ import {
   createDirtyChangeEvent,
   getAffectedRange,
 } from './events.ts';
-import { isTextEditAction } from '../types/actions.ts';
+import { isTextEditAction } from '../../types/actions.ts';
 
 /**
  * Background reconciliation state.

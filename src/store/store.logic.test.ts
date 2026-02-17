@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { documentReducer } from './reducer.ts';
+import { documentReducer } from './features/reducer.ts';
 import {
   createInitialState,
   createEmptyPieceTableState,
@@ -19,20 +19,20 @@ import {
   withState,
   withPieceNode,
   withLineIndexNode,
-} from './state.ts';
+} from './core/state.ts';
 import {
   DocumentActions,
   serializeAction,
   deserializeAction,
-} from './actions.ts';
+} from './features/actions.ts';
 import {
   isTextEditAction,
   isHistoryAction,
   isTransactionAction,
   isDocumentAction,
 } from '../types/actions.ts';
-import { createDocumentStore, isDocumentStore } from './store.ts';
-import { getLineCountFromIndex, getLineRange } from './line-index.ts';
+import { createDocumentStore, isDocumentStore } from './features/store.ts';
+import { getLineCountFromIndex, getLineRange } from './core/line-index.ts';
 import { byteOffset, byteLength, type ByteOffset } from '../types/branded.ts';
 
 // =============================================================================

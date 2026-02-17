@@ -4,24 +4,24 @@
  * No side effects - produces new state from old state + action.
  */
 
-import type { DocumentState, HistoryEntry, HistoryChange, SelectionState, SelectionRange } from '../types/state.ts';
-import type { DocumentAction } from '../types/actions.ts';
-import type { ByteOffset } from '../types/branded.ts';
-import type { LineIndexStrategy } from '../types/store.ts';
-import { byteOffset } from '../types/branded.ts';
-import { withState } from './state.ts';
+import type { DocumentState, HistoryEntry, HistoryChange, SelectionState, SelectionRange } from '../../types/state.ts';
+import type { DocumentAction } from '../../types/actions.ts';
+import type { ByteOffset } from '../../types/branded.ts';
+import type { LineIndexStrategy } from '../../types/store.ts';
+import { byteOffset } from '../../types/branded.ts';
+import { withState } from '../core/state.ts';
 import {
   pieceTableInsert as ptInsert,
   pieceTableDelete as ptDelete,
   getText,
-} from './piece-table.ts';
+} from '../core/piece-table.ts';
 import {
   lineIndexInsert as liInsert,
   lineIndexDelete as liDelete,
   lineIndexInsertLazy as liInsertLazy,
   lineIndexDeleteLazy as liDeleteLazy,
-} from './line-index.ts';
-import { textEncoder } from './encoding.ts';
+} from '../core/line-index.ts';
+import { textEncoder } from '../core/encoding.ts';
 
 // =============================================================================
 // Position Validation

@@ -33,20 +33,22 @@ src/
     store.ts                Store and strategy interfaces
   store/
     index.ts                Store barrel export
-    store.ts                Store factory (createDocumentStore, createDocumentStoreWithEvents)
-    state.ts                State factory functions (createInitialState, withState, etc.)
-    reducer.ts              Pure reducer with unified applyEdit pipeline
-    piece-table.ts          Piece table with immutable Red-Black tree
-    rb-tree.ts              Generic Red-Black tree utilities
-    line-index.ts           Line index with eager/lazy maintenance + reconciliation
-    events.ts               Typed event emitter system
-    rendering.ts            Virtualized rendering utilities
-    diff.ts                 Myers diff algorithm + setValue
-    history.ts              Undo/redo helper queries
-    transaction.ts          Nested transaction manager
-    actions.ts              Action creator factory (DocumentActions)
-    encoding.ts             Shared TextEncoder/TextDecoder singletons
-    growable-buffer.ts      Encapsulated append-only buffer
+    core/
+      encoding.ts           Shared TextEncoder/TextDecoder singletons
+      growable-buffer.ts    Encapsulated append-only buffer
+      rb-tree.ts            Generic Red-Black tree utilities
+      state.ts              State factory functions (createInitialState, withState, etc.)
+      piece-table.ts        Piece table with immutable Red-Black tree
+      line-index.ts         Line index with eager/lazy maintenance + reconciliation
+    features/
+      actions.ts            Action creator factory (DocumentActions)
+      history.ts            Undo/redo helper queries
+      transaction.ts        Nested transaction manager
+      events.ts             Typed event emitter system
+      reducer.ts            Pure reducer with unified applyEdit pipeline
+      rendering.ts          Virtualized rendering utilities
+      diff.ts               Myers diff algorithm + setValue
+      store.ts              Store factory (createDocumentStore, createDocumentStoreWithEvents)
 ```
 
 ### Build & Tooling
@@ -278,12 +280,12 @@ Position { byteOffset, charOffset, line, column }
   - fromLineColumn(state, line, col) -> Position
 ```
 
-### 6.2 Separate "Core" from "Features"
-As the codebase grows, split `store/` into:
-- `core/` — piece-table, rb-tree, state, reducer (zero dependencies)
-- `features/` — events, rendering, diff, history helpers
+### ~~6.2 Separate "Core" from "Features"~~ (Resolved 2026-02-17)
+Implemented. `store/` is now split into:
+- `store/core/` — encoding, growable-buffer, rb-tree, state, piece-table, line-index (pure data structures, zero feature dependencies)
+- `store/features/` — actions, history, transaction, events, reducer, rendering, diff, store (higher-level functionality composing core primitives)
 
-This enables tree-shaking for consumers who only need the pure data structure.
+Public API unchanged. All 447 tests passing.
 
 ### 6.3 Add a Plugin System Foundation
 The spec describes an extensive plugin system, but there are no hooks or extension points. A minimal "middleware" layer for the reducer:

@@ -4,8 +4,8 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { createDocumentStore } from './store.ts';
-import { DocumentActions } from './actions.ts';
+import { createDocumentStore } from './features/store.ts';
+import { DocumentActions } from './features/actions.ts';
 import { byteOffset } from '../types/branded.ts';
 
 describe('Editor Use Cases', () => {

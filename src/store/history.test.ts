@@ -10,10 +10,10 @@ import {
   getUndoCount,
   getRedoCount,
   isHistoryEmpty,
-} from './history.ts';
-import { createInitialState } from './state.ts';
-import { documentReducer } from './reducer.ts';
-import { DocumentActions } from './actions.ts';
+} from './features/history.ts';
+import { createInitialState } from './core/state.ts';
+import { documentReducer } from './features/reducer.ts';
+import { DocumentActions } from './features/actions.ts';
 import type { HistoryState } from '../types/state.ts';
 import { byteOffset } from '../types/branded.ts';
 

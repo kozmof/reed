@@ -3,8 +3,8 @@
  * Provides type-safe factory functions for creating document actions.
  */
 
-import type { SelectionRange } from '../types/state.ts';
-import type { ByteOffset } from '../types/branded.ts';
+import type { SelectionRange } from '../../types/state.ts';
+import type { ByteOffset } from '../../types/branded.ts';
 import type {
   DocumentAction,
   InsertAction,
@@ -21,8 +21,8 @@ import type {
   RemoteChange,
   LoadChunkAction,
   EvictChunkAction,
-} from '../types/actions.ts';
-import { isDocumentAction } from '../types/actions.ts';
+} from '../../types/actions.ts';
+import { isDocumentAction } from '../../types/actions.ts';
 
 /**
  * Action creators for document mutations.

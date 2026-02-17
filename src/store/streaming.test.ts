@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { createInitialState } from './state.ts';
-import { getValueStream } from './piece-table.ts';
+import { createInitialState } from './core/state.ts';
+import { getValueStream } from './core/piece-table.ts';
 
 describe('getValueStream', () => {
   describe('basic functionality', () => {

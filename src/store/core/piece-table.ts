@@ -8,8 +8,8 @@ import type {
   PieceTableState,
   BufferType,
   BufferReference,
-} from '../types/state.ts';
-import { byteOffset, byteLength, type ByteOffset, type ByteLength } from '../types/branded.ts';
+} from '../../types/state.ts';
+import { byteOffset, byteLength, type ByteOffset, type ByteLength } from '../../types/branded.ts';
 import { createPieceNode, withPieceNode } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 import { textEncoder, textDecoder } from './encoding.ts';
