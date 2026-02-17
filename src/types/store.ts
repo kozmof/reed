@@ -174,7 +174,13 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
  * making the structural update explicit. The reducer wraps the result
  * back into `DocumentState`.
  */
+/**
+ * Callback to read text from the piece table.
+ * Used by line index operations to compute char lengths during line splits.
+ */
+export type ReadTextFn = (start: ByteOffset, end: ByteOffset) => string;
+
 export interface LineIndexStrategy {
-  insert(state: LineIndexState, position: ByteOffset, text: string, version: number): LineIndexState;
+  insert(state: LineIndexState, position: ByteOffset, text: string, version: number, readText?: ReadTextFn): LineIndexState;
   delete(state: LineIndexState, start: ByteOffset, end: ByteOffset, deletedText: string, version: number): LineIndexState;
 }

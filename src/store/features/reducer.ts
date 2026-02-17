@@ -112,8 +112,8 @@ function getTextRange(state: DocumentState, start: ByteOffset, end: ByteOffset):
  * Used for undo/redo where we need immediate accuracy.
  */
 export const eagerLineIndex: LineIndexStrategy = {
-  insert: (lineIndex, position, text, _version) => {
-    return liInsert(lineIndex, position, text);
+  insert: (lineIndex, position, text, _version, readText) => {
+    return liInsert(lineIndex, position, text, readText);
   },
   delete: (lineIndex, start, end, deletedText, _version) => {
     return liDelete(lineIndex, start, end, deletedText);
@@ -125,8 +125,8 @@ export const eagerLineIndex: LineIndexStrategy = {
  * Used for normal editing where throughput matters more than immediate accuracy.
  */
 export const lazyLineIndex: LineIndexStrategy = {
-  insert: (lineIndex, position, text, version) => {
-    return liInsertLazy(lineIndex, position, text, version);
+  insert: (lineIndex, position, text, version, readText) => {
+    return liInsertLazy(lineIndex, position, text, version, readText);
   },
   delete: (lineIndex, start, end, deletedText, version) => {
     return liDeleteLazy(lineIndex, start, end, deletedText, version);
@@ -409,7 +409,8 @@ function applyChange(state: DocumentState, change: HistoryChange, version: numbe
   switch (change.type) {
     case 'insert': {
       const { state: s } = pieceTableInsert(state, change.position, change.text);
-      const newLineIndex = eagerLineIndex.insert(s.lineIndex, change.position, change.text, version);
+      const readText = (start: ByteOffset, end: ByteOffset) => getText(s.pieceTable, start, end);
+      const newLineIndex = eagerLineIndex.insert(s.lineIndex, change.position, change.text, version, readText);
       return withState(s, { lineIndex: newLineIndex });
     }
     case 'delete': {
@@ -423,7 +424,8 @@ function applyChange(state: DocumentState, change: HistoryChange, version: numbe
       const s = pieceTableDelete(state, change.position, deleteEnd);
       const { state: s2 } = pieceTableInsert(s, change.position, change.text);
       const li1 = eagerLineIndex.delete(s2.lineIndex, change.position, deleteEnd, change.oldText, version);
-      const li2 = eagerLineIndex.insert(li1, change.position, change.text, version);
+      const readText = (start: ByteOffset, end: ByteOffset) => getText(s2.pieceTable, start, end);
+      const li2 = eagerLineIndex.insert(li1, change.position, change.text, version, readText);
       return withState(s2, { lineIndex: li2 });
     }
     default:
@@ -501,7 +503,8 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
     const result = pieceTableInsert(newState, op.position, op.insertText);
     newState = result.state;
     insertedByteLength = result.insertedByteLength;
-    const insLineIndex = lazyLineIndex.insert(newState.lineIndex, op.position, op.insertText, nextVersion);
+    const readText = (start: ByteOffset, end: ByteOffset) => getText(newState.pieceTable, start, end);
+    const insLineIndex = lazyLineIndex.insert(newState.lineIndex, op.position, op.insertText, nextVersion, readText);
     newState = withState(newState, { lineIndex: insLineIndex });
   }
 
@@ -626,7 +629,8 @@ export function documentReducer(
       for (const change of action.changes) {
         if (change.type === 'insert' && change.text) {
           newState = pieceTableInsert(newState, change.start, change.text).state;
-          const li = lazyLineIndex.insert(newState.lineIndex, change.start, change.text, nextVersion);
+          const readText = (start: ByteOffset, end: ByteOffset) => getText(newState.pieceTable, start, end);
+          const li = lazyLineIndex.insert(newState.lineIndex, change.start, change.text, nextVersion, readText);
           newState = withState(newState, { lineIndex: li });
         } else if (change.type === 'delete' && change.length) {
           // Capture deleted text before deleting for line index update

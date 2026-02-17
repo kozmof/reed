@@ -2,20 +2,18 @@
 
 ## 1. Data Structures — Hidden Complexity Contracts
 
-The public API exports functions like `getValue`, `getText`, `getLine`, and `getLineContent` as peers — flat functions with identical call signatures. A consumer cannot distinguish O(n) from O(log n) without reading implementation.
+The public API exports functions like `getValue`, `getText`, and `getLineContent` as peers — flat functions with identical call signatures. A consumer cannot distinguish O(n) from O(log n) without reading implementation.
 
 | Function | Actual Complexity | Visible from signature? |
 |---|---|---|
 | `getValue` | O(n) | No |
 | `getText` | O(log n + m) | No |
-| `getLine` (piece-table) | O(n) | Only via JSDoc |
+| ~~`getLine`~~ (removed) | O(n) | Renamed to `getLineLinearScan`, no longer public |
 | `getLineContent` (rendering) | O(log n) | Only via JSDoc |
 | `getBufferStats` | O(1) | Only via JSDoc |
 | `getLength` | O(1) | No |
 
-Both `getLine` and `getLineContent` are exported from `src/index.ts`. Nothing at the type level prevents a consumer from using the O(n) `getLine` in a render loop where `getLineContent` should be used.
-
-**Structural issue**: `getLine` in `src/store/piece-table.ts:891` operates on `PieceTableState`, while `getLineContent` in `src/store/rendering.ts:106` operates on `DocumentState`. This difference is the *only* structural hint — but it requires the consumer to already understand the type hierarchy to notice it.
+**Resolved**: `getLine` has been renamed to `getLineLinearScan` and removed from the public API (`src/index.ts`). It remains available internally in `src/store/core/piece-table.ts` for low-level use. Only `getLineContent` is now exported as the public line-access function.
 
 ## 2. Interfaces — The `LineIndexStrategy` Duality is Well-Formalized, But Invisible to Consumers
 
@@ -29,15 +27,19 @@ However, the strategy choice is **fully internal**. From a consumer's perspectiv
 
 A consumer calling `getLineRange` after a lazy insert will get stale data. Only `getLineRangePrecise` applies dirty-range deltas. These two functions differ by a single word in their name — a fragile distinction for a correctness-critical difference.
 
-## 3. Algorithms — Two Specific Formalization Gaps
+## 3. Algorithms — Two Contract Fidelity Violations (Resolved)
 
-### (a) `byteOffsetToCharOffset` is accidentally O(n)
+### (a) `byteOffsetToCharOffset` — was O(n), now O(log n + line_length)
 
-In `src/store/rendering.ts:360-394`, the function claims to be "O(line_length + log n)" but contains a loop `for (let line = 0; line < location.lineNumber; line++)` that iterates over all preceding lines. For a position near the end of a 100K-line document, this is O(n). The `subtreeByteLength` aggregate already exists on `LineIndexNode` — this loop could be replaced with an O(log n) tree query that accumulates char counts, or a new `subtreeCharLength` aggregate.
+Previously in `src/store/features/rendering.ts`, this function contained a `for (let line = 0; line < location.lineNumber; line++)` loop that issued one `getText` call per preceding line — O(n) in total.
 
-### (b) `charOffsetsToSelection` reads from byte 0
+**Fix**: Added `charLength` and `subtreeCharLength` aggregates to `LineIndexNode` (`src/types/state.ts`). The function now calls `getCharStartOffset(root, lineNumber)` — a single O(log n) tree descent accumulating `subtreeCharLength` — then reads only the partial current line for the within-line byte-to-char conversion. All line-index insert/delete operations (both eager and lazy) maintain `charLength` incrementally. For line splits that require knowing the char count of a byte prefix, a `ReadTextFn` callback is threaded from the reducer (which has piece table access).
 
-In `src/store/rendering.ts:414-426`, `charOffsetsToSelection` reads `getText(state.pieceTable, byteOffset(0), byteOffset(upperBoundBytes))` — always from the document start. This is O(n) for positions late in the document, despite the comment claiming "O(k) instead of O(n)" (the bound `maxChar * 4` is still proportional to position).
+### (b) `charOffsetsToSelection` — was O(n), now O(log n + line_length)
+
+Previously this function called `getText(state.pieceTable, byteOffset(0), byteOffset(upperBoundBytes))` — always reading from the document start, O(n) for positions late in the document.
+
+**Fix**: Added `findLineAtCharPosition(root, charOffset)` — an O(log n) tree descent using `subtreeCharLength` that finds the line containing a given character offset. The function now descends the tree to find the target line, reads only that line's text, and uses `charToByteOffset` within the line to find the exact byte position.
 
 ## 4. Specific Implementations — Formalization Proposals
 
@@ -118,11 +120,9 @@ interface DocumentState<M extends EvaluationMode = EvaluationMode> {
 
 After `reconcileNow()`, the store could return `DocumentState<'eager'>`, narrowing the type.
 
-### Proposal D: Remove the O(n) `getLine` from Public API
+### Proposal D: Remove the O(n) `getLine` from Public API (Done)
 
-The simplest structural fix: stop exporting `getLine` from `src/index.ts`. It exists in `src/store/piece-table.ts:891` with an explicit comment saying to use `getLineContent` instead. Keeping it exported is a trap.
-
-If it must remain for backward compatibility, rename it `getLineLinearScan` to make the cost self-documenting.
+`getLine` has been renamed to `getLineLinearScan` and removed from the public API (`src/index.ts`, `src/store/index.ts`). It remains in `src/store/core/piece-table.ts` for internal/test use only. The cost is now self-documenting in the name.
 
 ---
 
@@ -138,7 +138,7 @@ The following table maps each structural guarantee to its TypeScript-native mech
 | **Contract discharge / narrowing point** — a function that narrows a contract from loose to strict | Generic parameter narrowing via return type | `reconcileNow()` narrows `DocumentState<'lazy'>` to `DocumentState<'eager'>` (Proposal C) |
 | **Parametric state mode** — state parameterized over its mode | `DocumentState<M extends EvaluationMode>` | `LineIndexState`, `DocumentState` carry their evaluation mode |
 | **Contract stacking** — orthogonal contracts composed via intersection | `LogCost & CleanRead` as intersection brands | A value can carry both a cost contract and a staleness contract simultaneously |
-| **Contract fidelity** — implementation must satisfy its branded promise | Code review / test invariant | `byteOffsetToCharOffset` violates its contract: the branded return type promises O(log n) but the loop is O(n) |
+| **Contract fidelity** — implementation must satisfy its branded promise | Code review / test invariant / `subtreeCharLength` aggregate | `byteOffsetToCharOffset` and `charOffsetsToSelection` now satisfy their O(log n + line_length) contracts via tree-aggregate queries |
 | **Cost widening** — a stricter contract satisfies a looser one | Branded-type hierarchy with assignability | `ConstResult<T>` assignable to `LogResult<T>` assignable to `LinearResult<T>` |
 
 ### Contract Stacking: Proposals A and C Compose
@@ -151,13 +151,15 @@ Proposals A (cost contracts) and C (parametric state mode) are not alternatives 
 
 In TypeScript, this composes naturally via intersection brands: a value of type `string & Brand<'O(log n)'> & Brand<'clean'>` carries both contracts.
 
-### Contract Fidelity Violations (Sections 3a and 3b)
+### Contract Fidelity Violations (Sections 3a and 3b) — Resolved
 
-The algorithm bugs identified in Section 3 are contract fidelity violations — the implementation does not satisfy the cost its type promises:
+Both violations have been fixed by adding `charLength` / `subtreeCharLength` aggregates to `LineIndexNode` and rewriting the affected functions:
 
-**(a) `byteOffsetToCharOffset`**: The function's signature and JSDoc promise O(log n + line_length), but the `for (let line = 0; ...)` loop makes it O(n). The `subtreeByteLength` aggregate already exists on `LineIndexNode` — restoring contract fidelity requires either replacing the loop with an O(log n) tree query or adding a `subtreeCharLength` aggregate. This is not merely a performance bug; it is a structural lie in the type contract.
+**(a) `byteOffsetToCharOffset`**: Now uses `getCharStartOffset(root, lineNumber)` — O(log n) prefix sum via `subtreeCharLength` — instead of the per-line loop. Contract fidelity restored.
 
-**(b) `charOffsetsToSelection`**: Reading from `byteOffset(0)` delegates a hidden O(n) cost to `getText`. The function claims to handle `CharOffset → ByteOffset` conversion locally, but actually externalizes the cost. Contract fidelity requires handling the conversion via binary search on the tree rather than materializing a substring.
+**(b) `charOffsetsToSelection`**: Now uses `findLineAtCharPosition(root, charOffset)` — O(log n) tree descent via `subtreeCharLength` — instead of `getText` from byte 0. Reads only the target line. Contract fidelity restored.
+
+The `subtreeCharLength` aggregate is maintained incrementally through all insert/delete operations (both eager and lazy paths). For line splits where the char count of a byte prefix is needed, a `ReadTextFn` callback is passed from the reducer.
 
 ### Cost Widening: Branded Hierarchy
 
@@ -181,12 +183,15 @@ Without this, `getLength()` (returning `ConstResult<number>`) would not be assig
 
 **Most likely to be bypassed**: The `getLineRange` vs `getLineRangePrecise` distinction. A contributor will call `getLineRange` in rendering code (shorter name, appears first in exports) and introduce a subtle stale-offset bug that only manifests under lazy mode with dirty ranges. Nothing in the type system prevents this. With Proposal C, this becomes a compile error — the parametric state mode rejects the call entirely.
 
-**Most likely to become fragile**: The `byteOffsetToCharOffset` loop in `src/store/rendering.ts:376`. As the document grows, this silently degrades. This is a contract fidelity violation — the function's type promises sublinear cost but the implementation is linear. The per-line loop should be replaced with a tree-aggregate query.
+**Most likely to become fragile**: The `charLength` / `subtreeCharLength` aggregate on `LineIndexNode`. Every code path that creates or modifies line index nodes must correctly maintain this aggregate. The `withLineIndexNode` helper recomputes `subtreeCharLength` automatically from children, but per-node `charLength` must be set correctly at every insert/delete/split site. A new code path that creates a `LineIndexNode` without setting `charLength` would silently corrupt all downstream char-offset queries.
 
-**Structural recommendation priority**:
+**Resolved issues**:
 
-1. Remove or rename `getLine` (Proposal D) — eliminates the primary O(n) trap
-2. Fix `byteOffsetToCharOffset` and `charOffsetsToSelection` to restore contract fidelity — eliminates hidden O(n) regressions
+1. ~~Remove or rename `getLine` (Proposal D)~~ — **Done**. Renamed to `getLineLinearScan`, removed from public API.
+2. ~~Fix `byteOffsetToCharOffset` and `charOffsetsToSelection`~~ — **Done**. Both now use O(log n) tree-aggregate queries via `subtreeCharLength`.
+
+**Remaining structural recommendations**:
+
 3. Namespace stratification (Proposal B) — makes all future additions self-documenting
 4. Evaluation-mode type parameter (Proposal C) — prevents stale-read bugs at compile time via contract discharge
 5. Cost contracts with widening (Proposal A + cost hierarchy) — makes cost visible and composable at every call site

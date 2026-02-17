@@ -105,13 +105,17 @@ export interface PieceTableState {
 export interface LineIndexNode extends RBNode<LineIndexNode> {
   /** Byte offset in document where this line starts. null when using lazy mode before reconciliation. */
   readonly documentOffset: number | null;
-  /** Length of this line including newline character(s) */
+  /** Length of this line including newline character(s) in bytes */
   readonly lineLength: number;
+  /** Length of this line in UTF-16 code units (JavaScript string length) */
+  readonly charLength: number;
 
   /** Number of lines in this subtree */
   readonly subtreeLineCount: number;
   /** Total byte length of all lines in this subtree */
   readonly subtreeByteLength: number;
+  /** Total char length (UTF-16 code units) of all lines in this subtree */
+  readonly subtreeCharLength: number;
 }
 
 /**

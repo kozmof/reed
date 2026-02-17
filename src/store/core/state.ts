@@ -16,7 +16,7 @@ import type {
 } from '../../types/state.ts';
 import { byteOffset, byteLength } from '../../types/branded.ts';
 import type { ByteOffset, ByteLength } from '../../types/branded.ts';
-import { textEncoder } from './encoding.ts';
+import { textEncoder, textDecoder } from './encoding.ts';
 import { GrowableBuffer } from './growable-buffer.ts';
 
 /**
@@ -119,12 +119,15 @@ export function createLineIndexNode(
   lineLength: number,
   color: 'red' | 'black' = 'black',
   left: LineIndexNode | null = null,
-  right: LineIndexNode | null = null
+  right: LineIndexNode | null = null,
+  charLength: number = 0
 ): LineIndexNode {
   const leftLineCount = left?.subtreeLineCount ?? 0;
   const leftByteLength = left?.subtreeByteLength ?? 0;
+  const leftCharLength = left?.subtreeCharLength ?? 0;
   const rightLineCount = right?.subtreeLineCount ?? 0;
   const rightByteLength = right?.subtreeByteLength ?? 0;
+  const rightCharLength = right?.subtreeCharLength ?? 0;
 
   return Object.freeze({
     color,
@@ -132,8 +135,10 @@ export function createLineIndexNode(
     right,
     documentOffset,
     lineLength,
+    charLength,
     subtreeLineCount: 1 + leftLineCount + rightLineCount,
     subtreeByteLength: lineLength + leftByteLength + rightByteLength,
+    subtreeCharLength: charLength + leftCharLength + rightCharLength,
   });
 }
 
@@ -149,30 +154,39 @@ export function createLineIndexState(content: string): LineIndexState {
   // Encode to UTF-8 bytes and scan for line breaks.
   // Line lengths and offsets must be in bytes, not UTF-16 code units.
   const bytes = textEncoder.encode(content);
-  const lineStarts: { offset: number; length: number }[] = [];
+  const lineStarts: { offset: number; length: number; charLength: number }[] = [];
   let lineStart = 0;
 
   for (let i = 0; i < bytes.length; i++) {
     if (bytes[i] === 0x0A) { // '\n'
+      const byteLen = i - lineStart + 1;
+      const charLen = textDecoder.decode(bytes.subarray(lineStart, i + 1)).length;
       lineStarts.push({
         offset: lineStart,
-        length: i - lineStart + 1, // Include newline
+        length: byteLen,
+        charLength: charLen,
       });
       lineStart = i + 1;
     } else if (bytes[i] === 0x0D) { // '\r'
       // Handle CRLF
       if (i + 1 < bytes.length && bytes[i + 1] === 0x0A) {
+        const byteLen = i - lineStart + 2;
+        const charLen = textDecoder.decode(bytes.subarray(lineStart, i + 2)).length;
         lineStarts.push({
           offset: lineStart,
-          length: i - lineStart + 2, // Include \r\n
+          length: byteLen,
+          charLength: charLen,
         });
         i++; // Skip \n
         lineStart = i + 1;
       } else {
         // CR only
+        const byteLen = i - lineStart + 1;
+        const charLen = textDecoder.decode(bytes.subarray(lineStart, i + 1)).length;
         lineStarts.push({
           offset: lineStart,
-          length: i - lineStart + 1,
+          length: byteLen,
+          charLength: charLen,
         });
         lineStart = i + 1;
       }
@@ -181,9 +195,12 @@ export function createLineIndexState(content: string): LineIndexState {
 
   // Add last line (may not end with newline)
   if (lineStart <= bytes.length) {
+    const byteLen = bytes.length - lineStart;
+    const charLen = textDecoder.decode(bytes.subarray(lineStart, bytes.length)).length;
     lineStarts.push({
       offset: lineStart,
-      length: bytes.length - lineStart,
+      length: byteLen,
+      charLength: charLen,
     });
   }
 
@@ -204,7 +221,7 @@ export function createLineIndexState(content: string): LineIndexState {
  * Uses iterative approach with explicit parent tracking.
  */
 function buildLineIndexTree(
-  lines: { offset: number; length: number }[],
+  lines: { offset: number; length: number; charLength: number }[],
   start: number,
   end: number
 ): LineIndexNode | null {
@@ -219,7 +236,7 @@ function buildLineIndexTree(
   const left = buildLineIndexTree(lines, start, mid - 1);
   const right = buildLineIndexTree(lines, mid + 1, end);
 
-  return createLineIndexNode(line.offset, line.length, 'black', left, right);
+  return createLineIndexNode(line.offset, line.length, 'black', left, right, line.charLength);
 }
 
 /**
@@ -341,7 +358,7 @@ export function withPieceNode(
  * subtreeLineCount and subtreeByteLength are always recomputed from children and lineLength,
  * so they cannot be set directly.
  */
-export type LineIndexNodeUpdates = Partial<Pick<LineIndexNode, 'color' | 'left' | 'right' | 'documentOffset' | 'lineLength'>>;
+export type LineIndexNodeUpdates = Partial<Pick<LineIndexNode, 'color' | 'left' | 'right' | 'documentOffset' | 'lineLength' | 'charLength'>>;
 
 /**
  * Helper to create modified line index node with structural sharing.
@@ -352,15 +369,18 @@ export function withLineIndexNode(
 ): LineIndexNode {
   const newNode = { ...node, ...changes };
 
-  // Recalculate subtree metadata if children changed
-  if ('left' in changes || 'right' in changes || 'lineLength' in changes) {
+  // Recalculate subtree metadata if children or per-node lengths changed
+  if ('left' in changes || 'right' in changes || 'lineLength' in changes || 'charLength' in changes) {
     const leftLineCount = newNode.left?.subtreeLineCount ?? 0;
     const leftByteLength = newNode.left?.subtreeByteLength ?? 0;
+    const leftCharLength = newNode.left?.subtreeCharLength ?? 0;
     const rightLineCount = newNode.right?.subtreeLineCount ?? 0;
     const rightByteLength = newNode.right?.subtreeByteLength ?? 0;
+    const rightCharLength = newNode.right?.subtreeCharLength ?? 0;
 
     newNode.subtreeLineCount = 1 + leftLineCount + rightLineCount;
     newNode.subtreeByteLength = newNode.lineLength + leftByteLength + rightByteLength;
+    newNode.subtreeCharLength = newNode.charLength + leftCharLength + rightCharLength;
   }
 
   return Object.freeze(newNode);

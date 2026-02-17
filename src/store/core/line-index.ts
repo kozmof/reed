@@ -10,6 +10,7 @@ import type {
   DirtyLineRange,
 } from '../../types/state.ts';
 import type { ByteOffset, ByteLength } from '../../types/branded.ts';
+import type { ReadTextFn } from '../../types/store.ts';
 import { byteOffset, byteLength as toByteLengthBrand } from '../../types/branded.ts';
 import { createLineIndexNode, withLineIndexNode, withLineIndexState } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
@@ -50,6 +51,17 @@ function countNewlines(text: string): number {
     if (text[i] === '\n') count++;
   }
   return count;
+}
+
+/**
+ * Find char (UTF-16) positions of newlines in a string.
+ */
+function findNewlineCharPositions(text: string): number[] {
+  const positions: number[] = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '\n') positions.push(i);
+  }
+  return positions;
 }
 
 // =============================================================================
@@ -183,6 +195,78 @@ export function getLineStartOffset(
 }
 
 /**
+ * Get the character offset where a line starts.
+ * O(log n) using subtreeCharLength aggregates.
+ */
+export function getCharStartOffset(
+  root: LineIndexNode | null,
+  lineNumber: number
+): number {
+  if (root === null) return 0;
+  if (lineNumber < 0) return 0;
+
+  let offset = 0;
+  let current: LineIndexNode | null = root;
+  let targetLine = lineNumber;
+
+  while (current !== null) {
+    const leftLineCount = current.left?.subtreeLineCount ?? 0;
+    const leftCharLength = current.left?.subtreeCharLength ?? 0;
+
+    if (targetLine < leftLineCount) {
+      current = current.left;
+    } else if (targetLine > leftLineCount) {
+      offset += leftCharLength + current.charLength;
+      targetLine -= leftLineCount + 1;
+      current = current.right;
+    } else {
+      return offset + leftCharLength;
+    }
+  }
+
+  return offset;
+}
+
+/**
+ * Find the line containing a character offset.
+ * O(log n) using subtreeCharLength aggregates.
+ */
+export function findLineAtCharPosition(
+  root: LineIndexNode | null,
+  charPosition: number
+): { lineNumber: number; charOffsetInLine: number } | null {
+  if (root === null) return null;
+  if (charPosition < 0) return null;
+
+  let lineNumber = 0;
+  let current: LineIndexNode | null = root;
+  let pos = charPosition;
+
+  while (current !== null) {
+    const leftLineCount = current.left?.subtreeLineCount ?? 0;
+    const leftCharLength = current.left?.subtreeCharLength ?? 0;
+
+    const lineStart = leftCharLength;
+    const lineEnd = lineStart + current.charLength;
+
+    if (pos < lineStart) {
+      current = current.left;
+    } else if (pos >= lineEnd && current.right !== null) {
+      lineNumber += leftLineCount + 1;
+      pos -= lineEnd;
+      current = current.right;
+    } else {
+      return {
+        lineNumber: lineNumber + leftLineCount,
+        charOffsetInLine: pos - lineStart,
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
  * Collect all lines in order (in-order traversal).
  */
 export function collectLines(root: LineIndexNode | null): readonly LineIndexNode[] {
@@ -210,9 +294,10 @@ function rbInsertLine(
   root: LineIndexNode | null,
   lineNumber: number,
   documentOffset: number | null,
-  lineLength: number
+  lineLength: number,
+  charLength: number = 0
 ): LineIndexNode {
-  const newNode = createLineIndexNode(documentOffset, lineLength, 'red');
+  const newNode = createLineIndexNode(documentOffset, lineLength, 'red', null, null, charLength);
 
   if (root === null) {
     return withLineIndexNode(newNode, { color: 'black' });
@@ -284,7 +369,8 @@ function bstInsertLine(
 export function lineIndexInsert(
   state: LineIndexState,
   position: ByteOffset,
-  text: string
+  text: string,
+  readText?: ReadTextFn
 ): LineIndexState {
   if (text.length === 0) return state;
 
@@ -292,7 +378,7 @@ export function lineIndexInsert(
 
   // If no newlines, just update the length of the affected line
   if (newlinePositions.length === 0) {
-    return updateLineLength(state, position, byteLength);
+    return updateLineLength(state, position, byteLength, text.length);
   }
 
   // Find the line where insertion happens
@@ -303,7 +389,7 @@ export function lineIndexInsert(
   }
 
   // Split the current line and insert new lines
-  return insertLinesAtPosition(state, location, text, newlinePositions, byteLength);
+  return insertLinesAtPosition(state, location, text, newlinePositions, byteLength, readText);
 }
 
 /**
@@ -312,11 +398,12 @@ export function lineIndexInsert(
 function updateLineLength(
   state: LineIndexState,
   position: ByteOffset,
-  lengthDelta: number
+  lengthDelta: number,
+  charLengthDelta: number = 0
 ): LineIndexState {
   if (state.root === null) {
     // Create first line
-    const root = createLineIndexNode(0, lengthDelta, 'black');
+    const root = createLineIndexNode(0, lengthDelta, 'black', null, null, charLengthDelta);
     return withLineIndexState(state, {
       root,
       lineCount: 1,
@@ -325,7 +412,7 @@ function updateLineLength(
     });
   }
 
-  const newRoot = updateLineLengthInTree(state.root, position as number, lengthDelta);
+  const newRoot = updateLineLengthInTree(state.root, position as number, lengthDelta, charLengthDelta);
   return withLineIndexState(state, {
     root: newRoot,
   });
@@ -337,7 +424,8 @@ function updateLineLength(
 function updateLineLengthInTree(
   node: LineIndexNode,
   position: number,
-  lengthDelta: number
+  lengthDelta: number,
+  charLengthDelta: number = 0
 ): LineIndexNode {
   const leftByteLength = node.left?.subtreeByteLength ?? 0;
   const lineStart = leftByteLength;
@@ -346,17 +434,18 @@ function updateLineLengthInTree(
   if (position < lineStart && node.left !== null) {
     // Position is in left subtree
     return withLineIndexNode(node, {
-      left: updateLineLengthInTree(node.left, position, lengthDelta),
+      left: updateLineLengthInTree(node.left, position, lengthDelta, charLengthDelta),
     });
   } else if (position >= lineEnd && node.right !== null) {
     // Position is in right subtree
     return withLineIndexNode(node, {
-      right: updateLineLengthInTree(node.right, position - lineEnd, lengthDelta),
+      right: updateLineLengthInTree(node.right, position - lineEnd, lengthDelta, charLengthDelta),
     });
   } else {
     // Position is in this line - update its length
     return withLineIndexNode(node, {
       lineLength: node.lineLength + lengthDelta,
+      charLength: node.charLength + charLengthDelta,
     });
   }
 }
@@ -371,36 +460,44 @@ function appendLinesStructural(
   lineCount: number,
   position: number,
   newlinePositions: number[],
-  byteLength: number
+  byteLength: number,
+  text?: string
 ): { root: LineIndexNode; lineCount: number } {
   const totalLength = root.subtreeByteLength;
+
+  // Compute char positions from text if available
+  const charPositions = text ? findNewlineCharPositions(text) : [];
+  const hasCharInfo = charPositions.length === newlinePositions.length;
 
   // Update the last line's length for text before first newline
   const firstNewlinePos = newlinePositions[0];
   const textBeforeFirstNewline = firstNewlinePos + 1; // Include the newline
+  const firstCharDelta = hasCharInfo ? charPositions[0] + 1 : 0;
 
   let newRoot = root;
 
   // If inserting at end, we need to add to the last line
   if (position >= totalLength) {
-    newRoot = addToLastLine(newRoot, textBeforeFirstNewline);
+    newRoot = addToLastLine(newRoot, textBeforeFirstNewline, firstCharDelta);
   } else {
-    newRoot = updateLineLengthInTree(newRoot, position, textBeforeFirstNewline);
+    newRoot = updateLineLengthInTree(newRoot, position, textBeforeFirstNewline, firstCharDelta);
   }
 
   // Insert new lines for remaining newlines
   let currentOffset = position + textBeforeFirstNewline;
   for (let i = 1; i < newlinePositions.length; i++) {
     const lineLength = newlinePositions[i] - newlinePositions[i - 1];
-    newRoot = rbInsertLine(newRoot, lineCount, currentOffset, lineLength);
+    const lineCharLength = hasCharInfo ? charPositions[i] - charPositions[i - 1] : 0;
+    newRoot = rbInsertLine(newRoot, lineCount, currentOffset, lineLength, lineCharLength);
     lineCount++;
     currentOffset += lineLength;
   }
 
   // Insert final line (text after last newline)
   const textAfterLastNewline = byteLength - newlinePositions[newlinePositions.length - 1] - 1;
+  const lastCharLength = hasCharInfo ? (text!.length - charPositions[charPositions.length - 1] - 1) : 0;
   if (textAfterLastNewline > 0 || newlinePositions.length > 0) {
-    newRoot = rbInsertLine(newRoot, lineCount, currentOffset, textAfterLastNewline);
+    newRoot = rbInsertLine(newRoot, lineCount, currentOffset, textAfterLastNewline, lastCharLength);
     lineCount++;
   }
 
@@ -421,7 +518,7 @@ function appendLines(
     return buildLineIndexFromText(text, 0);
   }
 
-  const result = appendLinesStructural(state.root, state.lineCount, position, newlinePositions, byteLength);
+  const result = appendLinesStructural(state.root, state.lineCount, position, newlinePositions, byteLength, text);
 
   return withLineIndexState(state, {
     root: result.root,
@@ -432,14 +529,15 @@ function appendLines(
 /**
  * Add length to the last line in the tree.
  */
-function addToLastLine(node: LineIndexNode, lengthDelta: number): LineIndexNode {
+function addToLastLine(node: LineIndexNode, lengthDelta: number, charLengthDelta: number = 0): LineIndexNode {
   if (node.right !== null) {
     return withLineIndexNode(node, {
-      right: addToLastLine(node.right, lengthDelta),
+      right: addToLastLine(node.right, lengthDelta, charLengthDelta),
     });
   }
   return withLineIndexNode(node, {
     lineLength: node.lineLength + lengthDelta,
+    charLength: node.charLength + charLengthDelta,
   });
 }
 
@@ -453,9 +551,15 @@ function insertLinesStructural(
   location: LineLocation,
   newlinePositions: number[],
   byteLength: number,
-  computeOffset: (lineNumber: number, prevOffset: number) => number | null
+  computeOffset: (lineNumber: number, prevOffset: number) => number | null,
+  text?: string,
+  charsBefore?: number
 ): { root: LineIndexNode; lineCount: number } {
   const { lineNumber, offsetInLine, node } = location;
+
+  // Compute char positions from text if available
+  const charPositions = text ? findNewlineCharPositions(text) : [];
+  const hasCharInfo = text !== undefined && charsBefore !== undefined && charPositions.length === newlinePositions.length;
 
   // Calculate the parts of the split line
   const originalLineLength = node.lineLength;
@@ -465,9 +569,10 @@ function insertLinesStructural(
   // First line: original text before insert + text up to first newline (including \n)
   const firstNewlinePos = newlinePositions[0];
   const firstLineLength = beforeInsert + firstNewlinePos + 1;
+  const firstLineCharLength = hasCharInfo ? charsBefore! + charPositions[0] + 1 : undefined;
 
   // Update the current line to be the first part
-  let newRoot = updateLineAtNumber(root, lineNumber, firstLineLength);
+  let newRoot = updateLineAtNumber(root, lineNumber, firstLineLength, firstLineCharLength);
 
   // Track cumulative offset for middle/last line insertion
   let prevOffset = firstLineLength;
@@ -475,8 +580,9 @@ function insertLinesStructural(
   // Insert middle lines (between first and last newline)
   for (let i = 1; i < newlinePositions.length; i++) {
     const lineLength = newlinePositions[i] - newlinePositions[i - 1];
+    const lineCharLength = hasCharInfo ? charPositions[i] - charPositions[i - 1] : 0;
     const offset = computeOffset(lineNumber + i, prevOffset);
-    newRoot = rbInsertLine(newRoot, lineNumber + i, offset, lineLength);
+    newRoot = rbInsertLine(newRoot, lineNumber + i, offset, lineLength, lineCharLength);
     lineCount++;
     prevOffset += lineLength;
   }
@@ -484,13 +590,17 @@ function insertLinesStructural(
   // Last line: text after last newline + remaining original text
   const textAfterLastNewline = byteLength - newlinePositions[newlinePositions.length - 1] - 1;
   const lastLineLength = textAfterLastNewline + afterInsert;
+  const lastCharLength = hasCharInfo
+    ? (text!.length - charPositions[charPositions.length - 1] - 1) + (node.charLength - charsBefore!)
+    : 0;
 
   const lastOffset = computeOffset(lineNumber + newlinePositions.length, prevOffset);
   newRoot = rbInsertLine(
     newRoot,
     lineNumber + newlinePositions.length,
     lastOffset,
-    lastLineLength
+    lastLineLength,
+    lastCharLength
   );
   lineCount++;
 
@@ -505,10 +615,20 @@ function insertLinesAtPosition(
   location: LineLocation,
   text: string,
   newlinePositions: number[],
-  byteLength: number
+  byteLength: number,
+  readText?: ReadTextFn
 ): LineIndexState {
   // Eager: compute real offsets relative to line start
   const lineStart = getLineStartOffset(state.root, location.lineNumber);
+
+  // Compute charsBefore using readText if available
+  let charsBefore: number | undefined;
+  if (readText && location.offsetInLine > 0) {
+    const prefixText = readText(byteOffset(lineStart), byteOffset(lineStart + location.offsetInLine));
+    charsBefore = prefixText.length;
+  } else if (location.offsetInLine === 0) {
+    charsBefore = 0;
+  }
 
   const result = insertLinesStructural(
     state.root!,
@@ -516,7 +636,9 @@ function insertLinesAtPosition(
     location,
     newlinePositions,
     byteLength,
-    (_lineNumber, cumulativeFromFirstLine) => lineStart + cumulativeFromFirstLine
+    (_lineNumber, cumulativeFromFirstLine) => lineStart + cumulativeFromFirstLine,
+    text,
+    charsBefore
   );
 
   // Update offsets for all lines after the inserted ones
@@ -538,20 +660,23 @@ function insertLinesAtPosition(
 function updateLineAtNumber(
   node: LineIndexNode,
   lineNumber: number,
-  newLength: number
+  newLength: number,
+  newCharLength?: number
 ): LineIndexNode {
   const leftLineCount = node.left?.subtreeLineCount ?? 0;
 
   if (lineNumber < leftLineCount && node.left !== null) {
     return withLineIndexNode(node, {
-      left: updateLineAtNumber(node.left, lineNumber, newLength),
+      left: updateLineAtNumber(node.left, lineNumber, newLength, newCharLength),
     });
   } else if (lineNumber > leftLineCount && node.right !== null) {
     return withLineIndexNode(node, {
-      right: updateLineAtNumber(node.right, lineNumber - leftLineCount - 1, newLength),
+      right: updateLineAtNumber(node.right, lineNumber - leftLineCount - 1, newLength, newCharLength),
     });
   } else {
-    return withLineIndexNode(node, { lineLength: newLength });
+    const updates: any = { lineLength: newLength };
+    if (newCharLength !== undefined) updates.charLength = newCharLength;
+    return withLineIndexNode(node, updates);
   }
 }
 
@@ -600,26 +725,21 @@ function updateOffsetsAfterLine(
  * Build a line index from text content.
  */
 function buildLineIndexFromText(text: string, startOffset: number): LineIndexState {
-  const bytes = textEncoder.encode(text);
-  const lines: { offset: number; length: number }[] = [];
-  let lineStart = 0;
+  const lines: { offset: number; length: number; charLength: number }[] = [];
 
-  for (let i = 0; i < bytes.length; i++) {
-    if (bytes[i] === 0x0A) {
-      lines.push({
-        offset: startOffset + lineStart,
-        length: i - lineStart + 1,
-      });
-      lineStart = i + 1;
-    }
-  }
+  // Split by newline to compute both byte and char lengths per line
+  const textLines = text.split('\n');
+  let bytePos = 0;
 
-  // Add final line
-  if (lineStart <= bytes.length) {
+  for (let i = 0; i < textLines.length; i++) {
+    const lineText = i < textLines.length - 1 ? textLines[i] + '\n' : textLines[i];
+    const lineBytes = textEncoder.encode(lineText);
     lines.push({
-      offset: startOffset + lineStart,
-      length: bytes.length - lineStart,
+      offset: startOffset + bytePos,
+      length: lineBytes.length,
+      charLength: lineText.length,
     });
+    bytePos += lineBytes.length;
   }
 
   if (lines.length === 0) {
@@ -632,7 +752,7 @@ function buildLineIndexFromText(text: string, startOffset: number): LineIndexSta
     });
   }
 
-  const root = buildBalancedTree(lines, 0, lines.length - 1);
+  const root = buildBalancedTreeWithChars(lines, 0, lines.length - 1);
   return Object.freeze({
     root,
     lineCount: lines.length,
@@ -643,10 +763,10 @@ function buildLineIndexFromText(text: string, startOffset: number): LineIndexSta
 }
 
 /**
- * Build a balanced tree from sorted line data.
+ * Build a balanced tree from sorted line data with char lengths.
  */
-function buildBalancedTree(
-  lines: { offset: number; length: number }[],
+function buildBalancedTreeWithChars(
+  lines: { offset: number; length: number; charLength: number }[],
   start: number,
   end: number
 ): LineIndexNode | null {
@@ -655,10 +775,10 @@ function buildBalancedTree(
   const mid = Math.floor((start + end) / 2);
   const line = lines[mid];
 
-  const left = buildBalancedTree(lines, start, mid - 1);
-  const right = buildBalancedTree(lines, mid + 1, end);
+  const left = buildBalancedTreeWithChars(lines, start, mid - 1);
+  const right = buildBalancedTreeWithChars(lines, mid + 1, end);
 
-  return createLineIndexNode(line.offset, line.length, 'black', left, right);
+  return createLineIndexNode(line.offset, line.length, 'black', left, right, line.charLength);
 }
 
 // =============================================================================
@@ -688,7 +808,7 @@ export function lineIndexDelete(
 
   // If no newlines deleted, just update line length
   if (deletedNewlines === 0) {
-    return updateLineLength(state, start, -deleteLength);
+    return updateLineLength(state, start, -deleteLength, -deletedText.length);
   }
 
   // Find the start and end lines
@@ -696,7 +816,7 @@ export function lineIndexDelete(
   if (startLocation === null) return state;
 
   // Merge lines and remove deleted lines
-  return deleteLineRange(state, startLocation, deletedNewlines, deleteLength);
+  return deleteLineRange(state, startLocation, deletedNewlines, deleteLength, deletedText.length);
 }
 
 /**
@@ -707,7 +827,8 @@ function deleteLineRange(
   state: LineIndexState,
   startLocation: LineLocation,
   deletedNewlines: number,
-  deleteLength: number
+  deleteLength: number,
+  deletedCharLength: number
 ): LineIndexState {
   const { lineNumber: startLine, offsetInLine: startOffset } = startLocation;
   const endLine = startLine + deletedNewlines;
@@ -716,7 +837,7 @@ function deleteLineRange(
   const endNode = findLineByNumber(state.root, endLine);
   if (endNode === null) {
     // End line doesn't exist - delete to end of document
-    return removeLinesToEnd(state, startLine, startOffset);
+    return removeLinesToEnd(state, startLine, startOffset, deletedCharLength);
   }
 
   // Find the start line to get its length
@@ -745,8 +866,18 @@ function deleteLineRange(
   // Merged line length = what we keep from start + what we keep from end
   const mergedLength = startOffset + keepFromEndLine;
 
+  // Compute merged char length
+  const startLineCharStart = getCharStartOffset(state.root, startLine);
+  let endBound: number;
+  if (endLine + 1 < state.lineCount) {
+    endBound = getCharStartOffset(state.root, endLine + 1);
+  } else {
+    endBound = state.root!.subtreeCharLength;
+  }
+  const mergedCharLength = Math.max(0, (endBound - startLineCharStart) - deletedCharLength);
+
   // Single-pass reconstruction: collect lines, skip deleted range, merge start/end
-  return rebuildWithDeletedRange(state.root!, startLine, endLine, mergedLength);
+  return rebuildWithDeletedRange(state.root!, startLine, endLine, mergedLength, mergedCharLength);
 }
 
 /**
@@ -762,7 +893,8 @@ function rebuildWithDeletedRange(
   root: LineIndexNode,
   startLine: number,
   endLine: number,
-  mergedLength: number
+  mergedLength: number,
+  mergedCharLength: number = 0
 ): LineIndexState {
   const totalLines = root.subtreeLineCount;
   const deletedCount = endLine - startLine; // Lines being merged/removed
@@ -780,7 +912,7 @@ function rebuildWithDeletedRange(
 
   // Use incremental deletion: O(k * log n) where k = deletedCount
   // 1. Update the start line's length to the merged length
-  let newRoot: LineIndexNode | null = updateLineAtNumber(root, startLine, mergedLength);
+  let newRoot: LineIndexNode | null = updateLineAtNumber(root, startLine, mergedLength, mergedCharLength);
 
   // 2. Remove deleted lines from endLine down to startLine+1
   //    (delete in reverse to keep line numbers stable)
@@ -892,7 +1024,8 @@ function removeNode(node: LineIndexNode): LineIndexNode | null {
     successor.lineLength,
     node.color,
     node.left,
-    newRight
+    newRight,
+    successor.charLength
   );
 
   return fixDeleteViolations(replacement);
@@ -946,20 +1079,29 @@ function fixDeleteViolations(node: LineIndexNode | null): LineIndexNode | null {
 function removeLinesToEnd(
   state: LineIndexState,
   startLine: number,
-  startOffset: number
+  startOffset: number,
+  deletedCharLength?: number
 ): LineIndexState {
   const lines = collectLines(state.root);
-  const newLines: { offset: number; length: number }[] = [];
+  const newLines: { offset: number; length: number; charLength: number }[] = [];
 
   let currentOffset = 0;
   for (let i = 0; i < startLine && i < lines.length; i++) {
-    newLines.push({ offset: currentOffset, length: lines[i].lineLength });
+    newLines.push({ offset: currentOffset, length: lines[i].lineLength, charLength: lines[i].charLength });
     currentOffset += lines[i].lineLength;
   }
 
   // Add partial last line if there's content before the deletion
   if (startOffset > 0 && startLine < lines.length) {
-    newLines.push({ offset: currentOffset, length: startOffset });
+    // Compute charLength for the truncated line
+    let totalCharsFromStartToEnd = 0;
+    for (let i = startLine; i < lines.length; i++) {
+      totalCharsFromStartToEnd += lines[i].charLength;
+    }
+    const truncatedCharLength = deletedCharLength !== undefined
+      ? totalCharsFromStartToEnd - deletedCharLength
+      : 0;
+    newLines.push({ offset: currentOffset, length: startOffset, charLength: Math.max(0, truncatedCharLength) });
   }
 
   if (newLines.length === 0) {
@@ -972,7 +1114,7 @@ function removeLinesToEnd(
     });
   }
 
-  const root = buildBalancedTree(newLines, 0, newLines.length - 1);
+  const root = buildBalancedTreeWithChars(newLines, 0, newLines.length - 1);
   return withLineIndexState(state, {
     root,
     lineCount: newLines.length,
@@ -1134,7 +1276,8 @@ export function lineIndexInsertLazy(
   state: LineIndexState,
   position: ByteOffset,
   text: string,
-  currentVersion: number
+  currentVersion: number,
+  readText?: ReadTextFn
 ): LineIndexState {
   if (text.length === 0) return state;
 
@@ -1142,7 +1285,7 @@ export function lineIndexInsertLazy(
 
   // No newlines: simple length update (O(log n), no lazy needed)
   if (newlinePositions.length === 0) {
-    return updateLineLengthLazy(state, position, byteLength);
+    return updateLineLengthLazy(state, position, byteLength, text.length);
   }
 
   // Find affected line
@@ -1153,7 +1296,7 @@ export function lineIndexInsertLazy(
   }
 
   // Insert new lines and mark downstream as dirty
-  return insertLinesAtPositionLazy(state, location, text, newlinePositions, byteLength, currentVersion);
+  return insertLinesAtPositionLazy(state, location, text, newlinePositions, byteLength, currentVersion, readText);
 }
 
 // updateLineLengthLazy is identical to updateLineLength - reuse it directly
@@ -1182,7 +1325,7 @@ function appendLinesLazy(
   }
 
   // For appending at end, offsets are naturally correct (no dirty ranges needed)
-  const result = appendLinesStructural(state.root, state.lineCount, position, newlinePositions, byteLength);
+  const result = appendLinesStructural(state.root, state.lineCount, position, newlinePositions, byteLength, text);
 
   return withLineIndexState(state, {
     root: result.root,
@@ -1199,8 +1342,19 @@ function insertLinesAtPositionLazy(
   text: string,
   newlinePositions: number[],
   byteLength: number,
-  currentVersion: number
+  currentVersion: number,
+  readText?: ReadTextFn
 ): LineIndexState {
+  // Compute charsBefore using readText if available
+  let charsBefore: number | undefined;
+  if (readText && location.offsetInLine > 0) {
+    const lineStart = getLineStartOffset(state.root, location.lineNumber);
+    const prefixText = readText(byteOffset(lineStart), byteOffset(lineStart + location.offsetInLine));
+    charsBefore = prefixText.length;
+  } else if (location.offsetInLine === 0) {
+    charsBefore = 0;
+  }
+
   // Lazy: use null placeholder for all new line offsets
   const result = insertLinesStructural(
     state.root!,
@@ -1208,7 +1362,9 @@ function insertLinesAtPositionLazy(
     location,
     newlinePositions,
     byteLength,
-    () => null
+    () => null,
+    text,
+    charsBefore
   );
 
   // Mark all lines after the insertion as dirty (they have stale offsets)
@@ -1247,7 +1403,7 @@ export function lineIndexDeleteLazy(
 
   // No newlines: just update line length
   if (deletedNewlines === 0) {
-    return updateLineLengthLazy(state, start, -deleteLength);
+    return updateLineLengthLazy(state, start, -deleteLength, -deletedText.length);
   }
 
   // Find the start line
@@ -1255,7 +1411,7 @@ export function lineIndexDeleteLazy(
   if (startLocation === null) return state;
 
   // Delete lines and mark remaining as dirty
-  return deleteLineRangeLazy(state, startLocation, deletedNewlines, deleteLength, currentVersion);
+  return deleteLineRangeLazy(state, startLocation, deletedNewlines, deleteLength, currentVersion, deletedText.length);
 }
 
 /**
@@ -1266,14 +1422,15 @@ function deleteLineRangeLazy(
   startLocation: LineLocation,
   deletedNewlines: number,
   deleteLength: number,
-  currentVersion: number
+  currentVersion: number,
+  deletedCharLength: number
 ): LineIndexState {
   const { lineNumber: startLine, offsetInLine: startOffset } = startLocation;
   const endLine = startLine + deletedNewlines;
 
   const endNode = findLineByNumber(state.root, endLine);
   if (endNode === null) {
-    return removeLinesToEndLazy(state, startLine, startOffset, currentVersion);
+    return removeLinesToEndLazy(state, startLine, startOffset, currentVersion, deletedCharLength);
   }
 
   const startNode = findLineByNumber(state.root, startLine);
@@ -1294,9 +1451,19 @@ function deleteLineRangeLazy(
   const keepFromEndLine = Math.max(0, endLineLength - deleteOnEndLine);
   const mergedLength = startOffset + keepFromEndLine;
 
+  // Compute merged char length
+  const startLineCharStart = getCharStartOffset(state.root, startLine);
+  let endBound: number;
+  if (endLine + 1 < state.lineCount) {
+    endBound = getCharStartOffset(state.root, endLine + 1);
+  } else {
+    endBound = state.root!.subtreeCharLength;
+  }
+  const mergedCharLength = Math.max(0, (endBound - startLineCharStart) - deletedCharLength);
+
   // Rebuild with deleted range (this is still O(n) for deletions with newlines)
   // Future optimization: track deleted ranges for lazy reconciliation
-  const newState = rebuildWithDeletedRange(state.root!, startLine, endLine, mergedLength);
+  const newState = rebuildWithDeletedRange(state.root!, startLine, endLine, mergedLength, mergedCharLength);
 
   // Mark lines after deletion as dirty
   const newDirtyRange = createDirtyRange(
@@ -1323,9 +1490,10 @@ function removeLinesToEndLazy(
   state: LineIndexState,
   startLine: number,
   startOffset: number,
-  currentVersion: number
+  currentVersion: number,
+  deletedCharLength?: number
 ): LineIndexState {
-  const newState = removeLinesToEnd(state, startLine, startOffset);
+  const newState = removeLinesToEnd(state, startLine, startOffset, deletedCharLength);
   return withLineIndexState(state, {
     root: newState.root,
     lineCount: newState.lineCount,

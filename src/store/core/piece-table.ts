@@ -888,7 +888,7 @@ export function getLength(state: PieceTableState): number {
  * Note: This scans the document to find line boundaries — O(n).
  * For O(log n) line access with DocumentState, use `getLineContent()` from rendering.ts.
  */
-export function getLine(state: PieceTableState, lineNumber: number): string {
+export function getLineLinearScan(state: PieceTableState, lineNumber: number): string {
   if (state.root === null) return '';
   if (lineNumber < 0) return '';
 

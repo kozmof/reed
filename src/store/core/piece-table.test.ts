@@ -9,7 +9,7 @@ import {
   getValue,
   getText,
   getLength,
-  getLine,
+  getLineLinearScan,
   findPieceAtPosition,
   collectPieces,
   getBufferStats,
@@ -90,31 +90,31 @@ describe('Piece Table Operations', () => {
     });
   });
 
-  describe('getLine', () => {
+  describe('getLineLinearScan', () => {
     it('should return empty for empty state', () => {
       const state = createEmptyPieceTableState();
-      expect(getLine(state, 0)).toBe('');
+      expect(getLineLinearScan(state, 0)).toBe('');
     });
 
     it('should return first line', () => {
       const state = createPieceTableState('Line 1\nLine 2\nLine 3');
-      expect(getLine(state, 0)).toBe('Line 1\n');
+      expect(getLineLinearScan(state, 0)).toBe('Line 1\n');
     });
 
     it('should return middle line', () => {
       const state = createPieceTableState('Line 1\nLine 2\nLine 3');
-      expect(getLine(state, 1)).toBe('Line 2\n');
+      expect(getLineLinearScan(state, 1)).toBe('Line 2\n');
     });
 
     it('should return last line without trailing newline', () => {
       const state = createPieceTableState('Line 1\nLine 2\nLine 3');
-      expect(getLine(state, 2)).toBe('Line 3');
+      expect(getLineLinearScan(state, 2)).toBe('Line 3');
     });
 
     it('should return empty for out of bounds line', () => {
       const state = createPieceTableState('Line 1\nLine 2');
-      expect(getLine(state, 5)).toBe('');
-      expect(getLine(state, -1)).toBe('');
+      expect(getLineLinearScan(state, 5)).toBe('');
+      expect(getLineLinearScan(state, -1)).toBe('');
     });
   });
 
