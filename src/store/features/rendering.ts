@@ -5,7 +5,7 @@
 
 import type { DocumentState, SelectionRange, CharSelectionRange } from '../../types/state.ts';
 import type { ByteOffset, LogCost } from '../../types/branded.ts';
-import { byteOffset, charOffset, addByteOffset, logCost } from '../../types/branded.ts';
+import { byteOffset, charOffset, addByteOffset, constCost, mapCost, chainCost } from '../../types/branded.ts';
 import { findLineAtPosition, getCharStartOffset, findLineAtCharPosition, getLineRangePrecise, getLineCountFromIndex } from '../core/line-index.ts';
 import { getText, charToByteOffset } from '../core/piece-table.ts';
 import { textEncoder } from '../core/encoding.ts';
@@ -105,9 +105,13 @@ export function getVisibleLineRange(
  */
 export function getLineContent(state: DocumentState, lineNum: number): LogCost<string> {
   const range = getLineRangePrecise(state.lineIndex, lineNum);
-  if (range === null) return logCost('');
-  const raw = getText(state.pieceTable, range.start, addByteOffset(range.start, range.length as number));
-  return logCost(raw.endsWith('\n') ? raw.slice(0, -1) : raw);
+  if (range === null) return constCost('');
+  return chainCost(range, r =>
+    mapCost(
+      getText(state.pieceTable, r.start, addByteOffset(r.start, r.length as number)),
+      raw => raw.endsWith('\n') ? raw.slice(0, -1) : raw
+    )
+  );
 }
 
 /**

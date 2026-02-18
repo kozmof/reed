@@ -109,4 +109,6 @@ export {
   constCost,
   logCost,
   linearCost,
+  mapCost,
+  chainCost,
 } from './branded.ts';

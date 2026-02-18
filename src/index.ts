@@ -107,6 +107,8 @@ export {
   constCost,
   logCost,
   linearCost,
+  mapCost,
+  chainCost,
 } from './types/index.ts';
 
 // =============================================================================

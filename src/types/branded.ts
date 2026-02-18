@@ -319,3 +319,32 @@ export function logCost<T>(value: T): LogCost<T> {
 export function linearCost<T>(value: T): LinearCost<T> {
   return value as LinearCost<T>;
 }
+
+/**
+ * Extract the cost level from a branded value.
+ */
+type CostOf<T> = T extends CostBrand<infer L> ? L : never;
+
+/**
+ * Apply a pure (O(1)) transform to a cost-branded value.
+ * The cost level is preserved — a pure function doesn't add algorithmic cost.
+ */
+export function mapCost<T extends CostBrand<number>, U>(
+  value: T,
+  f: (value: T) => U
+): U & CostBrand<CostOf<T>> {
+  return f(value) as U & CostBrand<CostOf<T>>;
+}
+
+/**
+ * Compose two cost-branded operations.
+ * The result cost is the union of both levels (= the more expensive tier).
+ *
+ * Example: LogCost + LogCost = LogCost, LogCost + LinearCost = LinearCost.
+ */
+export function chainCost<T extends CostBrand<number>, U extends CostBrand<number>>(
+  value: T,
+  f: (value: T) => U
+): U & CostBrand<CostOf<T> | CostOf<U>> {
+  return f(value) as U & CostBrand<CostOf<T> | CostOf<U>>;
+}
