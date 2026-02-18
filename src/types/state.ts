@@ -101,10 +101,15 @@ export interface PieceTableState {
 /**
  * Immutable line index node in the separate Red-Black tree.
  * Maps line numbers to absolute byte offsets.
+ *
+ * Parameterized by evaluation mode:
+ * - `'eager'`: `documentOffset` is always `number` (offsets are computed immediately)
+ * - `'lazy'`: `documentOffset` is `number | null` (`null` means pending reconciliation)
+ * - Default (union): `number | null` for backward compatibility
  */
-export interface LineIndexNode extends RBNode<LineIndexNode> {
+export interface LineIndexNode<M extends EvaluationMode = EvaluationMode> extends RBNode<LineIndexNode<M>> {
   /** Byte offset in document where this line starts. null when using lazy mode before reconciliation. */
-  readonly documentOffset: number | null;
+  readonly documentOffset: M extends 'eager' ? number : number | null;
   /** Length of this line including newline character(s) in bytes */
   readonly lineLength: number;
   /** Length of this line in UTF-16 code units (JavaScript string length) */
@@ -143,8 +148,8 @@ export type EvaluationMode = 'eager' | 'lazy';
  * The default (union) accepts either mode for backward compatibility.
  */
 export interface LineIndexState<M extends EvaluationMode = EvaluationMode> {
-  /** Root of the line index tree */
-  readonly root: LineIndexNode | null;
+  /** Root of the line index tree (parameterized by mode for node-level type safety) */
+  readonly root: LineIndexNode<M> | null;
   /** Total line count (cached for O(1) access) */
   readonly lineCount: number;
   /** Dirty ranges awaiting background reconciliation */

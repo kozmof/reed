@@ -8,6 +8,7 @@ import type {
   DocumentStoreConfig,
   PieceTableState,
   PieceNode,
+  EvaluationMode,
   LineIndexState,
   LineIndexNode,
   SelectionState,
@@ -310,12 +311,25 @@ export function withState(
 /**
  * Helper to create modified line index state with structural sharing.
  * Centralizes LineIndexState construction to ensure consistency.
+ * Preserves the evaluation mode parameter for type safety.
  */
-export function withLineIndexState(
-  state: LineIndexState,
-  changes: Partial<LineIndexState>
-): LineIndexState {
-  return Object.freeze({ ...state, ...changes });
+export function withLineIndexState<M extends EvaluationMode = EvaluationMode>(
+  state: LineIndexState<M>,
+  changes: Partial<LineIndexState<M>>
+): LineIndexState<M> {
+  return Object.freeze({ ...state, ...changes }) as LineIndexState<M>;
+}
+
+/**
+ * Narrow a LineIndexState to eager mode with runtime validation.
+ * Throws if the state has dirty ranges or a pending rebuild.
+ * Use at mode boundaries (e.g., undo/redo) where eager state is required.
+ */
+export function asEagerLineIndex(state: LineIndexState): LineIndexState<'eager'> {
+  if (state.dirtyRanges.length !== 0 || state.rebuildPending) {
+    throw new Error('Expected eager LineIndexState but found dirty ranges or pending rebuild');
+  }
+  return state as LineIndexState<'eager'>;
 }
 
 /**

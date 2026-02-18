@@ -183,6 +183,6 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
 export type ReadTextFn = (start: ByteOffset, end: ByteOffset) => string;
 
 export interface LineIndexStrategy<M extends EvaluationMode = EvaluationMode> {
-  insert(state: LineIndexState, position: ByteOffset, text: string, version: number, readText?: ReadTextFn): LineIndexState<M>;
-  delete(state: LineIndexState, start: ByteOffset, end: ByteOffset, deletedText: string, version: number): LineIndexState<M>;
+  insert(state: LineIndexState<M>, position: ByteOffset, text: string, version: number, readText?: ReadTextFn): LineIndexState<M>;
+  delete(state: LineIndexState<M>, start: ByteOffset, end: ByteOffset, deletedText: string, version: number): LineIndexState<M>;
 }

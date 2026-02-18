@@ -23,16 +23,11 @@ This systematically defeats the branded type contract. When `ByteLength` is rout
 - Introducing a `byteEnd(start: ByteOffset, length: ByteLength): ByteOffset` helper for the recurring `start + length` pattern, eliminating the five identical `addByteOffset(range.start, range.length as number)` sites in rendering.ts.
 - Replacing `ByteLength` with a type whose arithmetic is defined against `ByteOffset` rather than `number`.
 
-### 1.2 `LineIndexNode.documentOffset: number | null` conflates two modes
+### 1.2 ~~`LineIndexNode.documentOffset: number | null` conflates two modes~~ **[FIXED]**
 
-The nullable `documentOffset` field serves double duty: `null` means "lazy/pending" and a `number` means "known". This is the mechanism that `EvaluationMode` is supposed to formalize at the *state* level, but the node-level type doesn't participate:
+`LineIndexNode` is now parameterized as `LineIndexNode<M extends EvaluationMode>`. The `documentOffset` field is `number` when `M = 'eager'` and `number | null` when `M = 'lazy'`. `LineIndexState<M>.root` uses `LineIndexNode<M>`, so the mode guarantee flows structurally through the tree.
 
-```typescript
-// Every node has the same type regardless of mode
-readonly documentOffset: number | null;
-```
-
-A first-time reader might not realize that `null` is a semantic invariant (lazy mode) rather than an error state. The `LineIndexState<M>` generic narrows `dirtyRanges` and `rebuildPending` but leaves nodes unparameterized, so the modal guarantee cannot be enforced structurally.
+Note: TypeScript's conditional type resolution has a limitation — `LineIndexState<EvaluationMode>` (the default union) is structurally assignable to `LineIndexState<'eager'>`, so full compile-time enforcement requires explicit mode tracking (e.g., `LineIndexState<'lazy'>`) rather than relying on the default. The `asEagerLineIndex` runtime helper in [state.ts](src/store/core/state.ts) provides a validated narrowing path for code that cannot carry the mode parameter statically.
 
 ### 1.3 `PieceNode.subtreeLength` is `number`, not `ByteLength`
 
@@ -46,16 +41,11 @@ A first-time reader might not realize that `null` is a semantic invariant (lazy 
 
 ## 2. Interfaces
 
-### 2.1 `LineIndexStrategy` accepts `LineIndexState` (union) but returns `LineIndexState<M>`
+### 2.1 ~~`LineIndexStrategy` accepts `LineIndexState` (union) but returns `LineIndexState<M>`~~ **[FIXED]**
 
-```typescript
-export interface LineIndexStrategy<M extends EvaluationMode = EvaluationMode> {
-  insert(state: LineIndexState, ...): LineIndexState<M>;
-  delete(state: LineIndexState, ...): LineIndexState<M>;
-}
-```
+`LineIndexStrategy<M>` now accepts `LineIndexState<M>` as input, matching the output type. This prevents `LineIndexState<'lazy'>` from being passed to an eager strategy at compile time.
 
-The input is the *unparameterized* union, so a caller can pass lazy state into an eager strategy or vice versa. The strategy then returns `LineIndexState<M>`, creating a mode transition that is invisible at the call site. The input should be `LineIndexState<M>` or explicitly `LineIndexState<EvaluationMode>` with documented semantics for cross-mode calls.
+Additionally, the undo/redo path (`applyChange` in [reducer.ts](src/store/features/reducer.ts)) now explicitly reconciles lazy state to eager via `reconcileFull` before applying the eager strategy. This fixes a latent bug where the eager strategy could operate on state with unreconciled dirty ranges and `null` document offsets — a mode violation that was previously invisible because the types didn't distinguish the two modes at the strategy input boundary.
 
 ### 2.2 `ReadTextFn` is optional but silently degrades charLength computation
 
@@ -166,10 +156,10 @@ Reconciliation corrects internal bookkeeping (line offsets) without changing doc
 
 ```typescript
 export function withState(state: DocumentState, changes: Partial<DocumentState>): DocumentState { ... }
-export function withLineIndexState(state: LineIndexState, changes: Partial<LineIndexState>): LineIndexState { ... }
+export function withLineIndexState<M>(state: LineIndexState<M>, changes: Partial<LineIndexState<M>>): LineIndexState<M> { ... }
 ```
 
-These accept `Partial<T>` which includes *any* field of the state, including computed/derived ones like `version` or `lineCount`. A misspelled or wrong-typed field in `changes` will silently override. Consider constraining the `changes` parameter to only settable fields (similar to how `PieceNodeUpdates` restricts `withPieceNode`).
+`withLineIndexState` is now generic to preserve the evaluation mode parameter through updates (previously it returned the unparameterized union, losing mode information). Both helpers still accept `Partial<T>` which includes *any* field of the state, including computed/derived ones like `version` or `lineCount`. A misspelled or wrong-typed field in `changes` will silently override. Consider constraining the `changes` parameter to only settable fields (similar to how `PieceNodeUpdates` restricts `withPieceNode`).
 
 ---
 
@@ -177,7 +167,7 @@ These accept `Partial<T>` which includes *any* field of the state, including com
 
 1. **Branded type erosion** — The `as number` casts throughout rendering.ts and reducer.ts will proliferate as new code is added, gradually making the brand system decorative rather than protective.
 
-2. **Lazy/eager mode boundary** — The `LineIndexState<M>` parameterization is well-designed at the state level but not enforced at the node level or the strategy interface input, creating a gap where mode violations can slip through.
+2. ~~**Lazy/eager mode boundary**~~ **[FIXED]** — `LineIndexNode<M>` and `LineIndexStrategy<M>` input are now parameterized by mode. Undo/redo reconciles before eager operations. A TypeScript limitation remains: `LineIndexState<EvaluationMode>` (default) is structurally assignable to `LineIndexState<'eager'>`, so full enforcement requires explicit mode tracking at call sites.
 
 3. **Piece table delete rebalancing** — The `deleteRange` function produces structurally correct but potentially unbalanced trees. For documents with heavy edit-delete cycles, tree height may grow beyond O(log n).
 

@@ -20,6 +20,7 @@ import {
   lineIndexDelete as liDelete,
   lineIndexInsertLazy as liInsertLazy,
   lineIndexDeleteLazy as liDeleteLazy,
+  reconcileFull,
 } from '../core/line-index.ts';
 import { textEncoder } from '../core/encoding.ts';
 
@@ -406,24 +407,31 @@ function invertChange(change: HistoryChange): HistoryChange {
  * Uses eager line index strategy for immediate accuracy after redo.
  */
 function applyChange(state: DocumentState, change: HistoryChange, version: number): DocumentState {
+  // Undo/redo requires eager line index state for correct offset computation.
+  // Reconcile first if the state has dirty ranges from lazy editing.
+  const reconciledLI = reconcileFull(state.lineIndex, version);
+  if (reconciledLI !== state.lineIndex) {
+    state = withState(state, { lineIndex: reconciledLI });
+  }
+
   switch (change.type) {
     case 'insert': {
       const { state: s } = pieceTableInsert(state, change.position, change.text);
       const readText = (start: ByteOffset, end: ByteOffset) => getText(s.pieceTable, start, end);
-      const newLineIndex = eagerLineIndex.insert(s.lineIndex, change.position, change.text, version, readText);
+      const newLineIndex = eagerLineIndex.insert(reconciledLI, change.position, change.text, version, readText);
       return withState(s, { lineIndex: newLineIndex });
     }
     case 'delete': {
       const end = byteOffset(change.position + change.byteLength);
       const s = pieceTableDelete(state, change.position, end);
-      const newLineIndex = eagerLineIndex.delete(s.lineIndex, change.position, end, change.text, version);
+      const newLineIndex = eagerLineIndex.delete(reconciledLI, change.position, end, change.text, version);
       return withState(s, { lineIndex: newLineIndex });
     }
     case 'replace': {
       const deleteEnd = byteOffset(change.position + textEncoder.encode(change.oldText).length);
       const s = pieceTableDelete(state, change.position, deleteEnd);
       const { state: s2 } = pieceTableInsert(s, change.position, change.text);
-      const li1 = eagerLineIndex.delete(s2.lineIndex, change.position, deleteEnd, change.oldText, version);
+      const li1 = eagerLineIndex.delete(reconciledLI, change.position, deleteEnd, change.oldText, version);
       const readText = (start: ByteOffset, end: ByteOffset) => getText(s2.pieceTable, start, end);
       const li2 = eagerLineIndex.insert(li1, change.position, change.text, version, readText);
       return withState(s2, { lineIndex: li2 });
