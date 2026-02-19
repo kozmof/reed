@@ -78,12 +78,17 @@ export type {
   CharOffset,
   LineNumber,
   ColumnNumber,
+  CostLevel,
+  Costed,
+  CostFn,
+  JoinCostLevel,
   ConstCost,
   LogCost,
   LinearCost,
 } from './branded.ts';
 
 export {
+  $,
   byteOffset,
   byteLength,
   charOffset,
@@ -107,8 +112,15 @@ export {
   LINE_ZERO,
   COLUMN_ZERO,
   constCost,
+  constCostBoundary,
+  constCostFn,
   logCost,
+  logCostBoundary,
+  logCostFn,
   linearCost,
+  linearCostBoundary,
+  linearCostFn,
+  composeCostFn,
   mapCost,
   chainCost,
 } from './branded.ts';

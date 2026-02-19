@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  $,
   byteOffset,
   charOffset,
   lineNumber,
@@ -21,6 +22,17 @@ import {
   ZERO_CHAR_OFFSET,
   LINE_ZERO,
   COLUMN_ZERO,
+  constCostBoundary,
+  constCostFn,
+  logCostBoundary,
+  logCostFn,
+  linearCostBoundary,
+  linearCostFn,
+  composeCostFn,
+  type ConstCost,
+  type CostFn,
+  type LogCost,
+  type LinearCost,
   type ByteOffset,
   type CharOffset,
   type LineNumber,
@@ -160,6 +172,61 @@ describe('Branded Types', () => {
       expect(a < b).toBe(true);
       expect(a === byteOffset(10)).toBe(true);
       expect(b > a).toBe(true);
+    });
+  });
+
+  describe('cost boundaries', () => {
+    it('should wrap callback result as ConstCost', () => {
+      const result: ConstCost<number> = constCostBoundary(() => 7);
+      expect(result).toBe(7);
+    });
+
+    it('should wrap callback result as LogCost', () => {
+      const result: LogCost<number> = logCostBoundary(() => 42);
+      expect(result).toBe(42);
+    });
+
+    it('should wrap callback result as LinearCost', () => {
+      const result: LinearCost<number> = linearCostBoundary(() => 100);
+      expect(result).toBe(100);
+    });
+
+    it('should execute callback exactly once', () => {
+      let calls = 0;
+      const result = $('log', () => {
+        calls += 1;
+        return 'value';
+      });
+      expect(result).toBe('value');
+      expect(calls).toBe(1);
+    });
+
+    it('should support compact $ boundary helper', () => {
+      const c: ConstCost<number> = $('const', () => 1);
+      const l: LogCost<number> = $('log', () => 2);
+      const n: LinearCost<number> = $('linear', () => 3);
+      expect(c + l + n).toBe(6);
+    });
+  });
+
+  describe('cost function contracts', () => {
+    it('should annotate function output with log cost', () => {
+      const fn: CostFn<'log', [number], number> = logCostFn((value: number) => value + 1);
+      const result = fn(41);
+      expect(result).toBe(42);
+    });
+
+    it('should compose functions and preserve dominant cost', () => {
+      const first: CostFn<'const', [number], number> = constCostFn((value: number) => value + 1);
+      const second = (value: number) => linearCostBoundary(() => value * 2);
+
+      const composed: CostFn<'linear', [number], number> = composeCostFn(first, second);
+      expect(composed(5)).toBe(12);
+    });
+
+    it('should support direct linear function annotation', () => {
+      const fn: CostFn<'linear', [number], string> = linearCostFn((value: number) => String(value));
+      expect(fn(7)).toBe('7');
     });
   });
 });

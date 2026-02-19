@@ -284,30 +284,66 @@ export const COLUMN_ZERO: ColumnNumber = 0 as ColumnNumber;
 declare const costLevel: unique symbol;
 
 /**
- * Cost brand with numeric level for natural widening.
- * Level 0 = O(1), Level 1 = O(log n), Level 2 = O(n).
+ * Declarative cost levels for algorithmic complexity.
+ */
+export type CostLevel = 'const' | 'log' | 'linear';
+
+/**
+ * Cost brand with level labels for natural widening through unions.
  *
  * Widening is automatic via TypeScript's union assignability:
- * - `CostBrand<0>` (O(1)) is assignable to `CostBrand<0 | 1>` (O(log n))
- * - `CostBrand<0 | 1>` (O(log n)) is assignable to `CostBrand<0 | 1 | 2>` (O(n))
+ * - `CostBrand<'const'>` is assignable to `CostBrand<'const' | 'log'>`
+ * - `CostBrand<'const' | 'log'>` is assignable to `CostBrand<'const' | 'log' | 'linear'>`
  *
  * This means a value from an O(1) function can be used wherever an O(log n)
- * or O(n) result is expected — cheaper operations satisfy costlier contracts.
+ * or O(n) result is expected.
  */
-type CostBrand<Level extends number> = { readonly [costLevel]: Level };
+type CostBrand<Level extends CostLevel> = { readonly [costLevel]: Level };
 
 /** Value from an O(1) operation. Assignable to LogCost and LinearCost. */
-export type ConstCost<T> = T & CostBrand<0>;
+export type ConstCost<T> = T & CostBrand<'const'>;
 
 /** Value from an O(log n) operation. Assignable to LinearCost. */
-export type LogCost<T> = T & CostBrand<0 | 1>;
+export type LogCost<T> = T & CostBrand<'const' | 'log'>;
 
 /** Value from an O(n) operation. */
-export type LinearCost<T> = T & CostBrand<0 | 1 | 2>;
+export type LinearCost<T> = T & CostBrand<'const' | 'log' | 'linear'>;
+
+/**
+ * Map a cost level to its branded value shape.
+ */
+export type Costed<Level extends CostLevel, T> =
+  Level extends 'const' ? ConstCost<T> :
+  Level extends 'log' ? LogCost<T> :
+  LinearCost<T>;
+
+/**
+ * Function contract with declarative cost level.
+ */
+export type CostFn<Level extends CostLevel, Args extends readonly unknown[], R> =
+  (...args: Args) => Costed<Level, R>;
+
+/**
+ * Join two cost levels to the dominant one.
+ */
+export type JoinCostLevel<A extends CostLevel, B extends CostLevel> =
+  A extends 'linear' ? 'linear' :
+  B extends 'linear' ? 'linear' :
+  A extends 'log' ? 'log' :
+  B extends 'log' ? 'log' :
+  'const';
 
 /** Tag a value as O(1). Zero runtime cost — cast only. */
 export function constCost<T>(value: T): ConstCost<T> {
   return value as ConstCost<T>;
+}
+
+/**
+ * Mark a computation boundary as O(1).
+ * Useful when the computation is guaranteed constant-time.
+ */
+export function constCostBoundary<T>(compute: () => T): ConstCost<T> {
+  return constCost(compute());
 }
 
 /** Tag a value as O(log n). Zero runtime cost — cast only. */
@@ -315,9 +351,83 @@ export function logCost<T>(value: T): LogCost<T> {
   return value as LogCost<T>;
 }
 
+/**
+ * Mark a computation boundary as O(log n).
+ * Useful when internal work is intentionally hidden behind one complexity tier.
+ */
+export function logCostBoundary<T>(compute: () => T): LogCost<T> {
+  return logCost(compute());
+}
+
 /** Tag a value as O(n). Zero runtime cost — cast only. */
 export function linearCost<T>(value: T): LinearCost<T> {
   return value as LinearCost<T>;
+}
+
+/**
+ * Mark a computation boundary as O(n).
+ * Useful when internal work is intentionally grouped behind linear complexity.
+ */
+export function linearCostBoundary<T>(compute: () => T): LinearCost<T> {
+  return linearCost(compute());
+}
+
+/**
+ * Compact boundary helper for readability:
+ * $('const' | 'log' | 'linear', () => value)
+ */
+export function $<T>(level: 'const', compute: () => T): ConstCost<T>;
+export function $<T>(level: 'log', compute: () => T): LogCost<T>;
+export function $<T>(level: 'linear', compute: () => T): LinearCost<T>;
+export function $<T>(level: CostLevel, compute: () => T): Costed<CostLevel, T> {
+  if (level === 'const') return constCostBoundary(compute);
+  if (level === 'log') return logCostBoundary(compute);
+  return linearCostBoundary(compute);
+}
+
+/**
+ * Annotate a function as O(1) without changing runtime behavior.
+ */
+export function constCostFn<Args extends readonly unknown[], R>(
+  fn: (...args: Args) => R
+): CostFn<'const', Args, R> {
+  return ((...args: Args) => constCost(fn(...args))) as CostFn<'const', Args, R>;
+}
+
+/**
+ * Annotate a function as O(log n) without changing runtime behavior.
+ */
+export function logCostFn<Args extends readonly unknown[], R>(
+  fn: (...args: Args) => R
+): CostFn<'log', Args, R> {
+  return ((...args: Args) => logCost(fn(...args))) as CostFn<'log', Args, R>;
+}
+
+/**
+ * Annotate a function as O(n) without changing runtime behavior.
+ */
+export function linearCostFn<Args extends readonly unknown[], R>(
+  fn: (...args: Args) => R
+): CostFn<'linear', Args, R> {
+  return ((...args: Args) => linearCost(fn(...args))) as CostFn<'linear', Args, R>;
+}
+
+/**
+ * Compose cost-annotated functions and compute the dominant cost level.
+ */
+export function composeCostFn<
+  L1 extends CostLevel,
+  L2 extends CostLevel,
+  Args extends readonly unknown[],
+  Mid,
+  Out
+>(
+  first: CostFn<L1, Args, Mid>,
+  second: (value: Mid) => Costed<L2, Out>
+): CostFn<JoinCostLevel<L1, L2>, Args, Out> {
+  return ((...args: Args) =>
+    second(first(...args)) as unknown as Costed<JoinCostLevel<L1, L2>, Out>
+  ) as CostFn<JoinCostLevel<L1, L2>, Args, Out>;
 }
 
 /**
@@ -329,7 +439,7 @@ type CostOf<T> = T extends CostBrand<infer L> ? L : never;
  * Apply a pure (O(1)) transform to a cost-branded value.
  * The cost level is preserved — a pure function doesn't add algorithmic cost.
  */
-export function mapCost<T extends CostBrand<number>, U>(
+export function mapCost<T extends CostBrand<CostLevel>, U>(
   value: T,
   f: (value: T) => U
 ): U & CostBrand<CostOf<T>> {
@@ -342,7 +452,7 @@ export function mapCost<T extends CostBrand<number>, U>(
  *
  * Example: LogCost + LogCost = LogCost, LogCost + LinearCost = LinearCost.
  */
-export function chainCost<T extends CostBrand<number>, U extends CostBrand<number>>(
+export function chainCost<T extends CostBrand<CostLevel>, U extends CostBrand<CostLevel>>(
   value: T,
   f: (value: T) => U
 ): U & CostBrand<CostOf<T> | CostOf<U>> {
