@@ -33,6 +33,8 @@ import {
   quadCostFn,
   quadCost,
   composeCostFn,
+  chainCost,
+  mapCost,
   checked,
   start,
   pipe,
@@ -260,6 +262,19 @@ describe('Branded Types', () => {
 
       expect(nlogn([3, 1, 2])).toEqual([1, 2, 3]);
       expect(quad(4)).toBe(16);
+    });
+
+    it('should keep mapCost and chainCost consistent with dominant cost', () => {
+      const chained = chainCost(
+        $('log', () => logCost(10)),
+        (value) => $('linear', () => linearCost(value * 2))
+      );
+      const mapped = mapCost(chained, (value) => value + 1);
+
+      const linearResult: LinearCost<number> = $('linear', () => mapped);
+      expect(linearResult).toBe(21);
+      // @ts-expect-error linear is not <= log
+      $('log', () => mapped);
     });
   });
 

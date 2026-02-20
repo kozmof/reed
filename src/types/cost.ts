@@ -6,8 +6,8 @@
  *    return-value casts when a function is already computed and just returns.
  * 2. Use `$(level, checked(() => plan))` when you want compile-time checking
  *    that a modeled plan cost is <= the declared boundary.
- * 3. Use `$(level, () => costedValue)` to keep boundary blocks explicit while
- *    still requiring a compile-time checked costed return.
+ * 3. Use `$(level, planCtx)` or `$(level, () => costedValue)` for compile-time
+ *    checked boundaries without runtime casts.
  * 4. Keep internal arithmetic/data as plain types where possible, and apply
  *    cost branding at boundaries (or via `CostFn` wrappers) rather than on
  *    intermediate mutable values.
@@ -175,30 +175,31 @@ export function quadCost<T>(value: T): QuadCost<T> {
  * - `$(max, checked(() => ctx))` validates modeled plan cost at compile time.
  * - `$(max, ctx)` validates precomputed context cost at compile time.
  * - `$(max, () => costedValue)` validates callback-declared cost at compile time.
+ * Runtime behavior is identity: the boundary unwraps context and returns value.
  */
 export function $<L extends CostLabel, C extends Cost, T>(
   max: L,
   plan: CheckedPlan<C, T> & (Leq<C, CostOfLabel<L>> extends true ? unknown : never)
-): Costed<L, T>;
+): T;
 export function $<L extends CostLabel, Inner extends CostLevel, T>(
   max: L,
   compute: () => Costed<Inner, T> & (Leq<CostOfLabel<Inner>, CostOfLabel<L>> extends true ? unknown : never)
-): Costed<L, T>;
+): Costed<Inner, T>;
 export function $<L extends CostLabel, C extends Cost, T>(
   max: L,
   ctx: { readonly _cost: C; readonly value: T } & (Leq<C, CostOfLabel<L>> extends true ? unknown : never)
-): Costed<L, T>;
+): T;
 export function $(
-  level: CostLevel,
+  _max: CostLevel,
   boundary: CheckedPlan<Cost, unknown> | { readonly _cost: Cost; readonly value: unknown } | (() => Costed<CostLevel, unknown>)
 ): unknown {
   if (typeof boundary === 'function') {
-    return castCost(level, boundary());
+    return boundary();
   }
   if (checkedPlanTag in boundary) {
-    return castCost(level, boundary.run().value);
+    return boundary.run().value;
   }
-  return castCost(level, boundary.value);
+  return boundary.value;
 }
 
 /**
@@ -275,30 +276,25 @@ export function composeCostFn<
 }
 
 /**
- * Extract the cost level from a branded value.
- */
-type CostOf<T> = T extends CostBrand<infer L> ? L : never;
-
-/**
  * Apply a pure (O(1)) transform to a cost-branded value.
  * The cost level is preserved — a pure function doesn't add algorithmic cost.
  */
-export function mapCost<T extends CostBrand<CostLevel>, U>(
-  value: T,
+export function mapCost<L extends CostLevel, T, U>(
+  value: Costed<L, T>,
   f: (value: T) => U
-): U & CostBrand<CostOf<T>> {
-  return f(value) as U & CostBrand<CostOf<T>>;
+): Costed<L, U> {
+  return f(value as unknown as T) as Costed<L, U>;
 }
 
 /**
  * Compose two cost-branded operations.
- * The result cost is the union of both levels (= the more expensive tier).
+ * The result cost is the dominant level of both operations.
  */
-export function chainCost<T extends CostBrand<CostLevel>, U extends CostBrand<CostLevel>>(
-  value: T,
-  f: (value: T) => U
-): U & CostBrand<CostOf<T> | CostOf<U>> {
-  return f(value) as U & CostBrand<CostOf<T> | CostOf<U>>;
+export function chainCost<L1 extends CostLevel, T, L2 extends CostLevel, U>(
+  value: Costed<L1, T>,
+  f: (value: T) => Costed<L2, U>
+): Costed<JoinCostLevel<L1, L2>, U> {
+  return f(value as unknown as T) as Costed<JoinCostLevel<L1, L2>, U>;
 }
 
 // =============================================================================
