@@ -1,6 +1,9 @@
 /**
  * Piece Table operations with immutable Red-Black tree.
  * All operations return new tree structures with structural sharing.
+ *
+ * Cost typing policy: use cast helpers for simple returns, and `$` boundaries
+ * for explicit compute regions (see `src/types/cost.ts`).
  */
 
 import type {
@@ -9,7 +12,7 @@ import type {
   BufferType,
   BufferReference,
 } from '../../types/state.ts';
-import { byteOffset, byteLength, constCost, logCost, linearCost, type ByteOffset, type ByteLength, type ConstCost, type LogCost, type LinearCost } from '../../types/branded.ts';
+import { $, constCost, linearCost, logCost, mapCost, pipe, byteOffset, byteLength, type ByteOffset, type ByteLength, type ConstCost, type LogCost, type LinearCost } from '../../types/branded.ts';
 import { createPieceNode, withPieceNode } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 import { textEncoder, textDecoder } from './encoding.ts';
@@ -102,82 +105,99 @@ export interface PathEntry {
 export function findPieceAtPosition(
   root: PieceNode | null,
   position: ByteOffset
-): PieceLocation | null {
+): LogCost<PieceLocation> | null {
   if (root === null) return null;
   if (position < 0) return null;
 
-  const path: PathEntry[] = [];
-  let current: PieceNode | null = root;
-  let currentOffset = 0;
+  const result = pipe(
+    $('log', () => {
+      const path: PathEntry[] = [];
+      let current: PieceNode | null = root;
+      let currentOffset = 0;
 
-  while (current !== null) {
-    const leftLength = current.left?.subtreeLength ?? 0;
-    const pieceStart = currentOffset + leftLength;
-    const pieceEnd = pieceStart + current.length;
+      while (current !== null) {
+        const leftLength = current.left?.subtreeLength ?? 0;
+        const pieceStart = currentOffset + leftLength;
+        const pieceEnd = pieceStart + current.length;
 
-    if (position < pieceStart) {
-      // Go left
-      path.push({ node: current, direction: 'left' });
-      current = current.left;
-    } else if (position >= pieceEnd) {
-      // Go right
-      path.push({ node: current, direction: 'right' });
-      currentOffset = pieceEnd;
-      current = current.right;
-    } else {
-      // Found it - position is in this piece
-      return {
-        node: current,
-        offsetInPiece: position - pieceStart,
-        pieceStartOffset: pieceStart,
-        path,
-      };
-    }
-  }
+        if (position < pieceStart) {
+          path.push({ node: current, direction: 'left' });
+          current = current.left;
+        } else if (position >= pieceEnd) {
+          path.push({ node: current, direction: 'right' });
+          currentOffset = pieceEnd;
+          current = current.right;
+        } else {
+          return {
+            kind: 'found' as const,
+            location: {
+              node: current,
+              offsetInPiece: position - pieceStart,
+              pieceStartOffset: pieceStart,
+              path,
+            },
+          };
+        }
+      }
 
-  return null;
+      return { kind: 'missing' as const };
+    }),
+  );
+
+  if (result.kind === 'missing') return null;
+  const location = mapCost(result, (found) => found.location);
+  return location;
 }
 
 /**
  * Find the piece at the end of the document (rightmost node).
  */
-export function findLastPiece(root: PieceNode | null): PieceLocation | null {
+export function findLastPiece(root: PieceNode | null): LogCost<PieceLocation> | null {
   if (root === null) return null;
 
-  const path: PathEntry[] = [];
-  let current = root;
-  let currentOffset = 0;
+  const location = pipe(
+    $('log', () => {
+      const path: PathEntry[] = [];
+      let current = root;
+      let currentOffset = 0;
 
-  while (current.right !== null) {
-    currentOffset += (current.left?.subtreeLength ?? 0) + current.length;
-    path.push({ node: current, direction: 'right' });
-    current = current.right;
-  }
+      while (current.right !== null) {
+        currentOffset += (current.left?.subtreeLength ?? 0) + current.length;
+        path.push({ node: current, direction: 'right' });
+        current = current.right;
+      }
 
-  const leftLength = current.left?.subtreeLength ?? 0;
-  return {
-    node: current,
-    offsetInPiece: current.length,
-    pieceStartOffset: currentOffset + leftLength,
-    path,
-  };
+      const leftLength = current.left?.subtreeLength ?? 0;
+      return {
+        node: current,
+        offsetInPiece: current.length,
+        pieceStartOffset: currentOffset + leftLength,
+        path,
+      };
+    }),
+  );
+
+  return location;
 }
 
 /**
  * Collect all pieces in document order (in-order traversal).
  */
-export function collectPieces(root: PieceNode | null): readonly PieceNode[] {
-  const result: PieceNode[] = [];
+export function collectPieces(root: PieceNode | null): LinearCost<readonly PieceNode[]> {
+  const pieces = $('linear', () => {
+    const result: PieceNode[] = [];
 
-  function inOrder(node: PieceNode | null) {
-    if (node === null) return;
-    inOrder(node.left);
-    result.push(node);
-    inOrder(node.right);
-  }
+    function inOrder(node: PieceNode | null) {
+      if (node === null) return;
+      inOrder(node.left);
+      result.push(node);
+      inOrder(node.right);
+    }
 
-  inOrder(root);
-  return result;
+    inOrder(root);
+    return result as readonly PieceNode[];
+  });
+  return pieces;
 }
 
 // =============================================================================
@@ -960,13 +980,13 @@ export interface BufferStats {
  * O(1) via subtreeAddLength maintained on every PieceNode by
  * createPieceNode/withPieceNode — no tree traversal needed.
  */
-export function getBufferStats(state: PieceTableState): BufferStats {
+export function getBufferStats(state: PieceTableState): ConstCost<BufferStats> {
   const addBufferUsed = state.root?.subtreeAddLength ?? 0;
   const addBufferSize = state.addBuffer.length;
   const addBufferWaste = addBufferSize - addBufferUsed;
   const wasteRatio = addBufferSize > 0 ? addBufferWaste / addBufferSize : 0;
 
-  return { addBufferSize, addBufferUsed, addBufferWaste, wasteRatio };
+  return constCost({ addBufferSize, addBufferUsed, addBufferWaste, wasteRatio });
 }
 
 /**
@@ -1083,9 +1103,9 @@ function rebuildTreeWithNewOffsets(
  * charToByteOffset('Hello 😀', 7);  // Returns 8 (emoji: 4 bytes)
  * ```
  */
-export function charToByteOffset(text: string, charOffset: number): number {
+export function charToByteOffset(text: string, charOffset: number): LinearCost<number> {
   const clampedOffset = Math.max(0, Math.min(charOffset, text.length));
-  return textEncoder.encode(text.slice(0, clampedOffset)).length;
+  return linearCost(textEncoder.encode(text.slice(0, clampedOffset)).length);
 }
 
 /**
@@ -1105,11 +1125,11 @@ export function charToByteOffset(text: string, charOffset: number): number {
  * byteToCharOffset('你好', 4);       // Returns 1 (mid-character, returns start)
  * ```
  */
-export function byteToCharOffset(text: string, byteOffset: number): number {
-  if (byteOffset <= 0) return 0;
+export function byteToCharOffset(text: string, byteOffset: number): LinearCost<number> {
+  if (byteOffset <= 0) return linearCost(0);
 
   const bytes = textEncoder.encode(text);
-  if (byteOffset >= bytes.length) return text.length;
+  if (byteOffset >= bytes.length) return linearCost(text.length);
 
   // Single encode + byte scanning using UTF-8 sequence length detection
   let charPos = 0;
@@ -1129,7 +1149,7 @@ export function byteToCharOffset(text: string, byteOffset: number): number {
     charPos += seqLen === 4 ? 2 : 1;
   }
 
-  return charPos;
+  return linearCost(charPos);
 }
 
 // =============================================================================

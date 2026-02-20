@@ -2,6 +2,9 @@
  * Line Index operations with immutable Red-Black tree.
  * Maintains line positions for O(log n) line lookups.
  * All operations return new tree structures with structural sharing.
+ *
+ * Cost typing policy: use cast helpers for simple returns, and `$` boundaries
+ * for explicit compute regions (see `src/types/cost.ts`).
  */
 
 import type {
@@ -11,7 +14,7 @@ import type {
 } from '../../types/state.ts';
 import type { ByteOffset, ByteLength } from '../../types/branded.ts';
 import type { ReadTextFn } from '../../types/store.ts';
-import { byteOffset, byteLength as toByteLengthBrand, constCost, logCost, type ConstCost, type LogCost } from '../../types/branded.ts';
+import { $, byteOffset, byteLength as toByteLengthBrand, constCost, linearCost, logCost, type ConstCost, type LinearCost, type LogCost, type NLogNCost } from '../../types/branded.ts';
 import { createLineIndexNode, withLineIndexNode, withLineIndexState } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 
@@ -91,7 +94,7 @@ export interface LineLocation {
 export function findLineAtPosition(
   root: LineIndexNode | null,
   position: ByteOffset
-): LineLocation | null {
+): LogCost<LineLocation> | null {
   if (root === null) return null;
   if (position < 0) return null;
 
@@ -117,11 +120,13 @@ export function findLineAtPosition(
       current = current.right;
     } else {
       // Position is in this line (or at end and no right subtree)
-      return {
-        node: current,
+      const node = current;
+      const location = logCost({
+        node,
         lineNumber: lineNumber + leftLineCount,
         offsetInLine: pos - lineStart,
-      };
+      });
+      return location;
     }
   }
 
@@ -134,7 +139,7 @@ export function findLineAtPosition(
 export function findLineByNumber(
   root: LineIndexNode | null,
   lineNumber: number
-): LineIndexNode | null {
+): LogCost<LineIndexNode> | null {
   if (root === null) return null;
   if (lineNumber < 0) return null;
 
@@ -152,7 +157,8 @@ export function findLineByNumber(
       current = current.right;
     } else {
       // This is the target line
-      return current;
+      const line = logCost(current);
+      return line;
     }
   }
 
@@ -165,13 +171,20 @@ export function findLineByNumber(
 export function getLineStartOffset(
   root: LineIndexNode | null,
   lineNumber: number
-): number {
-  if (root === null) return 0;
-  if (lineNumber < 0) return 0;
+): LogCost<number> {
+  if (root === null) {
+    const emptyOffset = logCost(0);
+    return emptyOffset;
+  }
+  if (lineNumber < 0) {
+    const invalidOffset = logCost(0);
+    return invalidOffset;
+  }
 
   let offset = 0;
   let current: LineIndexNode | null = root;
   let targetLine = lineNumber;
+  let foundOffset: number | null = null;
 
   while (current !== null) {
     const leftLineCount = current.left?.subtreeLineCount ?? 0;
@@ -187,11 +200,13 @@ export function getLineStartOffset(
       current = current.right;
     } else {
       // This is the target line
-      return offset + leftByteLength;
+      foundOffset = offset + leftByteLength;
+      break;
     }
   }
 
-  return offset;
+  const startOffset = logCost(foundOffset ?? offset);
+  return startOffset;
 }
 
 /**
@@ -201,13 +216,20 @@ export function getLineStartOffset(
 export function getCharStartOffset(
   root: LineIndexNode | null,
   lineNumber: number
-): number {
-  if (root === null) return 0;
-  if (lineNumber < 0) return 0;
+): LogCost<number> {
+  if (root === null) {
+    const emptyOffset = logCost(0);
+    return emptyOffset;
+  }
+  if (lineNumber < 0) {
+    const invalidOffset = logCost(0);
+    return invalidOffset;
+  }
 
   let offset = 0;
   let current: LineIndexNode | null = root;
   let targetLine = lineNumber;
+  let foundOffset: number | null = null;
 
   while (current !== null) {
     const leftLineCount = current.left?.subtreeLineCount ?? 0;
@@ -220,11 +242,13 @@ export function getCharStartOffset(
       targetLine -= leftLineCount + 1;
       current = current.right;
     } else {
-      return offset + leftCharLength;
+      foundOffset = offset + leftCharLength;
+      break;
     }
   }
 
-  return offset;
+  const startOffset = logCost(foundOffset ?? offset);
+  return startOffset;
 }
 
 /**
@@ -234,7 +258,7 @@ export function getCharStartOffset(
 export function findLineAtCharPosition(
   root: LineIndexNode | null,
   charPosition: number
-): { lineNumber: number; charOffsetInLine: number } | null {
+): LogCost<{ lineNumber: number; charOffsetInLine: number }> | null {
   if (root === null) return null;
   if (charPosition < 0) return null;
 
@@ -256,10 +280,11 @@ export function findLineAtCharPosition(
       pos -= lineEnd;
       current = current.right;
     } else {
-      return {
+      const location = logCost({
         lineNumber: lineNumber + leftLineCount,
         charOffsetInLine: pos - lineStart,
-      };
+      });
+      return location;
     }
   }
 
@@ -269,18 +294,21 @@ export function findLineAtCharPosition(
 /**
  * Collect all lines in order (in-order traversal).
  */
-export function collectLines(root: LineIndexNode | null): readonly LineIndexNode[] {
-  const result: LineIndexNode[] = [];
+export function collectLines(root: LineIndexNode | null): LinearCost<readonly LineIndexNode[]> {
+  const lines: LinearCost<readonly LineIndexNode[]> = $('linear', () => {
+    const result: LineIndexNode[] = [];
 
-  function inOrder(node: LineIndexNode | null) {
-    if (node === null) return;
-    inOrder(node.left);
-    result.push(node);
-    inOrder(node.right);
-  }
+    function inOrder(node: LineIndexNode | null) {
+      if (node === null) return;
+      inOrder(node.left);
+      result.push(node);
+      inOrder(node.right);
+    }
 
-  inOrder(root);
-  return result;
+    inOrder(root);
+    return result as readonly LineIndexNode[];
+  });
+  return lines;
 }
 
 // =============================================================================
@@ -1140,7 +1168,8 @@ export function rebuildLineIndex(content: string): LineIndexState {
  * Get line count from the state.
  */
 export function getLineCountFromIndex(state: LineIndexState): ConstCost<number> {
-  return constCost(state.lineCount);
+  const lineCount = constCost(state.lineCount);
+  return lineCount;
 }
 
 /**
@@ -1168,56 +1197,59 @@ export function getLineRange(
  */
 export function mergeDirtyRanges(
   ranges: readonly DirtyLineRange[]
-): readonly DirtyLineRange[] {
-  if (ranges.length <= 1) return [...ranges];
+): NLogNCost<readonly DirtyLineRange[]> {
+  const mergedRanges: NLogNCost<readonly DirtyLineRange[]> = $('nlogn', () => {
+    if (ranges.length <= 1) return [...ranges];
 
-  // Sort by startLine
-  const sorted = [...ranges].sort((a, b) => a.startLine - b.startLine);
-  const merged: DirtyLineRange[] = [];
-  let current = sorted[0];
+    // Sort by startLine
+    const sorted = [...ranges].sort((a, b) => a.startLine - b.startLine);
+    const merged: DirtyLineRange[] = [];
+    let current = sorted[0];
 
-  for (let i = 1; i < sorted.length; i++) {
-    const next = sorted[i];
-    if (next.startLine <= current.endLine + 1) {
-      if (next.offsetDelta === current.offsetDelta) {
-        // Same delta — merge as before
-        current = Object.freeze({
-          startLine: current.startLine,
-          endLine: Math.max(current.endLine, next.endLine),
-          offsetDelta: current.offsetDelta,
-          createdAtVersion: Math.max(current.createdAtVersion, next.createdAtVersion),
-        });
-      } else if (next.startLine === current.startLine) {
-        // Same start, different delta — sum deltas (equivalent to applying both)
-        current = Object.freeze({
-          startLine: current.startLine,
-          endLine: Math.max(current.endLine, next.endLine),
-          offsetDelta: current.offsetDelta + next.offsetDelta,
-          createdAtVersion: Math.max(current.createdAtVersion, next.createdAtVersion),
-        });
+    for (let i = 1; i < sorted.length; i++) {
+      const next = sorted[i];
+      if (next.startLine <= current.endLine + 1) {
+        if (next.offsetDelta === current.offsetDelta) {
+          // Same delta — merge as before
+          current = Object.freeze({
+            startLine: current.startLine,
+            endLine: Math.max(current.endLine, next.endLine),
+            offsetDelta: current.offsetDelta,
+            createdAtVersion: Math.max(current.createdAtVersion, next.createdAtVersion),
+          });
+        } else if (next.startLine === current.startLine) {
+          // Same start, different delta — sum deltas (equivalent to applying both)
+          current = Object.freeze({
+            startLine: current.startLine,
+            endLine: Math.max(current.endLine, next.endLine),
+            offsetDelta: current.offsetDelta + next.offsetDelta,
+            createdAtVersion: Math.max(current.createdAtVersion, next.createdAtVersion),
+          });
+        } else {
+          merged.push(current);
+          current = next;
+        }
       } else {
         merged.push(current);
         current = next;
       }
-    } else {
-      merged.push(current);
-      current = next;
     }
-  }
-  merged.push(current);
+    merged.push(current);
 
-  // Safety cap: if too many ranges accumulated, collapse to full-document rebuild
-  if (merged.length > 32) {
-    const maxVersion = merged.reduce((v, r) => Math.max(v, r.createdAtVersion), 0);
-    return [Object.freeze({
-      startLine: 0,
-      endLine: Number.MAX_SAFE_INTEGER,
-      offsetDelta: 0,
-      createdAtVersion: maxVersion,
-    })];
-  }
+    // Safety cap: if too many ranges accumulated, collapse to full-document rebuild
+    if (merged.length > 32) {
+      const maxVersion = merged.reduce((v, r) => Math.max(v, r.createdAtVersion), 0);
+      return [Object.freeze({
+        startLine: 0,
+        endLine: Number.MAX_SAFE_INTEGER,
+        offsetDelta: 0,
+        createdAtVersion: maxVersion,
+      })] as readonly DirtyLineRange[];
+    }
 
-  return merged;
+    return merged as readonly DirtyLineRange[];
+  });
+  return mergedRanges;
 }
 
 /**
@@ -1226,10 +1258,10 @@ export function mergeDirtyRanges(
 export function isLineDirty(
   dirtyRanges: readonly DirtyLineRange[],
   lineNumber: number
-): boolean {
-  return dirtyRanges.some(
+): LinearCost<boolean> {
+  return linearCost(dirtyRanges.some(
     r => lineNumber >= r.startLine && lineNumber <= r.endLine
-  );
+  ));
 }
 
 /**
@@ -1238,14 +1270,14 @@ export function isLineDirty(
 export function getOffsetDeltaForLine(
   dirtyRanges: readonly DirtyLineRange[],
   lineNumber: number
-): number {
+): LinearCost<number> {
   let delta = 0;
   for (const range of dirtyRanges) {
     if (lineNumber >= range.startLine && lineNumber <= range.endLine) {
       delta += range.offsetDelta;
     }
   }
-  return delta;
+  return linearCost(delta);
 }
 
 /**
@@ -1520,7 +1552,7 @@ export function getLineRangePrecise(
   const node = findLineByNumber(state.root, lineNumber);
   if (node === null) return null;
 
-  let start = getLineStartOffset(state.root, lineNumber);
+  let start: number = getLineStartOffset(state.root, lineNumber);
 
   // Apply cumulative delta if line is dirty
   if (state.dirtyRanges.length > 0) {

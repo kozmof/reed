@@ -4,8 +4,8 @@
  */
 
 import type { DocumentState, SelectionRange, CharSelectionRange } from '../../types/state.ts';
-import type { ByteOffset, CostFn } from '../../types/branded.ts';
-import { $, byteOffset, charOffset, addByteOffset } from '../../types/branded.ts';
+import type { ByteOffset, ConstCost, CostFn, LinearCost } from '../../types/branded.ts';
+import { $, byteOffset, charOffset, addByteOffset, constCost, linearCost } from '../../types/branded.ts';
 import { findLineAtPosition, getCharStartOffset, findLineAtCharPosition, getLineRangePrecise, getLineCountFromIndex } from '../core/line-index.ts';
 import { getText, charToByteOffset } from '../core/piece-table.ts';
 import { textEncoder } from '../core/encoding.ts';
@@ -79,7 +79,7 @@ export function getVisibleLineRange(
   scroll: ScrollPosition,
   totalLines: number,
   overscan: number = 5
-): { startLine: number; endLine: number } {
+): ConstCost<{ startLine: number; endLine: number }> {
   const { scrollTop, lineHeight, viewportHeight } = scroll;
 
   const firstVisibleLine = Math.floor(scrollTop / lineHeight);
@@ -90,7 +90,7 @@ export function getVisibleLineRange(
   const startLine = Math.max(0, firstVisibleLine - overscan);
   const endLine = Math.min(totalLines - 1, lastVisibleLine + overscan);
 
-  return { startLine, endLine };
+  return constCost({ startLine, endLine });
 }
 
 /**
@@ -119,44 +119,46 @@ export const getLineContent: CostFn<'log', [DocumentState, number], string> = (s
 export function getVisibleLines(
   state: DocumentState,
   config: ViewportConfig
-): VisibleLinesResult {
-  const { startLine, visibleLineCount, overscan = 5 } = config;
-  const totalLines = getLineCountFromIndex(state.lineIndex);
+): LinearCost<VisibleLinesResult> {
+  return $('linear', () => {
+    const { startLine, visibleLineCount, overscan = 5 } = config;
+    const totalLines = getLineCountFromIndex(state.lineIndex);
 
-  // Calculate actual range with overscan
-  // startLine to startLine + visibleLineCount - 1 gives visibleLineCount lines
-  const firstLine = Math.max(0, startLine - overscan);
-  const lastLine = Math.min(totalLines - 1, startLine + visibleLineCount - 1 + overscan);
+    // Calculate actual range with overscan
+    // startLine to startLine + visibleLineCount - 1 gives visibleLineCount lines
+    const firstLine = Math.max(0, startLine - overscan);
+    const lastLine = Math.min(totalLines - 1, startLine + visibleLineCount - 1 + overscan);
 
-  const lines: VisibleLine[] = [];
+    const lines: VisibleLine[] = [];
 
-  for (let lineNum = firstLine; lineNum <= lastLine; lineNum++) {
-    // Use getLineRangePrecise to handle dirty line indices correctly
-    const range = getLineRangePrecise(state.lineIndex, lineNum);
-    if (range) {
-      const startOffset = range.start;
-      const endOffset = addByteOffset(range.start, range.length as number);
-      const rawContent = getText(state.pieceTable, startOffset, endOffset);
+    for (let lineNum = firstLine; lineNum <= lastLine; lineNum++) {
+      // Use getLineRangePrecise to handle dirty line indices correctly
+      const range = getLineRangePrecise(state.lineIndex, lineNum);
+      if (range) {
+        const startOffset = range.start;
+        const endOffset = addByteOffset(range.start, range.length as number);
+        const rawContent = getText(state.pieceTable, startOffset, endOffset);
 
-      // Check if line ends with newline and strip it for display
-      const hasNewline = rawContent.endsWith('\n');
-      const content = hasNewline ? rawContent.slice(0, -1) : rawContent;
+        // Check if line ends with newline and strip it for display
+        const hasNewline = rawContent.endsWith('\n');
+        const content = hasNewline ? rawContent.slice(0, -1) : rawContent;
 
-      lines.push(Object.freeze({
-        lineNumber: lineNum,
-        content,
-        startOffset,
-        endOffset,
-        hasNewline,
-      }));
+        lines.push(Object.freeze({
+          lineNumber: lineNum,
+          content,
+          startOffset,
+          endOffset,
+          hasNewline,
+        }));
+      }
     }
-  }
 
-  return Object.freeze({
-    lines: Object.freeze(lines),
-    firstLine,
-    lastLine,
-    totalLines,
+    return Object.freeze({
+      lines: Object.freeze(lines),
+      firstLine,
+      lastLine,
+      totalLines,
+    });
   });
 }
 
@@ -166,17 +168,17 @@ export function getVisibleLines(
 export function getVisibleLine(
   state: DocumentState,
   lineNumber: number
-): VisibleLine | null {
+): LinearCost<VisibleLine | null> {
   const totalLines = getLineCountFromIndex(state.lineIndex);
 
   if (lineNumber < 0 || lineNumber >= totalLines) {
-    return null;
+    return linearCost(null);
   }
 
   // Use getLineRangePrecise to handle dirty line indices correctly
   const range = getLineRangePrecise(state.lineIndex, lineNumber);
   if (!range) {
-    return null;
+    return linearCost(null);
   }
 
   const startOffset = range.start;
@@ -185,13 +187,13 @@ export function getVisibleLine(
   const hasNewline = rawContent.endsWith('\n');
   const content = hasNewline ? rawContent.slice(0, -1) : rawContent;
 
-  return Object.freeze({
+  return linearCost(Object.freeze({
     lineNumber,
     content,
     startOffset,
     endOffset,
     hasNewline,
-  });
+  }));
 }
 
 // =============================================================================
@@ -218,18 +220,18 @@ export interface LineHeightConfig {
 export function estimateLineHeight(
   line: VisibleLine,
   config: LineHeightConfig
-): number {
+): ConstCost<number> {
   if (!config.softWrap) {
-    return config.baseLineHeight;
+    return constCost(config.baseLineHeight);
   }
 
   const charsPerLine = Math.floor(config.viewportWidth / config.charWidth);
   if (charsPerLine <= 0) {
-    return config.baseLineHeight;
+    return constCost(config.baseLineHeight);
   }
 
   const wrappedLines = Math.ceil(line.content.length / charsPerLine) || 1;
-  return wrappedLines * config.baseLineHeight;
+  return constCost(wrappedLines * config.baseLineHeight);
 }
 
 /**
@@ -238,45 +240,47 @@ export function estimateLineHeight(
 export function estimateTotalHeight(
   state: DocumentState,
   config: LineHeightConfig
-): number {
-  const totalLines = getLineCountFromIndex(state.lineIndex);
+): LinearCost<number> {
+  return $('linear', () => {
+    const totalLines = getLineCountFromIndex(state.lineIndex);
 
-  if (!config.softWrap) {
-    // Fixed height mode: simple multiplication
-    return totalLines * config.baseLineHeight;
-  }
+    if (!config.softWrap) {
+      // Fixed height mode: simple multiplication
+      return totalLines * config.baseLineHeight;
+    }
 
-  // Variable height mode: we need to estimate
-  // For large documents, sample lines to estimate average wrapped height
-  const SAMPLE_SIZE = 100;
+    // Variable height mode: we need to estimate
+    // For large documents, sample lines to estimate average wrapped height
+    const SAMPLE_SIZE = 100;
 
-  if (totalLines <= SAMPLE_SIZE) {
-    // Small document: calculate exactly
-    let totalHeight = 0;
-    for (let i = 0; i < totalLines; i++) {
+    if (totalLines <= SAMPLE_SIZE) {
+      // Small document: calculate exactly
+      let totalHeight = 0;
+      for (let i = 0; i < totalLines; i++) {
+        const line = getVisibleLine(state, i);
+        if (line) {
+          totalHeight += estimateLineHeight(line, config);
+        }
+      }
+      return totalHeight;
+    }
+
+    // Large document: sample and extrapolate
+    let sampleHeight = 0;
+    const step = Math.floor(totalLines / SAMPLE_SIZE);
+
+    for (let i = 0; i < totalLines; i += step) {
       const line = getVisibleLine(state, i);
       if (line) {
-        totalHeight += estimateLineHeight(line, config);
+        sampleHeight += estimateLineHeight(line, config);
       }
     }
-    return totalHeight;
-  }
 
-  // Large document: sample and extrapolate
-  let sampleHeight = 0;
-  const step = Math.floor(totalLines / SAMPLE_SIZE);
+    const sampledLines = Math.ceil(totalLines / step);
+    const avgLineHeight = sampleHeight / sampledLines;
 
-  for (let i = 0; i < totalLines; i += step) {
-    const line = getVisibleLine(state, i);
-    if (line) {
-      sampleHeight += estimateLineHeight(line, config);
-    }
-  }
-
-  const sampledLines = Math.ceil(totalLines / step);
-  const avgLineHeight = sampleHeight / sampledLines;
-
-  return Math.ceil(totalLines * avgLineHeight);
+    return Math.ceil(totalLines * avgLineHeight);
+  });
 }
 
 // =============================================================================
@@ -375,7 +379,7 @@ function byteOffsetToCharOffset(
   }
 
   // O(log n) prefix sum of char lengths for all lines before this one
-  let charCount = getCharStartOffset(state.lineIndex.root, location.lineNumber);
+  let charCount: number = getCharStartOffset(state.lineIndex.root, location.lineNumber);
 
   // Add chars within the current line up to the byte offset — O(line_length)
   if (location.offsetInLine > 0) {

@@ -1,5 +1,14 @@
 /**
  * Branded algorithmic cost types and combinators.
+ *
+ * Usage policy:
+ * 1. Use `constCost`/`logCost`/`linearCost`/`nlognCost`/`quadCost` for simple
+ *    return-value casts when a function is already computed and just returns.
+ * 2. Use `$(level, () => { ... })` to mark an explicit compute boundary when
+ *    you want the costed region to be visible in code.
+ * 3. Keep internal arithmetic/data as plain types where possible, and apply
+ *    cost branding at boundaries (or via `CostFn` wrappers) rather than on
+ *    intermediate mutable values.
  */
 
 // =============================================================================
