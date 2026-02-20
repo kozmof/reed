@@ -398,25 +398,9 @@ export function constCost<T>(value: T): ConstCost<T> {
   return value as ConstCost<T>;
 }
 
-/**
- * Mark a computation boundary as O(1).
- * Useful when the computation is guaranteed constant-time.
- */
-export function constCostBoundary<T>(compute: () => T): ConstCost<T> {
-  return constCost(compute());
-}
-
 /** Tag a value as O(log n). Zero runtime cost — cast only. */
 export function logCost<T>(value: T): LogCost<T> {
   return value as LogCost<T>;
-}
-
-/**
- * Mark a computation boundary as O(log n).
- * Useful when internal work is intentionally hidden behind one complexity tier.
- */
-export function logCostBoundary<T>(compute: () => T): LogCost<T> {
-  return logCost(compute());
 }
 
 /** Tag a value as O(n). Zero runtime cost — cast only. */
@@ -424,36 +408,14 @@ export function linearCost<T>(value: T): LinearCost<T> {
   return value as LinearCost<T>;
 }
 
-/**
- * Mark a computation boundary as O(n).
- * Useful when internal work is intentionally grouped behind linear complexity.
- */
-export function linearCostBoundary<T>(compute: () => T): LinearCost<T> {
-  return linearCost(compute());
-}
-
 /** Tag a value as O(n log n). Zero runtime cost — cast only. */
 export function nlognCost<T>(value: T): NLogNCost<T> {
   return value as NLogNCost<T>;
 }
 
-/**
- * Mark a computation boundary as O(n log n).
- */
-export function nlognCostBoundary<T>(compute: () => T): NLogNCost<T> {
-  return nlognCost(compute());
-}
-
 /** Tag a value as O(n^2). Zero runtime cost — cast only. */
 export function quadCost<T>(value: T): QuadCost<T> {
   return value as QuadCost<T>;
-}
-
-/**
- * Mark a computation boundary as O(n^2).
- */
-export function quadCostBoundary<T>(compute: () => T): QuadCost<T> {
-  return quadCost(compute());
 }
 
 /**
@@ -469,11 +431,7 @@ export function $<T>(
   level: CostLevel,
   compute: () => T
 ): ConstCost<T> | LogCost<T> | LinearCost<T> | NLogNCost<T> | QuadCost<T> {
-  if (level === 'const') return constCostBoundary(compute);
-  if (level === 'log') return logCostBoundary(compute);
-  if (level === 'linear') return linearCostBoundary(compute);
-  if (level === 'nlogn') return nlognCostBoundary(compute);
-  return quadCostBoundary(compute);
+  return costBoundary(level, compute);
 }
 
 /**
@@ -656,11 +614,34 @@ export const forEachN =
   };
 
 /**
- * Compile-time upper-bound check for context pipelines.
+ * Unified boundary helper.
+ * - `costBoundary(level, () => value)` casts callback result at the declared level.
+ * - `costBoundary(max, ctx)` checks compile-time upper bounds for context pipelines.
  */
+export function costBoundary<T>(level: 'const', compute: () => T): ConstCost<T>;
+export function costBoundary<T>(level: 'log', compute: () => T): LogCost<T>;
+export function costBoundary<T>(level: 'linear', compute: () => T): LinearCost<T>;
+export function costBoundary<T>(level: 'nlogn', compute: () => T): NLogNCost<T>;
+export function costBoundary<T>(level: 'quad', compute: () => T): QuadCost<T>;
+export function costBoundary<T>(
+  level: CostLevel,
+  compute: () => T
+): ConstCost<T> | LogCost<T> | LinearCost<T> | NLogNCost<T> | QuadCost<T>;
 export function costBoundary<L extends CostLabel, C extends Cost, T>(
   _max: L,
   ctx: Ctx<C, T> & (Leq<C, CostOfLabel<L>> extends true ? unknown : never)
-): T {
-  return ctx.value;
+): T;
+export function costBoundary(
+  level: CostLevel,
+  boundary: Ctx<Cost, unknown> | (() => unknown)
+): unknown {
+  if (typeof boundary === 'function') {
+    const value = boundary();
+    if (level === 'const') return constCost(value);
+    if (level === 'log') return logCost(value);
+    if (level === 'linear') return linearCost(value);
+    if (level === 'nlogn') return nlognCost(value);
+    return quadCost(value);
+  }
+  return boundary.value;
 }

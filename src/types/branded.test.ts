@@ -22,15 +22,10 @@ import {
   ZERO_CHAR_OFFSET,
   LINE_ZERO,
   COLUMN_ZERO,
-  constCostBoundary,
   constCostFn,
-  logCostBoundary,
   logCostFn,
-  linearCostBoundary,
   linearCostFn,
-  nlognCostBoundary,
   nlognCostFn,
-  quadCostBoundary,
   quadCostFn,
   composeCostFn,
   start,
@@ -190,27 +185,27 @@ describe('Branded Types', () => {
 
   describe('cost boundaries', () => {
     it('should wrap callback result as ConstCost', () => {
-      const result: ConstCost<number> = constCostBoundary(() => 7);
+      const result: ConstCost<number> = costBoundary('const', () => 7);
       expect(result).toBe(7);
     });
 
     it('should wrap callback result as LogCost', () => {
-      const result: LogCost<number> = logCostBoundary(() => 42);
+      const result: LogCost<number> = costBoundary('log', () => 42);
       expect(result).toBe(42);
     });
 
     it('should wrap callback result as LinearCost', () => {
-      const result: LinearCost<number> = linearCostBoundary(() => 100);
+      const result: LinearCost<number> = costBoundary('linear', () => 100);
       expect(result).toBe(100);
     });
 
     it('should wrap callback result as NLogNCost', () => {
-      const result: NLogNCost<number> = nlognCostBoundary(() => 8);
+      const result: NLogNCost<number> = costBoundary('nlogn', () => 8);
       expect(result).toBe(8);
     });
 
     it('should wrap callback result as QuadCost', () => {
-      const result: QuadCost<number> = quadCostBoundary(() => 9);
+      const result: QuadCost<number> = costBoundary('quad', () => 9);
       expect(result).toBe(9);
     });
 
@@ -241,7 +236,7 @@ describe('Branded Types', () => {
 
     it('should compose functions and preserve dominant cost', () => {
       const first: CostFn<'const', [number], number> = constCostFn((value: number) => value + 1);
-      const second = (value: number) => linearCostBoundary(() => value * 2);
+      const second = (value: number) => costBoundary('linear', () => value * 2);
 
       const composed: CostFn<'linear', [number], number> = composeCostFn(first, second);
       expect(composed(5)).toBe(12);
