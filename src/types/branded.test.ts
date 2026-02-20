@@ -34,7 +34,6 @@ import {
   binarySearch,
   linearScan,
   forEachN,
-  costBoundary,
   type ConstCost,
   type CostFn,
   type LogCost,
@@ -185,27 +184,27 @@ describe('Branded Types', () => {
 
   describe('cost boundaries', () => {
     it('should wrap callback result as ConstCost', () => {
-      const result: ConstCost<number> = costBoundary('const', () => 7);
+      const result: ConstCost<number> = $('const', () => 7);
       expect(result).toBe(7);
     });
 
     it('should wrap callback result as LogCost', () => {
-      const result: LogCost<number> = costBoundary('log', () => 42);
+      const result: LogCost<number> = $('log', () => 42);
       expect(result).toBe(42);
     });
 
     it('should wrap callback result as LinearCost', () => {
-      const result: LinearCost<number> = costBoundary('linear', () => 100);
+      const result: LinearCost<number> = $('linear', () => 100);
       expect(result).toBe(100);
     });
 
     it('should wrap callback result as NLogNCost', () => {
-      const result: NLogNCost<number> = costBoundary('nlogn', () => 8);
+      const result: NLogNCost<number> = $('nlogn', () => 8);
       expect(result).toBe(8);
     });
 
     it('should wrap callback result as QuadCost', () => {
-      const result: QuadCost<number> = costBoundary('quad', () => 9);
+      const result: QuadCost<number> = $('quad', () => 9);
       expect(result).toBe(9);
     });
 
@@ -236,7 +235,7 @@ describe('Branded Types', () => {
 
     it('should compose functions and preserve dominant cost', () => {
       const first: CostFn<'const', [number], number> = constCostFn((value: number) => value + 1);
-      const second = (value: number) => costBoundary('linear', () => value * 2);
+      const second = (value: number) => $('linear', () => value * 2);
 
       const composed: CostFn<'linear', [number], number> = composeCostFn(first, second);
       expect(composed(5)).toBe(12);
@@ -266,9 +265,9 @@ describe('Branded Types', () => {
         map((index: number) => index + 10),
       );
 
-      expect(costBoundary('log', seqLog)).toBe(11);
+      expect($('log', seqLog)).toBe(11);
       // @ts-expect-error log is not <= const
-      costBoundary('const', seqLog);
+      $('const', seqLog);
     });
 
     it('should infer nlogn for linear nesting with log body', () => {
@@ -283,9 +282,9 @@ describe('Branded Types', () => {
         map((xs: readonly number[]) => xs.length),
       );
 
-      expect(costBoundary('nlogn', nestedNlogn)).toBe(4);
+      expect($('nlogn', nestedNlogn)).toBe(4);
       // @ts-expect-error nlogn is not <= linear
-      costBoundary('linear', nestedNlogn);
+      $('linear', nestedNlogn);
     });
 
     it('should infer quad for linear nesting with linear body', () => {
@@ -299,9 +298,9 @@ describe('Branded Types', () => {
         ),
       );
 
-      expect(costBoundary('quad', nestedQuad)).toEqual([1, 2, 3, 4]);
+      expect($('quad', nestedQuad)).toEqual([1, 2, 3, 4]);
       // @ts-expect-error quad is not <= nlogn
-      costBoundary('nlogn', nestedQuad);
+      $('nlogn', nestedQuad);
     });
   });
 });

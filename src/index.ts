@@ -141,7 +141,6 @@ export {
   filter,
   linearScan,
   forEachN,
-  costBoundary,
 } from './types/index.ts';
 
 // =============================================================================

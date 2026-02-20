@@ -78,6 +78,9 @@ export type {
   CharOffset,
   LineNumber,
   ColumnNumber,
+} from './branded.ts';
+
+export type {
   Nat,
   Cost,
   CostLabel,
@@ -96,10 +99,9 @@ export type {
   LinearCost,
   NLogNCost,
   QuadCost,
-} from './branded.ts';
+} from './cost.ts';
 
 export {
-  $,
   byteOffset,
   byteLength,
   charOffset,
@@ -122,6 +124,10 @@ export {
   ZERO_CHAR_OFFSET,
   LINE_ZERO,
   COLUMN_ZERO,
+} from './branded.ts';
+
+export {
+  $,
   constCost,
   constCostFn,
   logCost,
@@ -143,5 +149,4 @@ export {
   filter,
   linearScan,
   forEachN,
-  costBoundary,
-} from './branded.ts';
+} from './cost.ts';
