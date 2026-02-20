@@ -373,7 +373,6 @@ export function pieceTableInsert(
   } else {
     // Split the piece and insert in between
     newRoot = insertWithSplit(
-      state.root,
       location,
       'add',
       byteOffset(newAddStart),
@@ -396,7 +395,6 @@ export function pieceTableInsert(
  * Insert a new piece by splitting an existing piece.
  */
 function insertWithSplit(
-  root: PieceNode,
   location: PieceLocation,
   bufferType: BufferType,
   start: ByteOffset,

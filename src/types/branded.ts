@@ -274,7 +274,7 @@ export const LINE_ZERO: LineNumber = 0 as LineNumber;
 export const COLUMN_ZERO: ColumnNumber = 0 as ColumnNumber;
 
 // =============================================================================
-// Algorithmic Cost Brands
+// Algorithmic Cost Algebra + Brands
 // =============================================================================
 
 /**
@@ -284,38 +284,102 @@ export const COLUMN_ZERO: ColumnNumber = 0 as ColumnNumber;
 declare const costLevel: unique symbol;
 
 /**
- * Declarative cost levels for algorithmic complexity.
+ * Tiny bounded naturals used by the type-level cost algebra.
+ * 3 acts as "3 or more" to keep types tractable.
  */
-export type CostLevel = 'const' | 'log' | 'linear';
+export type Nat = 0 | 1 | 2 | 3;
+
+/**
+ * Saturating addition over Nat.
+ */
+export type AddNat<A extends Nat, B extends Nat> =
+  A extends 0 ? B :
+  A extends 1 ? (B extends 0 ? 1 : B extends 1 ? 2 : B extends 2 ? 3 : 3) :
+  A extends 2 ? (B extends 0 ? 2 : B extends 1 ? 3 : 3) :
+  3;
+
+/**
+ * Greater-than-or-equal over Nat.
+ */
+export type GteNat<A extends Nat, B extends Nat> =
+  A extends B ? true :
+  A extends 3 ? true :
+  A extends 2 ? (B extends 3 ? false : true) :
+  A extends 1 ? (B extends 0 ? true : false) :
+  false;
+
+/**
+ * Asymptotic cost pair: O(n^p log^l n).
+ */
+export type Cost = { p: Nat; l: Nat };
+
+/**
+ * Cost labels used throughout public APIs.
+ */
+export type CostLabel = 'const' | 'log' | 'linear' | 'nlogn' | 'quad';
+export type CostLevel = CostLabel;
+
+/**
+ * Label -> cost pair mapping.
+ */
+export type CostOfLabel<L extends CostLabel> =
+  L extends 'const' ? { p: 0; l: 0 } :
+  L extends 'log' ? { p: 0; l: 1 } :
+  L extends 'linear' ? { p: 1; l: 0 } :
+  L extends 'nlogn' ? { p: 1; l: 1 } :
+  { p: 2; l: 0 };
+
+/**
+ * Named cost constants for combinator typing.
+ */
+export type C_CONST = CostOfLabel<'const'>;
+export type C_LOG = CostOfLabel<'log'>;
+export type C_LIN = CostOfLabel<'linear'>;
+export type C_NLOGN = CostOfLabel<'nlogn'>;
+export type C_QUAD = CostOfLabel<'quad'>;
+
+/**
+ * Cost comparison and composition primitives.
+ */
+export type GteCost<A extends Cost, B extends Cost> =
+  GteNat<A['p'], B['p']> extends true
+    ? (A['p'] extends B['p'] ? GteNat<A['l'], B['l']> : true)
+    : false;
+
+export type MaxCost<A extends Cost, B extends Cost> = GteCost<A, B> extends true ? A : B;
+export type Seq<A extends Cost, B extends Cost> = MaxCost<A, B>;
+export type Nest<A extends Cost, B extends Cost> = { p: AddNat<A['p'], B['p']>; l: AddNat<A['l'], B['l']> };
+export type Leq<A extends Cost, B extends Cost> = GteCost<B, A>;
+export type Assert<T extends true> = T;
+
+/**
+ * All labels less-than-or-equal to L.
+ * Enables natural widening: const -> log -> linear -> nlogn -> quad.
+ */
+type LevelsUpTo<L extends CostLabel> = {
+  [K in CostLabel]: Leq<CostOfLabel<K>, CostOfLabel<L>> extends true ? K : never;
+}[CostLabel];
 
 /**
  * Cost brand with level labels for natural widening through unions.
- *
- * Widening is automatic via TypeScript's union assignability:
- * - `CostBrand<'const'>` is assignable to `CostBrand<'const' | 'log'>`
- * - `CostBrand<'const' | 'log'>` is assignable to `CostBrand<'const' | 'log' | 'linear'>`
- *
- * This means a value from an O(1) function can be used wherever an O(log n)
- * or O(n) result is expected.
  */
-type CostBrand<Level extends CostLevel> = { readonly [costLevel]: Level };
-
-/** Value from an O(1) operation. Assignable to LogCost and LinearCost. */
-export type ConstCost<T> = T & CostBrand<'const'>;
-
-/** Value from an O(log n) operation. Assignable to LinearCost. */
-export type LogCost<T> = T & CostBrand<'const' | 'log'>;
-
-/** Value from an O(n) operation. */
-export type LinearCost<T> = T & CostBrand<'const' | 'log' | 'linear'>;
+type CostBrand<Level extends CostLabel> = { readonly [costLevel]: Level };
 
 /**
- * Map a cost level to its branded value shape.
+ * Branded value by declared cost level.
  */
-export type Costed<Level extends CostLevel, T> =
-  Level extends 'const' ? ConstCost<T> :
-  Level extends 'log' ? LogCost<T> :
-  LinearCost<T>;
+export type Costed<Level extends CostLevel, T> = T & CostBrand<LevelsUpTo<Level>>;
+
+/** Value from an O(1) operation. */
+export type ConstCost<T> = Costed<'const', T>;
+/** Value from an O(log n) operation. */
+export type LogCost<T> = Costed<'log', T>;
+/** Value from an O(n) operation. */
+export type LinearCost<T> = Costed<'linear', T>;
+/** Value from an O(n log n) operation. */
+export type NLogNCost<T> = Costed<'nlogn', T>;
+/** Value from an O(n^2) operation. */
+export type QuadCost<T> = Costed<'quad', T>;
 
 /**
  * Function contract with declarative cost level.
@@ -327,11 +391,7 @@ export type CostFn<Level extends CostLevel, Args extends readonly unknown[], R> 
  * Join two cost levels to the dominant one.
  */
 export type JoinCostLevel<A extends CostLevel, B extends CostLevel> =
-  A extends 'linear' ? 'linear' :
-  B extends 'linear' ? 'linear' :
-  A extends 'log' ? 'log' :
-  B extends 'log' ? 'log' :
-  'const';
+  GteCost<CostOfLabel<A>, CostOfLabel<B>> extends true ? A : B;
 
 /** Tag a value as O(1). Zero runtime cost — cast only. */
 export function constCost<T>(value: T): ConstCost<T> {
@@ -372,17 +432,48 @@ export function linearCostBoundary<T>(compute: () => T): LinearCost<T> {
   return linearCost(compute());
 }
 
+/** Tag a value as O(n log n). Zero runtime cost — cast only. */
+export function nlognCost<T>(value: T): NLogNCost<T> {
+  return value as NLogNCost<T>;
+}
+
+/**
+ * Mark a computation boundary as O(n log n).
+ */
+export function nlognCostBoundary<T>(compute: () => T): NLogNCost<T> {
+  return nlognCost(compute());
+}
+
+/** Tag a value as O(n^2). Zero runtime cost — cast only. */
+export function quadCost<T>(value: T): QuadCost<T> {
+  return value as QuadCost<T>;
+}
+
+/**
+ * Mark a computation boundary as O(n^2).
+ */
+export function quadCostBoundary<T>(compute: () => T): QuadCost<T> {
+  return quadCost(compute());
+}
+
 /**
  * Compact boundary helper for readability:
- * $('const' | 'log' | 'linear', () => value)
+ * $('const' | 'log' | 'linear' | 'nlogn' | 'quad', () => value)
  */
 export function $<T>(level: 'const', compute: () => T): ConstCost<T>;
 export function $<T>(level: 'log', compute: () => T): LogCost<T>;
 export function $<T>(level: 'linear', compute: () => T): LinearCost<T>;
-export function $<T>(level: CostLevel, compute: () => T): Costed<CostLevel, T> {
+export function $<T>(level: 'nlogn', compute: () => T): NLogNCost<T>;
+export function $<T>(level: 'quad', compute: () => T): QuadCost<T>;
+export function $<T>(
+  level: CostLevel,
+  compute: () => T
+): ConstCost<T> | LogCost<T> | LinearCost<T> | NLogNCost<T> | QuadCost<T> {
   if (level === 'const') return constCostBoundary(compute);
   if (level === 'log') return logCostBoundary(compute);
-  return linearCostBoundary(compute);
+  if (level === 'linear') return linearCostBoundary(compute);
+  if (level === 'nlogn') return nlognCostBoundary(compute);
+  return quadCostBoundary(compute);
 }
 
 /**
@@ -410,6 +501,24 @@ export function linearCostFn<Args extends readonly unknown[], R>(
   fn: (...args: Args) => R
 ): CostFn<'linear', Args, R> {
   return ((...args: Args) => linearCost(fn(...args))) as CostFn<'linear', Args, R>;
+}
+
+/**
+ * Annotate a function as O(n log n) without changing runtime behavior.
+ */
+export function nlognCostFn<Args extends readonly unknown[], R>(
+  fn: (...args: Args) => R
+): CostFn<'nlogn', Args, R> {
+  return ((...args: Args) => nlognCost(fn(...args))) as CostFn<'nlogn', Args, R>;
+}
+
+/**
+ * Annotate a function as O(n^2) without changing runtime behavior.
+ */
+export function quadCostFn<Args extends readonly unknown[], R>(
+  fn: (...args: Args) => R
+): CostFn<'quad', Args, R> {
+  return ((...args: Args) => quadCost(fn(...args))) as CostFn<'quad', Args, R>;
 }
 
 /**
@@ -449,12 +558,109 @@ export function mapCost<T extends CostBrand<CostLevel>, U>(
 /**
  * Compose two cost-branded operations.
  * The result cost is the union of both levels (= the more expensive tier).
- *
- * Example: LogCost + LogCost = LogCost, LogCost + LinearCost = LinearCost.
  */
 export function chainCost<T extends CostBrand<CostLevel>, U extends CostBrand<CostLevel>>(
   value: T,
   f: (value: T) => U
 ): U & CostBrand<CostOf<T> | CostOf<U>> {
   return f(value) as U & CostBrand<CostOf<T> | CostOf<U>>;
+}
+
+// =============================================================================
+// Cost Context Pipeline Combinators
+// =============================================================================
+
+/**
+ * Context value carrying only a compile-time cost.
+ * `_cost` is phantom; no runtime overhead is introduced.
+ */
+export type Ctx<C extends Cost, T> = { readonly _cost: C; readonly value: T };
+
+/**
+ * Start a cost-typed pipeline with O(1) seed cost.
+ */
+export const start = <T>(value: T): Ctx<C_CONST, T> =>
+  ({ value } as Ctx<C_CONST, T>);
+
+export function pipe<A>(a: A): A;
+export function pipe<A, B>(a: A, ab: (a: A) => B): B;
+export function pipe<A, B, C>(a: A, ab: (a: A) => B, bc: (b: B) => C): C;
+export function pipe<A, B, C, D>(a: A, ab: (a: A) => B, bc: (b: B) => C, cd: (c: C) => D): D;
+export function pipe<A, B, C, D, E>(
+  a: A,
+  ab: (a: A) => B,
+  bc: (b: B) => C,
+  cd: (c: C) => D,
+  de: (d: D) => E
+): E;
+export function pipe(a: unknown, ...fns: Array<(x: any) => any>): unknown {
+  return fns.reduce((x, f) => f(x), a);
+}
+
+/**
+ * O(1) map over the current context value.
+ */
+export const map =
+  <T, U>(f: (t: T) => U) =>
+  <C extends Cost>(c: Ctx<C, T>): Ctx<Seq<C, C_CONST>, U> =>
+    ({ value: f(c.value) } as Ctx<Seq<C, C_CONST>, U>);
+
+/**
+ * O(log n) lookup combinator.
+ * Runtime implementation is intentionally simple; typing models declared cost.
+ */
+export const binarySearch =
+  (x: number) =>
+  <C extends Cost>(c: Ctx<C, readonly number[]>): Ctx<Seq<C, C_LOG>, number> =>
+    ({ value: c.value.indexOf(x) } as Ctx<Seq<C, C_LOG>, number>);
+
+/**
+ * O(n log n) sorting combinator.
+ */
+export const sort =
+  <E>(compareFn?: (a: E, b: E) => number) =>
+  <C extends Cost>(c: Ctx<C, readonly E[]>): Ctx<Seq<C, C_NLOGN>, E[]> => {
+    const out = [...c.value];
+    if (compareFn) out.sort(compareFn);
+    else out.sort();
+    return ({ value: out } as Ctx<Seq<C, C_NLOGN>, E[]>);
+  };
+
+/**
+ * O(n) filter combinator.
+ */
+export const filter =
+  <E>(pred: (e: E) => boolean) =>
+  <C extends Cost>(c: Ctx<C, readonly E[]>): Ctx<Seq<C, C_LIN>, E[]> =>
+    ({ value: c.value.filter(pred) } as Ctx<Seq<C, C_LIN>, E[]>);
+
+/**
+ * O(n) scan combinator returning first matching element.
+ */
+export const linearScan =
+  <E>(pred: (e: E) => boolean) =>
+  <C extends Cost>(c: Ctx<C, readonly E[]>): Ctx<Seq<C, C_LIN>, E | undefined> =>
+    ({ value: c.value.find(pred) } as Ctx<Seq<C, C_LIN>, E | undefined>);
+
+/**
+ * O(n * body) nested combinator.
+ * Body is evaluated once per element and contributes multiplicatively.
+ */
+export const forEachN =
+  <E, BodyC extends Cost>(body: (e: E) => Ctx<BodyC, unknown>) =>
+  <C extends Cost>(c: Ctx<C, readonly E[]>): Ctx<Seq<C, Nest<C_LIN, BodyC>>, E[]> => {
+    c.value.forEach((e) => {
+      body(e);
+    });
+    return ({ value: c.value } as Ctx<Seq<C, Nest<C_LIN, BodyC>>, E[]>);
+  };
+
+/**
+ * Compile-time upper-bound check for context pipelines.
+ */
+export function costBoundary<L extends CostLabel, C extends Cost, T>(
+  _max: L,
+  ctx: Ctx<C, T> & (Leq<C, CostOfLabel<L>> extends true ? unknown : never)
+): T {
+  return ctx.value;
 }

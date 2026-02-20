@@ -15,8 +15,6 @@ import {
   getBufferStats,
   compactAddBuffer,
   byteToCharOffset,
-  charToByteOffset,
-  rbInsertPiece,
 } from './piece-table.ts';
 import {
   createEmptyPieceTableState,

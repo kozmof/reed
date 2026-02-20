@@ -28,11 +28,24 @@ import {
   logCostFn,
   linearCostBoundary,
   linearCostFn,
+  nlognCostBoundary,
+  nlognCostFn,
+  quadCostBoundary,
+  quadCostFn,
   composeCostFn,
+  start,
+  pipe,
+  map,
+  binarySearch,
+  linearScan,
+  forEachN,
+  costBoundary,
   type ConstCost,
   type CostFn,
   type LogCost,
   type LinearCost,
+  type NLogNCost,
+  type QuadCost,
   type ByteOffset,
   type CharOffset,
   type LineNumber,
@@ -191,6 +204,16 @@ describe('Branded Types', () => {
       expect(result).toBe(100);
     });
 
+    it('should wrap callback result as NLogNCost', () => {
+      const result: NLogNCost<number> = nlognCostBoundary(() => 8);
+      expect(result).toBe(8);
+    });
+
+    it('should wrap callback result as QuadCost', () => {
+      const result: QuadCost<number> = quadCostBoundary(() => 9);
+      expect(result).toBe(9);
+    });
+
     it('should execute callback exactly once', () => {
       let calls = 0;
       const result = $('log', () => {
@@ -227,6 +250,63 @@ describe('Branded Types', () => {
     it('should support direct linear function annotation', () => {
       const fn: CostFn<'linear', [number], string> = linearCostFn((value: number) => String(value));
       expect(fn(7)).toBe('7');
+    });
+
+    it('should support nlogn and quad function annotation', () => {
+      const nlogn: CostFn<'nlogn', [readonly number[]], number[]> =
+        nlognCostFn((values: readonly number[]) => [...values].sort((a, b) => a - b));
+      const quad: CostFn<'quad', [number], number> =
+        quadCostFn((value: number) => value * value);
+
+      expect(nlogn([3, 1, 2])).toEqual([1, 2, 3]);
+      expect(quad(4)).toBe(16);
+    });
+  });
+
+  describe('cost context pipeline', () => {
+    it('should model sequential composition as dominant cost', () => {
+      const seqLog = pipe(
+        start([1, 2, 3]),
+        binarySearch(2),
+        map((index: number) => index + 10),
+      );
+
+      expect(costBoundary('log', seqLog)).toBe(11);
+      // @ts-expect-error log is not <= const
+      costBoundary('const', seqLog);
+    });
+
+    it('should infer nlogn for linear nesting with log body', () => {
+      const nestedNlogn = pipe(
+        start([1, 2, 3, 4]),
+        forEachN((x: number) =>
+          pipe(
+            start([1, 2, 3, 4, 5]),
+            binarySearch(x),
+          )
+        ),
+        map((xs: readonly number[]) => xs.length),
+      );
+
+      expect(costBoundary('nlogn', nestedNlogn)).toBe(4);
+      // @ts-expect-error nlogn is not <= linear
+      costBoundary('linear', nestedNlogn);
+    });
+
+    it('should infer quad for linear nesting with linear body', () => {
+      const nestedQuad = pipe(
+        start([1, 2, 3, 4]),
+        forEachN((x: number) =>
+          pipe(
+            start([1, 2, 3, 4, 5]),
+            linearScan((y: number) => y === x),
+          )
+        ),
+      );
+
+      expect(costBoundary('quad', nestedQuad)).toEqual([1, 2, 3, 4]);
+      // @ts-expect-error quad is not <= nlogn
+      costBoundary('nlogn', nestedQuad);
     });
   });
 });

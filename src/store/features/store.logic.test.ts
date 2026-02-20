@@ -32,7 +32,7 @@ import {
   isDocumentAction,
 } from '../../types/actions.ts';
 import { createDocumentStore, isDocumentStore } from './store.ts';
-import { getLineCountFromIndex, getLineRange } from './../core/line-index.ts';
+import { getLineCountFromIndex } from './../core/line-index.ts';
 import { byteOffset, byteLength, type ByteOffset } from '../../types/branded.ts';
 
 // =============================================================================
