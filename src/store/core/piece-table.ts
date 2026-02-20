@@ -110,7 +110,7 @@ export function findPieceAtPosition(
   if (position < 0) return null;
 
   const result = pipe(
-    $('log', () => logCost((() => {
+    $('log', () => {
       const path: PathEntry[] = [];
       let current: PieceNode | null = root;
       let currentOffset = 0;
@@ -128,7 +128,7 @@ export function findPieceAtPosition(
           currentOffset = pieceEnd;
           current = current.right;
         } else {
-          return {
+          return logCost({
             kind: 'found' as const,
             location: {
               node: current,
@@ -136,12 +136,12 @@ export function findPieceAtPosition(
               pieceStartOffset: pieceStart,
               path,
             },
-          };
+          });
         }
       }
 
-      return { kind: 'missing' as const };
-    })())),
+      return logCost({ kind: 'missing' as const });
+    }),
   );
 
   if (result.kind === 'missing') return null;
@@ -156,7 +156,7 @@ export function findLastPiece(root: PieceNode | null): LogCost<PieceLocation> | 
   if (root === null) return null;
 
   const location = pipe(
-    $('log', () => logCost((() => {
+    $('log', () => {
       const path: PathEntry[] = [];
       let current = root;
       let currentOffset = 0;
@@ -168,13 +168,13 @@ export function findLastPiece(root: PieceNode | null): LogCost<PieceLocation> | 
       }
 
       const leftLength = current.left?.subtreeLength ?? 0;
-      return {
+      return logCost({
         node: current,
         offsetInPiece: current.length,
         pieceStartOffset: currentOffset + leftLength,
         path,
-      };
-    })())),
+      });
+    }),
   );
 
   return location;
@@ -184,7 +184,7 @@ export function findLastPiece(root: PieceNode | null): LogCost<PieceLocation> | 
  * Collect all pieces in document order (in-order traversal).
  */
 export function collectPieces(root: PieceNode | null): LinearCost<readonly PieceNode[]> {
-  const pieces = $('linear', () => linearCost((() => {
+  const pieces = $('linear', () => {
     const result: PieceNode[] = [];
 
     function inOrder(node: PieceNode | null) {
@@ -195,8 +195,8 @@ export function collectPieces(root: PieceNode | null): LinearCost<readonly Piece
     }
 
     inOrder(root);
-    return result as readonly PieceNode[];
-  })()));
+    return linearCost(result as readonly PieceNode[]);
+  });
   return pieces;
 }
 
@@ -223,13 +223,13 @@ export function rbInsertPiece(
     return logCost(withPieceNode(newPiece, { color: 'black' }));
   }
 
-  const newRoot = $('log', () => logCost((() => {
+  const newRoot = $('log', () => {
     // Insert using standard BST insertion, collecting new nodes along insertion path
     const insertPath = bstInsert(root, position, newPiece);
 
     // Fix Red-Black violations using path-based O(log n) approach
-    return fixInsertWithPath(insertPath, withPiece);
-  })()));
+    return logCost(fixInsertWithPath(insertPath, withPiece));
+  });
   return newRoot;
 }
 
@@ -341,7 +341,7 @@ export function pieceTableInsert(
 ): LinearCost<PieceTableInsertResult> {
   if (text.length === 0) return linearCost({ state, insertedByteLength: 0 });
 
-  const result = $('linear', () => linearCost((() => {
+  const result = $('linear', () => {
     const textBytes = textEncoder.encode(text);
 
     // Append text to add buffer
@@ -351,7 +351,7 @@ export function pieceTableInsert(
     // Handle empty tree
     if (state.root === null) {
       const newRoot = createPieceNode('add', byteOffset(newAddStart), byteLength(textBytes.length), 'black');
-      return {
+      return linearCost({
         state: Object.freeze({
           root: newRoot,
           originalBuffer: state.originalBuffer,
@@ -359,7 +359,7 @@ export function pieceTableInsert(
           totalLength: textBytes.length,
         }),
         insertedByteLength: textBytes.length,
-      };
+      });
     }
 
     // Find the piece at the insertion position
@@ -404,7 +404,7 @@ export function pieceTableInsert(
       );
     }
 
-    return {
+    return linearCost({
       state: Object.freeze({
         root: newRoot,
         originalBuffer: state.originalBuffer,
@@ -412,8 +412,8 @@ export function pieceTableInsert(
         totalLength: state.totalLength + textBytes.length,
       }),
       insertedByteLength: textBytes.length,
-    };
-  })()));
+    });
+  });
   return result;
 }
 
@@ -497,20 +497,20 @@ export function pieceTableDelete(
   if (start >= end) return linearCost(state);
   if (state.root === null) return linearCost(state);
 
-  const nextState = $('linear', () => linearCost((() => {
+  const nextState = $('linear', () => {
     const deleteLength = Math.min(end, state.totalLength) - Math.max(start, 0);
-    if (deleteLength <= 0) return state;
+    if (deleteLength <= 0) return linearCost(state);
 
     // Rebuild tree excluding the deleted range
     const newRoot = deleteRange(state.root, 0, start, end);
 
-    return Object.freeze({
+    return linearCost(Object.freeze({
       root: newRoot,
       originalBuffer: state.originalBuffer,
       addBuffer: state.addBuffer,
       totalLength: state.totalLength - deleteLength,
-    });
-  })()));
+    }));
+  });
   return nextState;
 }
 
@@ -919,12 +919,12 @@ export function getLineLinearScan(state: PieceTableState, lineNumber: number): L
   if (state.root === null) return linearCost('');
   if (lineNumber < 0) return linearCost('');
 
-  const line = $('linear', () => linearCost((() => {
+  const line = $('linear', () => {
     // Find line start and end offsets by scanning for newlines
     const lineOffsets = findLineOffsets(state, lineNumber);
-    if (lineOffsets === null) return '';
-    return getText(state, lineOffsets.start, lineOffsets.end);
-  })()));
+    if (lineOffsets === null) return linearCost('');
+    return linearCost(getText(state, lineOffsets.start, lineOffsets.end));
+  });
   return line;
 }
 
@@ -1033,7 +1033,7 @@ export function compactAddBuffer(
     }));
   }
 
-  const nextState = $('linear', () => linearCost((() => {
+  const nextState = $('linear', () => {
     const pieces = collectPieces(state.root);
 
     // Single pass: build offset map and copy live data simultaneously
@@ -1055,13 +1055,13 @@ export function compactAddBuffer(
     // Rebuild tree with updated offsets
     const newRoot = rebuildTreeWithNewOffsets(state.root, offsetMap);
 
-    return Object.freeze({
+    return linearCost(Object.freeze({
       root: newRoot,
       originalBuffer: state.originalBuffer,
       addBuffer: new GrowableBuffer(newBuffer, writeOffset),
       totalLength: state.totalLength,
-    });
-  })()));
+    }));
+  });
   return nextState;
 }
 

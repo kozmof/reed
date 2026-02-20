@@ -123,7 +123,7 @@ export function getVisibleLines(
   state: DocumentState,
   config: ViewportConfig
 ): LinearCost<VisibleLinesResult> {
-  return $('linear', () => linearCost((() => {
+  return $('linear', () => {
     const { startLine, visibleLineCount, overscan = 5 } = config;
     const totalLines = getLineCountFromIndex(state.lineIndex);
 
@@ -156,13 +156,13 @@ export function getVisibleLines(
       }
     }
 
-    return Object.freeze({
+    return linearCost(Object.freeze({
       lines: Object.freeze(lines),
       firstLine,
       lastLine,
       totalLines,
-    });
-  })()));
+    }));
+  });
 }
 
 /**
@@ -248,12 +248,12 @@ export function estimateTotalHeight(
   state: DocumentState,
   config: LineHeightConfig
 ): LinearCost<number> {
-  return $('linear', () => linearCost((() => {
+  return $('linear', () => {
     const totalLines = getLineCountFromIndex(state.lineIndex);
 
     if (!config.softWrap) {
       // Fixed height mode: simple multiplication
-      return totalLines * config.baseLineHeight;
+      return linearCost(totalLines * config.baseLineHeight);
     }
 
     // Variable height mode: we need to estimate
@@ -269,7 +269,7 @@ export function estimateTotalHeight(
           totalHeight += estimateLineHeight(line, config);
         }
       }
-      return totalHeight;
+      return linearCost(totalHeight);
     }
 
     // Large document: sample and extrapolate
@@ -286,8 +286,8 @@ export function estimateTotalHeight(
     const sampledLines = Math.ceil(totalLines / step);
     const avgLineHeight = sampleHeight / sampledLines;
 
-    return Math.ceil(totalLines * avgLineHeight);
-  })()));
+    return linearCost(Math.ceil(totalLines * avgLineHeight));
+  });
 }
 
 // =============================================================================
