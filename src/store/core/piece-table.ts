@@ -2,8 +2,8 @@
  * Piece Table operations with immutable Red-Black tree.
  * All operations return new tree structures with structural sharing.
  *
- * Cost typing policy: use cast helpers for simple returns, and `$` boundaries
- * for explicit compute regions (see `src/types/cost.ts`).
+ * Cost typing policy: use `$` boundaries with `start/checked` for explicit
+ * compute regions (see `src/types/cost.ts`).
  */
 
 import type {
@@ -12,7 +12,7 @@ import type {
   BufferType,
   BufferReference,
 } from '../../types/state.ts';
-import { $, constCost, linearCost, logCost, mapCost, pipe, byteOffset, byteLength, type ByteOffset, type ByteLength, type ConstCost, type LogCost, type LinearCost } from '../../types/branded.ts';
+import { $, start as costStart, byteOffset, byteLength, type ByteOffset, type ByteLength, type ConstCost, type LogCost, type LinearCost } from '../../types/branded.ts';
 import { createPieceNode, withPieceNode } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 import { textEncoder, textDecoder } from './encoding.ts';
@@ -109,44 +109,33 @@ export function findPieceAtPosition(
   if (root === null) return null;
   if (position < 0) return null;
 
-  const result = pipe(
-    $('log', () => {
-      const path: PathEntry[] = [];
-      let current: PieceNode | null = root;
-      let currentOffset = 0;
+  const path: PathEntry[] = [];
+  let current: PieceNode | null = root;
+  let currentOffset = 0;
 
-      while (current !== null) {
-        const leftLength = current.left?.subtreeLength ?? 0;
-        const pieceStart = currentOffset + leftLength;
-        const pieceEnd = pieceStart + current.length;
+  while (current !== null) {
+    const leftLength = current.left?.subtreeLength ?? 0;
+    const pieceStart = currentOffset + leftLength;
+    const pieceEnd = pieceStart + current.length;
 
-        if (position < pieceStart) {
-          path.push({ node: current, direction: 'left' });
-          current = current.left;
-        } else if (position >= pieceEnd) {
-          path.push({ node: current, direction: 'right' });
-          currentOffset = pieceEnd;
-          current = current.right;
-        } else {
-          return logCost({
-            kind: 'found' as const,
-            location: {
-              node: current,
-              offsetInPiece: position - pieceStart,
-              pieceStartOffset: pieceStart,
-              path,
-            },
-          });
-        }
-      }
+    if (position < pieceStart) {
+      path.push({ node: current, direction: 'left' });
+      current = current.left;
+    } else if (position >= pieceEnd) {
+      path.push({ node: current, direction: 'right' });
+      currentOffset = pieceEnd;
+      current = current.right;
+    } else {
+      return $('log', costStart({
+        node: current,
+        offsetInPiece: position - pieceStart,
+        pieceStartOffset: pieceStart,
+        path,
+      }));
+    }
+  }
 
-      return logCost({ kind: 'missing' as const });
-    }),
-  );
-
-  if (result.kind === 'missing') return null;
-  const location = mapCost(result, (found) => found.location);
-  return location;
+  return null;
 }
 
 /**
@@ -155,49 +144,40 @@ export function findPieceAtPosition(
 export function findLastPiece(root: PieceNode | null): LogCost<PieceLocation> | null {
   if (root === null) return null;
 
-  const location = pipe(
-    $('log', () => {
-      const path: PathEntry[] = [];
-      let current = root;
-      let currentOffset = 0;
+  const path: PathEntry[] = [];
+  let current = root;
+  let currentOffset = 0;
 
-      while (current.right !== null) {
-        currentOffset += (current.left?.subtreeLength ?? 0) + current.length;
-        path.push({ node: current, direction: 'right' });
-        current = current.right;
-      }
+  while (current.right !== null) {
+    currentOffset += (current.left?.subtreeLength ?? 0) + current.length;
+    path.push({ node: current, direction: 'right' });
+    current = current.right;
+  }
 
-      const leftLength = current.left?.subtreeLength ?? 0;
-      return logCost({
-        node: current,
-        offsetInPiece: current.length,
-        pieceStartOffset: currentOffset + leftLength,
-        path,
-      });
-    }),
-  );
-
-  return location;
+  const leftLength = current.left?.subtreeLength ?? 0;
+  return $('log', costStart({
+    node: current,
+    offsetInPiece: current.length,
+    pieceStartOffset: currentOffset + leftLength,
+    path,
+  }));
 }
 
 /**
  * Collect all pieces in document order (in-order traversal).
  */
 export function collectPieces(root: PieceNode | null): LinearCost<readonly PieceNode[]> {
-  const pieces = $('linear', () => {
-    const result: PieceNode[] = [];
+  const result: PieceNode[] = [];
 
-    function inOrder(node: PieceNode | null) {
-      if (node === null) return;
-      inOrder(node.left);
-      result.push(node);
-      inOrder(node.right);
-    }
+  function inOrder(node: PieceNode | null) {
+    if (node === null) return;
+    inOrder(node.left);
+    result.push(node);
+    inOrder(node.right);
+  }
 
-    inOrder(root);
-    return linearCost(result as readonly PieceNode[]);
-  });
-  return pieces;
+  inOrder(root);
+  return $('linear', costStart(result as readonly PieceNode[]));
 }
 
 // =============================================================================
@@ -220,17 +200,14 @@ export function rbInsertPiece(
 
   if (root === null) {
     // Empty tree - new node becomes black root
-    return logCost(withPieceNode(newPiece, { color: 'black' }));
+    return $('log', costStart(withPieceNode(newPiece, { color: 'black' })));
   }
 
-  const newRoot = $('log', () => {
-    // Insert using standard BST insertion, collecting new nodes along insertion path
-    const insertPath = bstInsert(root, position, newPiece);
+  // Insert using standard BST insertion, collecting new nodes along insertion path
+  const insertPath = bstInsert(root, position, newPiece);
 
-    // Fix Red-Black violations using path-based O(log n) approach
-    return logCost(fixInsertWithPath(insertPath, withPiece));
-  });
-  return newRoot;
+  // Fix Red-Black violations using path-based O(log n) approach
+  return $('log', costStart(fixInsertWithPath(insertPath, withPiece)));
 }
 
 /**
@@ -339,82 +316,79 @@ export function pieceTableInsert(
   position: ByteOffset,
   text: string
 ): LinearCost<PieceTableInsertResult> {
-  if (text.length === 0) return linearCost({ state, insertedByteLength: 0 });
+  if (text.length === 0) return $('linear', costStart({ state, insertedByteLength: 0 }));
 
-  const result = $('linear', () => {
-    const textBytes = textEncoder.encode(text);
+  const textBytes = textEncoder.encode(text);
 
-    // Append text to add buffer
-    const newAddStart = state.addBuffer.length;
-    const addBuffer = state.addBuffer.append(textBytes);
+  // Append text to add buffer
+  const newAddStart = state.addBuffer.length;
+  const addBuffer = state.addBuffer.append(textBytes);
 
-    // Handle empty tree
-    if (state.root === null) {
-      const newRoot = createPieceNode('add', byteOffset(newAddStart), byteLength(textBytes.length), 'black');
-      return linearCost({
-        state: Object.freeze({
-          root: newRoot,
-          originalBuffer: state.originalBuffer,
-          addBuffer,
-          totalLength: textBytes.length,
-        }),
-        insertedByteLength: textBytes.length,
-      });
-    }
-
-    // Find the piece at the insertion position
-    const location = findPieceAtPosition(state.root, position);
-
-    let newRoot: PieceNode;
-
-    if (location === null) {
-      // Position is at or past the end - append
-      newRoot = rbInsertPiece(
-        state.root,
-        state.totalLength,
-        'add',
-        byteOffset(newAddStart),
-        byteLength(textBytes.length)
-      );
-    } else if (location.offsetInPiece === 0) {
-      // Insert at the beginning of a piece
-      newRoot = rbInsertPiece(
-        state.root,
-        location.pieceStartOffset,
-        'add',
-        byteOffset(newAddStart),
-        byteLength(textBytes.length)
-      );
-    } else if (location.offsetInPiece === location.node.length) {
-      // Insert at the end of a piece
-      newRoot = rbInsertPiece(
-        state.root,
-        location.pieceStartOffset + location.node.length,
-        'add',
-        byteOffset(newAddStart),
-        byteLength(textBytes.length)
-      );
-    } else {
-      // Split the piece and insert in between
-      newRoot = insertWithSplit(
-        location,
-        'add',
-        byteOffset(newAddStart),
-        byteLength(textBytes.length)
-      );
-    }
-
-    return linearCost({
+  // Handle empty tree
+  if (state.root === null) {
+    const newRoot = createPieceNode('add', byteOffset(newAddStart), byteLength(textBytes.length), 'black');
+    return $('linear', costStart({
       state: Object.freeze({
         root: newRoot,
         originalBuffer: state.originalBuffer,
         addBuffer,
-        totalLength: state.totalLength + textBytes.length,
+        totalLength: textBytes.length,
       }),
       insertedByteLength: textBytes.length,
-    });
-  });
-  return result;
+    }));
+  }
+
+  // Find the piece at the insertion position
+  const location = findPieceAtPosition(state.root, position);
+
+  let newRoot: PieceNode;
+
+  if (location === null) {
+    // Position is at or past the end - append
+    newRoot = rbInsertPiece(
+      state.root,
+      state.totalLength,
+      'add',
+      byteOffset(newAddStart),
+      byteLength(textBytes.length)
+    );
+  } else if (location.offsetInPiece === 0) {
+    // Insert at the beginning of a piece
+    newRoot = rbInsertPiece(
+      state.root,
+      location.pieceStartOffset,
+      'add',
+      byteOffset(newAddStart),
+      byteLength(textBytes.length)
+    );
+  } else if (location.offsetInPiece === location.node.length) {
+    // Insert at the end of a piece
+    newRoot = rbInsertPiece(
+      state.root,
+      location.pieceStartOffset + location.node.length,
+      'add',
+      byteOffset(newAddStart),
+      byteLength(textBytes.length)
+    );
+  } else {
+    // Split the piece and insert in between
+    newRoot = insertWithSplit(
+      location,
+      'add',
+      byteOffset(newAddStart),
+      byteLength(textBytes.length)
+    );
+  }
+
+  return $('linear', costStart({
+    state: Object.freeze({
+      root: newRoot,
+      originalBuffer: state.originalBuffer,
+      addBuffer,
+      totalLength: state.totalLength + textBytes.length,
+    }),
+    insertedByteLength: textBytes.length,
+  }));
 }
 
 /**
@@ -494,24 +468,21 @@ export function pieceTableDelete(
   start: ByteOffset,
   end: ByteOffset
 ): LinearCost<PieceTableState> {
-  if (start >= end) return linearCost(state);
-  if (state.root === null) return linearCost(state);
+  if (start >= end) return $('linear', costStart(state));
+  if (state.root === null) return $('linear', costStart(state));
 
-  const nextState = $('linear', () => {
-    const deleteLength = Math.min(end, state.totalLength) - Math.max(start, 0);
-    if (deleteLength <= 0) return linearCost(state);
+  const deleteLength = Math.min(end, state.totalLength) - Math.max(start, 0);
+  if (deleteLength <= 0) return $('linear', costStart(state));
 
-    // Rebuild tree excluding the deleted range
-    const newRoot = deleteRange(state.root, 0, start, end);
+  // Rebuild tree excluding the deleted range
+  const newRoot = deleteRange(state.root, 0, start, end);
 
-    return linearCost(Object.freeze({
-      root: newRoot,
-      originalBuffer: state.originalBuffer,
-      addBuffer: state.addBuffer,
-      totalLength: state.totalLength - deleteLength,
-    }));
-  });
-  return nextState;
+  return $('linear', costStart(Object.freeze({
+    root: newRoot,
+    originalBuffer: state.originalBuffer,
+    addBuffer: state.addBuffer,
+    totalLength: state.totalLength - deleteLength,
+  })));
 }
 
 /**
@@ -812,7 +783,7 @@ function joinLeft(
  * Get the entire document content as a string.
  */
 export function getValue(state: PieceTableState): LinearCost<string> {
-  if (state.root === null) return linearCost('');
+  if (state.root === null) return $('linear', costStart(''));
 
   const pieces = collectPieces(state.root);
 
@@ -832,7 +803,7 @@ export function getValue(state: PieceTableState): LinearCost<string> {
     offset += piece.length;
   }
 
-  return linearCost(textDecoder.decode(result));
+  return $('linear', costStart(textDecoder.decode(result)));
 }
 
 /**
@@ -843,10 +814,10 @@ export function getText(
   start: ByteOffset,
   end: ByteOffset
 ): LogCost<string> {
-  if (state.root === null) return logCost('');
-  if (start < 0) return logCost('');
-  if (start >= end) return logCost('');
-  if (start >= state.totalLength) return logCost('');
+  if (state.root === null) return $('log', costStart(''));
+  if (start < 0) return $('log', costStart(''));
+  if (start >= end) return $('log', costStart(''));
+  if (start >= state.totalLength) return $('log', costStart(''));
 
   const actualEnd = Math.min(end, state.totalLength);
 
@@ -856,7 +827,7 @@ export function getText(
   const writeState = { offset: 0 };
   collectBytesInRange(state, state.root, 0, start, actualEnd, result, writeState);
 
-  return logCost(textDecoder.decode(result.subarray(0, writeState.offset)));
+  return $('log', costStart(textDecoder.decode(result.subarray(0, writeState.offset))));
 }
 
 /**
@@ -905,7 +876,7 @@ function collectBytesInRange(
  * Get the total length of the document.
  */
 export function getLength(state: PieceTableState): ConstCost<number> {
-  return constCost(state.totalLength);
+  return $('const', costStart(state.totalLength));
 }
 
 /**
@@ -916,16 +887,13 @@ export function getLength(state: PieceTableState): ConstCost<number> {
  * For O(log n) line access with DocumentState, use `getLineContent()` from rendering.ts.
  */
 export function getLineLinearScan(state: PieceTableState, lineNumber: number): LinearCost<string> {
-  if (state.root === null) return linearCost('');
-  if (lineNumber < 0) return linearCost('');
+  if (state.root === null) return $('linear', costStart(''));
+  if (lineNumber < 0) return $('linear', costStart(''));
 
-  const line = $('linear', () => {
-    // Find line start and end offsets by scanning for newlines
-    const lineOffsets = findLineOffsets(state, lineNumber);
-    if (lineOffsets === null) return linearCost('');
-    return linearCost(getText(state, lineOffsets.start, lineOffsets.end));
-  });
-  return line;
+  // Find line start and end offsets by scanning for newlines
+  const lineOffsets = findLineOffsets(state, lineNumber);
+  if (lineOffsets === null) return $('linear', costStart(''));
+  return $('linear', costStart(getText(state, lineOffsets.start, lineOffsets.end)));
 }
 
 /**
@@ -997,7 +965,7 @@ export function getBufferStats(state: PieceTableState): ConstCost<BufferStats> {
   const addBufferWaste = addBufferSize - addBufferUsed;
   const wasteRatio = addBufferSize > 0 ? addBufferWaste / addBufferSize : 0;
 
-  return constCost({ addBufferSize, addBufferUsed, addBufferWaste, wasteRatio });
+  return $('const', costStart({ addBufferSize, addBufferUsed, addBufferWaste, wasteRatio }));
 }
 
 /**
@@ -1019,50 +987,47 @@ export function compactAddBuffer(
 
   // Don't compact if waste is below threshold
   if (stats.wasteRatio < threshold) {
-    return linearCost(state);
+    return $('linear', costStart(state));
   }
 
   // Don't compact if there's nothing to compact
   if (stats.addBufferUsed === 0) {
     // No add buffer content - reset to empty
-    return linearCost(Object.freeze({
+    return $('linear', costStart(Object.freeze({
       root: state.root,
       originalBuffer: state.originalBuffer,
       addBuffer: GrowableBuffer.empty(1024),
       totalLength: state.totalLength,
-    }));
+    })));
   }
 
-  const nextState = $('linear', () => {
-    const pieces = collectPieces(state.root);
+  const pieces = collectPieces(state.root);
 
-    // Single pass: build offset map and copy live data simultaneously
-    const offsetMap = new Map<number, number>();
-    const newBuffer = new Uint8Array(Math.max(stats.addBufferUsed * 2, 1024));
-    let writeOffset = 0;
+  // Single pass: build offset map and copy live data simultaneously
+  const offsetMap = new Map<number, number>();
+  const newBuffer = new Uint8Array(Math.max(stats.addBufferUsed * 2, 1024));
+  let writeOffset = 0;
 
-    for (const piece of pieces) {
-      if (piece.bufferType === 'add') {
-        offsetMap.set(piece.start, writeOffset);
-        newBuffer.set(
-          state.addBuffer.subarray(piece.start as number, (piece.start as number) + (piece.length as number)),
-          writeOffset
-        );
-        writeOffset += piece.length;
-      }
+  for (const piece of pieces) {
+    if (piece.bufferType === 'add') {
+      offsetMap.set(piece.start, writeOffset);
+      newBuffer.set(
+        state.addBuffer.subarray(piece.start as number, (piece.start as number) + (piece.length as number)),
+        writeOffset
+      );
+      writeOffset += piece.length;
     }
+  }
 
-    // Rebuild tree with updated offsets
-    const newRoot = rebuildTreeWithNewOffsets(state.root, offsetMap);
+  // Rebuild tree with updated offsets
+  const newRoot = rebuildTreeWithNewOffsets(state.root, offsetMap);
 
-    return linearCost(Object.freeze({
-      root: newRoot,
-      originalBuffer: state.originalBuffer,
-      addBuffer: new GrowableBuffer(newBuffer, writeOffset),
-      totalLength: state.totalLength,
-    }));
-  });
-  return nextState;
+  return $('linear', costStart(Object.freeze({
+    root: newRoot,
+    originalBuffer: state.originalBuffer,
+    addBuffer: new GrowableBuffer(newBuffer, writeOffset),
+    totalLength: state.totalLength,
+  })));
 }
 
 /**
@@ -1119,7 +1084,7 @@ function rebuildTreeWithNewOffsets(
  */
 export function charToByteOffset(text: string, charOffset: number): LinearCost<number> {
   const clampedOffset = Math.max(0, Math.min(charOffset, text.length));
-  return linearCost(textEncoder.encode(text.slice(0, clampedOffset)).length);
+  return $('linear', costStart(textEncoder.encode(text.slice(0, clampedOffset)).length));
 }
 
 /**
@@ -1140,10 +1105,10 @@ export function charToByteOffset(text: string, charOffset: number): LinearCost<n
  * ```
  */
 export function byteToCharOffset(text: string, byteOffset: number): LinearCost<number> {
-  if (byteOffset <= 0) return linearCost(0);
+  if (byteOffset <= 0) return $('linear', costStart(0));
 
   const bytes = textEncoder.encode(text);
-  if (byteOffset >= bytes.length) return linearCost(text.length);
+  if (byteOffset >= bytes.length) return $('linear', costStart(text.length));
 
   // Single encode + byte scanning using UTF-8 sequence length detection
   let charPos = 0;
@@ -1163,7 +1128,7 @@ export function byteToCharOffset(text: string, byteOffset: number): LinearCost<n
     charPos += seqLen === 4 ? 2 : 1;
   }
 
-  return linearCost(charPos);
+  return $('linear', costStart(charPos));
 }
 
 // =============================================================================

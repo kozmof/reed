@@ -23,15 +23,10 @@ import {
   LINE_ZERO,
   COLUMN_ZERO,
   constCostFn,
-  constCost,
   logCostFn,
-  logCost,
   linearCostFn,
-  linearCost,
   nlognCostFn,
-  nlognCost,
   quadCostFn,
-  quadCost,
   composeCostFn,
   chainCost,
   mapCost,
@@ -42,12 +37,9 @@ import {
   binarySearch,
   linearScan,
   forEachN,
-  type ConstCost,
   type CostFn,
   type LogCost,
   type LinearCost,
-  type NLogNCost,
-  type QuadCost,
   type ByteOffset,
   type CharOffset,
   type LineNumber,
@@ -191,46 +183,51 @@ describe('Branded Types', () => {
   });
 
   describe('cost boundaries', () => {
-    it('should wrap callback result as ConstCost', () => {
-      const result: ConstCost<number> = $('const', () => constCost(7));
+    it('should reject callback boundary mode', () => {
+      // @ts-expect-error callback mode is disabled; use checked(ctx) or ctx directly
+      $('log', () => start(1));
+    });
+
+    it('should unwrap const context value', () => {
+      const result = $('const', start(7));
       expect(result).toBe(7);
     });
 
-    it('should wrap callback result as LogCost', () => {
-      const result: LogCost<number> = $('log', () => logCost(42));
-      expect(result).toBe(42);
+    it('should validate checked log plan', () => {
+      const result = $('log', checked(() => pipe(
+        start([1, 2, 3]),
+        binarySearch(2),
+      )));
+      expect(result).toBe(1);
     });
 
-    it('should wrap callback result as LinearCost', () => {
-      const result: LinearCost<number> = $('linear', () => linearCost(100));
-      expect(result).toBe(100);
-    });
-
-    it('should wrap callback result as NLogNCost', () => {
-      const result: NLogNCost<number> = $('nlogn', () => nlognCost(8));
-      expect(result).toBe(8);
-    });
-
-    it('should wrap callback result as QuadCost', () => {
-      const result: QuadCost<number> = $('quad', () => quadCost(9));
-      expect(result).toBe(9);
+    it('should validate linear context', () => {
+      const linearCtx = pipe(
+        start([1, 2, 3]),
+        linearScan((x: number) => x === 2),
+      );
+      const result = $('linear', linearCtx);
+      expect(result).toBe(2);
     });
 
     it('should execute callback exactly once', () => {
       let calls = 0;
-      const result = $('log', () => {
+      const result = $('log', checked(() => {
         calls += 1;
-        return logCost('value');
-      });
-      expect(result).toBe('value');
+        return pipe(
+          start([1, 2, 3]),
+          binarySearch(2),
+        );
+      }));
+      expect(result).toBe(1);
       expect(calls).toBe(1);
     });
 
     it('should support compact $ boundary helper', () => {
-      const c: ConstCost<number> = $('const', () => constCost(1));
-      const l: LogCost<number> = $('log', () => logCost(2));
-      const n: LinearCost<number> = $('linear', () => linearCost(3));
-      expect(c + l + n).toBe(6);
+      const c = $('const', start(1));
+      const l = $('log', pipe(start([1, 2, 3]), binarySearch(2)));
+      const n = $('linear', pipe(start([1, 2, 3]), linearScan((x: number) => x === 3)));
+      expect(c + l + (n ?? 0)).toBe(5);
     });
   });
 
@@ -243,7 +240,7 @@ describe('Branded Types', () => {
 
     it('should compose functions and preserve dominant cost', () => {
       const first: CostFn<'const', [number], number> = constCostFn((value: number) => value + 1);
-      const second = (value: number) => $('linear', () => linearCost(value * 2));
+      const second = (value: number) => $('linear', start(value * 2));
 
       const composed: CostFn<'linear', [number], number> = composeCostFn(first, second);
       expect(composed(5)).toBe(12);
@@ -266,15 +263,15 @@ describe('Branded Types', () => {
 
     it('should keep mapCost and chainCost consistent with dominant cost', () => {
       const chained = chainCost(
-        $('log', () => logCost(10)),
-        (value) => $('linear', () => linearCost(value * 2))
+        $('log', start(10)),
+        (value) => $('linear', start(value * 2))
       );
       const mapped = mapCost(chained, (value) => value + 1);
 
-      const linearResult: LinearCost<number> = $('linear', () => mapped);
+      const linearResult: LinearCost<number> = mapped;
       expect(linearResult).toBe(21);
       // @ts-expect-error linear is not <= log
-      $('log', () => mapped);
+      const _logResult: LogCost<number> = mapped;
     });
   });
 

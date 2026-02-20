@@ -277,4 +277,45 @@ export const COLUMN_ZERO: ColumnNumber = 0 as ColumnNumber;
 // Cost Typing Re-exports
 // =============================================================================
 
-export * from './cost.ts';
+export type {
+  Nat,
+  Cost,
+  CostLabel,
+  CostLevel,
+  CostOfLabel,
+  Ctx,
+  Seq,
+  Nest,
+  Leq,
+  Assert,
+  Costed,
+  CostFn,
+  JoinCostLevel,
+  CheckedPlan,
+  ConstCost,
+  LogCost,
+  LinearCost,
+  NLogNCost,
+  QuadCost,
+} from './cost.ts';
+
+export {
+  $,
+  checked,
+  constCostFn,
+  logCostFn,
+  linearCostFn,
+  nlognCostFn,
+  quadCostFn,
+  composeCostFn,
+  mapCost,
+  chainCost,
+  start,
+  pipe,
+  map,
+  binarySearch,
+  sort,
+  filter,
+  linearScan,
+  forEachN,
+} from './cost.ts';

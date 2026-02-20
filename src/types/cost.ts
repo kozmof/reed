@@ -2,15 +2,12 @@
  * Branded algorithmic cost types and combinators.
  *
  * Usage policy:
- * 1. Use `constCost`/`logCost`/`linearCost`/`nlognCost`/`quadCost` for simple
- *    return-value casts when a function is already computed and just returns.
- * 2. Use `$(level, checked(() => plan))` when you want compile-time checking
- *    that a modeled plan cost is <= the declared boundary.
- * 3. Use `$(level, planCtx)` or `$(level, () => costedValue)` for compile-time
- *    checked boundaries without runtime casts.
- * 4. Keep internal arithmetic/data as plain types where possible, and apply
- *    cost branding at boundaries (or via `CostFn` wrappers) rather than on
- *    intermediate mutable values.
+ * 1. Prefer `$(level, checked(() => plan))` or `$(level, planCtx)` as the
+ *    primary API for compile-time checked boundaries.
+ * 2. Start plans from `start(value)` and compose with pipeline combinators.
+ * 3. Keep internal arithmetic/data as plain types and apply branding only
+ *    at explicit boundaries (or via `CostFn` wrappers).
+ * 4. Avoid direct cast helpers in store/application code.
  */
 
 // =============================================================================
@@ -145,61 +142,29 @@ function castCost<L extends CostLevel, T>(level: L, value: T): Costed<L, T> {
   return value as Costed<L, T>;
 }
 
-/** Tag a value as O(1). Zero runtime cost — cast only. */
-export function constCost<T>(value: T): ConstCost<T> {
-  return castCost('const', value);
-}
-
-/** Tag a value as O(log n). Zero runtime cost — cast only. */
-export function logCost<T>(value: T): LogCost<T> {
-  return castCost('log', value);
-}
-
-/** Tag a value as O(n). Zero runtime cost — cast only. */
-export function linearCost<T>(value: T): LinearCost<T> {
-  return castCost('linear', value);
-}
-
-/** Tag a value as O(n log n). Zero runtime cost — cast only. */
-export function nlognCost<T>(value: T): NLogNCost<T> {
-  return castCost('nlogn', value);
-}
-
-/** Tag a value as O(n^2). Zero runtime cost — cast only. */
-export function quadCost<T>(value: T): QuadCost<T> {
-  return castCost('quad', value);
-}
-
 /**
  * Unified boundary helper.
  * - `$(max, checked(() => ctx))` validates modeled plan cost at compile time.
  * - `$(max, ctx)` validates precomputed context cost at compile time.
- * - `$(max, () => costedValue)` validates callback-declared cost at compile time.
- * Runtime behavior is identity: the boundary unwraps context and returns value.
+ * Runtime behavior is identity plus branding: the boundary unwraps context
+ * and returns a value branded at the declared upper bound.
  */
 export function $<L extends CostLabel, C extends Cost, T>(
   max: L,
   plan: CheckedPlan<C, T> & (Leq<C, CostOfLabel<L>> extends true ? unknown : never)
-): T;
-export function $<L extends CostLabel, Inner extends CostLevel, T>(
-  max: L,
-  compute: () => Costed<Inner, T> & (Leq<CostOfLabel<Inner>, CostOfLabel<L>> extends true ? unknown : never)
-): Costed<Inner, T>;
+): Costed<L, T>;
 export function $<L extends CostLabel, C extends Cost, T>(
   max: L,
   ctx: { readonly _cost: C; readonly value: T } & (Leq<C, CostOfLabel<L>> extends true ? unknown : never)
-): T;
+): Costed<L, T>;
 export function $(
-  _max: CostLevel,
-  boundary: CheckedPlan<Cost, unknown> | { readonly _cost: Cost; readonly value: unknown } | (() => Costed<CostLevel, unknown>)
+  max: CostLevel,
+  boundary: CheckedPlan<Cost, unknown> | { readonly _cost: Cost; readonly value: unknown }
 ): unknown {
-  if (typeof boundary === 'function') {
-    return boundary();
-  }
   if (checkedPlanTag in boundary) {
-    return boundary.run().value;
+    return castCost(max, boundary.run().value);
   }
-  return boundary.value;
+  return castCost(max, boundary.value);
 }
 
 /**
