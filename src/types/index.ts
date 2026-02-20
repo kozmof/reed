@@ -94,6 +94,7 @@ export type {
   Costed,
   CostFn,
   JoinCostLevel,
+  CheckedPlan,
   ConstCost,
   LogCost,
   LinearCost,
@@ -128,6 +129,7 @@ export {
 
 export {
   $,
+  checked,
   constCost,
   constCostFn,
   logCost,

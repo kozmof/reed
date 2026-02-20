@@ -4,9 +4,11 @@
  * Usage policy:
  * 1. Use `constCost`/`logCost`/`linearCost`/`nlognCost`/`quadCost` for simple
  *    return-value casts when a function is already computed and just returns.
- * 2. Use `$(level, () => { ... })` to mark an explicit compute boundary when
- *    you want the costed region to be visible in code.
- * 3. Keep internal arithmetic/data as plain types where possible, and apply
+ * 2. Use `$(level, checked(() => plan))` when you want compile-time checking
+ *    that a modeled plan cost is <= the declared boundary.
+ * 3. Use `$(level, () => costedValue)` to keep boundary blocks explicit while
+ *    still requiring a compile-time checked costed return.
+ * 4. Keep internal arithmetic/data as plain types where possible, and apply
  *    cost branding at boundaries (or via `CostFn` wrappers) rather than on
  *    intermediate mutable values.
  */
@@ -170,22 +172,33 @@ export function quadCost<T>(value: T): QuadCost<T> {
 
 /**
  * Unified boundary helper.
- * - `$(level, () => value)` casts callback result at the declared level.
- * - `$(max, ctx)` checks compile-time upper bounds for context pipelines.
+ * - `$(max, checked(() => ctx))` validates modeled plan cost at compile time.
+ * - `$(max, ctx)` validates precomputed context cost at compile time.
+ * - `$(max, () => costedValue)` validates callback-declared cost at compile time.
  */
-export function $<L extends CostLevel, T>(level: L, compute: () => T): Costed<L, T>;
+export function $<L extends CostLabel, C extends Cost, T>(
+  max: L,
+  plan: CheckedPlan<C, T> & (Leq<C, CostOfLabel<L>> extends true ? unknown : never)
+): Costed<L, T>;
+export function $<L extends CostLabel, Inner extends CostLevel, T>(
+  max: L,
+  compute: () => Costed<Inner, T> & (Leq<CostOfLabel<Inner>, CostOfLabel<L>> extends true ? unknown : never)
+): Costed<L, T>;
 export function $<L extends CostLabel, C extends Cost, T>(
   max: L,
   ctx: { readonly _cost: C; readonly value: T } & (Leq<C, CostOfLabel<L>> extends true ? unknown : never)
-): T;
+): Costed<L, T>;
 export function $(
   level: CostLevel,
-  boundary: { readonly _cost: Cost; readonly value: unknown } | (() => unknown)
+  boundary: CheckedPlan<Cost, unknown> | { readonly _cost: Cost; readonly value: unknown } | (() => Costed<CostLevel, unknown>)
 ): unknown {
   if (typeof boundary === 'function') {
     return castCost(level, boundary());
   }
-  return boundary.value;
+  if (checkedPlanTag in boundary) {
+    return castCost(level, boundary.run().value);
+  }
+  return castCost(level, boundary.value);
 }
 
 /**
@@ -297,6 +310,27 @@ export function chainCost<T extends CostBrand<CostLevel>, U extends CostBrand<Co
  * `_cost` is phantom; no runtime overhead is introduced.
  */
 export type Ctx<C extends Cost, T> = { readonly _cost: C; readonly value: T };
+
+const checkedPlanTag = Symbol('checked-cost-plan');
+
+/**
+ * Wrapper for a compile-time checked boundary plan.
+ * Use with `$(max, checked(() => plan))`.
+ */
+export type CheckedPlan<C extends Cost, T> = {
+  readonly [checkedPlanTag]: true;
+  readonly run: () => Ctx<C, T>;
+};
+
+/**
+ * Mark a cost plan to be validated by `$` against an upper bound.
+ */
+export function checked<C extends Cost, T>(run: () => Ctx<C, T>): CheckedPlan<C, T> {
+  return {
+    [checkedPlanTag]: true,
+    run,
+  };
+}
 
 /**
  * Start a cost-typed pipeline with O(1) seed cost.

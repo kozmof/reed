@@ -23,11 +23,17 @@ import {
   LINE_ZERO,
   COLUMN_ZERO,
   constCostFn,
+  constCost,
   logCostFn,
+  logCost,
   linearCostFn,
+  linearCost,
   nlognCostFn,
+  nlognCost,
   quadCostFn,
+  quadCost,
   composeCostFn,
+  checked,
   start,
   pipe,
   map,
@@ -184,27 +190,27 @@ describe('Branded Types', () => {
 
   describe('cost boundaries', () => {
     it('should wrap callback result as ConstCost', () => {
-      const result: ConstCost<number> = $('const', () => 7);
+      const result: ConstCost<number> = $('const', () => constCost(7));
       expect(result).toBe(7);
     });
 
     it('should wrap callback result as LogCost', () => {
-      const result: LogCost<number> = $('log', () => 42);
+      const result: LogCost<number> = $('log', () => logCost(42));
       expect(result).toBe(42);
     });
 
     it('should wrap callback result as LinearCost', () => {
-      const result: LinearCost<number> = $('linear', () => 100);
+      const result: LinearCost<number> = $('linear', () => linearCost(100));
       expect(result).toBe(100);
     });
 
     it('should wrap callback result as NLogNCost', () => {
-      const result: NLogNCost<number> = $('nlogn', () => 8);
+      const result: NLogNCost<number> = $('nlogn', () => nlognCost(8));
       expect(result).toBe(8);
     });
 
     it('should wrap callback result as QuadCost', () => {
-      const result: QuadCost<number> = $('quad', () => 9);
+      const result: QuadCost<number> = $('quad', () => quadCost(9));
       expect(result).toBe(9);
     });
 
@@ -212,16 +218,16 @@ describe('Branded Types', () => {
       let calls = 0;
       const result = $('log', () => {
         calls += 1;
-        return 'value';
+        return logCost('value');
       });
       expect(result).toBe('value');
       expect(calls).toBe(1);
     });
 
     it('should support compact $ boundary helper', () => {
-      const c: ConstCost<number> = $('const', () => 1);
-      const l: LogCost<number> = $('log', () => 2);
-      const n: LinearCost<number> = $('linear', () => 3);
+      const c: ConstCost<number> = $('const', () => constCost(1));
+      const l: LogCost<number> = $('log', () => logCost(2));
+      const n: LinearCost<number> = $('linear', () => linearCost(3));
       expect(c + l + n).toBe(6);
     });
   });
@@ -235,7 +241,7 @@ describe('Branded Types', () => {
 
     it('should compose functions and preserve dominant cost', () => {
       const first: CostFn<'const', [number], number> = constCostFn((value: number) => value + 1);
-      const second = (value: number) => $('linear', () => value * 2);
+      const second = (value: number) => $('linear', () => linearCost(value * 2));
 
       const composed: CostFn<'linear', [number], number> = composeCostFn(first, second);
       expect(composed(5)).toBe(12);
@@ -258,6 +264,17 @@ describe('Branded Types', () => {
   });
 
   describe('cost context pipeline', () => {
+    it('should validate checked plan boundaries', () => {
+      const checkedLogPlan = checked(() => pipe(
+        start([1, 2, 3]),
+        binarySearch(2),
+      ));
+
+      expect($('log', checkedLogPlan)).toBe(1);
+      // @ts-expect-error log is not <= const
+      $('const', checkedLogPlan);
+    });
+
     it('should model sequential composition as dominant cost', () => {
       const seqLog = pipe(
         start([1, 2, 3]),

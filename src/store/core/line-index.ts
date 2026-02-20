@@ -14,7 +14,7 @@ import type {
 } from '../../types/state.ts';
 import type { ByteOffset, ByteLength } from '../../types/branded.ts';
 import type { ReadTextFn } from '../../types/store.ts';
-import { $, byteOffset, byteLength as toByteLengthBrand, constCost, linearCost, logCost, type ConstCost, type LinearCost, type LogCost, type NLogNCost } from '../../types/branded.ts';
+import { $, byteOffset, byteLength as toByteLengthBrand, constCost, linearCost, logCost, nlognCost, type ConstCost, type LinearCost, type LogCost, type NLogNCost } from '../../types/branded.ts';
 import { createLineIndexNode, withLineIndexNode, withLineIndexState } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 
@@ -295,7 +295,7 @@ export function findLineAtCharPosition(
  * Collect all lines in order (in-order traversal).
  */
 export function collectLines(root: LineIndexNode | null): LinearCost<readonly LineIndexNode[]> {
-  const lines: LinearCost<readonly LineIndexNode[]> = $('linear', () => {
+  const lines: LinearCost<readonly LineIndexNode[]> = $('linear', () => linearCost((() => {
     const result: LineIndexNode[] = [];
 
     function inOrder(node: LineIndexNode | null) {
@@ -307,7 +307,7 @@ export function collectLines(root: LineIndexNode | null): LinearCost<readonly Li
 
     inOrder(root);
     return result as readonly LineIndexNode[];
-  });
+  })()));
   return lines;
 }
 
@@ -399,25 +399,28 @@ export function lineIndexInsert(
   position: ByteOffset,
   text: string,
   readText?: ReadTextFn
-): LineIndexState {
-  if (text.length === 0) return state;
+): LinearCost<LineIndexState> {
+  if (text.length === 0) return linearCost(state);
 
-  const { positions: newlinePositions, byteLength } = findNewlineBytePositions(text);
+  const nextState = $('linear', () => linearCost((() => {
+    const { positions: newlinePositions, byteLength } = findNewlineBytePositions(text);
 
-  // If no newlines, just update the length of the affected line
-  if (newlinePositions.length === 0) {
-    return updateLineLength(state, position, byteLength, text.length);
-  }
+    // If no newlines, just update the length of the affected line
+    if (newlinePositions.length === 0) {
+      return updateLineLength(state, position, byteLength, text.length);
+    }
 
-  // Find the line where insertion happens
-  const location = findLineAtPosition(state.root, position);
-  if (location === null) {
-    // Position is at or past end - append to last line or create new
-    return appendLines(state, position, text, newlinePositions, byteLength);
-  }
+    // Find the line where insertion happens
+    const location = findLineAtPosition(state.root, position);
+    if (location === null) {
+      // Position is at or past end - append to last line or create new
+      return appendLines(state, position, text, newlinePositions, byteLength);
+    }
 
-  // Split the current line and insert new lines
-  return insertLinesAtPosition(state, location, text, newlinePositions, byteLength, readText);
+    // Split the current line and insert new lines
+    return insertLinesAtPosition(state, location, text, newlinePositions, byteLength, readText);
+  })()));
+  return nextState;
 }
 
 /**
@@ -827,24 +830,27 @@ export function lineIndexDelete(
   start: ByteOffset,
   end: ByteOffset,
   deletedText: string
-): LineIndexState {
-  if (start >= end) return state;
-  if (state.root === null) return state;
+): NLogNCost<LineIndexState> {
+  if (start >= end) return nlognCost(state);
+  if (state.root === null) return nlognCost(state);
 
-  const deleteLength = end - start;
-  const deletedNewlines = countNewlines(deletedText);
+  const nextState = $('nlogn', () => nlognCost((() => {
+    const deleteLength = end - start;
+    const deletedNewlines = countNewlines(deletedText);
 
-  // If no newlines deleted, just update line length
-  if (deletedNewlines === 0) {
-    return updateLineLength(state, start, -deleteLength, -deletedText.length);
-  }
+    // If no newlines deleted, just update line length
+    if (deletedNewlines === 0) {
+      return updateLineLength(state, start, -deleteLength, -deletedText.length);
+    }
 
-  // Find the start and end lines
-  const startLocation = findLineAtPosition(state.root, start);
-  if (startLocation === null) return state;
+    // Find the start and end lines
+    const startLocation = findLineAtPosition(state.root, start);
+    if (startLocation === null) return state;
 
-  // Merge lines and remove deleted lines
-  return deleteLineRange(state, startLocation, deletedNewlines, deleteLength, deletedText.length);
+    // Merge lines and remove deleted lines
+    return deleteLineRange(state, startLocation, deletedNewlines, deleteLength, deletedText.length);
+  })()));
+  return nextState;
 }
 
 /**
@@ -1160,8 +1166,8 @@ function removeLinesToEnd(
  * Rebuild the line index from document content.
  * Use this when the line index gets out of sync.
  */
-export function rebuildLineIndex(content: string): LineIndexState {
-  return buildLineIndexFromText(content, 0);
+export function rebuildLineIndex(content: string): LinearCost<LineIndexState> {
+  return linearCost(buildLineIndexFromText(content, 0));
 }
 
 /**
@@ -1198,7 +1204,7 @@ export function getLineRange(
 export function mergeDirtyRanges(
   ranges: readonly DirtyLineRange[]
 ): NLogNCost<readonly DirtyLineRange[]> {
-  const mergedRanges: NLogNCost<readonly DirtyLineRange[]> = $('nlogn', () => {
+  const mergedRanges: NLogNCost<readonly DirtyLineRange[]> = $('nlogn', () => nlognCost((() => {
     if (ranges.length <= 1) return [...ranges];
 
     // Sort by startLine
@@ -1248,7 +1254,7 @@ export function mergeDirtyRanges(
     }
 
     return merged as readonly DirtyLineRange[];
-  });
+  })()));
   return mergedRanges;
 }
 
@@ -1312,25 +1318,28 @@ export function lineIndexInsertLazy(
   text: string,
   currentVersion: number,
   readText?: ReadTextFn
-): LineIndexState {
-  if (text.length === 0) return state;
+): LinearCost<LineIndexState> {
+  if (text.length === 0) return linearCost(state);
 
-  const { positions: newlinePositions, byteLength } = findNewlineBytePositions(text);
+  const nextState = $('linear', () => linearCost((() => {
+    const { positions: newlinePositions, byteLength } = findNewlineBytePositions(text);
 
-  // No newlines: simple length update (O(log n), no lazy needed)
-  if (newlinePositions.length === 0) {
-    return updateLineLengthLazy(state, position, byteLength, text.length);
-  }
+    // No newlines: simple length update (O(log n), no lazy needed)
+    if (newlinePositions.length === 0) {
+      return updateLineLengthLazy(state, position, byteLength, text.length);
+    }
 
-  // Find affected line
-  const location = findLineAtPosition(state.root, position);
-  if (location === null) {
-    // Position at or past end - use eager approach for simplicity
-    return appendLinesLazy(state, position as number, text, newlinePositions, byteLength, currentVersion);
-  }
+    // Find affected line
+    const location = findLineAtPosition(state.root, position);
+    if (location === null) {
+      // Position at or past end - use eager approach for simplicity
+      return appendLinesLazy(state, position as number, text, newlinePositions, byteLength, currentVersion);
+    }
 
-  // Insert new lines and mark downstream as dirty
-  return insertLinesAtPositionLazy(state, location, text, newlinePositions, byteLength, currentVersion, readText);
+    // Insert new lines and mark downstream as dirty
+    return insertLinesAtPositionLazy(state, location, text, newlinePositions, byteLength, currentVersion, readText);
+  })()));
+  return nextState;
 }
 
 // updateLineLengthLazy is identical to updateLineLength - reuse it directly
@@ -1428,24 +1437,27 @@ export function lineIndexDeleteLazy(
   end: ByteOffset,
   deletedText: string,
   currentVersion: number
-): LineIndexState {
-  if (start >= end) return state;
-  if (state.root === null) return state;
+): NLogNCost<LineIndexState> {
+  if (start >= end) return nlognCost(state);
+  if (state.root === null) return nlognCost(state);
 
-  const deleteLength = end - start;
-  const deletedNewlines = countNewlines(deletedText);
+  const nextState = $('nlogn', () => nlognCost((() => {
+    const deleteLength = end - start;
+    const deletedNewlines = countNewlines(deletedText);
 
-  // No newlines: just update line length
-  if (deletedNewlines === 0) {
-    return updateLineLengthLazy(state, start, -deleteLength, -deletedText.length);
-  }
+    // No newlines: just update line length
+    if (deletedNewlines === 0) {
+      return updateLineLengthLazy(state, start, -deleteLength, -deletedText.length);
+    }
 
-  // Find the start line
-  const startLocation = findLineAtPosition(state.root, start);
-  if (startLocation === null) return state;
+    // Find the start line
+    const startLocation = findLineAtPosition(state.root, start);
+    if (startLocation === null) return state;
 
-  // Delete lines and mark remaining as dirty
-  return deleteLineRangeLazy(state, startLocation, deletedNewlines, deleteLength, currentVersion, deletedText.length);
+    // Delete lines and mark remaining as dirty
+    return deleteLineRangeLazy(state, startLocation, deletedNewlines, deleteLength, currentVersion, deletedText.length);
+  })()));
+  return nextState;
 }
 
 /**
@@ -1572,41 +1584,44 @@ export function reconcileRange(
   startLine: number,
   endLine: number,
   version: number
-): LineIndexState {
-  if (state.root === null || state.dirtyRanges.length === 0) return state;
+): NLogNCost<LineIndexState> {
+  if (state.root === null || state.dirtyRanges.length === 0) return nlognCost(state);
 
-  // For each line in range, compute correct offset and update
-  let newRoot = state.root;
-  for (let line = startLine; line <= endLine && line < state.lineCount; line++) {
-    const delta = getOffsetDeltaForLine(state.dirtyRanges, line);
-    if (delta !== 0) {
-      newRoot = updateLineOffsetByNumber(newRoot, line, delta);
+  const reconciledState = $('nlogn', () => nlognCost((() => {
+    // For each line in range, compute correct offset and update
+    let newRoot = state.root!;
+    for (let line = startLine; line <= endLine && line < state.lineCount; line++) {
+      const delta = getOffsetDeltaForLine(state.dirtyRanges, line);
+      if (delta !== 0) {
+        newRoot = updateLineOffsetByNumber(newRoot, line, delta);
+      }
     }
-  }
 
-  // Filter out ranges that are now reconciled
-  const remainingRanges = state.dirtyRanges.filter(range => {
-    const rangeEnd = Math.min(range.endLine, state.lineCount - 1);
-    // Keep if range extends beyond reconciled area
-    return rangeEnd > endLine || range.startLine < startLine;
-  }).map(range => {
-    // Adjust ranges that partially overlap
-    if (range.startLine <= endLine &&
-        range.endLine > endLine) {
-      return Object.freeze({
-        ...range,
-        startLine: endLine + 1,
-      });
-    }
-    return range;
-  });
+    // Filter out ranges that are now reconciled
+    const remainingRanges = state.dirtyRanges.filter(range => {
+      const rangeEnd = Math.min(range.endLine, state.lineCount - 1);
+      // Keep if range extends beyond reconciled area
+      return rangeEnd > endLine || range.startLine < startLine;
+    }).map(range => {
+      // Adjust ranges that partially overlap
+      if (range.startLine <= endLine &&
+          range.endLine > endLine) {
+        return Object.freeze({
+          ...range,
+          startLine: endLine + 1,
+        });
+      }
+      return range;
+    });
 
-  return withLineIndexState(state, {
-    root: newRoot,
-    dirtyRanges: Object.freeze(remainingRanges),
-    lastReconciledVersion: version,
-    rebuildPending: remainingRanges.length > 0,
-  });
+    return withLineIndexState(state, {
+      root: newRoot,
+      dirtyRanges: Object.freeze(remainingRanges),
+      lastReconciledVersion: version,
+      rebuildPending: remainingRanges.length > 0,
+    });
+  })()));
+  return reconciledState;
 }
 
 /**
@@ -1698,40 +1713,44 @@ export function reconcileFull(
   state: LineIndexState,
   version: number,
   config?: ReconciliationConfig
-): LineIndexState<'eager'> {
-  if (state.dirtyRanges.length === 0) return state as LineIndexState<'eager'>;
-  if (state.root === null) {
+): NLogNCost<LineIndexState<'eager'>> {
+  if (state.dirtyRanges.length === 0) return nlognCost(state as LineIndexState<'eager'>);
+
+  const reconciledState = $('nlogn', () => nlognCost((() => {
+    if (state.root === null) {
+      return withLineIndexState(state, {
+        lineCount: 1,
+        dirtyRanges: Object.freeze([]) as readonly [],
+        lastReconciledVersion: version,
+        rebuildPending: false as const,
+      }) as LineIndexState<'eager'>;
+    }
+
+    // Fast path: incremental for small dirty ranges — O(k * log n)
+    const totalDirty = computeTotalDirtyLines(state.dirtyRanges, state.lineCount);
+    const thresholdFn = config?.thresholdFn ?? defaultThresholdFn;
+    const threshold = thresholdFn(state.lineCount);
+
+    if (totalDirty <= threshold) {
+      let current: LineIndexState = state;
+      for (const range of state.dirtyRanges) {
+        const endLine = Math.min(range.endLine, current.lineCount - 1);
+        current = reconcileRange(current, range.startLine, endLine, version);
+      }
+      return current as LineIndexState<'eager'>;
+    }
+
+    // Slow path: in-place O(n) walk with structural sharing (no collect-rebuild)
+    const newRoot = reconcileInPlace(state.root, { offset: 0 });
+
     return withLineIndexState(state, {
-      lineCount: 1,
+      root: newRoot,
       dirtyRanges: Object.freeze([]) as readonly [],
       lastReconciledVersion: version,
       rebuildPending: false as const,
     }) as LineIndexState<'eager'>;
-  }
-
-  // Fast path: incremental for small dirty ranges — O(k * log n)
-  const totalDirty = computeTotalDirtyLines(state.dirtyRanges, state.lineCount);
-  const thresholdFn = config?.thresholdFn ?? defaultThresholdFn;
-  const threshold = thresholdFn(state.lineCount);
-
-  if (totalDirty <= threshold) {
-    let current: LineIndexState = state;
-    for (const range of state.dirtyRanges) {
-      const endLine = Math.min(range.endLine, current.lineCount - 1);
-      current = reconcileRange(current, range.startLine, endLine, version);
-    }
-    return current as LineIndexState<'eager'>;
-  }
-
-  // Slow path: in-place O(n) walk with structural sharing (no collect-rebuild)
-  const newRoot = reconcileInPlace(state.root, { offset: 0 });
-
-  return withLineIndexState(state, {
-    root: newRoot,
-    dirtyRanges: Object.freeze([]) as readonly [],
-    lastReconciledVersion: version,
-    rebuildPending: false as const,
-  }) as LineIndexState<'eager'>;
+  })()));
+  return reconciledState;
 }
 
 /**
@@ -1743,17 +1762,20 @@ export function reconcileViewport(
   startLine: number,
   endLine: number,
   version: number
-): LineIndexState {
-  if (state.dirtyRanges.length === 0) return state;
+): NLogNCost<LineIndexState> {
+  if (state.dirtyRanges.length === 0) return nlognCost(state);
 
-  // Check if any viewport lines are dirty
-  const viewportDirty = state.dirtyRanges.some(range => {
-    const rangeEnd = range.endLine;
-    return range.startLine <= endLine && rangeEnd >= startLine;
-  });
+  const reconciledState = $('nlogn', () => nlognCost((() => {
+    // Check if any viewport lines are dirty
+    const viewportDirty = state.dirtyRanges.some(range => {
+      const rangeEnd = range.endLine;
+      return range.startLine <= endLine && rangeEnd >= startLine;
+    });
 
-  if (!viewportDirty) return state;
+    if (!viewportDirty) return state;
 
-  // Reconcile only the viewport range
-  return reconcileRange(state, startLine, endLine, version);
+    // Reconcile only the viewport range
+    return reconcileRange(state, startLine, endLine, version);
+  })()));
+  return reconciledState;
 }
