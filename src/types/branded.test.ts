@@ -34,6 +34,8 @@ import {
   $checked,
   $cost,
   $pipe,
+  $fromCosted,
+  $andThen,
   $map,
   $binarySearch,
   $linearScan,
@@ -350,6 +352,22 @@ describe('Branded Types', () => {
       expect($('O(n^2)', nestedQuad)).toEqual([1, 2, 3, 4]);
       // @ts-expect-error quad is not <= nlogn
       $('O(n log n)', nestedQuad);
+    });
+
+    it('should compose function-call costs incrementally with $fromCosted + $andThen', () => {
+      const lookup: CostFn<'log', [readonly number[], number], number> =
+        $logCostFn((values: readonly number[], target: number) => values.indexOf(target));
+      const project: CostFn<'linear', [number], string> =
+        $linearCostFn((index: number) => `index:${index}`);
+
+      const incrementalPlan = $checked(() => $pipe(
+        $fromCosted(lookup([10, 20, 30], 20)),
+        $andThen((index: number) => $fromCosted(project(index))),
+      ));
+
+      expect($('O(n)', incrementalPlan)).toBe('index:1');
+      // @ts-expect-error linear is not <= log
+      $('O(log n)', incrementalPlan);
     });
   });
 });

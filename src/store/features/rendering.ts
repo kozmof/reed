@@ -5,7 +5,20 @@
 
 import type { DocumentState, SelectionRange, CharSelectionRange } from '../../types/state.ts';
 import type { ByteOffset, ConstCost, CostFn, LinearCost } from '../../types/branded.ts';
-import { $, $cost, byteOffset, charOffset, addByteOffset, $mapCost, $zipCost } from '../../types/branded.ts';
+import {
+  $,
+  $checked,
+  $cost,
+  $fromCosted,
+  $pipe,
+  $andThen,
+  $map,
+  byteOffset,
+  charOffset,
+  addByteOffset,
+  $mapCost,
+  $zipCost,
+} from '../../types/branded.ts';
 import { findLineAtPosition, getCharStartOffset, findLineAtCharPosition, getLineRangePrecise, getLineCountFromIndex } from '../core/line-index.ts';
 import { getText, charToByteOffset } from '../core/piece-table.ts';
 import { textEncoder } from '../core/encoding.ts';
@@ -111,8 +124,19 @@ export const getLineContent: CostFn<'linear', [DocumentState, number], string> =
     return getText(state.pieceTable, byteOffset(0), byteOffset(0));
   }
 
-  const raw = getText(state.pieceTable, range.start, addByteOffset(range.start, range.length as number));
-  return $mapCost(raw, (text) => (text.endsWith('\n') ? text.slice(0, -1) : text));
+  return $('O(n)', $checked(() => $pipe(
+    $fromCosted(range),
+    $andThen((resolvedRange) =>
+      $fromCosted(
+        getText(
+          state.pieceTable,
+          resolvedRange.start,
+          addByteOffset(resolvedRange.start, resolvedRange.length as number)
+        )
+      )
+    ),
+    $map((text: string) => (text.endsWith('\n') ? text.slice(0, -1) : text)),
+  )));
 };
 
 /**
@@ -182,21 +206,33 @@ export function getVisibleLine(
     return $('O(n)', $cost(null));
   }
 
-  const startOffset = range.start;
-  const endOffset = addByteOffset(range.start, range.length as number);
-  const rawContent = getText(state.pieceTable, startOffset, endOffset);
-
-  return $mapCost(rawContent, (text) => {
-    const hasNewline = text.endsWith('\n');
-    const content = hasNewline ? text.slice(0, -1) : text;
-    return Object.freeze({
-      lineNumber,
-      content,
-      startOffset,
-      endOffset,
-      hasNewline,
-    });
-  });
+  return $('O(n)', $checked(() => $pipe(
+    $fromCosted(totalLines),
+    $andThen(() => $fromCosted(range)),
+    $andThen((resolvedRange) => $pipe(
+      $fromCosted(
+        getText(
+          state.pieceTable,
+          resolvedRange.start,
+          addByteOffset(resolvedRange.start, resolvedRange.length as number)
+        )
+      ),
+      $map((text: string) => ({ resolvedRange, text })),
+    )),
+    $map(({ resolvedRange, text }) => {
+      const startOffset = resolvedRange.start;
+      const endOffset = addByteOffset(resolvedRange.start, resolvedRange.length as number);
+      const hasNewline = text.endsWith('\n');
+      const content = hasNewline ? text.slice(0, -1) : text;
+      return Object.freeze({
+        lineNumber,
+        content,
+        startOffset,
+        endOffset,
+        hasNewline,
+      });
+    }),
+  )));
 }
 
 // =============================================================================
@@ -342,17 +378,24 @@ export function lineColumnToPosition(
     return $('O(n)', $cost(null));
   }
 
-  const startOffset = range.start;
-  const endOffset = addByteOffset(range.start, range.length as number);
-  const lineContent = getText(state.pieceTable, startOffset, endOffset);
-
-  // Clamp column to line length
-  const clampedColumn = Math.min(column, lineContent.length);
-
-  // Convert character column to byte offset within the line
-  const columnByteLen = textEncoder.encode(lineContent.slice(0, clampedColumn)).length;
-
-  return $mapCost(lineContent, () => byteOffset(startOffset + columnByteLen));
+  return $('O(n)', $checked(() => $pipe(
+    $fromCosted(range),
+    $andThen((resolvedRange) => $pipe(
+      $fromCosted(
+        getText(
+          state.pieceTable,
+          resolvedRange.start,
+          addByteOffset(resolvedRange.start, resolvedRange.length as number)
+        )
+      ),
+      $map((lineContent: string) => ({ resolvedRange, lineContent })),
+    )),
+    $map(({ resolvedRange, lineContent }) => {
+      const clampedColumn = Math.min(column, lineContent.length);
+      const columnByteLen = textEncoder.encode(lineContent.slice(0, clampedColumn)).length;
+      return addByteOffset(resolvedRange.start, columnByteLen);
+    }),
+  )));
 }
 
 // =============================================================================

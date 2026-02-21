@@ -330,6 +330,14 @@ export function $checked<C extends Cost, T>(run: () => Ctx<C, T>): CheckedPlan<C
 export const $cost = <T>(value: T): Ctx<C_CONST, T> =>
   ({ value } as Ctx<C_CONST, T>);
 
+/**
+ * Lift a branded value into a context so it can participate in `$pipe` plans.
+ */
+export const $fromCosted = <L extends CostLevel, T>(
+  value: Costed<L, T>
+): Ctx<CostOfLabel<L>, T> =>
+  ({ value: value as unknown as T } as Ctx<CostOfLabel<L>, T>);
+
 export function $pipe<A>(a: A): A;
 export function $pipe<A, B>(a: A, ab: (a: A) => B): B;
 export function $pipe<A, B, C>(a: A, ab: (a: A) => B, bc: (b: B) => C): C;
@@ -344,6 +352,15 @@ export function $pipe<A, B, C, D, E>(
 export function $pipe(a: unknown, ...fns: Array<(x: any) => any>): unknown {
   return fns.reduce((x, f) => f(x), a);
 }
+
+/**
+ * Sequentially compose context-producing steps.
+ * Useful when each step calls another function with its own declared cost.
+ */
+export const $andThen =
+  <T, C2 extends Cost, U>(f: (t: T) => Ctx<C2, U>) =>
+  <C1 extends Cost>(c: Ctx<C1, T>): Ctx<Seq<C1, C2>, U> =>
+    ({ value: f(c.value).value } as Ctx<Seq<C1, C2>, U>);
 
 /**
  * O(1) map over the current context value.
