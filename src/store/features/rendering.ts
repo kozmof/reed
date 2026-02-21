@@ -9,7 +9,7 @@ import {
   $,
   $checked,
   $cost,
-  $fromCosted,
+  $from,
   $pipe,
   $andThen,
   $map,
@@ -124,9 +124,9 @@ export const getLineContent: CostFn<'linear', [DocumentState, number], string> =
   }
 
   return $('O(n)', $checked(() => $pipe(
-    $fromCosted(range),
+    $from(range),
     $andThen((resolvedRange) =>
-      $fromCosted(
+      $from(
         getText(
           state.pieceTable,
           resolvedRange.start,
@@ -206,10 +206,10 @@ export function getVisibleLine(
   }
 
   return $('O(n)', $checked(() => $pipe(
-    $fromCosted(totalLines),
-    $andThen(() => $fromCosted(range)),
+    $from(totalLines),
+    $andThen(() => $from(range)),
     $andThen((resolvedRange) => $pipe(
-      $fromCosted(
+      $from(
         getText(
           state.pieceTable,
           resolvedRange.start,
@@ -340,11 +340,11 @@ export function positionToLineColumn(
     const range = getLineRangePrecise(state.lineIndex, lineInfo.lineNumber);
     if (range) {
       return $('O(n)', $checked(() => $pipe(
-        $fromCosted(lineInfo),
+        $from(lineInfo),
         $andThen((resolvedLineInfo) => $pipe(
-          $fromCosted(range),
+          $from(range),
           $andThen((resolvedRange) => $pipe(
-            $fromCosted(getText(
+            $from(getText(
               state.pieceTable,
               resolvedRange.start,
               addByteOffset(resolvedRange.start, resolvedLineInfo.offsetInLine)
@@ -363,16 +363,16 @@ export function positionToLineColumn(
   const lastLineRange = getLineRangePrecise(state.lineIndex, totalLines - 1);
   if (lastLineRange) {
     return $('O(n)', $checked(() => $pipe(
-      $fromCosted(totalLines),
+      $from(totalLines),
       $andThen((resolvedTotalLines) => $pipe(
-        $fromCosted(lastLineRange),
+        $from(lastLineRange),
         $andThen((resolvedLastLineRange) => {
           const endOffset = addByteOffset(resolvedLastLineRange.start, resolvedLastLineRange.length as number);
           if (position !== endOffset) {
-            return $fromCosted($('O(n)', $cost<{ line: number; column: number } | null>(null)));
+            return $from($('O(n)', $cost<{ line: number; column: number } | null>(null)));
           }
           return $pipe(
-            $fromCosted(getText(state.pieceTable, resolvedLastLineRange.start, endOffset)),
+            $from(getText(state.pieceTable, resolvedLastLineRange.start, endOffset)),
             $map((text: string) => ({
               line: resolvedTotalLines - 1,
               column: text.length,
@@ -401,9 +401,9 @@ export function lineColumnToPosition(
   }
 
   return $('O(n)', $checked(() => $pipe(
-    $fromCosted(range),
+    $from(range),
     $andThen((resolvedRange) => $pipe(
-      $fromCosted(
+      $from(
         getText(
           state.pieceTable,
           resolvedRange.start,
@@ -441,7 +441,7 @@ function byteOffsetToCharOffset(
   if (location === null) {
     // Fallback: read from start (shouldn't happen with valid positions)
     const text = getText(state.pieceTable, byteOffset(0), position);
-    return $('O(n)', $pipe($fromCosted(text), $map(value => value.length)));
+    return $('O(n)', $pipe($from(text), $map(value => value.length)));
   }
 
   const charStart = getCharStartOffset(state.lineIndex.root, location.lineNumber);
@@ -456,11 +456,11 @@ function byteOffsetToCharOffset(
   }
 
   return $('O(n)', $checked(() => $pipe(
-    $fromCosted(charStart),
+    $from(charStart),
     $andThen((resolvedCharStart) => $pipe(
-      $fromCosted(range),
+      $from(range),
       $andThen((resolvedRange) => $pipe(
-        $fromCosted(getText(
+        $from(getText(
           state.pieceTable,
           resolvedRange.start,
           addByteOffset(resolvedRange.start, location.offsetInLine)
@@ -481,7 +481,7 @@ export function selectionToCharOffsets(
 ): LinearCost<CharSelectionRange> {
   const anchor = byteOffsetToCharOffset(state, range.anchor);
   const head = byteOffsetToCharOffset(state, range.head);
-  return $('O(n)', $zipCtx($fromCosted(anchor), $fromCosted(head), (anchorOffset, headOffset) => Object.freeze({
+  return $('O(n)', $zipCtx($from(anchor), $from(head), (anchorOffset, headOffset) => Object.freeze({
     anchor: charOffset(anchorOffset),
     head: charOffset(headOffset),
   })));
@@ -514,9 +514,9 @@ function charOffsetToByteOffset(
   }
 
   return $('O(n)', $checked(() => $pipe(
-    $fromCosted(range),
+    $from(range),
     $andThen((resolvedRange) => $pipe(
-      $fromCosted(getText(
+      $from(getText(
         state.pieceTable,
         resolvedRange.start,
         addByteOffset(resolvedRange.start, resolvedRange.length as number)
@@ -524,7 +524,7 @@ function charOffsetToByteOffset(
       $andThen((lineText: string) => {
         const charInLine = Math.min(location.charOffsetInLine, lineText.length);
         return $pipe(
-          $fromCosted(charToByteOffset(lineText, charOffset(charInLine))),
+          $from(charToByteOffset(lineText, charOffset(charInLine))),
           $map((offsetInLine) => addByteOffset(resolvedRange.start, offsetInLine)),
         );
       }),
@@ -542,7 +542,7 @@ export function charOffsetsToSelection(
 ): LinearCost<SelectionRange> {
   const anchor = charOffsetToByteOffset(state, range.anchor);
   const head = charOffsetToByteOffset(state, range.head);
-  return $('O(n)', $zipCtx($fromCosted(anchor), $fromCosted(head), (anchorOffset, headOffset) => Object.freeze({
+  return $('O(n)', $zipCtx($from(anchor), $from(head), (anchorOffset, headOffset) => Object.freeze({
     anchor: anchorOffset,
     head: headOffset,
   })));

@@ -139,7 +139,7 @@ export {
   $nlognCostFn,
   $quadCostFn,
   $cost,
-  $fromCosted,
+  $from,
   $pipe,
   $andThen,
   $map,

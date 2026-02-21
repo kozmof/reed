@@ -35,7 +35,7 @@ import {
   $checked,
   $cost,
   $pipe,
-  $fromCosted,
+  $from,
   $andThen,
   $map,
   $binarySearch,
@@ -250,8 +250,8 @@ describe('Branded Types', () => {
       const double = $linearCostFn((n: number) => n * 2);
 
       const plan = $checked(() => $pipe(
-        $fromCosted(fetch([10, 20, 30], 20)),           // log: indexOf = 1
-        $andThen((idx: number) => $fromCosted(double(idx))), // linear: 1 * 2 = 2
+        $from(fetch([10, 20, 30], 20)),           // log: indexOf = 1
+        $andThen((idx: number) => $from(double(idx))), // linear: 1 * 2 = 2
         $map((n: number) => n + 1),                      // linear: 2 + 1 = 3
       ));
 
@@ -281,8 +281,8 @@ describe('Branded Types', () => {
       const double = $linearCostFn((n: number) => n * 2);
 
       const plan = $checked(() => $pipe(
-        $fromCosted(fetch([10, 20, 30], 20)),                // log: indexOf = 1
-        $andThen((idx: number) => $fromCosted(double(idx))), // linear: 1 * 2 = 2
+        $from(fetch([10, 20, 30], 20)),                // log: indexOf = 1
+        $andThen((idx: number) => $from(double(idx))), // linear: 1 * 2 = 2
         $map((n: number) => n + 1),                          // linear: 2 + 1 = 3
       ));
 
@@ -304,8 +304,8 @@ describe('Branded Types', () => {
       // right: O(n), value = [3, 4, 5]
       // dominant cost: O(n); pick element at found index → [3,4,5][2] = 5
       const plan = $checked(() => {
-        const left = $fromCosted(fetchIndex([1, 2, 3, 4, 5], 3));
-        const right = $fromCosted(findAbove([1, 2, 3, 4, 5], 2));
+        const left = $from(fetchIndex([1, 2, 3, 4, 5], 3));
+        const right = $from(findAbove([1, 2, 3, 4, 5], 2));
         return $zipCtx(left, right, (idx, arr) => arr[idx] ?? -1);
       });
 
@@ -373,15 +373,15 @@ describe('Branded Types', () => {
       $('O(n log n)', nestedQuad);
     });
 
-    it('should compose function-call costs incrementally with $fromCosted + $andThen', () => {
+    it('should compose function-call costs incrementally with $from + $andThen', () => {
       const lookup: CostFn<'log', [readonly number[], number], number> =
         $logCostFn((values: readonly number[], target: number) => values.indexOf(target));
       const project: CostFn<'linear', [number], string> =
         $linearCostFn((index: number) => `index:${index}`);
 
       const incrementalPlan = $checked(() => $pipe(
-        $fromCosted(lookup([10, 20, 30], 20)),
-        $andThen((index: number) => $fromCosted(project(index))),
+        $from(lookup([10, 20, 30], 20)),
+        $andThen((index: number) => $from(project(index))),
       ));
 
       expect($('O(n)', incrementalPlan)).toBe('index:1');

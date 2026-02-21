@@ -19,7 +19,7 @@ import {
   $,
   $checked,
   $cost,
-  $fromCosted,
+  $from,
   $pipe,
   $andThen,
   $map,
@@ -423,7 +423,7 @@ export function lineIndexInsert(
     findLineAtPosition(state.root, position) ?? $('O(log n)', $cost<LineLocation | null>(null));
 
   return $('O(n)', $checked(() => $pipe(
-    $fromCosted(location),
+    $from(location),
     $map((resolvedLocation) => {
       if (resolvedLocation === null) {
         // Position is at or past end - append to last line or create new
@@ -859,7 +859,7 @@ export function lineIndexDelete(
     findLineAtPosition(state.root, start) ?? $('O(log n)', $cost<LineLocation | null>(null));
 
   return $('O(n log n)', $checked(() => $pipe(
-    $fromCosted(startLocation),
+    $from(startLocation),
     $map((resolvedLocation) => {
       if (resolvedLocation === null) return state;
       // Merge lines and remove deleted lines
@@ -1206,9 +1206,9 @@ export function getLineRange(
   if (node === null) return null;
 
   return $('O(log n)', $checked(() => $pipe(
-    $fromCosted(node),
+    $from(node),
     $andThen((resolvedNode) => $pipe(
-      $fromCosted(getLineStartOffset(state.root, lineNumber)),
+      $from(getLineStartOffset(state.root, lineNumber)),
       $map((start) => ({ start: byteOffset(start), length: toByteLengthBrand(resolvedNode.lineLength) })),
     )),
   )));
@@ -1349,7 +1349,7 @@ export function lineIndexInsertLazy(
     findLineAtPosition(state.root, position) ?? $('O(log n)', $cost<LineLocation | null>(null));
 
   return $('O(n)', $checked(() => $pipe(
-    $fromCosted(location),
+    $from(location),
     $map((resolvedLocation) => {
       if (resolvedLocation === null) {
         // Position at or past end - use eager approach for simplicity
@@ -1473,7 +1473,7 @@ export function lineIndexDeleteLazy(
     findLineAtPosition(state.root, start) ?? $('O(log n)', $cost<LineLocation | null>(null));
 
   return $('O(n log n)', $checked(() => $pipe(
-    $fromCosted(startLocation),
+    $from(startLocation),
     $map((resolvedLocation) => {
       if (resolvedLocation === null) return state;
       // Delete lines and mark remaining as dirty
@@ -1604,9 +1604,9 @@ export function getLineRangePrecise(
   // Eager state guarantees clean offsets; this remains O(log n).
   if (state.dirtyRanges.length === 0) {
     return $('O(log n)', $checked(() => $pipe(
-      $fromCosted(node),
+      $from(node),
       $andThen((resolvedNode) => $pipe(
-        $fromCosted(getLineStartOffset(state.root, lineNumber)),
+        $from(getLineStartOffset(state.root, lineNumber)),
         $map((start) => ({ start: byteOffset(start), length: toByteLengthBrand(resolvedNode.lineLength) })),
       )),
     )));
@@ -1614,11 +1614,11 @@ export function getLineRangePrecise(
 
   // Lazy/union states may require dirty-range scanning (O(dirtyRanges)).
   return $('O(n)', $checked(() => $pipe(
-    $fromCosted(node),
+    $from(node),
     $andThen((resolvedNode) => $pipe(
-      $fromCosted(getLineStartOffset(state.root, lineNumber)),
+      $from(getLineStartOffset(state.root, lineNumber)),
       $andThen((start) => $pipe(
-        $fromCosted(getOffsetDeltaForLine(state.dirtyRanges, lineNumber)),
+        $from(getOffsetDeltaForLine(state.dirtyRanges, lineNumber)),
         $map((delta) => ({ start: byteOffset(start + delta), length: toByteLengthBrand(resolvedNode.lineLength) })),
       )),
     )),

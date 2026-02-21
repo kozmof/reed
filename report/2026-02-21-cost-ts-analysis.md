@@ -65,7 +65,7 @@ CheckedPlan<C, T>         { [checkedPlanTag]: true, run: () => Ctx<C,T> }
 | Function | Role | Cost propagation |
 |---|---|---|
 | `$cost` | Seed | `C_CONST` |
-| `$fromCosted` | Lift Costed → Ctx | Preserves via `CostOfLabel` |
+| `$from` | Lift Costed → Ctx | Preserves via `CostOfLabel` |
 | `$checked` | Wrap plan for `$` validation | Wraps run() |
 | `$pipe` | Generic pipeline | Pass-through |
 | `$andThen` | Monadic bind | `Seq<C1, C2>` |
@@ -78,7 +78,7 @@ CheckedPlan<C, T>         { [checkedPlanTag]: true, run: () => Ctx<C,T> }
 | `$forEachN` | O(n·body) side-effect loop | `Seq<C, Nest<C_LIN, BodyC>>` |
 | `$mapN` | O(n·body) element-wise map | `Seq<C, Nest<C_LIN, BodyC>>` |
 
-**Bridge**: The `$` function accepts both a `CheckedPlan` and a raw `Ctx`. It dispatches at runtime via `checkedPlanTag in boundary`. Function-annotated values (`CostFn`) enter the pipeline via `$fromCosted`.
+**Bridge**: The `$` function accepts both a `CheckedPlan` and a raw `Ctx`. It dispatches at runtime via `checkedPlanTag in boundary`. Function-annotated values (`CostFn`) enter the pipeline via `$from`.
 
 ---
 
@@ -98,7 +98,7 @@ function lookup(...): LogCost<LineLocation> | null {
 }
 ```
 
-`src/types/branded.test.ts` is comprehensive — it covers widening, `@ts-expect-error` regression tests, `$forEachN` nesting, and `$fromCosted` + `$andThen` incremental composition.
+`src/types/branded.test.ts` is comprehensive — it covers widening, `@ts-expect-error` regression tests, `$forEachN` nesting, and `$from` + `$andThen` incremental composition.
 
 ---
 
@@ -193,9 +193,9 @@ The redundant Costed-value combinators (`$mapCost`, `$chainCost`, `$zipCost`, `$
 
 | Removed | Replacement |
 |---|---|
-| `$mapCost(v, f)` | `$('O(...)', $pipe($fromCosted(v), $map(f)))` |
-| `$chainCost(v, f)` | `$('O(...)', $pipe($fromCosted(v), $andThen(x => $fromCosted(f(x)))))` |
-| `$zipCost(a, b, f)` | `$('O(...)', $zipCtx($fromCosted(a), $fromCosted(b), f))` |
+| `$mapCost(v, f)` | `$('O(...)', $pipe($from(v), $map(f)))` |
+| `$chainCost(v, f)` | `$('O(...)', $pipe($from(v), $andThen(x => $from(f(x)))))` |
+| `$zipCost(a, b, f)` | `$('O(...)', $zipCtx($from(a), $from(b), f))` |
 | `$composeCostFn(g, h)` | `$pipe` / `$andThen` at call site |
 
 `annotateCostFn` simplified to a direct cast (no wrapping arrow function). `$constCostFn` … `$quadCostFn` are kept as the function-level equivalent of `$`. `JoinCostLevel<A,B>` retained as a useful type utility.

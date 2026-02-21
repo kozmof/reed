@@ -17,7 +17,7 @@ import {
   $,
   $checked,
   $cost,
-  $fromCosted,
+  $from,
   $pipe,
   $andThen,
   $map,
@@ -354,10 +354,10 @@ export function pieceTableInsert(
     findPieceAtPosition(state.root, position) ?? $('O(log n)', $cost<PieceLocation | null>(null));
 
   return $('O(n)', $checked(() => $pipe(
-    $fromCosted(location),
+    $from(location),
     $andThen((resolvedLocation) => {
       if (resolvedLocation === null) {
-        return $fromCosted(rbInsertPiece(
+        return $from(rbInsertPiece(
           state.root,
           state.totalLength,
           'add',
@@ -366,7 +366,7 @@ export function pieceTableInsert(
         ));
       }
       if (resolvedLocation.offsetInPiece === 0) {
-        return $fromCosted(rbInsertPiece(
+        return $from(rbInsertPiece(
           state.root,
           resolvedLocation.pieceStartOffset,
           'add',
@@ -375,7 +375,7 @@ export function pieceTableInsert(
         ));
       }
       if (resolvedLocation.offsetInPiece === resolvedLocation.node.length) {
-        return $fromCosted(rbInsertPiece(
+        return $from(rbInsertPiece(
           state.root,
           resolvedLocation.pieceStartOffset + resolvedLocation.node.length,
           'add',
@@ -384,7 +384,7 @@ export function pieceTableInsert(
         ));
       }
       // Split path performs O(log n) insertions as well.
-      return $fromCosted($('O(log n)', $cost(insertWithSplit(
+      return $from($('O(log n)', $cost(insertWithSplit(
         resolvedLocation,
         'add',
         byteOffset(newAddStart),
@@ -798,7 +798,7 @@ export function getValue(state: PieceTableState): LinearCost<string> {
   if (state.root === null) return $('O(n)', $cost(''));
 
   return $('O(n)', $checked(() => $pipe(
-    $fromCosted(collectPieces(state.root)),
+    $from(collectPieces(state.root)),
     $map((pieces) => {
       // Pre-calculate total length for efficient concatenation
       let totalBytes = 0;
@@ -907,10 +907,10 @@ export function getLineLinearScan(state: PieceTableState, lineNumber: number): L
 
   // Find line start and end offsets by scanning for newlines
   return $('O(n)', $checked(() => $pipe(
-    $fromCosted(findLineOffsets(state, lineNumber)),
+    $from(findLineOffsets(state, lineNumber)),
     $andThen((lineOffsets) => {
-      if (lineOffsets === null) return $fromCosted($('O(n)', $cost('')));
-      return $fromCosted(getText(state, lineOffsets.start, lineOffsets.end));
+      if (lineOffsets === null) return $from($('O(n)', $cost('')));
+      return $from(getText(state, lineOffsets.start, lineOffsets.end));
     }),
   )));
 }
@@ -926,7 +926,7 @@ function findLineOffsets(
   if (state.root === null) return $('O(n)', $cost(null));
 
   return $('O(n)', $checked(() => $pipe(
-    $fromCosted(collectPieces(state.root)),
+    $from(collectPieces(state.root)),
     $map((pieces) => {
       let currentLine = 0;
       let lineStartOffset = 0;
@@ -1009,17 +1009,17 @@ export function compactAddBuffer(
   threshold: number = 0.5
 ): LinearCost<PieceTableState> {
   return $('O(n)', $checked(() => $pipe(
-    $fromCosted(getBufferStats(state)),
+    $from(getBufferStats(state)),
     $andThen((stats) => {
       // Don't compact if waste is below threshold
       if (stats.wasteRatio < threshold) {
-        return $fromCosted($('O(n)', $cost(state)));
+        return $from($('O(n)', $cost(state)));
       }
 
       // Don't compact if there's nothing to compact
       if (stats.addBufferUsed === 0) {
         // No add buffer content - reset to empty
-        return $fromCosted($('O(n)', $cost(Object.freeze({
+        return $from($('O(n)', $cost(Object.freeze({
           root: state.root,
           originalBuffer: state.originalBuffer,
           addBuffer: GrowableBuffer.empty(1024),
@@ -1028,11 +1028,11 @@ export function compactAddBuffer(
       }
 
       if (state.root === null) {
-        return $fromCosted($('O(n)', $cost(state)));
+        return $from($('O(n)', $cost(state)));
       }
 
       return $pipe(
-        $fromCosted(collectPieces(state.root)),
+        $from(collectPieces(state.root)),
         $map((pieces) => {
           // Single pass: build offset map and copy live data simultaneously
           const offsetMap = new Map<number, number>();

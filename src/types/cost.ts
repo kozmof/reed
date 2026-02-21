@@ -280,7 +280,7 @@ export const $cost = <T>(value: T): Ctx<C_CONST, T> =>
 /**
  * Lift a branded value into a context so it can participate in `$pipe` plans.
  */
-export const $fromCosted = <L extends CostLevel, T>(
+export const $from = <L extends CostLevel, T>(
   value: Costed<L, T>
 ): Ctx<CostOfLabel<L>, T> =>
   ({ value: value as unknown as T } as Ctx<CostOfLabel<L>, T>);
@@ -369,7 +369,7 @@ export const $linearScan =
 /**
  * Combine two context values into one.
  * The result cost is the dominant cost of both inputs.
- * Use with `$fromCosted` to zip branded values: `$zipCtx($fromCosted(a), $fromCosted(b), f)`.
+ * Use with `$from` to zip branded values: `$zipCtx($from(a), $from(b), f)`.
  */
 export const $zipCtx = <C1 extends Cost, A, C2 extends Cost, B, U>(
   left: Ctx<C1, A>,
