@@ -32,7 +32,7 @@ import {
   $mapCost,
   $zipCost,
   $checked,
-  $start,
+  $cost,
   $pipe,
   $map,
   $binarySearch,
@@ -186,23 +186,23 @@ describe('Branded Types', () => {
   describe('cost boundaries', () => {
     it('should reject callback boundary mode', () => {
       // @ts-expect-error callback mode is disabled; use $checked(ctx) or ctx directly
-      $('O(log n)', () => $start(1));
+      $('O(log n)', () => $cost(1));
     });
 
     it('should unwrap const context value', () => {
-      const result = $('O(1)', $start(7));
+      const result = $('O(1)', $cost(7));
       expect(result).toBe(7);
     });
 
     it('should keep legacy labels compatible', () => {
-      const legacy = $('const', $start(3));
-      const bigO = $('O(1)', $start(3));
+      const legacy = $('const', $cost(3));
+      const bigO = $('O(1)', $cost(3));
       expect(legacy).toBe(bigO);
     });
 
     it('should validate $checked log plan', () => {
       const result = $('O(log n)', $checked(() => $pipe(
-        $start([1, 2, 3]),
+        $cost([1, 2, 3]),
         $binarySearch(2),
       )));
       expect(result).toBe(1);
@@ -210,7 +210,7 @@ describe('Branded Types', () => {
 
     it('should validate linear context', () => {
       const linearCtx = $pipe(
-        $start([1, 2, 3]),
+        $cost([1, 2, 3]),
         $linearScan((x: number) => x === 2),
       );
       const result = $('O(n)', linearCtx);
@@ -222,7 +222,7 @@ describe('Branded Types', () => {
       const result = $('O(log n)', $checked(() => {
         calls += 1;
         return $pipe(
-          $start([1, 2, 3]),
+          $cost([1, 2, 3]),
           $binarySearch(2),
         );
       }));
@@ -231,9 +231,9 @@ describe('Branded Types', () => {
     });
 
     it('should support compact $ boundary helper', () => {
-      const c = $('O(1)', $start(1));
-      const l = $('O(log n)', $pipe($start([1, 2, 3]), $binarySearch(2)));
-      const n = $('O(n)', $pipe($start([1, 2, 3]), $linearScan((x: number) => x === 3)));
+      const c = $('O(1)', $cost(1));
+      const l = $('O(log n)', $pipe($cost([1, 2, 3]), $binarySearch(2)));
+      const n = $('O(n)', $pipe($cost([1, 2, 3]), $linearScan((x: number) => x === 3)));
       expect(c + l + (n ?? 0)).toBe(5);
     });
   });
@@ -247,7 +247,7 @@ describe('Branded Types', () => {
 
     it('should compose functions and preserve dominant cost', () => {
       const first: CostFn<'const', [number], number> = $constCostFn((value: number) => value + 1);
-      const second = (value: number) => $('O(n)', $start(value * 2));
+      const second = (value: number) => $('O(n)', $cost(value * 2));
 
       const composed: CostFn<'linear', [number], number> = $composeCostFn(first, second);
       expect(composed(5)).toBe(12);
@@ -270,8 +270,8 @@ describe('Branded Types', () => {
 
     it('should keep $mapCost and $chainCost consistent with dominant cost', () => {
       const chained = $chainCost(
-        $('O(log n)', $start(10)),
-        (value) => $('O(n)', $start(value * 2))
+        $('O(log n)', $cost(10)),
+        (value) => $('O(n)', $cost(value * 2))
       );
       const mapped = $mapCost(chained, (value) => value + 1);
 
@@ -283,8 +283,8 @@ describe('Branded Types', () => {
 
     it('should combine two costed values using dominant cost', () => {
       const combined = $zipCost(
-        $('O(log n)', $start(10)),
-        $('O(n)', $start(5)),
+        $('O(log n)', $cost(10)),
+        $('O(n)', $cost(5)),
         (left, right) => left + right
       );
 
@@ -298,7 +298,7 @@ describe('Branded Types', () => {
   describe('cost context pipeline', () => {
     it('should validate $checked plan boundaries', () => {
       const checkedLogPlan = $checked(() => $pipe(
-        $start([1, 2, 3]),
+        $cost([1, 2, 3]),
         $binarySearch(2),
       ));
 
@@ -309,7 +309,7 @@ describe('Branded Types', () => {
 
     it('should model sequential composition as dominant cost', () => {
       const seqLog = $pipe(
-        $start([1, 2, 3]),
+        $cost([1, 2, 3]),
         $binarySearch(2),
         $map((index: number) => index + 10),
       );
@@ -321,10 +321,10 @@ describe('Branded Types', () => {
 
     it('should infer nlogn for linear nesting with log body', () => {
       const nestedNlogn = $pipe(
-        $start([1, 2, 3, 4]),
+        $cost([1, 2, 3, 4]),
         $forEachN((x: number) =>
           $pipe(
-            $start([1, 2, 3, 4, 5]),
+            $cost([1, 2, 3, 4, 5]),
             $binarySearch(x),
           )
         ),
@@ -338,10 +338,10 @@ describe('Branded Types', () => {
 
     it('should infer quad for linear nesting with linear body', () => {
       const nestedQuad = $pipe(
-        $start([1, 2, 3, 4]),
+        $cost([1, 2, 3, 4]),
         $forEachN((x: number) =>
           $pipe(
-            $start([1, 2, 3, 4, 5]),
+            $cost([1, 2, 3, 4, 5]),
             $linearScan((y: number) => y === x),
           )
         ),

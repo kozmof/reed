@@ -5,7 +5,7 @@
 
 import type { DocumentState, SelectionRange, CharSelectionRange } from '../../types/state.ts';
 import type { ByteOffset, ConstCost, CostFn, LinearCost } from '../../types/branded.ts';
-import { $, $start, byteOffset, charOffset, addByteOffset, $mapCost, $zipCost } from '../../types/branded.ts';
+import { $, $cost, byteOffset, charOffset, addByteOffset, $mapCost, $zipCost } from '../../types/branded.ts';
 import { findLineAtPosition, getCharStartOffset, findLineAtCharPosition, getLineRangePrecise, getLineCountFromIndex } from '../core/line-index.ts';
 import { getText, charToByteOffset } from '../core/piece-table.ts';
 import { textEncoder } from '../core/encoding.ts';
@@ -90,7 +90,7 @@ export function getVisibleLineRange(
   const startLine = Math.max(0, firstVisibleLine - overscan);
   const endLine = Math.min(totalLines - 1, lastVisibleLine + overscan);
 
-  return $('O(1)', $start({ startLine, endLine }));
+  return $('O(1)', $cost({ startLine, endLine }));
 }
 
 /**
@@ -155,7 +155,7 @@ export function getVisibleLines(
     }
   }
 
-  return $('O(n)', $start(Object.freeze({
+  return $('O(n)', $cost(Object.freeze({
     lines: Object.freeze(lines),
     firstLine,
     lastLine,
@@ -173,13 +173,13 @@ export function getVisibleLine(
   const totalLines = getLineCountFromIndex(state.lineIndex);
 
   if (lineNumber < 0 || lineNumber >= totalLines) {
-    return $('O(n)', $start(null));
+    return $('O(n)', $cost(null));
   }
 
   // Use getLineRangePrecise to handle dirty line indices correctly
   const range = getLineRangePrecise(state.lineIndex, lineNumber);
   if (!range) {
-    return $('O(n)', $start(null));
+    return $('O(n)', $cost(null));
   }
 
   const startOffset = range.start;
@@ -225,16 +225,16 @@ export function estimateLineHeight(
   config: LineHeightConfig
 ): ConstCost<number> {
   if (!config.softWrap) {
-    return $('O(1)', $start(config.baseLineHeight));
+    return $('O(1)', $cost(config.baseLineHeight));
   }
 
   const charsPerLine = Math.floor(config.viewportWidth / config.charWidth);
   if (charsPerLine <= 0) {
-    return $('O(1)', $start(config.baseLineHeight));
+    return $('O(1)', $cost(config.baseLineHeight));
   }
 
   const wrappedLines = Math.ceil(line.content.length / charsPerLine) || 1;
-  return $('O(1)', $start(wrappedLines * config.baseLineHeight));
+  return $('O(1)', $cost(wrappedLines * config.baseLineHeight));
 }
 
 /**
@@ -248,7 +248,7 @@ export function estimateTotalHeight(
 
   if (!config.softWrap) {
     // Fixed height mode: simple multiplication
-    return $('O(n)', $start(totalLines * config.baseLineHeight));
+    return $('O(n)', $cost(totalLines * config.baseLineHeight));
   }
 
   // Variable height mode: we need to estimate
@@ -264,7 +264,7 @@ export function estimateTotalHeight(
         totalHeight += estimateLineHeight(line, config);
       }
     }
-    return $('O(n)', $start(totalHeight));
+    return $('O(n)', $cost(totalHeight));
   }
 
   // Large document: sample and extrapolate
@@ -281,7 +281,7 @@ export function estimateTotalHeight(
   const sampledLines = Math.ceil(totalLines / step);
   const avgLineHeight = sampleHeight / sampledLines;
 
-  return $('O(n)', $start(Math.ceil(totalLines * avgLineHeight)));
+  return $('O(n)', $cost(Math.ceil(totalLines * avgLineHeight)));
 }
 
 // =============================================================================
@@ -325,7 +325,7 @@ export function positionToLineColumn(
     }
   }
 
-  return $('O(n)', $start(null));
+  return $('O(n)', $cost(null));
 }
 
 /**
@@ -339,7 +339,7 @@ export function lineColumnToPosition(
   // Use getLineRangePrecise to handle dirty line indices correctly
   const range = getLineRangePrecise(state.lineIndex, line);
   if (!range) {
-    return $('O(n)', $start(null));
+    return $('O(n)', $cost(null));
   }
 
   const startOffset = range.start;
@@ -370,7 +370,7 @@ function byteOffsetToCharOffset(
   position: ByteOffset
 ): LinearCost<number> {
   const posNum = position as number;
-  if (posNum <= 0) return $('O(n)', $start(0));
+  if (posNum <= 0) return $('O(n)', $cost(0));
 
   const location = findLineAtPosition(state.lineIndex.root, position);
   if (location === null) {
@@ -421,19 +421,19 @@ function charOffsetToByteOffset(
   charPos: number
 ): LinearCost<ByteOffset> {
   if (charPos <= 0) {
-    return $('O(n)', $start(byteOffset(0)));
+    return $('O(n)', $cost(byteOffset(0)));
   }
 
   const location = findLineAtCharPosition(state.lineIndex.root, charPos);
   if (location === null) {
     // charPos is at or past end of document
-    return $('O(n)', $start(byteOffset(state.pieceTable.totalLength)));
+    return $('O(n)', $cost(byteOffset(state.pieceTable.totalLength)));
   }
 
   // Get the byte range of the target line
   const range = getLineRangePrecise(state.lineIndex, location.lineNumber);
   if (range === null) {
-    return $('O(n)', $start(byteOffset(state.pieceTable.totalLength)));
+    return $('O(n)', $cost(byteOffset(state.pieceTable.totalLength)));
   }
 
   // Read only this line's text and find the byte offset of the char within it

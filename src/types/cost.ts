@@ -4,7 +4,7 @@
  * Usage policy:
  * 1. Prefer `$(level, $checked(() => plan))` or `$(level, planCtx)` as the
  *    primary API for compile-time checked boundaries.
- * 2. Start plans from `$start(value)` and compose with pipeline combinators.
+ * 2. Start plans from `$cost(value)` and compose with pipeline combinators.
  * 3. Keep internal arithmetic/data as plain types and apply branding only
  *    at explicit boundaries (or via `CostFn` wrappers).
  * 4. Avoid direct cast helpers in store/application code.
@@ -327,7 +327,7 @@ export function $checked<C extends Cost, T>(run: () => Ctx<C, T>): CheckedPlan<C
 /**
  * Start a cost-typed pipeline with O(1) seed cost.
  */
-export const $start = <T>(value: T): Ctx<C_CONST, T> =>
+export const $cost = <T>(value: T): Ctx<C_CONST, T> =>
   ({ value } as Ctx<C_CONST, T>);
 
 export function $pipe<A>(a: A): A;

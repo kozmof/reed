@@ -314,7 +314,7 @@ export {
   $mapCost,
   $chainCost,
   $zipCost,
-  $start,
+  $cost,
   $pipe,
   $map,
   $binarySearch,
