@@ -27,15 +27,11 @@ import {
 } from './branded.ts';
 import {
   $,
-  $constCostFn,
   $logCostFn,
   $linearCostFn,
   $nlognCostFn,
   $quadCostFn,
-  $composeCostFn,
-  $chainCost,
-  $mapCost,
-  $zipCost,
+  $zipCtx,
   $checked,
   $cost,
   $pipe,
@@ -249,12 +245,20 @@ describe('Branded Types', () => {
       expect(result).toBe(42);
     });
 
-    it('should compose functions and preserve dominant cost', () => {
-      const first: CostFn<'const', [number], number> = $constCostFn((value: number) => value + 1);
-      const second = (value: number) => $('O(n)', $cost(value * 2));
+    it('should compose functions via $pipe/$andThen and use the dominant cost', () => {
+      const fetch = $logCostFn((arr: readonly number[], x: number) => arr.indexOf(x));
+      const double = $linearCostFn((n: number) => n * 2);
 
-      const composed: CostFn<'linear', [number], number> = $composeCostFn(first, second);
-      expect(composed(5)).toBe(12);
+      const plan = $checked(() => $pipe(
+        $fromCosted(fetch([10, 20, 30], 20)),           // log: indexOf = 1
+        $andThen((idx: number) => $fromCosted(double(idx))), // linear: 1 * 2 = 2
+        $map((n: number) => n + 1),                      // linear: 2 + 1 = 3
+      ));
+
+      const linearResult: LinearCost<number> = $('O(n)', plan);
+      expect(linearResult).toBe(3);
+      // @ts-expect-error linear is not <= log
+      const _logResult: LogCost<number> = $('O(n)', plan);
     });
 
     it('should support direct linear function annotation', () => {
@@ -272,30 +276,43 @@ describe('Branded Types', () => {
       expect(quad(4)).toBe(16);
     });
 
-    it('should keep $mapCost and $chainCost consistent with dominant cost', () => {
-      const chained = $chainCost(
-        $('O(log n)', $cost(10)),
-        (value) => $('O(n)', $cost(value * 2))
-      );
-      const mapped = $mapCost(chained, (value) => value + 1);
+    it('should preserve dominant cost when sequencing log then linear via $andThen', () => {
+      const fetch = $logCostFn((arr: readonly number[], x: number) => arr.indexOf(x));
+      const double = $linearCostFn((n: number) => n * 2);
 
-      const linearResult: LinearCost<number> = mapped;
-      expect(linearResult).toBe(21);
+      const plan = $checked(() => $pipe(
+        $fromCosted(fetch([10, 20, 30], 20)),                // log: indexOf = 1
+        $andThen((idx: number) => $fromCosted(double(idx))), // linear: 1 * 2 = 2
+        $map((n: number) => n + 1),                          // linear: 2 + 1 = 3
+      ));
+
+      const linearResult: LinearCost<number> = $('O(n)', plan);
+      expect(linearResult).toBe(3);
       // @ts-expect-error linear is not <= log
-      const _logResult: LogCost<number> = mapped;
+      const _logResult: LogCost<number> = $('O(n)', plan);
     });
 
-    it('should combine two costed values using dominant cost', () => {
-      const combined = $zipCost(
-        $('O(log n)', $cost(10)),
-        $('O(n)', $cost(5)),
-        (left, right) => left + right
+    it('should combine two context values using $zipCtx with dominant cost', () => {
+      const fetchIndex = $logCostFn(
+        (arr: readonly number[], x: number) => arr.indexOf(x)
+      );
+      const findAbove = $linearCostFn(
+        (arr: readonly number[], threshold: number) => arr.filter(v => v > threshold)
       );
 
-      const linearResult: LinearCost<number> = combined;
-      expect(linearResult).toBe(15);
+      // left: O(log n), value = indexOf(3) = 2
+      // right: O(n), value = [3, 4, 5]
+      // dominant cost: O(n); pick element at found index → [3,4,5][2] = 5
+      const plan = $checked(() => {
+        const left = $fromCosted(fetchIndex([1, 2, 3, 4, 5], 3));
+        const right = $fromCosted(findAbove([1, 2, 3, 4, 5], 2));
+        return $zipCtx(left, right, (idx, arr) => arr[idx] ?? -1);
+      });
+
+      const linearResult: LinearCost<number> = $('O(n)', plan);
+      expect(linearResult).toBe(5);
       // @ts-expect-error linear is not <= log
-      const _logResult: LogCost<number> = combined;
+      const _logResult: LogCost<number> = $('O(n)', plan);
     });
   });
 

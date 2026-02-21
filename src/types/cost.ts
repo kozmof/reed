@@ -185,12 +185,13 @@ export function $(
 
 /**
  * Internal helper for declaring function cost contracts.
+ * The level parameter is unused at runtime — branding is compile-time only.
  */
 function annotateCostFn<L extends CostLevel, Args extends readonly unknown[], R>(
-  level: L,
+  _level: L,
   fn: (...args: Args) => R
 ): CostFn<L, Args, R> {
-  return ((...args: Args) => castCost(level, fn(...args))) as CostFn<L, Args, R>;
+  return fn as unknown as CostFn<L, Args, R>;
 }
 
 /**
@@ -238,57 +239,6 @@ export function $quadCostFn<Args extends readonly unknown[], R>(
   return annotateCostFn('quad', fn);
 }
 
-/**
- * Compose cost-annotated functions and compute the dominant cost level.
- */
-export function $composeCostFn<
-  L1 extends CostLevel,
-  L2 extends CostLevel,
-  Args extends readonly unknown[],
-  Mid,
-  Out
->(
-  first: CostFn<L1, Args, Mid>,
-  second: (value: Mid) => Costed<L2, Out>
-): CostFn<JoinCostLevel<L1, L2>, Args, Out> {
-  return ((...args: Args) =>
-    second(first(...args)) as unknown as Costed<JoinCostLevel<L1, L2>, Out>
-  ) as CostFn<JoinCostLevel<L1, L2>, Args, Out>;
-}
-
-/**
- * Apply a pure (O(1)) transform to a cost-branded value.
- * The cost level is preserved — a pure function doesn't add algorithmic cost.
- */
-export function $mapCost<L extends CostLevel, T, U>(
-  value: Costed<L, T>,
-  f: (value: T) => U
-): Costed<L, U> {
-  return f(value as unknown as T) as Costed<L, U>;
-}
-
-/**
- * Compose two cost-branded operations.
- * The result cost is the dominant level of both operations.
- */
-export function $chainCost<L1 extends CostLevel, T, L2 extends CostLevel, U>(
-  value: Costed<L1, T>,
-  f: (value: T) => Costed<L2, U>
-): Costed<JoinCostLevel<L1, L2>, U> {
-  return f(value as unknown as T) as Costed<JoinCostLevel<L1, L2>, U>;
-}
-
-/**
- * Combine two cost-branded values.
- * The result cost is the dominant level of both inputs.
- */
-export function $zipCost<L1 extends CostLevel, A, L2 extends CostLevel, B, U>(
-  left: Costed<L1, A>,
-  right: Costed<L2, B>,
-  f: (left: A, right: B) => U
-): Costed<JoinCostLevel<L1, L2>, U> {
-  return f(left as unknown as A, right as unknown as B) as Costed<JoinCostLevel<L1, L2>, U>;
-}
 
 // =============================================================================
 // Cost Context Pipeline Combinators
@@ -415,6 +365,18 @@ export const $linearScan =
   <E>(pred: (e: E) => boolean) =>
   <C extends Cost>(c: Ctx<C, readonly E[]>): Ctx<Seq<C, C_LIN>, E | undefined> =>
     ({ value: c.value.find(pred) } as Ctx<Seq<C, C_LIN>, E | undefined>);
+
+/**
+ * Combine two context values into one.
+ * The result cost is the dominant cost of both inputs.
+ * Use with `$fromCosted` to zip branded values: `$zipCtx($fromCosted(a), $fromCosted(b), f)`.
+ */
+export const $zipCtx = <C1 extends Cost, A, C2 extends Cost, B, U>(
+  left: Ctx<C1, A>,
+  right: Ctx<C2, B>,
+  f: (a: A, b: B) => U
+): Ctx<Seq<C1, C2>, U> =>
+  ({ value: f(left.value, right.value) } as Ctx<Seq<C1, C2>, U>);
 
 /**
  * O(n * body) nested combinator for side effects.

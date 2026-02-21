@@ -129,20 +129,18 @@ export {
   $linearCostFn,
   $nlognCostFn,
   $quadCostFn,
-  $composeCostFn,
-  $mapCost,
-  $chainCost,
-  $zipCost,
   $cost,
   $fromCosted,
   $pipe,
   $andThen,
   $map,
+  $zipCtx,
   $binarySearch,
   $sort,
   $filter,
   $linearScan,
   $forEachN,
+  $mapN,
 } from './types/index.ts';
 
 // =============================================================================

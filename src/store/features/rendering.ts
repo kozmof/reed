@@ -13,8 +13,7 @@ import {
   $pipe,
   $andThen,
   $map,
-  $mapCost,
-  $zipCost,
+  $zipCtx,
   type ConstCost,
   type CostFn,
   type LinearCost,
@@ -442,7 +441,7 @@ function byteOffsetToCharOffset(
   if (location === null) {
     // Fallback: read from start (shouldn't happen with valid positions)
     const text = getText(state.pieceTable, byteOffset(0), position);
-    return $mapCost(text, value => value.length);
+    return $('O(n)', $pipe($fromCosted(text), $map(value => value.length)));
   }
 
   const charStart = getCharStartOffset(state.lineIndex.root, location.lineNumber);
@@ -482,10 +481,10 @@ export function selectionToCharOffsets(
 ): LinearCost<CharSelectionRange> {
   const anchor = byteOffsetToCharOffset(state, range.anchor);
   const head = byteOffsetToCharOffset(state, range.head);
-  return $zipCost(anchor, head, (anchorOffset, headOffset) => Object.freeze({
+  return $('O(n)', $zipCtx($fromCosted(anchor), $fromCosted(head), (anchorOffset, headOffset) => Object.freeze({
     anchor: charOffset(anchorOffset),
     head: charOffset(headOffset),
-  }));
+  })));
 }
 
 /**
@@ -543,8 +542,8 @@ export function charOffsetsToSelection(
 ): LinearCost<SelectionRange> {
   const anchor = charOffsetToByteOffset(state, range.anchor);
   const head = charOffsetToByteOffset(state, range.head);
-  return $zipCost(anchor, head, (anchorOffset, headOffset) => Object.freeze({
+  return $('O(n)', $zipCtx($fromCosted(anchor), $fromCosted(head), (anchorOffset, headOffset) => Object.freeze({
     anchor: anchorOffset,
     head: headOffset,
-  }));
+  })));
 }

@@ -1,7 +1,7 @@
 # Code Analysis: `src/types/cost.ts`
 
 **Date:** 2026-02-21
-**Updated:** 2026-02-21 (P1–P5 resolved)
+**Updated:** 2026-02-21 (P1–P5 resolved; D1 resolved)
 
 ---
 
@@ -12,7 +12,7 @@ The file is cleanly divided into two major sections:
 - **Cost Algebra + Brands** (lines 13–151): Type-level arithmetic (`Nat`, `Cost`, `GteNat`, `GteCost`), brand types (`Costed`, `CostFn`), and value-level combinators (`$mapCost`, `$chainCost`, `$zipCost`).
 - **Cost Context Pipeline** (lines 296–433): `Ctx<C,T>` monad-like pipeline with `$cost`, `$pipe`, `$andThen`, `$map`, `$sort`, `$filter`, `$forEachN`, `$mapN`, etc.
 
-The usage policy in the header is a good architectural guide. The file is the single canonical source for cost types: re-exported only through `src/types/index.ts`. Store files and tests import from `cost.ts` directly for cost items, and from `branded.ts` only for position types.
+The usage policy in the header is a good architectural guide. The file is the single canonical source for cost types, with a single composition model (the Ctx pipeline). Re-exported through `src/types/index.ts` and `src/index.ts`. Store files and tests import from `cost.ts` directly for cost items, and from `branded.ts` only for position types.
 
 ---
 
@@ -52,19 +52,15 @@ CheckedPlan<C, T>         { [checkedPlanTag]: true, run: () => Ctx<C,T> }
 
 ## 3. Relations: Functions
 
-### Track 1 — Branded values
+### Track 1 — Function boundary markers
 
 | Function | Role | Cost propagation |
 |---|---|---|
 | `castCost` | Internal identity cast | N/A |
-| `annotateCostFn` | Wraps fn → CostFn | Declares level |
-| `$constCostFn` ... `$quadCostFn` | Level-specific wrappers | Fixed level |
-| `$composeCostFn` | CostFn → CostFn chain | `JoinCostLevel` (dominant) |
-| `$mapCost` | Pure transform on Costed | Preserves level |
-| `$chainCost` | Bind / flatMap on Costed | `JoinCostLevel` (dominant) |
-| `$zipCost` | Combine two Costed | `JoinCostLevel` (dominant) |
+| `annotateCostFn` | Direct cast fn → CostFn | Declares level |
+| `$constCostFn` ... `$quadCostFn` | Function-level `$` equivalent | Fixed level |
 
-### Track 2 — Ctx pipeline
+### Track 2 — Ctx pipeline (primary API)
 
 | Function | Role | Cost propagation |
 |---|---|---|
@@ -74,6 +70,7 @@ CheckedPlan<C, T>         { [checkedPlanTag]: true, run: () => Ctx<C,T> }
 | `$pipe` | Generic pipeline | Pass-through |
 | `$andThen` | Monadic bind | `Seq<C1, C2>` |
 | `$map` | O(1) transform | `C` (preserved) |
+| `$zipCtx` | Combine two Ctx values | `Seq<C1, C2>` (dominant) |
 | `$binarySearch` | O(log n) lookup (sorted input) | `Seq<C, C_LOG>` |
 | `$sort` | O(n log n) sort | `Seq<C, C_NLOGN>` |
 | `$filter` | O(n) filter | `Seq<C, C_LIN>` |
@@ -81,7 +78,7 @@ CheckedPlan<C, T>         { [checkedPlanTag]: true, run: () => Ctx<C,T> }
 | `$forEachN` | O(n·body) side-effect loop | `Seq<C, Nest<C_LIN, BodyC>>` |
 | `$mapN` | O(n·body) element-wise map | `Seq<C, Nest<C_LIN, BodyC>>` |
 
-**Bridge**: The `$` function accepts both tracks. It dispatches at runtime via `checkedPlanTag in boundary`.
+**Bridge**: The `$` function accepts both a `CheckedPlan` and a raw `Ctx`. It dispatches at runtime via `checkedPlanTag in boundary`. Function-annotated values (`CostFn`) enter the pipeline via `$fromCosted`.
 
 ---
 
@@ -190,8 +187,20 @@ All importers have been updated:
 
 ## 6. Improvement Points: Design Overview
 
-### D1 — Two-track API complexity
-The `Costed<L,T>` / `CostFn` track and the `Ctx<C,T>` pipeline track overlap in purpose. The `$fromCosted` bridge helps, but users must understand when to use which. A unified `Ctx`-only API would be simpler.
+### ~~D1 — Two-track API complexity~~ — **Fixed**
+
+The redundant Costed-value combinators (`$mapCost`, `$chainCost`, `$zipCost`, `$composeCostFn`) have been removed. The Ctx pipeline is now the single composition model. The mapping from Track 1 to Track 2:
+
+| Removed | Replacement |
+|---|---|
+| `$mapCost(v, f)` | `$('O(...)', $pipe($fromCosted(v), $map(f)))` |
+| `$chainCost(v, f)` | `$('O(...)', $pipe($fromCosted(v), $andThen(x => $fromCosted(f(x)))))` |
+| `$zipCost(a, b, f)` | `$('O(...)', $zipCtx($fromCosted(a), $fromCosted(b), f))` |
+| `$composeCostFn(g, h)` | `$pipe` / `$andThen` at call site |
+
+`annotateCostFn` simplified to a direct cast (no wrapping arrow function). `$constCostFn` … `$quadCostFn` are kept as the function-level equivalent of `$`. `JoinCostLevel<A,B>` retained as a useful type utility.
+
+Files updated: `cost.ts`, `store/features/rendering.ts`, `types/index.ts`, `src/index.ts`, `types/branded.test.ts`.
 
 ### D2 — No runtime verification mode
 The system is entirely compile-time. There is no opt-in development mode to assert that actual operations stay within declared costs (e.g., via counters or tracing). Incorrect annotations are silent.
@@ -248,7 +257,7 @@ More maintainable than the current if-chain.
 | 2 | `Cost = { p, l }` and `CostOfLabel` | cost.ts lines 51–87 |
 | 3 | `LevelsUpTo<L>` + `Costed<L,T>` widening | cost.ts lines 107–130 |
 | 4 | `$` boundary enforcement via `Leq` constraint | cost.ts lines 163–187 |
-| 5 | `Ctx<C,T>` and `$cost/$pipe/$andThen` | cost.ts lines 304–363 |
+| 5 | `Ctx<C,T>` and `$cost/$pipe/$andThen/$zipCtx` | cost.ts lines 304–420 |
 | 6 | `Seq` vs `Nest` cost propagation | cost.ts lines 98–99, `$forEachN` / `$mapN` |
 | 7 | Full usage in practice | `src/store/core/line-index.ts`, `src/types/branded.test.ts` |
 
