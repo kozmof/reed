@@ -2,9 +2,9 @@
  * Branded algorithmic cost types and combinators.
  *
  * Usage policy:
- * 1. Prefer `$(level, checked(() => plan))` or `$(level, planCtx)` as the
+ * 1. Prefer `$(level, $checked(() => plan))` or `$(level, planCtx)` as the
  *    primary API for compile-time checked boundaries.
- * 2. Start plans from `start(value)` and compose with pipeline combinators.
+ * 2. Start plans from `$start(value)` and compose with pipeline combinators.
  * 3. Keep internal arithmetic/data as plain types and apply branding only
  *    at explicit boundaries (or via `CostFn` wrappers).
  * 4. Avoid direct cast helpers in store/application code.
@@ -155,7 +155,7 @@ function castCost<L extends CostLevel, T>(level: L, value: T): Costed<L, T> {
 
 /**
  * Unified boundary helper.
- * - `$(max, checked(() => ctx))` validates modeled plan cost at compile time.
+ * - `$(max, $checked(() => ctx))` validates modeled plan cost at compile time.
  * - `$(max, ctx)` validates precomputed context cost at compile time.
  * Runtime behavior is identity plus branding: the boundary unwraps context
  * and returns a value branded at the declared upper bound.
@@ -307,7 +307,7 @@ const checkedPlanTag = Symbol('checked-cost-plan');
 
 /**
  * Wrapper for a compile-time checked boundary plan.
- * Use with `$(max, checked(() => plan))`.
+ * Use with `$(max, $checked(() => plan))`.
  */
 export type CheckedPlan<C extends Cost, T> = {
   readonly [checkedPlanTag]: true;
@@ -402,3 +402,26 @@ export const forEachN =
     });
     return ({ value: c.value } as Ctx<Seq<C, Nest<C_LIN, BodyC>>, E[]>);
   };
+
+/**
+ * Dollar-prefixed aliases for readability in cost-typing APIs.
+ * Existing non-prefixed names are preserved for compatibility.
+ */
+export const $checked = checked;
+export const $constCostFn = constCostFn;
+export const $logCostFn = logCostFn;
+export const $linearCostFn = linearCostFn;
+export const $nlognCostFn = nlognCostFn;
+export const $quadCostFn = quadCostFn;
+export const $composeCostFn = composeCostFn;
+export const $mapCost = mapCost;
+export const $chainCost = chainCost;
+export const $zipCost = zipCost;
+export const $start = start;
+export const $pipe = pipe;
+export const $map = map;
+export const $binarySearch = binarySearch;
+export const $sort = sort;
+export const $filter = filter;
+export const $linearScan = linearScan;
+export const $forEachN = forEachN;

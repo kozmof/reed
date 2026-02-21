@@ -3,7 +3,7 @@
  * Maintains line positions for O(log n) line lookups.
  * All operations return new tree structures with structural sharing.
  *
- * Cost typing policy: use `$` boundaries with `start/checked` for explicit
+ * Cost typing policy: use `$` boundaries with `$start/$checked` for explicit
  * compute regions (see `src/types/cost.ts`).
  */
 
@@ -15,7 +15,7 @@ import type {
 } from '../../types/state.ts';
 import type { ByteOffset, ByteLength } from '../../types/branded.ts';
 import type { ReadTextFn } from '../../types/store.ts';
-import { $, start as costStart, byteOffset, byteLength as toByteLengthBrand, type ConstCost, type LinearCost, type LogCost, type NLogNCost } from '../../types/branded.ts';
+import { $, $start as costStart, byteOffset, byteLength as toByteLengthBrand, type ConstCost, type LinearCost, type LogCost, type NLogNCost } from '../../types/branded.ts';
 import { createLineIndexNode, withLineIndexNode, withLineIndexState } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 

@@ -2,7 +2,7 @@
  * Piece Table operations with immutable Red-Black tree.
  * All operations return new tree structures with structural sharing.
  *
- * Cost typing policy: use `$` boundaries with `start/checked` for explicit
+ * Cost typing policy: use `$` boundaries with `$start/$checked` for explicit
  * compute regions (see `src/types/cost.ts`).
  */
 
@@ -12,7 +12,7 @@ import type {
   BufferType,
   BufferReference,
 } from '../../types/state.ts';
-import { $, start as costStart, byteOffset, byteLength, type ByteOffset, type ByteLength, type ConstCost, type LogCost, type LinearCost } from '../../types/branded.ts';
+import { $, $start as costStart, byteOffset, byteLength, type ByteOffset, type ByteLength, type ConstCost, type LogCost, type LinearCost } from '../../types/branded.ts';
 import { createPieceNode, withPieceNode } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 import { textEncoder, textDecoder } from './encoding.ts';
