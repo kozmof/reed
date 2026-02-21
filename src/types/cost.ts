@@ -199,7 +199,7 @@ function annotateCostFn<L extends CostLevel, Args extends readonly unknown[], R>
 /**
  * Annotate a function as O(1) without changing runtime behavior.
  */
-export function constCostFn<Args extends readonly unknown[], R>(
+export function $constCostFn<Args extends readonly unknown[], R>(
   fn: (...args: Args) => R
 ): CostFn<'const', Args, R> {
   return annotateCostFn('const', fn);
@@ -208,7 +208,7 @@ export function constCostFn<Args extends readonly unknown[], R>(
 /**
  * Annotate a function as O(log n) without changing runtime behavior.
  */
-export function logCostFn<Args extends readonly unknown[], R>(
+export function $logCostFn<Args extends readonly unknown[], R>(
   fn: (...args: Args) => R
 ): CostFn<'log', Args, R> {
   return annotateCostFn('log', fn);
@@ -217,7 +217,7 @@ export function logCostFn<Args extends readonly unknown[], R>(
 /**
  * Annotate a function as O(n) without changing runtime behavior.
  */
-export function linearCostFn<Args extends readonly unknown[], R>(
+export function $linearCostFn<Args extends readonly unknown[], R>(
   fn: (...args: Args) => R
 ): CostFn<'linear', Args, R> {
   return annotateCostFn('linear', fn);
@@ -226,7 +226,7 @@ export function linearCostFn<Args extends readonly unknown[], R>(
 /**
  * Annotate a function as O(n log n) without changing runtime behavior.
  */
-export function nlognCostFn<Args extends readonly unknown[], R>(
+export function $nlognCostFn<Args extends readonly unknown[], R>(
   fn: (...args: Args) => R
 ): CostFn<'nlogn', Args, R> {
   return annotateCostFn('nlogn', fn);
@@ -235,7 +235,7 @@ export function nlognCostFn<Args extends readonly unknown[], R>(
 /**
  * Annotate a function as O(n^2) without changing runtime behavior.
  */
-export function quadCostFn<Args extends readonly unknown[], R>(
+export function $quadCostFn<Args extends readonly unknown[], R>(
   fn: (...args: Args) => R
 ): CostFn<'quad', Args, R> {
   return annotateCostFn('quad', fn);
@@ -244,7 +244,7 @@ export function quadCostFn<Args extends readonly unknown[], R>(
 /**
  * Compose cost-annotated functions and compute the dominant cost level.
  */
-export function composeCostFn<
+export function $composeCostFn<
   L1 extends CostLevel,
   L2 extends CostLevel,
   Args extends readonly unknown[],
@@ -263,7 +263,7 @@ export function composeCostFn<
  * Apply a pure (O(1)) transform to a cost-branded value.
  * The cost level is preserved — a pure function doesn't add algorithmic cost.
  */
-export function mapCost<L extends CostLevel, T, U>(
+export function $mapCost<L extends CostLevel, T, U>(
   value: Costed<L, T>,
   f: (value: T) => U
 ): Costed<L, U> {
@@ -274,7 +274,7 @@ export function mapCost<L extends CostLevel, T, U>(
  * Compose two cost-branded operations.
  * The result cost is the dominant level of both operations.
  */
-export function chainCost<L1 extends CostLevel, T, L2 extends CostLevel, U>(
+export function $chainCost<L1 extends CostLevel, T, L2 extends CostLevel, U>(
   value: Costed<L1, T>,
   f: (value: T) => Costed<L2, U>
 ): Costed<JoinCostLevel<L1, L2>, U> {
@@ -285,7 +285,7 @@ export function chainCost<L1 extends CostLevel, T, L2 extends CostLevel, U>(
  * Combine two cost-branded values.
  * The result cost is the dominant level of both inputs.
  */
-export function zipCost<L1 extends CostLevel, A, L2 extends CostLevel, B, U>(
+export function $zipCost<L1 extends CostLevel, A, L2 extends CostLevel, B, U>(
   left: Costed<L1, A>,
   right: Costed<L2, B>,
   f: (left: A, right: B) => U
@@ -317,7 +317,7 @@ export type CheckedPlan<C extends Cost, T> = {
 /**
  * Mark a cost plan to be validated by `$` against an upper bound.
  */
-export function checked<C extends Cost, T>(run: () => Ctx<C, T>): CheckedPlan<C, T> {
+export function $checked<C extends Cost, T>(run: () => Ctx<C, T>): CheckedPlan<C, T> {
   return {
     [checkedPlanTag]: true,
     run,
@@ -327,28 +327,28 @@ export function checked<C extends Cost, T>(run: () => Ctx<C, T>): CheckedPlan<C,
 /**
  * Start a cost-typed pipeline with O(1) seed cost.
  */
-export const start = <T>(value: T): Ctx<C_CONST, T> =>
+export const $start = <T>(value: T): Ctx<C_CONST, T> =>
   ({ value } as Ctx<C_CONST, T>);
 
-export function pipe<A>(a: A): A;
-export function pipe<A, B>(a: A, ab: (a: A) => B): B;
-export function pipe<A, B, C>(a: A, ab: (a: A) => B, bc: (b: B) => C): C;
-export function pipe<A, B, C, D>(a: A, ab: (a: A) => B, bc: (b: B) => C, cd: (c: C) => D): D;
-export function pipe<A, B, C, D, E>(
+export function $pipe<A>(a: A): A;
+export function $pipe<A, B>(a: A, ab: (a: A) => B): B;
+export function $pipe<A, B, C>(a: A, ab: (a: A) => B, bc: (b: B) => C): C;
+export function $pipe<A, B, C, D>(a: A, ab: (a: A) => B, bc: (b: B) => C, cd: (c: C) => D): D;
+export function $pipe<A, B, C, D, E>(
   a: A,
   ab: (a: A) => B,
   bc: (b: B) => C,
   cd: (c: C) => D,
   de: (d: D) => E
 ): E;
-export function pipe(a: unknown, ...fns: Array<(x: any) => any>): unknown {
+export function $pipe(a: unknown, ...fns: Array<(x: any) => any>): unknown {
   return fns.reduce((x, f) => f(x), a);
 }
 
 /**
  * O(1) map over the current context value.
  */
-export const map =
+export const $map =
   <T, U>(f: (t: T) => U) =>
   <C extends Cost>(c: Ctx<C, T>): Ctx<Seq<C, C_CONST>, U> =>
     ({ value: f(c.value) } as Ctx<Seq<C, C_CONST>, U>);
@@ -357,7 +357,7 @@ export const map =
  * O(log n) lookup combinator.
  * Runtime implementation is intentionally simple; typing models declared cost.
  */
-export const binarySearch =
+export const $binarySearch =
   (x: number) =>
   <C extends Cost>(c: Ctx<C, readonly number[]>): Ctx<Seq<C, C_LOG>, number> =>
     ({ value: c.value.indexOf(x) } as Ctx<Seq<C, C_LOG>, number>);
@@ -365,7 +365,7 @@ export const binarySearch =
 /**
  * O(n log n) sorting combinator.
  */
-export const sort =
+export const $sort =
   <E>(compareFn?: (a: E, b: E) => number) =>
   <C extends Cost>(c: Ctx<C, readonly E[]>): Ctx<Seq<C, C_NLOGN>, E[]> => {
     const out = [...c.value];
@@ -377,7 +377,7 @@ export const sort =
 /**
  * O(n) filter combinator.
  */
-export const filter =
+export const $filter =
   <E>(pred: (e: E) => boolean) =>
   <C extends Cost>(c: Ctx<C, readonly E[]>): Ctx<Seq<C, C_LIN>, E[]> =>
     ({ value: c.value.filter(pred) } as Ctx<Seq<C, C_LIN>, E[]>);
@@ -385,7 +385,7 @@ export const filter =
 /**
  * O(n) scan combinator returning first matching element.
  */
-export const linearScan =
+export const $linearScan =
   <E>(pred: (e: E) => boolean) =>
   <C extends Cost>(c: Ctx<C, readonly E[]>): Ctx<Seq<C, C_LIN>, E | undefined> =>
     ({ value: c.value.find(pred) } as Ctx<Seq<C, C_LIN>, E | undefined>);
@@ -394,7 +394,7 @@ export const linearScan =
  * O(n * body) nested combinator.
  * Body is evaluated once per element and contributes multiplicatively.
  */
-export const forEachN =
+export const $forEachN =
   <E, BodyC extends Cost>(body: (e: E) => Ctx<BodyC, unknown>) =>
   <C extends Cost>(c: Ctx<C, readonly E[]>): Ctx<Seq<C, Nest<C_LIN, BodyC>>, E[]> => {
     c.value.forEach((e) => {
@@ -402,26 +402,3 @@ export const forEachN =
     });
     return ({ value: c.value } as Ctx<Seq<C, Nest<C_LIN, BodyC>>, E[]>);
   };
-
-/**
- * Dollar-prefixed aliases for readability in cost-typing APIs.
- * Existing non-prefixed names are preserved for compatibility.
- */
-export const $checked = checked;
-export const $constCostFn = constCostFn;
-export const $logCostFn = logCostFn;
-export const $linearCostFn = linearCostFn;
-export const $nlognCostFn = nlognCostFn;
-export const $quadCostFn = quadCostFn;
-export const $composeCostFn = composeCostFn;
-export const $mapCost = mapCost;
-export const $chainCost = chainCost;
-export const $zipCost = zipCost;
-export const $start = start;
-export const $pipe = pipe;
-export const $map = map;
-export const $binarySearch = binarySearch;
-export const $sort = sort;
-export const $filter = filter;
-export const $linearScan = linearScan;
-export const $forEachN = forEachN;
