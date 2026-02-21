@@ -52,9 +52,20 @@ export type Cost = { p: Nat; l: Nat };
 
 /**
  * Cost labels used throughout public APIs.
+ * - Canonical labels are used for type-level algebra.
+ * - Big-O labels are accepted at `$` boundaries for readability.
  */
 export type CostLabel = 'const' | 'log' | 'linear' | 'nlogn' | 'quad';
 export type CostLevel = CostLabel;
+export type CostBigO = 'O(1)' | 'O(log n)' | 'O(n)' | 'O(n log n)' | 'O(n^2)';
+export type CostInputLabel = CostLabel | CostBigO;
+export type NormalizeCostLabel<L extends CostInputLabel> =
+  L extends 'O(1)' ? 'const' :
+  L extends 'O(log n)' ? 'log' :
+  L extends 'O(n)' ? 'linear' :
+  L extends 'O(n log n)' ? 'nlogn' :
+  L extends 'O(n^2)' ? 'quad' :
+  L;
 
 /**
  * Label -> cost pair mapping.
@@ -149,22 +160,30 @@ function castCost<L extends CostLevel, T>(level: L, value: T): Costed<L, T> {
  * Runtime behavior is identity plus branding: the boundary unwraps context
  * and returns a value branded at the declared upper bound.
  */
-export function $<L extends CostLabel, C extends Cost, T>(
+export function $<L extends CostInputLabel, C extends Cost, T>(
   max: L,
-  plan: CheckedPlan<C, T> & (Leq<C, CostOfLabel<L>> extends true ? unknown : never)
-): Costed<L, T>;
-export function $<L extends CostLabel, C extends Cost, T>(
+  plan: CheckedPlan<C, T> & (Leq<C, CostOfLabel<NormalizeCostLabel<L>>> extends true ? unknown : never)
+): Costed<NormalizeCostLabel<L>, T>;
+export function $<L extends CostInputLabel, C extends Cost, T>(
   max: L,
-  ctx: { readonly _cost: C; readonly value: T } & (Leq<C, CostOfLabel<L>> extends true ? unknown : never)
-): Costed<L, T>;
+  ctx: { readonly _cost: C; readonly value: T } & (Leq<C, CostOfLabel<NormalizeCostLabel<L>>> extends true ? unknown : never)
+): Costed<NormalizeCostLabel<L>, T>;
 export function $(
-  max: CostLevel,
+  max: CostInputLabel,
   boundary: CheckedPlan<Cost, unknown> | { readonly _cost: Cost; readonly value: unknown }
 ): unknown {
+  const level: CostLevel =
+    max === 'O(1)' ? 'const' :
+    max === 'O(log n)' ? 'log' :
+    max === 'O(n)' ? 'linear' :
+    max === 'O(n log n)' ? 'nlogn' :
+    max === 'O(n^2)' ? 'quad' :
+    max;
+
   if (checkedPlanTag in boundary) {
-    return castCost(max, boundary.run().value);
+    return castCost(level, boundary.run().value);
   }
-  return castCost(max, boundary.value);
+  return castCost(level, boundary.value);
 }
 
 /**
@@ -260,6 +279,18 @@ export function chainCost<L1 extends CostLevel, T, L2 extends CostLevel, U>(
   f: (value: T) => Costed<L2, U>
 ): Costed<JoinCostLevel<L1, L2>, U> {
   return f(value as unknown as T) as Costed<JoinCostLevel<L1, L2>, U>;
+}
+
+/**
+ * Combine two cost-branded values.
+ * The result cost is the dominant level of both inputs.
+ */
+export function zipCost<L1 extends CostLevel, A, L2 extends CostLevel, B, U>(
+  left: Costed<L1, A>,
+  right: Costed<L2, B>,
+  f: (left: A, right: B) => U
+): Costed<JoinCostLevel<L1, L2>, U> {
+  return f(left as unknown as A, right as unknown as B) as Costed<JoinCostLevel<L1, L2>, U>;
 }
 
 // =============================================================================

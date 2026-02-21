@@ -1,6 +1,6 @@
 /**
- * Query namespace — O(log n) and O(1) operations.
- * All functions in this namespace use tree-based lookups and never scan the full document.
+ * Query namespace — O(1), O(log n), and bounded linear operations.
+ * Functions here are read-only selectors over immutable document state.
  */
 
 import {
@@ -38,7 +38,7 @@ export const query = {
   findLineAtPosition,
   /** @complexity O(log n) — tree walk; requires eager state */
   getLineRange,
-  /** @complexity O(log n) — tree walk with dirty-range delta correction */
+  /** @complexity O(log n + dirty-range-scan) — precise range with lazy-mode correction */
   getLineRangePrecise,
   /** @complexity O(1) — cached lineCount */
   getLineCount: getLineCountFromIndex,
@@ -46,14 +46,14 @@ export const query = {
   getCharStartOffset,
   /** @complexity O(log n) — tree descent via subtreeCharLength */
   findLineAtCharPosition,
-  /** @complexity O(log n) — line lookup + text extraction */
+  /** @complexity O(log n + line_length) — line lookup + text extraction */
   getLineContent,
-  /** @complexity O(log n) — single line lookup and text extraction */
+  /** @complexity O(log n + line_length) — single line lookup and text extraction */
   getVisibleLine,
   /** @complexity O(k * log n) — k line lookups for visible range */
   getVisibleLines,
-  /** @complexity O(log n) — byte position to line/column */
+  /** @complexity O(log n + line_length) — byte position to line/column */
   positionToLineColumn,
-  /** @complexity O(log n) — line/column to byte position */
+  /** @complexity O(log n + line_length) — line/column to byte position */
   lineColumnToPosition,
 } as const;

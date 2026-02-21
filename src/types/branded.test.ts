@@ -30,6 +30,7 @@ import {
   composeCostFn,
   chainCost,
   mapCost,
+  zipCost,
   checked,
   start,
   pipe,
@@ -185,16 +186,22 @@ describe('Branded Types', () => {
   describe('cost boundaries', () => {
     it('should reject callback boundary mode', () => {
       // @ts-expect-error callback mode is disabled; use checked(ctx) or ctx directly
-      $('log', () => start(1));
+      $('O(log n)', () => start(1));
     });
 
     it('should unwrap const context value', () => {
-      const result = $('const', start(7));
+      const result = $('O(1)', start(7));
       expect(result).toBe(7);
     });
 
+    it('should keep legacy labels compatible', () => {
+      const legacy = $('const', start(3));
+      const bigO = $('O(1)', start(3));
+      expect(legacy).toBe(bigO);
+    });
+
     it('should validate checked log plan', () => {
-      const result = $('log', checked(() => pipe(
+      const result = $('O(log n)', checked(() => pipe(
         start([1, 2, 3]),
         binarySearch(2),
       )));
@@ -206,13 +213,13 @@ describe('Branded Types', () => {
         start([1, 2, 3]),
         linearScan((x: number) => x === 2),
       );
-      const result = $('linear', linearCtx);
+      const result = $('O(n)', linearCtx);
       expect(result).toBe(2);
     });
 
     it('should execute callback exactly once', () => {
       let calls = 0;
-      const result = $('log', checked(() => {
+      const result = $('O(log n)', checked(() => {
         calls += 1;
         return pipe(
           start([1, 2, 3]),
@@ -224,9 +231,9 @@ describe('Branded Types', () => {
     });
 
     it('should support compact $ boundary helper', () => {
-      const c = $('const', start(1));
-      const l = $('log', pipe(start([1, 2, 3]), binarySearch(2)));
-      const n = $('linear', pipe(start([1, 2, 3]), linearScan((x: number) => x === 3)));
+      const c = $('O(1)', start(1));
+      const l = $('O(log n)', pipe(start([1, 2, 3]), binarySearch(2)));
+      const n = $('O(n)', pipe(start([1, 2, 3]), linearScan((x: number) => x === 3)));
       expect(c + l + (n ?? 0)).toBe(5);
     });
   });
@@ -240,7 +247,7 @@ describe('Branded Types', () => {
 
     it('should compose functions and preserve dominant cost', () => {
       const first: CostFn<'const', [number], number> = constCostFn((value: number) => value + 1);
-      const second = (value: number) => $('linear', start(value * 2));
+      const second = (value: number) => $('O(n)', start(value * 2));
 
       const composed: CostFn<'linear', [number], number> = composeCostFn(first, second);
       expect(composed(5)).toBe(12);
@@ -263,8 +270,8 @@ describe('Branded Types', () => {
 
     it('should keep mapCost and chainCost consistent with dominant cost', () => {
       const chained = chainCost(
-        $('log', start(10)),
-        (value) => $('linear', start(value * 2))
+        $('O(log n)', start(10)),
+        (value) => $('O(n)', start(value * 2))
       );
       const mapped = mapCost(chained, (value) => value + 1);
 
@@ -272,6 +279,19 @@ describe('Branded Types', () => {
       expect(linearResult).toBe(21);
       // @ts-expect-error linear is not <= log
       const _logResult: LogCost<number> = mapped;
+    });
+
+    it('should combine two costed values using dominant cost', () => {
+      const combined = zipCost(
+        $('O(log n)', start(10)),
+        $('O(n)', start(5)),
+        (left, right) => left + right
+      );
+
+      const linearResult: LinearCost<number> = combined;
+      expect(linearResult).toBe(15);
+      // @ts-expect-error linear is not <= log
+      const _logResult: LogCost<number> = combined;
     });
   });
 
@@ -282,9 +302,9 @@ describe('Branded Types', () => {
         binarySearch(2),
       ));
 
-      expect($('log', checkedLogPlan)).toBe(1);
+      expect($('O(log n)', checkedLogPlan)).toBe(1);
       // @ts-expect-error log is not <= const
-      $('const', checkedLogPlan);
+      $('O(1)', checkedLogPlan);
     });
 
     it('should model sequential composition as dominant cost', () => {
@@ -294,9 +314,9 @@ describe('Branded Types', () => {
         map((index: number) => index + 10),
       );
 
-      expect($('log', seqLog)).toBe(11);
+      expect($('O(log n)', seqLog)).toBe(11);
       // @ts-expect-error log is not <= const
-      $('const', seqLog);
+      $('O(1)', seqLog);
     });
 
     it('should infer nlogn for linear nesting with log body', () => {
@@ -311,9 +331,9 @@ describe('Branded Types', () => {
         map((xs: readonly number[]) => xs.length),
       );
 
-      expect($('nlogn', nestedNlogn)).toBe(4);
+      expect($('O(n log n)', nestedNlogn)).toBe(4);
       // @ts-expect-error nlogn is not <= linear
-      $('linear', nestedNlogn);
+      $('O(n)', nestedNlogn);
     });
 
     it('should infer quad for linear nesting with linear body', () => {
@@ -327,9 +347,9 @@ describe('Branded Types', () => {
         ),
       );
 
-      expect($('quad', nestedQuad)).toEqual([1, 2, 3, 4]);
+      expect($('O(n^2)', nestedQuad)).toEqual([1, 2, 3, 4]);
       // @ts-expect-error quad is not <= nlogn
-      $('nlogn', nestedQuad);
+      $('O(n log n)', nestedQuad);
     });
   });
 });
