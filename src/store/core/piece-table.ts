@@ -12,7 +12,22 @@ import type {
   BufferType,
   BufferReference,
 } from '../../types/state.ts';
-import { $, $cost, byteOffset, byteLength, type ByteOffset, type ByteLength, type ConstCost, type LogCost, type LinearCost } from '../../types/branded.ts';
+import {
+  $,
+  $checked,
+  $cost,
+  $fromCosted,
+  $pipe,
+  $andThen,
+  $map,
+  byteOffset,
+  byteLength,
+  type ByteOffset,
+  type ByteLength,
+  type ConstCost,
+  type LogCost,
+  type LinearCost,
+} from '../../types/branded.ts';
 import { createPieceNode, withPieceNode } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 import { textEncoder, textDecoder } from './encoding.ts';
@@ -338,57 +353,57 @@ export function pieceTableInsert(
     }));
   }
 
-  // Find the piece at the insertion position
-  const location = findPieceAtPosition(state.root, position);
+  const location: LogCost<PieceLocation | null> =
+    findPieceAtPosition(state.root, position) ?? $('O(log n)', $cost<PieceLocation | null>(null));
 
-  let newRoot: PieceNode;
-
-  if (location === null) {
-    // Position is at or past the end - append
-    newRoot = rbInsertPiece(
-      state.root,
-      state.totalLength,
-      'add',
-      byteOffset(newAddStart),
-      byteLength(textBytes.length)
-    );
-  } else if (location.offsetInPiece === 0) {
-    // Insert at the beginning of a piece
-    newRoot = rbInsertPiece(
-      state.root,
-      location.pieceStartOffset,
-      'add',
-      byteOffset(newAddStart),
-      byteLength(textBytes.length)
-    );
-  } else if (location.offsetInPiece === location.node.length) {
-    // Insert at the end of a piece
-    newRoot = rbInsertPiece(
-      state.root,
-      location.pieceStartOffset + location.node.length,
-      'add',
-      byteOffset(newAddStart),
-      byteLength(textBytes.length)
-    );
-  } else {
-    // Split the piece and insert in between
-    newRoot = insertWithSplit(
-      location,
-      'add',
-      byteOffset(newAddStart),
-      byteLength(textBytes.length)
-    );
-  }
-
-  return $('O(n)', $cost({
-    state: Object.freeze({
-      root: newRoot,
-      originalBuffer: state.originalBuffer,
-      addBuffer,
-      totalLength: state.totalLength + textBytes.length,
+  return $('O(n)', $checked(() => $pipe(
+    $fromCosted(location),
+    $andThen((resolvedLocation) => {
+      if (resolvedLocation === null) {
+        return $fromCosted(rbInsertPiece(
+          state.root,
+          state.totalLength,
+          'add',
+          byteOffset(newAddStart),
+          byteLength(textBytes.length)
+        ));
+      }
+      if (resolvedLocation.offsetInPiece === 0) {
+        return $fromCosted(rbInsertPiece(
+          state.root,
+          resolvedLocation.pieceStartOffset,
+          'add',
+          byteOffset(newAddStart),
+          byteLength(textBytes.length)
+        ));
+      }
+      if (resolvedLocation.offsetInPiece === resolvedLocation.node.length) {
+        return $fromCosted(rbInsertPiece(
+          state.root,
+          resolvedLocation.pieceStartOffset + resolvedLocation.node.length,
+          'add',
+          byteOffset(newAddStart),
+          byteLength(textBytes.length)
+        ));
+      }
+      // Split path performs O(log n) insertions as well.
+      return $fromCosted($('O(log n)', $cost(insertWithSplit(
+        resolvedLocation,
+        'add',
+        byteOffset(newAddStart),
+        byteLength(textBytes.length)
+      ))));
     }),
-    insertedByteLength: textBytes.length,
-  }));
+    $map((newRoot) => ({
+      state: Object.freeze({
+        root: newRoot,
+        originalBuffer: state.originalBuffer,
+        addBuffer,
+        totalLength: state.totalLength + textBytes.length,
+      }),
+      insertedByteLength: textBytes.length,
+    })),
+  )));
 }
 
 /**
@@ -785,25 +800,28 @@ function joinLeft(
 export function getValue(state: PieceTableState): LinearCost<string> {
   if (state.root === null) return $('O(n)', $cost(''));
 
-  const pieces = collectPieces(state.root);
+  return $('O(n)', $checked(() => $pipe(
+    $fromCosted(collectPieces(state.root)),
+    $map((pieces) => {
+      // Pre-calculate total length for efficient concatenation
+      let totalBytes = 0;
+      for (const piece of pieces) {
+        totalBytes += piece.length;
+      }
 
-  // Pre-calculate total length for efficient concatenation
-  let totalBytes = 0;
-  for (const piece of pieces) {
-    totalBytes += piece.length;
-  }
+      // Build result buffer
+      const result = new Uint8Array(totalBytes);
+      let offset = 0;
 
-  // Build result buffer
-  const result = new Uint8Array(totalBytes);
-  let offset = 0;
+      for (const piece of pieces) {
+        const buffer = getPieceBuffer(state, piece);
+        result.set(buffer.subarray(piece.start, piece.start + piece.length), offset);
+        offset += piece.length;
+      }
 
-  for (const piece of pieces) {
-    const buffer = getPieceBuffer(state, piece);
-    result.set(buffer.subarray(piece.start, piece.start + piece.length), offset);
-    offset += piece.length;
-  }
-
-  return $('O(n)', $cost(textDecoder.decode(result)));
+      return textDecoder.decode(result);
+    }),
+  )));
 }
 
 /**
@@ -891,9 +909,13 @@ export function getLineLinearScan(state: PieceTableState, lineNumber: number): L
   if (lineNumber < 0) return $('O(n)', $cost(''));
 
   // Find line start and end offsets by scanning for newlines
-  const lineOffsets = findLineOffsets(state, lineNumber);
-  if (lineOffsets === null) return $('O(n)', $cost(''));
-  return getText(state, lineOffsets.start, lineOffsets.end);
+  return $('O(n)', $checked(() => $pipe(
+    $fromCosted(findLineOffsets(state, lineNumber)),
+    $andThen((lineOffsets) => {
+      if (lineOffsets === null) return $fromCosted($('O(n)', $cost('')));
+      return $fromCosted(getText(state, lineOffsets.start, lineOffsets.end));
+    }),
+  )));
 }
 
 /**
@@ -903,35 +925,41 @@ export function getLineLinearScan(state: PieceTableState, lineNumber: number): L
 function findLineOffsets(
   state: PieceTableState,
   lineNumber: number
-): { start: ByteOffset; end: ByteOffset } | null {
-  const pieces = collectPieces(state.root);
-  let currentLine = 0;
-  let lineStartOffset = 0;
-  let currentOffset = 0;
+): LinearCost<{ start: ByteOffset; end: ByteOffset } | null> {
+  if (state.root === null) return $('O(n)', $cost(null));
 
-  for (const piece of pieces) {
-    const buffer = getPieceBuffer(state, piece);
-    for (let i = 0; i < piece.length; i++) {
-      // Check for newline byte (0x0A)
-      if (buffer[piece.start + i] === 0x0A) {
-        if (currentLine === lineNumber) {
-          // Found the end of target line (include newline)
-          return { start: byteOffset(lineStartOffset), end: byteOffset(currentOffset + i + 1) };
+  return $('O(n)', $checked(() => $pipe(
+    $fromCosted(collectPieces(state.root)),
+    $map((pieces) => {
+      let currentLine = 0;
+      let lineStartOffset = 0;
+      let currentOffset = 0;
+
+      for (const piece of pieces) {
+        const buffer = getPieceBuffer(state, piece);
+        for (let i = 0; i < piece.length; i++) {
+          // Check for newline byte (0x0A)
+          if (buffer[piece.start + i] === 0x0A) {
+            if (currentLine === lineNumber) {
+              // Found the end of target line (include newline)
+              return { start: byteOffset(lineStartOffset), end: byteOffset(currentOffset + i + 1) };
+            }
+            currentLine++;
+            lineStartOffset = currentOffset + i + 1;
+          }
         }
-        currentLine++;
-        lineStartOffset = currentOffset + i + 1;
+
+        currentOffset += piece.length;
       }
-    }
 
-    currentOffset += piece.length;
-  }
+      // Handle last line (no trailing newline)
+      if (currentLine === lineNumber) {
+        return { start: byteOffset(lineStartOffset), end: byteOffset(state.totalLength) };
+      }
 
-  // Handle last line (no trailing newline)
-  if (currentLine === lineNumber) {
-    return { start: byteOffset(lineStartOffset), end: byteOffset(state.totalLength) };
-  }
-
-  return null;
+      return null;
+    }),
+  )));
 }
 
 // =============================================================================
@@ -983,51 +1011,61 @@ export function compactAddBuffer(
   state: PieceTableState,
   threshold: number = 0.5
 ): LinearCost<PieceTableState> {
-  const stats = getBufferStats(state);
+  return $('O(n)', $checked(() => $pipe(
+    $fromCosted(getBufferStats(state)),
+    $andThen((stats) => {
+      // Don't compact if waste is below threshold
+      if (stats.wasteRatio < threshold) {
+        return $fromCosted($('O(n)', $cost(state)));
+      }
 
-  // Don't compact if waste is below threshold
-  if (stats.wasteRatio < threshold) {
-    return $('O(n)', $cost(state));
-  }
+      // Don't compact if there's nothing to compact
+      if (stats.addBufferUsed === 0) {
+        // No add buffer content - reset to empty
+        return $fromCosted($('O(n)', $cost(Object.freeze({
+          root: state.root,
+          originalBuffer: state.originalBuffer,
+          addBuffer: GrowableBuffer.empty(1024),
+          totalLength: state.totalLength,
+        }))));
+      }
 
-  // Don't compact if there's nothing to compact
-  if (stats.addBufferUsed === 0) {
-    // No add buffer content - reset to empty
-    return $('O(n)', $cost(Object.freeze({
-      root: state.root,
-      originalBuffer: state.originalBuffer,
-      addBuffer: GrowableBuffer.empty(1024),
-      totalLength: state.totalLength,
-    })));
-  }
+      if (state.root === null) {
+        return $fromCosted($('O(n)', $cost(state)));
+      }
 
-  const pieces = collectPieces(state.root);
+      return $pipe(
+        $fromCosted(collectPieces(state.root)),
+        $map((pieces) => {
+          // Single pass: build offset map and copy live data simultaneously
+          const offsetMap = new Map<number, number>();
+          const newBuffer = new Uint8Array(Math.max(stats.addBufferUsed * 2, 1024));
+          let writeOffset = 0;
 
-  // Single pass: build offset map and copy live data simultaneously
-  const offsetMap = new Map<number, number>();
-  const newBuffer = new Uint8Array(Math.max(stats.addBufferUsed * 2, 1024));
-  let writeOffset = 0;
+          for (const piece of pieces) {
+            if (piece.bufferType === 'add') {
+              offsetMap.set(piece.start, writeOffset);
+              newBuffer.set(
+                state.addBuffer.subarray(piece.start as number, (piece.start as number) + (piece.length as number)),
+                writeOffset
+              );
+              writeOffset += piece.length;
+            }
+          }
 
-  for (const piece of pieces) {
-    if (piece.bufferType === 'add') {
-      offsetMap.set(piece.start, writeOffset);
-      newBuffer.set(
-        state.addBuffer.subarray(piece.start as number, (piece.start as number) + (piece.length as number)),
-        writeOffset
+          // Rebuild tree with updated offsets
+          const newRoot = rebuildTreeWithNewOffsets(state.root, offsetMap);
+
+          return Object.freeze({
+            root: newRoot,
+            originalBuffer: state.originalBuffer,
+            addBuffer: new GrowableBuffer(newBuffer, writeOffset),
+            totalLength: state.totalLength,
+          });
+        }),
       );
-      writeOffset += piece.length;
-    }
-  }
-
-  // Rebuild tree with updated offsets
-  const newRoot = rebuildTreeWithNewOffsets(state.root, offsetMap);
-
-  return $('O(n)', $cost(Object.freeze({
-    root: newRoot,
-    originalBuffer: state.originalBuffer,
-    addBuffer: new GrowableBuffer(newBuffer, writeOffset),
-    totalLength: state.totalLength,
-  })));
+    }),
+  )));
 }
 
 /**

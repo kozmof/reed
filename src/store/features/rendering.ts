@@ -340,25 +340,48 @@ export function positionToLineColumn(
     // We need to convert to character offset
     const range = getLineRangePrecise(state.lineIndex, lineInfo.lineNumber);
     if (range) {
-      const lineContent = getText(state.pieceTable, range.start, addByteOffset(range.start, lineInfo.offsetInLine));
-      return $mapCost(lineContent, (text) => ({
-        line: lineInfo.lineNumber,
-        column: text.length,
-      }));
+      return $('O(n)', $checked(() => $pipe(
+        $fromCosted(lineInfo),
+        $andThen((resolvedLineInfo) => $pipe(
+          $fromCosted(range),
+          $andThen((resolvedRange) => $pipe(
+            $fromCosted(getText(
+              state.pieceTable,
+              resolvedRange.start,
+              addByteOffset(resolvedRange.start, resolvedLineInfo.offsetInLine)
+            )),
+            $map((text: string) => ({
+              line: resolvedLineInfo.lineNumber,
+              column: text.length,
+            })),
+          )),
+        )),
+      )));
     }
   }
 
   // Check if position is at the very end of document
   const lastLineRange = getLineRangePrecise(state.lineIndex, totalLines - 1);
   if (lastLineRange) {
-    const endOffset = addByteOffset(lastLineRange.start, lastLineRange.length as number);
-    if (position === endOffset) {
-      const content = getText(state.pieceTable, lastLineRange.start, endOffset);
-      return $mapCost(content, (text) => ({
-        line: totalLines - 1,
-        column: text.length,
-      }));
-    }
+    return $('O(n)', $checked(() => $pipe(
+      $fromCosted(totalLines),
+      $andThen((resolvedTotalLines) => $pipe(
+        $fromCosted(lastLineRange),
+        $andThen((resolvedLastLineRange) => {
+          const endOffset = addByteOffset(resolvedLastLineRange.start, resolvedLastLineRange.length as number);
+          if (position !== endOffset) {
+            return $fromCosted($('O(n)', $cost<{ line: number; column: number } | null>(null)));
+          }
+          return $pipe(
+            $fromCosted(getText(state.pieceTable, resolvedLastLineRange.start, endOffset)),
+            $map((text: string) => ({
+              line: resolvedTotalLines - 1,
+              column: text.length,
+            })),
+          );
+        }),
+      )),
+    )));
   }
 
   return $('O(n)', $cost(null));
@@ -433,8 +456,20 @@ function byteOffsetToCharOffset(
     return charStart;
   }
 
-  const partialText = getText(state.pieceTable, range.start, addByteOffset(range.start, location.offsetInLine));
-  return $mapCost(partialText, (text) => (charStart as number) + text.length);
+  return $('O(n)', $checked(() => $pipe(
+    $fromCosted(charStart),
+    $andThen((resolvedCharStart) => $pipe(
+      $fromCosted(range),
+      $andThen((resolvedRange) => $pipe(
+        $fromCosted(getText(
+          state.pieceTable,
+          resolvedRange.start,
+          addByteOffset(resolvedRange.start, location.offsetInLine)
+        )),
+        $map((text: string) => resolvedCharStart + text.length),
+      )),
+    )),
+  )));
 }
 
 /**
@@ -479,12 +514,23 @@ function charOffsetToByteOffset(
     return $('O(n)', $cost(byteOffset(state.pieceTable.totalLength)));
   }
 
-  // Read only this line's text and find the byte offset of the char within it
-  const lineText = getText(state.pieceTable, range.start, addByteOffset(range.start, range.length as number));
-  const charInLine = Math.min(location.charOffsetInLine, lineText.length);
-  const byteInLine = charToByteOffset(lineText, charOffset(charInLine));
-
-  return $mapCost(byteInLine, (offsetInLine) => addByteOffset(range.start, offsetInLine));
+  return $('O(n)', $checked(() => $pipe(
+    $fromCosted(range),
+    $andThen((resolvedRange) => $pipe(
+      $fromCosted(getText(
+        state.pieceTable,
+        resolvedRange.start,
+        addByteOffset(resolvedRange.start, resolvedRange.length as number)
+      )),
+      $andThen((lineText: string) => {
+        const charInLine = Math.min(location.charOffsetInLine, lineText.length);
+        return $pipe(
+          $fromCosted(charToByteOffset(lineText, charOffset(charInLine))),
+          $map((offsetInLine) => addByteOffset(resolvedRange.start, offsetInLine)),
+        );
+      }),
+    )),
+  )));
 }
 
 /**

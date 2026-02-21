@@ -15,7 +15,21 @@ import type {
 } from '../../types/state.ts';
 import type { ByteOffset, ByteLength } from '../../types/branded.ts';
 import type { ReadTextFn } from '../../types/store.ts';
-import { $, $cost, byteOffset, byteLength as toByteLengthBrand, type ConstCost, type LinearCost, type LogCost, type NLogNCost } from '../../types/branded.ts';
+import {
+  $,
+  $checked,
+  $cost,
+  $fromCosted,
+  $pipe,
+  $andThen,
+  $map,
+  byteOffset,
+  byteLength as toByteLengthBrand,
+  type ConstCost,
+  type LinearCost,
+  type LogCost,
+  type NLogNCost,
+} from '../../types/branded.ts';
 import { createLineIndexNode, withLineIndexNode, withLineIndexState } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 
@@ -407,15 +421,21 @@ export function lineIndexInsert(
     return $('O(n)', $cost(updateLineLength(state, position, byteLength, text.length)));
   }
 
-  // Find the line where insertion happens
-  const location = findLineAtPosition(state.root, position);
-  if (location === null) {
-    // Position is at or past end - append to last line or create new
-    return $('O(n)', $cost(appendLines(state, position, text, newlinePositions, byteLength)));
-  }
+  const location: LogCost<LineLocation | null> =
+    findLineAtPosition(state.root, position) ?? $('O(log n)', $cost<LineLocation | null>(null));
 
-  // Split the current line and insert new lines
-  return $('O(n)', $cost(insertLinesAtPosition(state, location, text, newlinePositions, byteLength, readText)));
+  return $('O(n)', $checked(() => $pipe(
+    $fromCosted(location),
+    $map((resolvedLocation) => {
+      if (resolvedLocation === null) {
+        // Position is at or past end - append to last line or create new
+        return appendLines(state, position, text, newlinePositions, byteLength);
+      }
+
+      // Split the current line and insert new lines
+      return insertLinesAtPosition(state, resolvedLocation, text, newlinePositions, byteLength, readText);
+    }),
+  )));
 }
 
 /**
@@ -837,12 +857,17 @@ export function lineIndexDelete(
     return $('O(n log n)', $cost(updateLineLength(state, start, -deleteLength, -deletedText.length)));
   }
 
-  // Find the start and end lines
-  const startLocation = findLineAtPosition(state.root, start);
-  if (startLocation === null) return $('O(n log n)', $cost(state));
+  const startLocation: LogCost<LineLocation | null> =
+    findLineAtPosition(state.root, start) ?? $('O(log n)', $cost<LineLocation | null>(null));
 
-  // Merge lines and remove deleted lines
-  return $('O(n log n)', $cost(deleteLineRange(state, startLocation, deletedNewlines, deleteLength, deletedText.length)));
+  return $('O(n log n)', $checked(() => $pipe(
+    $fromCosted(startLocation),
+    $map((resolvedLocation) => {
+      if (resolvedLocation === null) return state;
+      // Merge lines and remove deleted lines
+      return deleteLineRange(state, resolvedLocation, deletedNewlines, deleteLength, deletedText.length);
+    }),
+  )));
 }
 
 /**
@@ -1182,8 +1207,13 @@ export function getLineRange(
   const node = findLineByNumber(state.root, lineNumber);
   if (node === null) return null;
 
-  const start = getLineStartOffset(state.root, lineNumber);
-  return $('O(log n)', $cost({ start: byteOffset(start), length: toByteLengthBrand(node.lineLength) }));
+  return $('O(log n)', $checked(() => $pipe(
+    $fromCosted(node),
+    $andThen((resolvedNode) => $pipe(
+      $fromCosted(getLineStartOffset(state.root, lineNumber)),
+      $map((start) => ({ start: byteOffset(start), length: toByteLengthBrand(resolvedNode.lineLength) })),
+    )),
+  )));
 }
 
 // =============================================================================
@@ -1317,15 +1347,21 @@ export function lineIndexInsertLazy(
     return $('O(n)', $cost(updateLineLengthLazy(state, position, byteLength, text.length)));
   }
 
-  // Find affected line
-  const location = findLineAtPosition(state.root, position);
-  if (location === null) {
-    // Position at or past end - use eager approach for simplicity
-    return $('O(n)', $cost(appendLinesLazy(state, position as number, text, newlinePositions, byteLength, currentVersion)));
-  }
+  const location: LogCost<LineLocation | null> =
+    findLineAtPosition(state.root, position) ?? $('O(log n)', $cost<LineLocation | null>(null));
 
-  // Insert new lines and mark downstream as dirty
-  return $('O(n)', $cost(insertLinesAtPositionLazy(state, location, text, newlinePositions, byteLength, currentVersion, readText)));
+  return $('O(n)', $checked(() => $pipe(
+    $fromCosted(location),
+    $map((resolvedLocation) => {
+      if (resolvedLocation === null) {
+        // Position at or past end - use eager approach for simplicity
+        return appendLinesLazy(state, position as number, text, newlinePositions, byteLength, currentVersion);
+      }
+
+      // Insert new lines and mark downstream as dirty
+      return insertLinesAtPositionLazy(state, resolvedLocation, text, newlinePositions, byteLength, currentVersion, readText);
+    }),
+  )));
 }
 
 // updateLineLengthLazy is identical to updateLineLength - reuse it directly
@@ -1435,12 +1471,24 @@ export function lineIndexDeleteLazy(
     return $('O(n log n)', $cost(updateLineLengthLazy(state, start, -deleteLength, -deletedText.length)));
   }
 
-  // Find the start line
-  const startLocation = findLineAtPosition(state.root, start);
-  if (startLocation === null) return $('O(n log n)', $cost(state));
+  const startLocation: LogCost<LineLocation | null> =
+    findLineAtPosition(state.root, start) ?? $('O(log n)', $cost<LineLocation | null>(null));
 
-  // Delete lines and mark remaining as dirty
-  return $('O(n log n)', $cost(deleteLineRangeLazy(state, startLocation, deletedNewlines, deleteLength, currentVersion, deletedText.length)));
+  return $('O(n log n)', $checked(() => $pipe(
+    $fromCosted(startLocation),
+    $map((resolvedLocation) => {
+      if (resolvedLocation === null) return state;
+      // Delete lines and mark remaining as dirty
+      return deleteLineRangeLazy(
+        state,
+        resolvedLocation,
+        deletedNewlines,
+        deleteLength,
+        currentVersion,
+        deletedText.length
+      );
+    }),
+  )));
 }
 
 /**
@@ -1555,17 +1603,28 @@ export function getLineRangePrecise(
   const node = findLineByNumber(state.root, lineNumber);
   if (node === null) return null;
 
-  let start: number = getLineStartOffset(state.root, lineNumber);
-
   // Eager state guarantees clean offsets; this remains O(log n).
   if (state.dirtyRanges.length === 0) {
-    return $('O(log n)', $cost({ start: byteOffset(start), length: toByteLengthBrand(node.lineLength) }));
+    return $('O(log n)', $checked(() => $pipe(
+      $fromCosted(node),
+      $andThen((resolvedNode) => $pipe(
+        $fromCosted(getLineStartOffset(state.root, lineNumber)),
+        $map((start) => ({ start: byteOffset(start), length: toByteLengthBrand(resolvedNode.lineLength) })),
+      )),
+    )));
   }
 
   // Lazy/union states may require dirty-range scanning (O(dirtyRanges)).
-  const delta = getOffsetDeltaForLine(state.dirtyRanges, lineNumber);
-  start += delta;
-  return $('O(n)', $cost({ start: byteOffset(start), length: toByteLengthBrand(node.lineLength) }));
+  return $('O(n)', $checked(() => $pipe(
+    $fromCosted(node),
+    $andThen((resolvedNode) => $pipe(
+      $fromCosted(getLineStartOffset(state.root, lineNumber)),
+      $andThen((start) => $pipe(
+        $fromCosted(getOffsetDeltaForLine(state.dirtyRanges, lineNumber)),
+        $map((delta) => ({ start: byteOffset(start + delta), length: toByteLengthBrand(resolvedNode.lineLength) })),
+      )),
+    )),
+  )));
 }
 
 /**
