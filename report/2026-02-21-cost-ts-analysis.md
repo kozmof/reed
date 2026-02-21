@@ -1,7 +1,7 @@
 # Code Analysis: `src/types/cost.ts`
 
 **Date:** 2026-02-21
-**Updated:** 2026-02-21 (P1–P5 resolved; D1 resolved)
+**Updated:** 2026-02-21 (P1–P5 resolved; D1, D3 resolved)
 
 ---
 
@@ -205,8 +205,9 @@ Files updated: `cost.ts`, `store/features/rendering.ts`, `types/index.ts`, `src/
 ### D2 — No runtime verification mode
 The system is entirely compile-time. There is no opt-in development mode to assert that actual operations stay within declared costs (e.g., via counters or tracing). Incorrect annotations are silent.
 
-### D3 — `$pipe` is not cost-aware
-`$pipe` is a generic pipeline utility. Cost accumulation is driven by the combinator types passed into it. Cost inference only works when the user pipes through cost-typed combinators — raw functions lose cost context.
+### ~~D3 — `$pipe` is not cost-aware~~ — **Fixed**
+
+The five generic overloads (`(a: A, ab: (a: A) => B, ...) => ...`) have been replaced with `Ctx`-constrained overloads. Every step must now map a `Ctx<Ci, Ti>` to a `Ctx<Cj, Tj>`, so passing a raw function whose return type is not a `Ctx` is a compile-time error. The runtime implementation is unchanged. All existing call sites already comply — they use `$cost` / `$from` as the seed and cost-typed combinators (`$map`, `$andThen`, `$binarySearch`, etc.) for every step.
 
 ---
 

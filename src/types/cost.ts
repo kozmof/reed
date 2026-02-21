@@ -285,17 +285,31 @@ export const $from = <L extends CostLevel, T>(
 ): Ctx<CostOfLabel<L>, T> =>
   ({ value: value as unknown as T } as Ctx<CostOfLabel<L>, T>);
 
-export function $pipe<A>(a: A): A;
-export function $pipe<A, B>(a: A, ab: (a: A) => B): B;
-export function $pipe<A, B, C>(a: A, ab: (a: A) => B, bc: (b: B) => C): C;
-export function $pipe<A, B, C, D>(a: A, ab: (a: A) => B, bc: (b: B) => C, cd: (c: C) => D): D;
-export function $pipe<A, B, C, D, E>(
-  a: A,
-  ab: (a: A) => B,
-  bc: (b: B) => C,
-  cd: (c: C) => D,
-  de: (d: D) => E
-): E;
+export function $pipe<C extends Cost, T>(
+  ctx: Ctx<C, T>
+): Ctx<C, T>;
+export function $pipe<C1 extends Cost, A, C2 extends Cost, B>(
+  ctx: Ctx<C1, A>,
+  f1: (a: Ctx<C1, A>) => Ctx<C2, B>
+): Ctx<C2, B>;
+export function $pipe<C1 extends Cost, A, C2 extends Cost, B, C3 extends Cost, CC>(
+  ctx: Ctx<C1, A>,
+  f1: (a: Ctx<C1, A>) => Ctx<C2, B>,
+  f2: (b: Ctx<C2, B>) => Ctx<C3, CC>
+): Ctx<C3, CC>;
+export function $pipe<C1 extends Cost, A, C2 extends Cost, B, C3 extends Cost, CC, C4 extends Cost, D>(
+  ctx: Ctx<C1, A>,
+  f1: (a: Ctx<C1, A>) => Ctx<C2, B>,
+  f2: (b: Ctx<C2, B>) => Ctx<C3, CC>,
+  f3: (c: Ctx<C3, CC>) => Ctx<C4, D>
+): Ctx<C4, D>;
+export function $pipe<C1 extends Cost, A, C2 extends Cost, B, C3 extends Cost, CC, C4 extends Cost, D, C5 extends Cost, E>(
+  ctx: Ctx<C1, A>,
+  f1: (a: Ctx<C1, A>) => Ctx<C2, B>,
+  f2: (b: Ctx<C2, B>) => Ctx<C3, CC>,
+  f3: (c: Ctx<C3, CC>) => Ctx<C4, D>,
+  f4: (d: Ctx<C4, D>) => Ctx<C5, E>
+): Ctx<C5, E>;
 export function $pipe(a: unknown, ...fns: Array<(x: any) => any>): unknown {
   return fns.reduce((x, f) => f(x), a);
 }
