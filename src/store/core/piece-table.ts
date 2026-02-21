@@ -12,6 +12,7 @@ import type {
   BufferType,
   BufferReference,
 } from '../../types/state.ts';
+import { byteOffset, byteLength, type ByteOffset, type ByteLength } from '../../types/branded.ts';
 import {
   $,
   $checked,
@@ -20,14 +21,10 @@ import {
   $pipe,
   $andThen,
   $map,
-  byteOffset,
-  byteLength,
-  type ByteOffset,
-  type ByteLength,
   type ConstCost,
   type LogCost,
   type LinearCost,
-} from '../../types/branded.ts';
+} from '../../types/cost.ts';
 import { createPieceNode, withPieceNode } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 import { textEncoder, textDecoder } from './encoding.ts';

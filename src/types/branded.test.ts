@@ -4,7 +4,6 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  $,
   byteOffset,
   charOffset,
   lineNumber,
@@ -22,6 +21,12 @@ import {
   ZERO_CHAR_OFFSET,
   LINE_ZERO,
   COLUMN_ZERO,
+  type ByteOffset,
+  type CharOffset,
+  type LineNumber,
+} from './branded.ts';
+import {
+  $,
   $constCostFn,
   $logCostFn,
   $linearCostFn,
@@ -43,10 +48,7 @@ import {
   type CostFn,
   type LogCost,
   type LinearCost,
-  type ByteOffset,
-  type CharOffset,
-  type LineNumber,
-} from './branded.ts';
+} from './cost.ts';
 
 describe('Branded Types', () => {
   describe('constructor functions', () => {

@@ -4,7 +4,7 @@
  */
 
 import type { DocumentState, SelectionRange, CharSelectionRange } from '../../types/state.ts';
-import type { ByteOffset, ConstCost, CostFn, LinearCost } from '../../types/branded.ts';
+import { byteOffset, charOffset, addByteOffset, type ByteOffset } from '../../types/branded.ts';
 import {
   $,
   $checked,
@@ -13,12 +13,12 @@ import {
   $pipe,
   $andThen,
   $map,
-  byteOffset,
-  charOffset,
-  addByteOffset,
   $mapCost,
   $zipCost,
-} from '../../types/branded.ts';
+  type ConstCost,
+  type CostFn,
+  type LinearCost,
+} from '../../types/cost.ts';
 import { findLineAtPosition, getCharStartOffset, findLineAtCharPosition, getLineRangePrecise, getLineCountFromIndex } from '../core/line-index.ts';
 import { getText, charToByteOffset } from '../core/piece-table.ts';
 import { textEncoder } from '../core/encoding.ts';

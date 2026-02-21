@@ -144,12 +144,9 @@ export type JoinCostLevel<A extends CostLevel, B extends CostLevel> =
 /**
  * Internal helper to cast a value to a declared cost level.
  * Keeps runtime behavior unchanged while centralizing type assertions.
+ * The level parameter is intentionally unused at runtime — branding is compile-time only.
  */
-function castCost<L extends CostLevel, T>(level: L, value: T): Costed<L, T> {
-  if (level === 'const') return value as Costed<L, T>;
-  if (level === 'log') return value as Costed<L, T>;
-  if (level === 'linear') return value as Costed<L, T>;
-  if (level === 'nlogn') return value as Costed<L, T>;
+function castCost<L extends CostLevel, T>(_level: L, value: T): Costed<L, T> {
   return value as Costed<L, T>;
 }
 
@@ -364,20 +361,32 @@ export const $andThen =
 
 /**
  * O(1) map over the current context value.
+ * Cost is preserved: a pure transform adds no algorithmic cost.
  */
 export const $map =
   <T, U>(f: (t: T) => U) =>
-  <C extends Cost>(c: Ctx<C, T>): Ctx<Seq<C, C_CONST>, U> =>
-    ({ value: f(c.value) } as Ctx<Seq<C, C_CONST>, U>);
+  <C extends Cost>(c: Ctx<C, T>): Ctx<C, U> =>
+    ({ value: f(c.value) } as Ctx<C, U>);
 
 /**
- * O(log n) lookup combinator.
- * Runtime implementation is intentionally simple; typing models declared cost.
+ * O(log n) binary search combinator.
+ * Requires the input array to be sorted in ascending order.
+ * Returns the index of x, or -1 if not found.
  */
 export const $binarySearch =
   (x: number) =>
-  <C extends Cost>(c: Ctx<C, readonly number[]>): Ctx<Seq<C, C_LOG>, number> =>
-    ({ value: c.value.indexOf(x) } as Ctx<Seq<C, C_LOG>, number>);
+  <C extends Cost>(c: Ctx<C, readonly number[]>): Ctx<Seq<C, C_LOG>, number> => {
+    let lo = 0;
+    let hi = c.value.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >>> 1;
+      const v = c.value[mid];
+      if (v === x) return { value: mid } as Ctx<Seq<C, C_LOG>, number>;
+      if (v < x) lo = mid + 1;
+      else hi = mid - 1;
+    }
+    return { value: -1 } as Ctx<Seq<C, C_LOG>, number>;
+  };
 
 /**
  * O(n log n) sorting combinator.
@@ -408,8 +417,9 @@ export const $linearScan =
     ({ value: c.value.find(pred) } as Ctx<Seq<C, C_LIN>, E | undefined>);
 
 /**
- * O(n * body) nested combinator.
+ * O(n * body) nested combinator for side effects.
  * Body is evaluated once per element and contributes multiplicatively.
+ * The original array is returned unchanged — use `$mapN` to collect results.
  */
 export const $forEachN =
   <E, BodyC extends Cost>(body: (e: E) => Ctx<BodyC, unknown>) =>
@@ -418,4 +428,15 @@ export const $forEachN =
       body(e);
     });
     return ({ value: c.value } as Ctx<Seq<C, Nest<C_LIN, BodyC>>, E[]>);
+  };
+
+/**
+ * O(n * body) nested map combinator.
+ * Like `$forEachN` but collects each body result into a new array.
+ */
+export const $mapN =
+  <E, U, BodyC extends Cost>(body: (e: E) => Ctx<BodyC, U>) =>
+  <C extends Cost>(c: Ctx<C, readonly E[]>): Ctx<Seq<C, Nest<C_LIN, BodyC>>, U[]> => {
+    const result = c.value.map((e) => body(e).value);
+    return ({ value: result } as Ctx<Seq<C, Nest<C_LIN, BodyC>>, U[]>);
   };

@@ -1,6 +1,7 @@
 # Code Analysis: `src/types/cost.ts`
 
 **Date:** 2026-02-21
+**Updated:** 2026-02-21 (P1–P5 resolved)
 
 ---
 
@@ -8,10 +9,10 @@
 
 The file is cleanly divided into two major sections:
 
-- **Cost Algebra + Brands** (lines 13–294): Type-level arithmetic (`Nat`, `Cost`, `GteNat`, `GteCost`), brand types (`Costed`, `CostFn`), and value-level combinators (`$mapCost`, `$chainCost`, `$zipCost`).
-- **Cost Context Pipeline** (lines 296–422): `Ctx<C,T>` monad-like pipeline with `$cost`, `$pipe`, `$andThen`, `$map`, `$sort`, `$filter`, `$forEachN`, etc.
+- **Cost Algebra + Brands** (lines 13–151): Type-level arithmetic (`Nat`, `Cost`, `GteNat`, `GteCost`), brand types (`Costed`, `CostFn`), and value-level combinators (`$mapCost`, `$chainCost`, `$zipCost`).
+- **Cost Context Pipeline** (lines 296–433): `Ctx<C,T>` monad-like pipeline with `$cost`, `$pipe`, `$andThen`, `$map`, `$sort`, `$filter`, `$forEachN`, `$mapN`, etc.
 
-The usage policy in the header is a good architectural guide. The file is used widely: re-exported through both `src/types/branded.ts` (lines 280–327) and `src/types/index.ts` (lines 83–155).
+The usage policy in the header is a good architectural guide. The file is the single canonical source for cost types: re-exported only through `src/types/index.ts`. Store files and tests import from `cost.ts` directly for cost items, and from `branded.ts` only for position types.
 
 ---
 
@@ -72,14 +73,15 @@ CheckedPlan<C, T>         { [checkedPlanTag]: true, run: () => Ctx<C,T> }
 | `$checked` | Wrap plan for `$` validation | Wraps run() |
 | `$pipe` | Generic pipeline | Pass-through |
 | `$andThen` | Monadic bind | `Seq<C1, C2>` |
-| `$map` | O(1) transform | `Seq<C, C_CONST>` |
-| `$binarySearch` | O(log n) lookup | `Seq<C, C_LOG>` |
+| `$map` | O(1) transform | `C` (preserved) |
+| `$binarySearch` | O(log n) lookup (sorted input) | `Seq<C, C_LOG>` |
 | `$sort` | O(n log n) sort | `Seq<C, C_NLOGN>` |
 | `$filter` | O(n) filter | `Seq<C, C_LIN>` |
 | `$linearScan` | O(n) find | `Seq<C, C_LIN>` |
-| `$forEachN` | O(n·body) nested loop | `Seq<C, Nest<C_LIN, BodyC>>` |
+| `$forEachN` | O(n·body) side-effect loop | `Seq<C, Nest<C_LIN, BodyC>>` |
+| `$mapN` | O(n·body) element-wise map | `Seq<C, Nest<C_LIN, BodyC>>` |
 
-**Bridge**: The `$` function (line 163) accepts both tracks. It dispatches at runtime via `checkedPlanTag in boundary`.
+**Bridge**: The `$` function accepts both tracks. It dispatches at runtime via `checkedPlanTag in boundary`.
 
 ---
 
@@ -105,27 +107,84 @@ function lookup(...): LogCost<LineLocation> | null {
 
 ## 5. Pitfalls
 
-### P1 — `$binarySearch` uses `indexOf` (O(n)) — line 380
+### ~~P1 — `$binarySearch` uses `indexOf` (O(n))~~ — **Fixed**
+
+Replaced the `indexOf` call with a proper binary search loop using unsigned right-shift for the safe midpoint. The combinator now correctly runs in O(log n). Requires sorted input, as documented in the JSDoc.
+
 ```ts
+// Before
 ({ value: c.value.indexOf(x) } as Ctx<Seq<C, C_LOG>, number>)
+
+// After
+let lo = 0, hi = c.value.length - 1;
+while (lo <= hi) {
+  const mid = (lo + hi) >>> 1;
+  const v = c.value[mid];
+  if (v === x) return { value: mid } as Ctx<Seq<C, C_LOG>, number>;
+  if (v < x) lo = mid + 1; else hi = mid - 1;
+}
+return { value: -1 } as Ctx<Seq<C, C_LOG>, number>;
 ```
-The type claims O(log n) but the runtime is O(n). The comment notes "intentionally simple," but any call site believing this is an actual binary search will have incorrect performance. This is the most impactful pitfall.
 
-### P2 — `castCost` has a dead branch — lines 148–154
-The if-chain checks `const/log/linear/nlogn` but never explicitly handles `'quad'`. The function returns correctly because the final `return value as Costed<L, T>` is always reached. The `level` parameter is entirely unused at runtime — all branches do the same thing.
+### ~~P2 — `castCost` dead branch~~ — **Fixed**
 
-### P3 — `$forEachN` discards body results — lines 414–421
+Removed the dead if-chain. All branches were identical at runtime; branding is compile-time only. The `level` parameter is now named `_level` to signal it is intentionally unused.
+
 ```ts
-c.value.forEach((e) => { body(e); });
-return ({ value: c.value } as ...); // original array unchanged
+// Before
+function castCost<L extends CostLevel, T>(level: L, value: T): Costed<L, T> {
+  if (level === 'const') return value as Costed<L, T>;
+  if (level === 'log') return value as Costed<L, T>;
+  if (level === 'linear') return value as Costed<L, T>;
+  if (level === 'nlogn') return value as Costed<L, T>;
+  return value as Costed<L, T>;
+}
+
+// After
+function castCost<L extends CostLevel, T>(_level: L, value: T): Costed<L, T> {
+  return value as Costed<L, T>;
+}
 ```
-The combinator models the cost of a loop body but returns the original array unchanged. It only models the cost of side-effectful loops — there is no `$mapN` for element-wise transformation.
 
-### P4 — `$map` uses `Seq<C, C_CONST>` instead of `C` — line 370
-`Seq<C, C_CONST> = MaxCost<C, C_CONST> = C` for all `C` since C_CONST is the minimum. The type is correct but the indirection makes the signature harder to read than necessary.
+### ~~P3 — `$forEachN` discards body results~~ — **Fixed**
 
-### P5 — Duplicate export paths
-`cost.ts` is re-exported in both `branded.ts` (lines 280–327) and `index.ts` (lines 83–155). Two routes to the same exports exist, which is redundant and could cause confusion about the canonical import path.
+Added a new `$mapN` combinator alongside `$forEachN`. `$forEachN` remains for side-effect-only loops and returns the original array; `$mapN` collects each body result into a new array. Both carry the same `Seq<C, Nest<C_LIN, BodyC>>` cost.
+
+```ts
+export const $mapN =
+  <E, U, BodyC extends Cost>(body: (e: E) => Ctx<BodyC, U>) =>
+  <C extends Cost>(c: Ctx<C, readonly E[]>): Ctx<Seq<C, Nest<C_LIN, BodyC>>, U[]> => {
+    const result = c.value.map((e) => body(e).value);
+    return ({ value: result } as Ctx<Seq<C, Nest<C_LIN, BodyC>>, U[]>);
+  };
+```
+
+### ~~P4 — `$map` uses `Seq<C, C_CONST>` instead of `C`~~ — **Fixed**
+
+`Seq<C, C_CONST> = MaxCost<C, C_CONST>` always reduces to `C` since `C_CONST` is the minimum cost. The return type is now simply `Ctx<C, U>`, making the signature clearer and removing an unnecessary conditional type evaluation.
+
+```ts
+// Before
+<C extends Cost>(c: Ctx<C, T>): Ctx<Seq<C, C_CONST>, U>
+
+// After
+<C extends Cost>(c: Ctx<C, T>): Ctx<C, U>
+```
+
+### ~~P5 — Duplicate export paths~~ — **Fixed**
+
+`branded.ts` was re-exporting all of `cost.ts` alongside its own position types, creating two import routes for cost items. The cost re-export block has been removed from `branded.ts`, which now exclusively owns branded position types (`ByteOffset`, `CharOffset`, etc.).
+
+All importers have been updated:
+
+| File | Position types | Cost types |
+|---|---|---|
+| `branded.test.ts` | `./branded.ts` | `./cost.ts` |
+| `store/core/line-index.ts` | `../../types/branded.ts` | `../../types/cost.ts` |
+| `store/core/piece-table.ts` | `../../types/branded.ts` | `../../types/cost.ts` |
+| `store/features/rendering.ts` | `../../types/branded.ts` | `../../types/cost.ts` |
+
+`index.ts` remains the single public re-export barrel for both, and now also exports `$mapN`.
 
 ---
 
@@ -138,19 +197,13 @@ The `Costed<L,T>` / `CostFn` track and the `Ctx<C,T>` pipeline track overlap in 
 The system is entirely compile-time. There is no opt-in development mode to assert that actual operations stay within declared costs (e.g., via counters or tracing). Incorrect annotations are silent.
 
 ### D3 — `$pipe` is not cost-aware
-`$pipe` is a generic pipeline utility (line 341). Cost accumulation is driven by the combinator types passed into it. Cost inference only works when the user pipes through cost-typed combinators — raw functions lose cost context.
+`$pipe` is a generic pipeline utility. Cost accumulation is driven by the combinator types passed into it. Cost inference only works when the user pipes through cost-typed combinators — raw functions lose cost context.
 
 ---
 
 ## 7. Improvement Points: Types and Interfaces
 
-### T1 — `$map` return type simplification
-```ts
-// Current (verbose)
-<C extends Cost>(c: Ctx<C, T>): Ctx<Seq<C, C_CONST>, U>
-// Equivalent (direct)
-<C extends Cost>(c: Ctx<C, T>): Ctx<C, U>
-```
+### ~~T1 — `$map` return type simplification~~ — **Resolved by P4 fix**
 
 ### T2 — `LevelsUpTo<L>` is unexported
 This utility could be valuable for external generic constraints (e.g., "this function accepts any cost ≤ linear").
@@ -162,14 +215,7 @@ The algebra defines `AddNat` and `GteNat` but no explicit `MaxNat`/`MinNat`. `Ma
 
 ## 8. Improvement Points: Implementations
 
-### I1 — `castCost` is a no-op wrapper
-```ts
-// All branches do identical things at runtime — simplified:
-function castCost<L extends CostLevel, T>(_level: L, value: T): Costed<L, T> {
-  return value as Costed<L, T>;
-}
-```
-The `level` parameter could be prefixed `_level` to signal it is intentionally unused.
+### ~~I1 — `castCost` is a no-op wrapper~~ — **Resolved by P2 fix**
 
 ### I2 — `annotateCostFn` allocates an extra function per call
 ```ts
@@ -180,20 +226,7 @@ return fn as unknown as CostFn<L, Args, R>;
 ```
 Since `castCost` is a no-op, the wrapper only adds call overhead.
 
-### I3 — `$binarySearch` should match its contract
-Either rename to `$linearSearch` / `$indexOf`, or implement an actual binary search (requires sorted input):
-```ts
-export const $binarySearch = (x: number) =>
-  <C extends Cost>(c: Ctx<C, readonly number[]>): Ctx<Seq<C, C_LOG>, number> => {
-    let lo = 0, hi = c.value.length - 1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (c.value[mid] === x) return { value: mid } as Ctx<Seq<C, C_LOG>, number>;
-      if (c.value[mid] < x) lo = mid + 1; else hi = mid - 1;
-    }
-    return { value: -1 } as Ctx<Seq<C, C_LOG>, number>;
-  };
-```
+### ~~I3 — `$binarySearch` should match its contract~~ — **Resolved by P1 fix**
 
 ### I4 — `$` runtime normalization could use a lookup map
 ```ts
@@ -203,7 +236,7 @@ const LABEL_MAP: Record<CostBigO, CostLabel> = {
 };
 const level = LABEL_MAP[max as CostBigO] ?? (max as CostLabel);
 ```
-More maintainable than the if-chain at lines 175–181.
+More maintainable than the current if-chain.
 
 ---
 
@@ -216,7 +249,7 @@ More maintainable than the if-chain at lines 175–181.
 | 3 | `LevelsUpTo<L>` + `Costed<L,T>` widening | cost.ts lines 107–130 |
 | 4 | `$` boundary enforcement via `Leq` constraint | cost.ts lines 163–187 |
 | 5 | `Ctx<C,T>` and `$cost/$pipe/$andThen` | cost.ts lines 304–363 |
-| 6 | `Seq` vs `Nest` cost propagation | cost.ts lines 98–99, `$forEachN` line 414 |
-| 7 | Full usage in practice | `src/store/core/line-index.ts`, `src/types/branded.test.ts` lines 300–373 |
+| 6 | `Seq` vs `Nest` cost propagation | cost.ts lines 98–99, `$forEachN` / `$mapN` |
+| 7 | Full usage in practice | `src/store/core/line-index.ts`, `src/types/branded.test.ts` |
 
-The most illuminating test cases for understanding the system are the `$forEachN` nesting tests in `branded.test.ts` (lines 324–355) — they demonstrate how `Nest<C_LIN, C_LOG>` infers `nlogn` and `Nest<C_LIN, C_LIN>` infers `quad`, which is the core value of the whole system.
+The most illuminating test cases for understanding the system are the `$forEachN` nesting tests in `branded.test.ts` — they demonstrate how `Nest<C_LIN, C_LOG>` infers `nlogn` and `Nest<C_LIN, C_LIN>` infers `quad`, which is the core value of the whole system.

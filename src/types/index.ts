@@ -152,4 +152,5 @@ export {
   $filter,
   $linearScan,
   $forEachN,
+  $mapN,
 } from './cost.ts';

@@ -13,7 +13,7 @@ import type {
   DirtyLineRange,
   EvaluationMode,
 } from '../../types/state.ts';
-import type { ByteOffset, ByteLength } from '../../types/branded.ts';
+import { byteOffset, byteLength as toByteLengthBrand, type ByteOffset, type ByteLength } from '../../types/branded.ts';
 import type { ReadTextFn } from '../../types/store.ts';
 import {
   $,
@@ -23,13 +23,11 @@ import {
   $pipe,
   $andThen,
   $map,
-  byteOffset,
-  byteLength as toByteLengthBrand,
   type ConstCost,
   type LinearCost,
   type LogCost,
   type NLogNCost,
-} from '../../types/branded.ts';
+} from '../../types/cost.ts';
 import { createLineIndexNode, withLineIndexNode, withLineIndexState } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 
