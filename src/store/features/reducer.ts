@@ -10,6 +10,7 @@ import type { ByteOffset } from '../../types/branded.ts';
 import type { LineIndexStrategy } from '../../types/store.ts';
 import { byteOffset } from '../../types/branded.ts';
 import { withState } from '../core/state.ts';
+import { $, $cost, type LinearCost } from '../../types/cost.ts';
 import {
   pieceTableInsert as ptInsert,
   pieceTableDelete as ptDelete,
@@ -73,12 +74,12 @@ function pieceTableInsert(
   state: DocumentState,
   position: ByteOffset,
   text: string
-): { state: DocumentState; insertedByteLength: number } {
+): LinearCost<{ state: DocumentState; insertedByteLength: number }> {
   const result = ptInsert(state.pieceTable, position, text);
-  return {
+  return $('O(n)', $cost({
     state: withState(state, { pieceTable: result.state }),
     insertedByteLength: result.insertedByteLength,
-  };
+  }));
 }
 
 /**
@@ -89,18 +90,18 @@ function pieceTableDelete(
   state: DocumentState,
   start: ByteOffset,
   end: ByteOffset
-): DocumentState {
+): LinearCost<DocumentState> {
   const newPieceTable = ptDelete(state.pieceTable, start, end);
-  return withState(state, {
+  return $('O(n)', $cost(withState(state, {
     pieceTable: newPieceTable,
-  });
+  })));
 }
 
 /**
  * Get text in a range from the piece table.
  * Used for capturing deleted text for undo.
  */
-function getTextRange(state: DocumentState, start: ByteOffset, end: ByteOffset): string {
+function getTextRange(state: DocumentState, start: ByteOffset, end: ByteOffset): LinearCost<string> {
   return getText(state.pieceTable, start, end);
 }
 

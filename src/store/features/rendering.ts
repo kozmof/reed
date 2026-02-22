@@ -296,7 +296,7 @@ export function estimateTotalHeight(
     for (let i = 0; i < totalLines; i++) {
       const line = getVisibleLine(state, i);
       if (line) {
-        totalHeight += estimateLineHeight(line, config);
+        totalHeight += $from(estimateLineHeight(line, config)).value;
       }
     }
     return $('O(n)', $cost(totalHeight));
@@ -309,7 +309,7 @@ export function estimateTotalHeight(
   for (let i = 0; i < totalLines; i += step) {
     const line = getVisibleLine(state, i);
     if (line) {
-      sampleHeight += estimateLineHeight(line, config);
+      sampleHeight += $from(estimateLineHeight(line, config)).value;
     }
   }
 

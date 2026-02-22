@@ -10,6 +10,12 @@ import type { DocumentAction } from '../../types/actions.ts';
 import { byteOffset } from '../../types/branded.ts';
 import { DocumentActions } from './actions.ts';
 import { textEncoder } from '../core/encoding.ts';
+import {
+  $,
+  $cost,
+  type LinearCost,
+  type QuadCost,
+} from '../../types/cost.ts';
 
 // =============================================================================
 // Types
@@ -47,27 +53,27 @@ export interface DiffResult {
  * Compute the diff between two strings using Myers algorithm.
  * Returns the minimal edit script to transform `oldText` into `newText`.
  */
-export function diff(oldText: string, newText: string): DiffResult {
+export function diff(oldText: string, newText: string): QuadCost<DiffResult> {
   // Handle trivial cases
   if (oldText === newText) {
-    return {
+    return $('O(n^2)', $cost({
       edits: oldText.length > 0 ? [{ type: 'equal', text: oldText, oldPos: 0, newPos: 0 }] : [],
       distance: 0,
-    };
+    } satisfies DiffResult));
   }
 
   if (oldText.length === 0) {
-    return {
+    return $('O(n^2)', $cost({
       edits: [{ type: 'insert', text: newText, oldPos: 0, newPos: 0 }],
       distance: newText.length,
-    };
+    } satisfies DiffResult));
   }
 
   if (newText.length === 0) {
-    return {
+    return $('O(n^2)', $cost({
       edits: [{ type: 'delete', text: oldText, oldPos: 0, newPos: 0 }],
       distance: oldText.length,
-    };
+    } satisfies DiffResult));
   }
 
   // Find common prefix
@@ -126,7 +132,7 @@ export function diff(oldText: string, newText: string): DiffResult {
     }
   }
 
-  return { edits, distance };
+  return $('O(n^2)', $cost({ edits, distance }));
 }
 
 /**
@@ -369,9 +375,9 @@ function consolidateEdits(edits: DiffEdit[]): DiffEdit[] {
 export function computeSetValueActions(
   oldContent: string,
   newContent: string
-): DocumentAction[] {
+): QuadCost<DocumentAction[]> {
   if (oldContent === newContent) {
-    return [];
+    return $('O(n^2)', $cost([]));
   }
 
   const diffResult = diff(oldContent, newContent);
@@ -427,7 +433,7 @@ export function computeSetValueActions(
     }
   }
 
-  return actions;
+  return $('O(n^2)', $cost(actions));
 }
 
 /**
@@ -459,9 +465,9 @@ function isHighSurrogate(code: number): boolean {
 export function computeSetValueActionsOptimized(
   oldContent: string,
   newContent: string
-): DocumentAction[] {
+): LinearCost<DocumentAction[]> {
   if (oldContent === newContent) {
-    return [];
+    return $('O(n)', $cost([]));
   }
 
   // Find the differing region (in string indices)
@@ -497,7 +503,7 @@ export function computeSetValueActionsOptimized(
   const insertedText = newContent.slice(start, newEnd);
 
   if (deletedText.length === 0 && insertedText.length === 0) {
-    return [];
+    return $('O(n)', $cost([]));
   }
 
   // Convert string indices to byte indices for the piece table
@@ -506,16 +512,16 @@ export function computeSetValueActionsOptimized(
 
   if (deletedText.length === 0) {
     // Pure insert
-    return [DocumentActions.insert(byteStart, insertedText)];
+    return $('O(n)', $cost([DocumentActions.insert(byteStart, insertedText)]));
   }
 
   if (insertedText.length === 0) {
     // Pure delete
-    return [DocumentActions.delete(byteStart, byteOldEnd)];
+    return $('O(n)', $cost([DocumentActions.delete(byteStart, byteOldEnd)]));
   }
 
   // Replace
-  return [DocumentActions.replace(byteStart, byteOldEnd, insertedText)];
+  return $('O(n)', $cost([DocumentActions.replace(byteStart, byteOldEnd, insertedText)]));
 }
 
 // =============================================================================
@@ -547,14 +553,14 @@ export function setValue(
   state: DocumentState,
   newContent: string,
   options: SetValueOptions = {}
-): DocumentState {
+): QuadCost<DocumentState> {
   const { useReplace = true } = options;
 
   // Get current content
   const oldContent = getValue(state.pieceTable);
 
   if (oldContent === newContent) {
-    return state;
+    return $('O(n^2)', $cost(state));
   }
 
   // Compute actions
@@ -563,7 +569,7 @@ export function setValue(
     : computeSetValueActions(oldContent, newContent);
 
   if (actions.length === 0) {
-    return state;
+    return $('O(n^2)', $cost(state));
   }
 
   // Apply actions directly through the reducer.
@@ -573,7 +579,7 @@ export function setValue(
     newState = documentReducer(newState, action);
   }
 
-  return newState;
+  return $('O(n^2)', $cost(newState));
 }
 
 /**
@@ -584,11 +590,11 @@ export function computeSetValueActionsFromState(
   pieceTable: PieceTableState,
   newContent: string,
   useReplace: boolean = true
-): DocumentAction[] {
+): QuadCost<DocumentAction[]> {
   const oldContent = getValue(pieceTable);
 
   if (oldContent === newContent) {
-    return [];
+    return $('O(n^2)', $cost([]));
   }
 
   return useReplace

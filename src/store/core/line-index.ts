@@ -718,7 +718,7 @@ function updateLineAtNumber(
       right: updateLineAtNumber(node.right, lineNumber - leftLineCount - 1, newLength, newCharLength),
     });
   } else {
-    const updates: any = { lineLength: newLength };
+    const updates: { lineLength: number; charLength?: number } = { lineLength: newLength };
     if (newCharLength !== undefined) updates.charLength = newCharLength;
     return withLineIndexNode(node, updates);
   }
@@ -1281,8 +1281,8 @@ export function mergeDirtyRanges(
 export function isLineDirty(
   dirtyRanges: readonly DirtyLineRange[],
   lineNumber: number
-): LinearCost<boolean> {
-  return $('O(n)', $cost(dirtyRanges.some(
+): ConstCost<boolean> {
+  return $('O(1)', $cost(dirtyRanges.some(
     r => lineNumber >= r.startLine && lineNumber <= r.endLine
   )));
 }
@@ -1293,14 +1293,14 @@ export function isLineDirty(
 export function getOffsetDeltaForLine(
   dirtyRanges: readonly DirtyLineRange[],
   lineNumber: number
-): LinearCost<number> {
+): ConstCost<number> {
   let delta = 0;
   for (const range of dirtyRanges) {
     if (lineNumber >= range.startLine && lineNumber <= range.endLine) {
       delta += range.offsetDelta;
     }
   }
-  return $('O(n)', $cost(delta));
+  return $('O(1)', $cost(delta));
 }
 
 /**
