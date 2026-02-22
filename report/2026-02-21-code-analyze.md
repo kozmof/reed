@@ -52,12 +52,13 @@
 
 ## 5. Pitfalls
 
-### P0: `getLineRangePrecise` returns incorrect ranges in dirty/lazy states
+### ~~P0: `getLineRangePrecise` returns incorrect ranges in dirty/lazy states~~ (Fixed 2026-02-22)
 - Evidence:
-  - Dirty path adds `getOffsetDeltaForLine(...)` on top of `getLineStartOffset(...)` in `src/store/core/line-index.ts:1619` and `src/store/core/line-index.ts:1621`.
-  - `getLineStartOffset(...)` already computes offsets from subtree byte aggregates, not stale `documentOffset` (`src/store/core/line-index.ts:184`), so this can double-apply shifts.
+  - Dirty path added `getOffsetDeltaForLine(...)` on top of `getLineStartOffset(...)` in `src/store/core/line-index.ts:1619` and `src/store/core/line-index.ts:1621`.
+  - `getLineStartOffset(...)` already computes offsets from subtree byte aggregates, not stale `documentOffset` (`src/store/core/line-index.ts:184`), so this double-applied shifts.
   - Rendering depends on this function (`src/store/features/rendering.ts:161`).
 - Reproduced via temporary test: after inserting `"X\n"` at byte 0 into `"A\nB\nC"`, visible lines became `['X', 'B', 'C', '']` instead of `['X', 'A', 'B', 'C']`.
+- Fix: removed the dirty-path branch from `getLineRangePrecise`. `withLineIndexNode` keeps `subtreeByteLength` current on every tree mutation, so `getLineStartOffset` returns the correct offset in both clean and dirty states without any delta adjustment. Cost annotation updated to `O(log n)`. All 465 tests pass, `tsc --noEmit` clean.
 
 ### P1: `batch()` does not schedule reconciliation at outer commit
 - Evidence:
@@ -103,8 +104,8 @@
 - Align `DocumentStore.batch` contract text (`src/types/store.ts:63`) with actual implementation or update implementation to satisfy it.
 
 ## 8. Improvement points 3 (implementations)
-- Fix lazy range computation:
-  - In `src/store/core/line-index.ts`, remove extra delta addition in `getLineRangePrecise` dirty branch, or compute from stale `documentOffset` consistently (not mixed models).
+- ~~Fix lazy range computation~~: Done (2026-02-22).
+  - Removed the dirty branch from `getLineRangePrecise` in `src/store/core/line-index.ts`; `getLineStartOffset` is authoritative in all states.
 - Fix post-batch reconciliation scheduling:
   - In `TRANSACTION_COMMIT` branch (`src/store/features/store.ts:109`), schedule reconciliation when outermost commit leaves `rebuildPending` true.
 - Fix remote event emission:

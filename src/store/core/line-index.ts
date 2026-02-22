@@ -1601,26 +1601,14 @@ export function getLineRangePrecise(
   const node = findLineByNumber(state.root, lineNumber);
   if (node === null) return null;
 
-  // Eager state guarantees clean offsets; this remains O(log n).
-  if (state.dirtyRanges.length === 0) {
-    return $('O(log n)', $checked(() => $pipe(
-      $from(node),
-      $andThen((resolvedNode) => $pipe(
-        $from(getLineStartOffset(state.root, lineNumber)),
-        $map((start) => ({ start: byteOffset(start), length: toByteLengthBrand(resolvedNode.lineLength) })),
-      )),
-    )));
-  }
-
-  // Lazy/union states may require dirty-range scanning (O(dirtyRanges)).
-  return $('O(n)', $checked(() => $pipe(
+  // getLineStartOffset uses subtreeByteLength aggregates, which withLineIndexNode
+  // keeps current on every tree mutation. The offset it returns is correct in both
+  // clean (eager) and dirty (lazy) states — no dirty-range delta adjustment needed.
+  return $('O(log n)', $checked(() => $pipe(
     $from(node),
     $andThen((resolvedNode) => $pipe(
       $from(getLineStartOffset(state.root, lineNumber)),
-      $andThen((start) => $pipe(
-        $from(getOffsetDeltaForLine(state.dirtyRanges, lineNumber)),
-        $map((delta) => ({ start: byteOffset(start + delta), length: toByteLengthBrand(resolvedNode.lineLength) })),
-      )),
+      $map((start) => ({ start: byteOffset(start), length: toByteLengthBrand(resolvedNode.lineLength) })),
     )),
   )));
 }
