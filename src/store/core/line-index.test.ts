@@ -442,6 +442,23 @@ describe('Reconciliation version tracking (P6 fix)', () => {
     const reconciled = reconcileRange(dirty, 0, 2, 7);
     expect(reconciled.lastReconciledVersion).toBe(7);
   });
+
+  it('reconcileRange should keep dirty lines outside the reconciled window', () => {
+    const content = Array.from({ length: 150 }, (_, i) => `Line ${i}`).join('\n');
+    const initial = createLineIndexState(content);
+    const dirty = lineIndexInsertLazy(initial, byteOffset(0), 'X\n', 1);
+    expect(dirty.dirtyRanges.length).toBeGreaterThan(0);
+
+    const partiallyReconciled = reconcileRange(dirty, 100, 120, 2);
+    const hasLineOneStillDirty = partiallyReconciled.dirtyRanges.some(
+      range => range.startLine <= 1 && range.endLine >= 1
+    );
+    const hasViewportLineStillDirty = partiallyReconciled.dirtyRanges.some(
+      range => range.startLine <= 110 && range.endLine >= 110
+    );
+    expect(hasLineOneStillDirty).toBe(true);
+    expect(hasViewportLineStillDirty).toBe(false);
+  });
 });
 
 describe('mergeDirtyRanges improvements', () => {

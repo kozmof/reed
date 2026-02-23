@@ -1634,22 +1634,35 @@ export function reconcileRange(
     }
   }
 
-  // Filter out ranges that are now reconciled
-  const remainingRanges = state.dirtyRanges.filter(range => {
+  // Keep only the parts of dirty ranges that are outside [startLine, endLine].
+  const remaining: DirtyLineRange[] = [];
+  for (const range of state.dirtyRanges) {
     const rangeEnd = Math.min(range.endLine, state.lineCount - 1);
-    // Keep if range extends beyond reconciled area
-    return rangeEnd > endLine || range.startLine < startLine;
-  }).map(range => {
-    // Adjust ranges that partially overlap
-    if (range.startLine <= endLine &&
-        range.endLine > endLine) {
-      return Object.freeze({
+    if (range.startLine > rangeEnd) continue;
+
+    // No overlap with reconciled window.
+    if (rangeEnd < startLine || range.startLine > endLine) {
+      remaining.push(range);
+      continue;
+    }
+
+    // Left-side remainder.
+    if (range.startLine < startLine) {
+      remaining.push(Object.freeze({
+        ...range,
+        endLine: startLine - 1,
+      }));
+    }
+
+    // Right-side remainder.
+    if (rangeEnd > endLine) {
+      remaining.push(Object.freeze({
         ...range,
         startLine: endLine + 1,
-      });
+      }));
     }
-    return range;
-  });
+  }
+  const remainingRanges = mergeDirtyRanges(remaining);
 
   return $('O(n log n)', $cost(withLineIndexState(state, {
     root: newRoot,

@@ -7,6 +7,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { createDocumentStore } from './store.ts';
 import { DocumentActions } from './actions.ts';
 import { byteOffset } from '../../types/branded.ts';
+import { rebuildLineIndex, getLineStartOffset } from '../core/line-index.ts';
+import { getText } from '../core/piece-table.ts';
 
 describe('Editor Use Cases', () => {
   describe('Basic Text Editing', () => {
@@ -322,6 +324,35 @@ describe('Editor Use Cases', () => {
 
       expect(store.getSnapshot().pieceTable.totalLength).toBe(iterations);
       expect(store.getSnapshot().version).toBe(iterations);
+    });
+
+    it('should keep line index consistent after many rapid multiline edits', () => {
+      const initialContent = Array.from({ length: 20 }, (_, i) => `Line ${i}`).join('\n');
+      const store = createDocumentStore({ content: initialContent });
+
+      // Simulate rapid multiline typing near document start.
+      for (let i = 0; i < 50; i++) {
+        store.dispatch(DocumentActions.insert(byteOffset(0), `X${i}\n`));
+      }
+
+      // Reconcile an active viewport first, then force full reconciliation.
+      store.setViewport(25, 40);
+      const reconciled = store.reconcileNow();
+
+      const content = getText(
+        reconciled.pieceTable,
+        byteOffset(0),
+        byteOffset(reconciled.pieceTable.totalLength)
+      );
+      const rebuilt = rebuildLineIndex(content);
+
+      expect(reconciled.lineIndex.lineCount).toBe(rebuilt.lineCount);
+
+      for (let line = 0; line < rebuilt.lineCount; line++) {
+        expect(getLineStartOffset(reconciled.lineIndex.root, line)).toBe(
+          getLineStartOffset(rebuilt.root, line)
+        );
+      }
     });
 
     it('should handle batch insert efficiently', () => {
