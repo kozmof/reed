@@ -20,7 +20,7 @@ import {
   reconcileViewport,
   mergeDirtyRanges,
 } from './line-index.ts';
-import { createLineIndexState, createEmptyLineIndexState } from './state.ts';
+import { createLineIndexState, createEmptyLineIndexState, withLineIndexState } from './state.ts';
 import { byteOffset } from '../../types/branded.ts';
 
 describe('Line Index Operations', () => {
@@ -526,6 +526,41 @@ describe('mergeDirtyRanges improvements', () => {
     expect(merged).toHaveLength(1);
     expect(merged[0].startLine).toBe(0);
     expect(merged[0].endLine).toBe(10);
+  });
+
+  it('reconcileFull should fully rebuild when range-cap collapse loses delta detail', () => {
+    const base = createLineIndexState(Array.from({ length: 20 }, (_, i) => `Line ${i}`).join('\n'));
+    const dirty = lineIndexInsertLazy(base, byteOffset(0), 'A\nB\nC\n', 1);
+
+    // Simulate the >32 range collapse sentinel produced by mergeDirtyRanges.
+    const manyRanges = [];
+    for (let i = 0; i < 40; i++) {
+      manyRanges.push(Object.freeze({
+        startLine: i * 2,
+        endLine: i * 2,
+        offsetDelta: i % 2 === 0 ? 1 : -1,
+        createdAtVersion: i + 1,
+      }));
+    }
+    const collapsed = mergeDirtyRanges(manyRanges);
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0].startLine).toBe(0);
+    expect(collapsed[0].endLine).toBe(Number.MAX_SAFE_INTEGER);
+    expect(collapsed[0].offsetDelta).toBe(0);
+
+    const forcedDirty = withLineIndexState(dirty, {
+      dirtyRanges: Object.freeze(collapsed),
+      rebuildPending: true,
+    });
+
+    const reconciled = reconcileFull(forcedDirty, 2);
+    const lines = collectLines(reconciled.root);
+
+    let runningOffset = 0;
+    for (const line of lines) {
+      expect(line.documentOffset).toBe(runningOffset);
+      runningOffset += line.lineLength;
+    }
   });
 });
 

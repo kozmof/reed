@@ -1828,8 +1828,16 @@ export function reconcileFull(
   const totalDirty = computeTotalDirtyLines(state.dirtyRanges, state.lineCount);
   const thresholdFn = config?.thresholdFn ?? defaultThresholdFn;
   const threshold = thresholdFn(state.lineCount);
+  const hasCollapsedCapSentinel = state.dirtyRanges.some(range =>
+    range.startLine === 0 &&
+    range.endLine === Number.MAX_SAFE_INTEGER &&
+    range.offsetDelta === 0
+  );
 
-  if (totalDirty <= threshold) {
+  // mergeDirtyRanges may collapse many heterogeneous ranges into a single
+  // full-document sentinel with offsetDelta=0. Delta detail is lost there,
+  // so incremental reconciliation cannot repair offsets correctly.
+  if (!hasCollapsedCapSentinel && totalDirty <= threshold) {
     let current: LineIndexState = state;
     for (const range of state.dirtyRanges) {
       const endLine = Math.min(range.endLine, current.lineCount - 1);
