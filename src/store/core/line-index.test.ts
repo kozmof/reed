@@ -44,6 +44,11 @@ describe('Line Index Operations', () => {
       const state = rebuildLineIndex('Line 1\n');
       expect(getLineCountFromIndex(state)).toBe(2);
     });
+
+    it('should handle consecutive CRLF line endings', () => {
+      const state = rebuildLineIndex('\r\n\r\n');
+      expect(getLineCountFromIndex(state)).toBe(3);
+    });
   });
 
   describe('findLineAtPosition', () => {

@@ -359,6 +359,34 @@ describe('Editor Use Cases', () => {
       store.dispatch(DocumentActions.delete(byteOffset(2), byteOffset(3)));
       expect(store.getSnapshot().lineIndex.lineCount).toBe(2);
     });
+
+    it('should keep line count when inserting CR before an existing LF separator', () => {
+      const store = createDocumentStore({ content: 'A\nB' });
+      expect(store.getSnapshot().lineIndex.lineCount).toBe(2);
+
+      store.dispatch(DocumentActions.insert(byteOffset(1), '\r'));
+      expect(store.getSnapshot().lineIndex.lineCount).toBe(2);
+    });
+
+    it('should keep line count when inserting LF after an existing CR separator', () => {
+      const store = createDocumentStore({ content: 'A\rB' });
+      expect(store.getSnapshot().lineIndex.lineCount).toBe(2);
+
+      store.dispatch(DocumentActions.insert(byteOffset(2), '\n'));
+      expect(store.getSnapshot().lineIndex.lineCount).toBe(2);
+    });
+
+    it('should keep line index accurate when inserting CRLF inside an existing CRLF pair', () => {
+      const store = createDocumentStore({ content: '\r\n\r' });
+      store.dispatch(DocumentActions.insert(byteOffset(1), '\r\n'));
+      assertLineIndexMatchesRebuild(store, '\r\r\n\n\r');
+    });
+
+    it('should keep line index accurate when deleting LF from CRLF plus following character', () => {
+      const store = createDocumentStore({ content: 'a\n\n\r\na\r\n' });
+      store.dispatch(DocumentActions.delete(byteOffset(4), byteOffset(6)));
+      assertLineIndexMatchesRebuild(store, 'a\n\n\r\r\n');
+    });
   });
 
   describe('Large Document Editing', () => {
@@ -552,6 +580,91 @@ describe('Editor Use Cases', () => {
         }
 
         assertLineIndexMatchesRebuild(store, model);
+      }
+    });
+
+    it('should stay line-index correct across randomized mixed line endings', () => {
+      const seeds = [3, 9, 27, 81, 243, 511, 997, 2027, 4093, 8191];
+      const pool = ['x', 'yy', '\n', '\r', '\r\n', 'a\r', '\nb', 'c\r\nd', '\r\n\r'];
+
+      for (const seed of seeds) {
+        const initialContent = Array.from({ length: 10 }, (_, i) => `R${seed}-${i}`).join('\n');
+        const store = createDocumentStore({ content: initialContent });
+        let model = initialContent;
+        const rng = createDeterministicRng(seed * 97);
+        let opDesc = 'init';
+
+        for (let i = 0; i < 220; i++) {
+          const op = randomInt(rng, 0, 2);
+
+          if (op === 0 || model.length === 0) {
+            const pos = randomInt(rng, 0, model.length);
+            const text = pool[randomInt(rng, 0, pool.length - 1)];
+            opDesc = `insert pos=${pos} text=${JSON.stringify(text)}`;
+            store.dispatch(DocumentActions.insert(byteOffset(pos), text));
+            model = model.slice(0, pos) + text + model.slice(pos);
+          } else if (op === 1) {
+            const start = randomInt(rng, 0, model.length - 1);
+            const end = randomInt(rng, start + 1, model.length);
+            opDesc = `delete start=${start} end=${end} text=${JSON.stringify(model.slice(start, end))}`;
+            store.dispatch(DocumentActions.delete(byteOffset(start), byteOffset(end)));
+            model = model.slice(0, start) + model.slice(end);
+          } else {
+            const start = randomInt(rng, 0, model.length - 1);
+            const end = randomInt(rng, start + 1, model.length);
+            const text = pool[randomInt(rng, 0, pool.length - 1)];
+            opDesc = `replace start=${start} end=${end} text=${JSON.stringify(text)}`;
+            store.dispatch(DocumentActions.replace(byteOffset(start), byteOffset(end), text));
+            model = model.slice(0, start) + text + model.slice(end);
+          }
+
+          if (randomInt(rng, 0, 2) === 0) {
+            const lineCount = model.split(/\r\n|\r|\n/).length;
+            const startLine = randomInt(rng, -3, lineCount + 3);
+            const endLine = randomInt(rng, -3, lineCount + 3);
+            opDesc += ` viewport=${startLine}-${endLine}`;
+            store.setViewport(startLine, endLine);
+          }
+
+          const reconciled = store.reconcileNow();
+          const content = getText(
+            reconciled.pieceTable,
+            byteOffset(0),
+            byteOffset(reconciled.pieceTable.totalLength)
+          );
+          if (content !== model) {
+            throw new Error(
+              `mixed-line-ending seed=${seed} step=${i} op=${opDesc} content-mismatch expected=${JSON.stringify(model)} actual=${JSON.stringify(content)}`
+            );
+          }
+
+          const rebuilt = rebuildLineIndex(content);
+          if (reconciled.lineIndex.lineCount !== rebuilt.lineCount) {
+            throw new Error(
+              `mixed-line-ending seed=${seed} step=${i} op=${opDesc} model=${JSON.stringify(model)} lineCount actual=${reconciled.lineIndex.lineCount} expected=${rebuilt.lineCount}`
+            );
+          }
+
+          for (let line = 0; line < rebuilt.lineCount; line++) {
+            const actual = getLineStartOffset(reconciled.lineIndex.root, line);
+            const expected = getLineStartOffset(rebuilt.root, line);
+            if (actual !== expected) {
+              throw new Error(
+                `mixed-line-ending seed=${seed} step=${i} op=${opDesc} model=${JSON.stringify(model)} line=${line} offset actual=${actual} expected=${expected}`
+              );
+            }
+          }
+        }
+
+        try {
+          assertLineIndexMatchesRebuild(store, model);
+        } catch (error) {
+          throw new Error(
+            `mixed-line-ending seed=${seed} modelLength=${model.length}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
       }
     });
 

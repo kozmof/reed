@@ -126,6 +126,60 @@ function findNewlineCharPositions(text: string): number[] {
   return positions;
 }
 
+interface InsertBoundaryContext {
+  prevChar?: string;
+  nextChar?: string;
+}
+
+function getInsertBoundaryContext(
+  position: ByteOffset,
+  insertedByteLength: number,
+  readText?: ReadTextFn
+): InsertBoundaryContext {
+  if (!readText) return {};
+
+  const pos = position as number;
+
+  const prevChar = pos > 0
+    ? readText(byteOffset(pos - 1), position)
+    : '';
+  const nextChar = readText(
+    byteOffset(pos + insertedByteLength),
+    byteOffset(pos + insertedByteLength + 1)
+  );
+
+  return {
+    prevChar: prevChar.length > 0 ? prevChar : undefined,
+    nextChar: nextChar.length > 0 ? nextChar : undefined,
+  };
+}
+
+function hasCrossBoundaryCRLFMerge(text: string, context: InsertBoundaryContext): boolean {
+  if (text.length === 0) return false;
+  const mergesWithPrev = text[0] === '\n' && context.prevChar === '\r';
+  const mergesWithNext = text[text.length - 1] === '\r' && context.nextChar === '\n';
+  // Inserting between an existing CRLF pair breaks one logical separator into two
+  // independent separators, which changes line count outside inserted text.
+  const splitsExistingCRLF = context.prevChar === '\r' && context.nextChar === '\n';
+  return mergesWithPrev || mergesWithNext || splitsExistingCRLF;
+}
+
+function rebuildFromReadText(
+  state: LineIndexState,
+  readText: ReadTextFn,
+  reconciledVersion: number
+): LineIndexState {
+  const content = readText(byteOffset(0), byteOffset(Number.MAX_SAFE_INTEGER));
+  const rebuilt = buildLineIndexFromText(content, 0);
+  return withLineIndexState(state, {
+    root: rebuilt.root,
+    lineCount: rebuilt.lineCount,
+    dirtyRanges: Object.freeze([]),
+    lastReconciledVersion: reconciledVersion,
+    rebuildPending: false,
+  });
+}
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -459,6 +513,14 @@ export function lineIndexInsert(
   if (text.length === 0) return $('O(n)', $cost(state));
 
   const { positions: newlinePositions, byteLength } = findNewlineBytePositions(text);
+  const insertContext = getInsertBoundaryContext(position, byteLength, readText);
+
+  // Boundary merge case (e.g. inserting '\r' before existing '\n').
+  // Structural incremental logic assumes inserted line breaks are self-contained;
+  // cross-boundary CRLF composition violates that assumption. Rebuild for correctness.
+  if (readText && hasCrossBoundaryCRLFMerge(text, insertContext)) {
+    return $('O(n)', $cost(rebuildFromReadText(state, readText, state.lastReconciledVersion)));
+  }
 
   // If no newlines, just update the length of the affected line
   if (newlinePositions.length === 0) {
@@ -816,21 +878,30 @@ function updateOffsetsAfterLine(
  */
 function buildLineIndexFromText(text: string, startOffset: number): LineIndexState {
   const lines: { offset: number; length: number; charLength: number }[] = [];
+  const { positions: breakBytes, byteLength } = findNewlineBytePositions(text);
+  const breakChars = findNewlineCharPositions(text);
 
-  // Split by newline to compute both byte and char lengths per line
-  const textLines = text.split('\n');
-  let bytePos = 0;
+  let prevByte = 0;
+  let prevChar = 0;
 
-  for (let i = 0; i < textLines.length; i++) {
-    const lineText = i < textLines.length - 1 ? textLines[i] + '\n' : textLines[i];
-    const lineBytes = textEncoder.encode(lineText);
+  for (let i = 0; i < breakBytes.length; i++) {
+    const endByte = breakBytes[i] + 1; // Include the line-break endpoint byte
+    const endChar = breakChars[i] + 1; // Include the line-break endpoint char
     lines.push({
-      offset: startOffset + bytePos,
-      length: lineBytes.length,
-      charLength: lineText.length,
+      offset: startOffset + prevByte,
+      length: endByte - prevByte,
+      charLength: endChar - prevChar,
     });
-    bytePos += lineBytes.length;
+    prevByte = endByte;
+    prevChar = endChar;
   }
+
+  // Final line (possibly empty when content ends with a line break).
+  lines.push({
+    offset: startOffset + prevByte,
+    length: byteLength - prevByte,
+    charLength: text.length - prevChar,
+  });
 
   if (lines.length === 0) {
     return Object.freeze({
@@ -1386,6 +1457,12 @@ export function lineIndexInsertLazy(
   if (text.length === 0) return $('O(n)', $cost(state));
 
   const { positions: newlinePositions, byteLength } = findNewlineBytePositions(text);
+  const insertContext = getInsertBoundaryContext(position, byteLength, readText);
+
+  // Same cross-boundary CRLF case as eager insert; rebuild to guarantee correctness.
+  if (readText && hasCrossBoundaryCRLFMerge(text, insertContext)) {
+    return $('O(n)', $cost(rebuildFromReadText(state, readText, currentVersion)));
+  }
 
   // No newlines: simple length update (O(log n), no lazy needed)
   if (newlinePositions.length === 0) {

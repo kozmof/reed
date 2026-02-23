@@ -22,6 +22,7 @@ import {
   lineIndexInsertLazy as liInsertLazy,
   lineIndexDeleteLazy as liDeleteLazy,
   reconcileFull,
+  rebuildLineIndex,
 } from '../core/line-index.ts';
 import { textEncoder } from '../core/encoding.ts';
 
@@ -155,6 +156,26 @@ function getDeleteBoundaryContext(
     prevChar: prevChar.length > 0 ? prevChar : undefined,
     nextChar: nextChar.length > 0 ? nextChar : undefined,
   };
+}
+
+function shouldRebuildLineIndexForDelete(
+  deletedText: string,
+  deleteContext?: DeleteBoundaryContext
+): boolean {
+  if (deletedText.includes('\r')) return true;
+  // Deleting LF immediately after a CR can rewrite CRLF boundaries across
+  // line edges while keeping logical line-break count unchanged.
+  if (deletedText.includes('\n') && deleteContext?.prevChar === '\r') return true;
+  // Deleting any content between '\r' and '\n' can collapse two logical
+  // breaks into one CRLF break without deleting newline bytes directly.
+  if (deleteContext?.prevChar === '\r' && deleteContext?.nextChar === '\n') return true;
+  return false;
+}
+
+function rebuildLineIndexFromPieceTableState(state: DocumentState): DocumentState {
+  const content = getText(state.pieceTable, byteOffset(0), byteOffset(state.pieceTable.totalLength));
+  const rebuilt = rebuildLineIndex(content);
+  return withState(state, { lineIndex: rebuilt });
 }
 
 // =============================================================================
@@ -448,6 +469,9 @@ function applyChange(state: DocumentState, change: HistoryChange, version: numbe
       const end = byteOffset(change.position + change.byteLength);
       const deleteContext = getDeleteBoundaryContext(state, change.position, end);
       const s = pieceTableDelete(state, change.position, end);
+      if (shouldRebuildLineIndexForDelete(change.text, deleteContext)) {
+        return rebuildLineIndexFromPieceTableState(s);
+      }
       const newLineIndex = eagerLineIndex.delete(reconciledLI, change.position, end, change.text, version, deleteContext);
       return withState(s, { lineIndex: newLineIndex });
     }
@@ -456,6 +480,9 @@ function applyChange(state: DocumentState, change: HistoryChange, version: numbe
       const deleteContext = getDeleteBoundaryContext(state, change.position, deleteEnd);
       const s = pieceTableDelete(state, change.position, deleteEnd);
       const { state: s2 } = pieceTableInsert(s, change.position, change.text);
+      if (shouldRebuildLineIndexForDelete(change.oldText, deleteContext)) {
+        return rebuildLineIndexFromPieceTableState(s2);
+      }
       const li1 = eagerLineIndex.delete(reconciledLI, change.position, deleteEnd, change.oldText, version, deleteContext);
       const readText = (start: ByteOffset, end: ByteOffset) => getText(s2.pieceTable, start, end);
       const li2 = eagerLineIndex.insert(li1, change.position, change.text, version, readText);
@@ -522,20 +549,27 @@ interface EditOperation {
 function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
   const nextVersion = state.version + 1;
   let newState: DocumentState = state;
+  let forceLineIndexRebuild = false;
 
   // Delete phase
   if (op.deleteEnd !== undefined) {
     const deleteContext = getDeleteBoundaryContext(newState, op.position, op.deleteEnd);
-    const delLineIndex = lazyLineIndex.delete(
-      newState.lineIndex,
-      op.position,
-      op.deleteEnd,
-      op.deletedText!,
-      nextVersion,
-      deleteContext
-    );
-    newState = pieceTableDelete(newState, op.position, op.deleteEnd);
-    newState = withState(newState, { lineIndex: delLineIndex });
+    const shouldRebuild = shouldRebuildLineIndexForDelete(op.deletedText!, deleteContext);
+    if (shouldRebuild) {
+      forceLineIndexRebuild = true;
+      newState = pieceTableDelete(newState, op.position, op.deleteEnd);
+    } else {
+      const delLineIndex = lazyLineIndex.delete(
+        newState.lineIndex,
+        op.position,
+        op.deleteEnd,
+        op.deletedText!,
+        nextVersion,
+        deleteContext
+      );
+      newState = pieceTableDelete(newState, op.position, op.deleteEnd);
+      newState = withState(newState, { lineIndex: delLineIndex });
+    }
   }
 
   // Insert phase
@@ -544,9 +578,15 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
     const result = pieceTableInsert(newState, op.position, op.insertText);
     newState = result.state;
     insertedByteLength = result.insertedByteLength;
-    const readText = (start: ByteOffset, end: ByteOffset) => getText(newState.pieceTable, start, end);
-    const insLineIndex = lazyLineIndex.insert(newState.lineIndex, op.position, op.insertText, nextVersion, readText);
-    newState = withState(newState, { lineIndex: insLineIndex });
+    if (!forceLineIndexRebuild) {
+      const readText = (start: ByteOffset, end: ByteOffset) => getText(newState.pieceTable, start, end);
+      const insLineIndex = lazyLineIndex.insert(newState.lineIndex, op.position, op.insertText, nextVersion, readText);
+      newState = withState(newState, { lineIndex: insLineIndex });
+    }
+  }
+
+  if (forceLineIndexRebuild) {
+    newState = rebuildLineIndexFromPieceTableState(newState);
   }
 
   // Build and push history change
@@ -678,16 +718,21 @@ export function documentReducer(
           const endPosition = byteOffset(change.start + change.length);
           const deletedText = getTextRange(newState, change.start, endPosition);
           const deleteContext = getDeleteBoundaryContext(newState, change.start, endPosition);
-          const li = lazyLineIndex.delete(
-            newState.lineIndex,
-            change.start,
-            endPosition,
-            deletedText,
-            nextVersion,
-            deleteContext
-          );
-          newState = pieceTableDelete(newState, change.start, endPosition);
-          newState = withState(newState, { lineIndex: li });
+          if (shouldRebuildLineIndexForDelete(deletedText, deleteContext)) {
+            newState = pieceTableDelete(newState, change.start, endPosition);
+            newState = rebuildLineIndexFromPieceTableState(newState);
+          } else {
+            const li = lazyLineIndex.delete(
+              newState.lineIndex,
+              change.start,
+              endPosition,
+              deletedText,
+              nextVersion,
+              deleteContext
+            );
+            newState = pieceTableDelete(newState, change.start, endPosition);
+            newState = withState(newState, { lineIndex: li });
+          }
         }
       }
       // Remote changes don't push to history (they come from network)
