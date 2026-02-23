@@ -131,7 +131,9 @@ export {
 } from './branded.ts';
 
 export {
-  $,
+  $declare,
+  $prove,
+  $proveCtx,
   $checked,
   $constCostFn,
   $logCostFn,

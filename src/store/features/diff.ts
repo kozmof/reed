@@ -11,9 +11,10 @@ import { byteOffset } from '../../types/branded.ts';
 import { DocumentActions } from './actions.ts';
 import { textEncoder } from '../core/encoding.ts';
 import {
-  $,
+  $declare,
+  $prove,
+  $proveCtx,
   $checked,
-  $cost,
   $from,
   $lift,
   $pipe,
@@ -62,24 +63,24 @@ export interface DiffResult {
 export function diff(oldText: string, newText: string): QuadCost<DiffResult> {
   // Handle trivial cases
   if (oldText === newText) {
-    return $('O(n^2)', $cost({
+    return $declare('O(n^2)', {
       edits: oldText.length > 0 ? [{ type: 'equal', text: oldText, oldPos: 0, newPos: 0 }] : [],
       distance: 0,
-    } satisfies DiffResult));
+    } satisfies DiffResult);
   }
 
   if (oldText.length === 0) {
-    return $('O(n^2)', $cost({
+    return $declare('O(n^2)', {
       edits: [{ type: 'insert', text: newText, oldPos: 0, newPos: 0 }],
       distance: newText.length,
-    } satisfies DiffResult));
+    } satisfies DiffResult);
   }
 
   if (newText.length === 0) {
-    return $('O(n^2)', $cost({
+    return $declare('O(n^2)', {
       edits: [{ type: 'delete', text: oldText, oldPos: 0, newPos: 0 }],
       distance: oldText.length,
-    } satisfies DiffResult));
+    } satisfies DiffResult);
   }
 
   // Find common prefix
@@ -138,7 +139,7 @@ export function diff(oldText: string, newText: string): QuadCost<DiffResult> {
     }
   }
 
-  return $('O(n^2)', $cost({ edits, distance }));
+  return $declare('O(n^2)', { edits, distance });
 }
 
 /**
@@ -383,7 +384,7 @@ export function computeSetValueActions(
   newContent: string
 ): QuadCost<DocumentAction[]> {
   if (oldContent === newContent) {
-    return $('O(n^2)', $cost([]));
+    return $declare('O(n^2)', []);
   }
 
   const diffResult = diff(oldContent, newContent);
@@ -439,7 +440,7 @@ export function computeSetValueActions(
     }
   }
 
-  return $('O(n^2)', $cost(actions));
+  return $declare('O(n^2)', actions);
 }
 
 /**
@@ -473,7 +474,7 @@ export function computeSetValueActionsOptimized(
   newContent: string
 ): LinearCost<DocumentAction[]> {
   if (oldContent === newContent) {
-    return $('O(n)', $cost([]));
+    return $declare('O(n)', []);
   }
 
   // Find the differing region (in string indices)
@@ -509,7 +510,7 @@ export function computeSetValueActionsOptimized(
   const insertedText = newContent.slice(start, newEnd);
 
   if (deletedText.length === 0 && insertedText.length === 0) {
-    return $('O(n)', $cost([]));
+    return $declare('O(n)', []);
   }
 
   // Convert string indices to byte indices for the piece table
@@ -518,16 +519,16 @@ export function computeSetValueActionsOptimized(
 
   if (deletedText.length === 0) {
     // Pure insert
-    return $('O(n)', $cost([DocumentActions.insert(byteStart, insertedText)]));
+    return $declare('O(n)', [DocumentActions.insert(byteStart, insertedText)]);
   }
 
   if (insertedText.length === 0) {
     // Pure delete
-    return $('O(n)', $cost([DocumentActions.delete(byteStart, byteOldEnd)]));
+    return $declare('O(n)', [DocumentActions.delete(byteStart, byteOldEnd)]);
   }
 
   // Replace
-  return $('O(n)', $cost([DocumentActions.replace(byteStart, byteOldEnd, insertedText)]));
+  return $declare('O(n)', [DocumentActions.replace(byteStart, byteOldEnd, insertedText)]);
 }
 
 // =============================================================================
@@ -570,7 +571,7 @@ export function setValue(
 ): QuadCost<DocumentState> {
   const { useReplace = true } = options;
 
-  return $('O(n^2)', $checked(() => $pipe(
+  return $prove('O(n^2)', $checked(() => $pipe(
     $from(getValue(state.pieceTable)),
     $andThen((oldContent) => {
       if (oldContent === newContent) {
@@ -578,7 +579,7 @@ export function setValue(
       }
 
       const actions = useReplace
-        ? $('O(n^2)', $from(computeSetValueActionsOptimized(oldContent, newContent)))
+        ? $proveCtx('O(n^2)', $from(computeSetValueActionsOptimized(oldContent, newContent)))
         : computeSetValueActions(oldContent, newContent);
 
       return $pipe(
@@ -603,14 +604,14 @@ export function computeSetValueActionsFromState(
   newContent: string,
   useReplace: boolean = true
 ): QuadCost<DocumentAction[]> {
-  return $('O(n^2)', $checked(() => $pipe(
+  return $prove('O(n^2)', $checked(() => $pipe(
     $from(getValue(pieceTable)),
     $andThen((oldContent) => {
       if (oldContent === newContent) {
         return $lift<'O(n^2)', DocumentAction[]>('O(n^2)', []);
       }
       const actions = useReplace
-        ? $('O(n^2)', $from(computeSetValueActionsOptimized(oldContent, newContent)))
+        ? $proveCtx('O(n^2)', $from(computeSetValueActionsOptimized(oldContent, newContent)))
         : computeSetValueActions(oldContent, newContent);
       return $from(actions);
     }),

@@ -26,7 +26,9 @@ import {
   type LineNumber,
 } from './branded.ts';
 import {
-  $,
+  $declare,
+  $prove,
+  $proveCtx,
   $logCostFn,
   $linearCostFn,
   $nlognCostFn,
@@ -184,24 +186,31 @@ describe('Branded Types', () => {
   });
 
   describe('cost boundaries', () => {
-    it('should reject callback boundary mode', () => {
-      // @ts-expect-error callback mode is disabled; use $checked(ctx) or ctx directly
-      $('O(log n)', () => $cost(1));
+    it('should reject unwrapped callback plan', () => {
+      if (false) {
+        // @ts-expect-error $prove requires a checked plan wrapper
+        $prove('O(log n)', () => $pipe($cost([1, 2, 3]), $binarySearch(2)));
+      }
     });
 
-    it('should unwrap const context value', () => {
-      const result = $('O(1)', $cost(7));
+    it('should reject context input for unchecked declaration', () => {
+      // @ts-expect-error $declare only accepts plain values
+      $declare('O(1)', $cost(7));
+    });
+
+    it('should declare plain values at unchecked boundary', () => {
+      const result = $declare('O(1)', 7);
       expect(result).toBe(7);
     });
 
     it('should keep legacy labels compatible', () => {
-      const legacy = $('const', $cost(3));
-      const bigO = $('O(1)', $cost(3));
+      const legacy = $declare('const', 3);
+      const bigO = $declare('O(1)', 3);
       expect(legacy).toBe(bigO);
     });
 
     it('should validate $checked log plan', () => {
-      const result = $('O(log n)', $checked(() => $pipe(
+      const result = $prove('O(log n)', $checked(() => $pipe(
         $cost([1, 2, 3]),
         $binarySearch(2),
       )));
@@ -213,13 +222,13 @@ describe('Branded Types', () => {
         $cost([1, 2, 3]),
         $linearScan((x: number) => x === 2),
       );
-      const result = $('O(n)', linearCtx);
+      const result = $proveCtx('O(n)', linearCtx);
       expect(result).toBe(2);
     });
 
     it('should execute callback exactly once', () => {
       let calls = 0;
-      const result = $('O(log n)', $checked(() => {
+      const result = $prove('O(log n)', $checked(() => {
         calls += 1;
         return $pipe(
           $cost([1, 2, 3]),
@@ -231,9 +240,9 @@ describe('Branded Types', () => {
     });
 
     it('should support compact $ boundary helper', () => {
-      const c = $('O(1)', $cost(1));
-      const l = $('O(log n)', $pipe($cost([1, 2, 3]), $binarySearch(2)));
-      const n = $('O(n)', $pipe($cost([1, 2, 3]), $linearScan((x: number) => x === 3)));
+      const c = $declare('O(1)', 1);
+      const l = $proveCtx('O(log n)', $pipe($cost([1, 2, 3]), $binarySearch(2)));
+      const n = $proveCtx('O(n)', $pipe($cost([1, 2, 3]), $linearScan((x: number) => x === 3)));
       expect(c + l + (n ?? 0)).toBe(5);
     });
   });
@@ -255,10 +264,10 @@ describe('Branded Types', () => {
         $map((n: number) => n + 1),                      // linear: 2 + 1 = 3
       ));
 
-      const linearResult: LinearCost<number> = $('O(n)', plan);
+      const linearResult: LinearCost<number> = $prove('O(n)', plan);
       expect(linearResult).toBe(3);
       // @ts-expect-error linear is not <= log
-      const _logResult: LogCost<number> = $('O(n)', plan);
+      const _logResult: LogCost<number> = $prove('O(n)', plan);
     });
 
     it('should support direct linear function annotation', () => {
@@ -286,10 +295,10 @@ describe('Branded Types', () => {
         $map((n: number) => n + 1),                          // linear: 2 + 1 = 3
       ));
 
-      const linearResult: LinearCost<number> = $('O(n)', plan);
+      const linearResult: LinearCost<number> = $prove('O(n)', plan);
       expect(linearResult).toBe(3);
       // @ts-expect-error linear is not <= log
-      const _logResult: LogCost<number> = $('O(n)', plan);
+      const _logResult: LogCost<number> = $prove('O(n)', plan);
     });
 
     it('should combine two context values using $zipCtx with dominant cost', () => {
@@ -309,10 +318,10 @@ describe('Branded Types', () => {
         return $zipCtx(left, right, (idx, arr) => arr[idx] ?? -1);
       });
 
-      const linearResult: LinearCost<number> = $('O(n)', plan);
+      const linearResult: LinearCost<number> = $prove('O(n)', plan);
       expect(linearResult).toBe(5);
       // @ts-expect-error linear is not <= log
-      const _logResult: LogCost<number> = $('O(n)', plan);
+      const _logResult: LogCost<number> = $prove('O(n)', plan);
     });
   });
 
@@ -323,9 +332,9 @@ describe('Branded Types', () => {
         $binarySearch(2),
       ));
 
-      expect($('O(log n)', checkedLogPlan)).toBe(1);
+      expect($prove('O(log n)', checkedLogPlan)).toBe(1);
       // @ts-expect-error log is not <= const
-      $('O(1)', checkedLogPlan);
+      $prove('O(1)', checkedLogPlan);
     });
 
     it('should model sequential composition as dominant cost', () => {
@@ -335,9 +344,9 @@ describe('Branded Types', () => {
         $map((index: number) => index + 10),
       );
 
-      expect($('O(log n)', seqLog)).toBe(11);
+      expect($proveCtx('O(log n)', seqLog)).toBe(11);
       // @ts-expect-error log is not <= const
-      $('O(1)', seqLog);
+      $proveCtx('O(1)', seqLog);
     });
 
     it('should infer nlogn for linear nesting with log body', () => {
@@ -352,9 +361,9 @@ describe('Branded Types', () => {
         $map((xs: readonly number[]) => xs.length),
       );
 
-      expect($('O(n log n)', nestedNlogn)).toBe(4);
+      expect($proveCtx('O(n log n)', nestedNlogn)).toBe(4);
       // @ts-expect-error nlogn is not <= linear
-      $('O(n)', nestedNlogn);
+      $proveCtx('O(n)', nestedNlogn);
     });
 
     it('should infer quad for linear nesting with linear body', () => {
@@ -368,9 +377,9 @@ describe('Branded Types', () => {
         ),
       );
 
-      expect($('O(n^2)', nestedQuad)).toEqual([1, 2, 3, 4]);
+      expect($proveCtx('O(n^2)', nestedQuad)).toEqual([1, 2, 3, 4]);
       // @ts-expect-error quad is not <= nlogn
-      $('O(n log n)', nestedQuad);
+      $proveCtx('O(n log n)', nestedQuad);
     });
 
     it('should compose function-call costs incrementally with $from + $andThen', () => {
@@ -384,9 +393,9 @@ describe('Branded Types', () => {
         $andThen((index: number) => $from(project(index))),
       ));
 
-      expect($('O(n)', incrementalPlan)).toBe('index:1');
+      expect($prove('O(n)', incrementalPlan)).toBe('index:1');
       // @ts-expect-error linear is not <= log
-      $('O(log n)', incrementalPlan);
+      $prove('O(log n)', incrementalPlan);
     });
   });
 });

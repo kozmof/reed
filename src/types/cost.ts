@@ -2,12 +2,13 @@
  * Branded algorithmic cost types and combinators.
  *
  * Usage policy:
- * 1. Prefer `$(level, $checked(() => plan))` or `$(level, planCtx)` as the
- *    primary API for compile-time checked boundaries.
- * 2. Start plans from `$cost(value)` and compose with pipeline combinators.
- * 3. Keep internal arithmetic/data as plain types and apply branding only
+ * 1. Use `$prove(level, $checked(() => plan))` or `$proveCtx(level, planCtx)`
+ *    for compile-time checked boundaries.
+ * 2. Use `$declare(level, value)` for explicit unchecked declarations.
+ * 3. Start plans from `$cost(value)` and compose with pipeline combinators.
+ * 4. Keep internal arithmetic/data as plain types and apply branding only
  *    at explicit boundaries (or via `CostFn` wrappers).
- * 4. Avoid direct cast helpers in store/application code.
+ * 5. Avoid direct cast helpers in store/application code.
  */
 
 // =============================================================================
@@ -157,30 +158,61 @@ function castCost<L extends CostLevel, T>(_level: L, value: T): Costed<L, T> {
 }
 
 /**
- * Unified boundary helper.
- * - `$(max, $checked(() => ctx))` validates modeled plan cost at compile time.
- * - `$(max, ctx)` validates precomputed context cost at compile time.
- * Runtime behavior is identity plus branding: the boundary unwraps context
- * and returns a value branded at the declared upper bound.
+ * Normalize public labels to canonical cost levels.
  */
-export function $<L extends CostInputLabel, C extends Cost, T>(
+function toCostLevel(max: CostInputLabel): CostLevel {
+  return costLabelByInput[max];
+}
+
+type CtxLike = { readonly _cost: Cost; readonly value: unknown };
+type CheckedPlanLike = { readonly run: () => CtxLike };
+type UncheckedBoundaryValue<T> =
+  T extends CtxLike ? never :
+  T extends CheckedPlanLike ? never :
+  T;
+
+/**
+ * Explicit unchecked boundary declaration.
+ * Use this when a proof plan is not modeled.
+ * For checked boundaries, use `$prove` or `$proveCtx`.
+ */
+export function $declare<L extends CostInputLabel, T>(
+  max: L,
+  value: UncheckedBoundaryValue<T>
+): Costed<NormalizeCostLabel<L>, UncheckedBoundaryValue<T>>;
+export function $declare(
+  max: CostInputLabel,
+  value: unknown
+): unknown {
+  return castCost(toCostLevel(max), value);
+}
+
+/**
+ * Compile-time checked boundary from a checked plan.
+ */
+export function $prove<L extends CostInputLabel, C extends Cost, T>(
   max: L,
   plan: CheckedPlan<C, T> & (Leq<C, CostOfLabel<NormalizeCostLabel<L>>> extends true ? unknown : never)
 ): Costed<NormalizeCostLabel<L>, T>;
-export function $<L extends CostInputLabel, C extends Cost, T>(
-  max: L,
-  ctx: { readonly _cost: C; readonly value: T } & (Leq<C, CostOfLabel<NormalizeCostLabel<L>>> extends true ? unknown : never)
-): Costed<NormalizeCostLabel<L>, T>;
-export function $(
+export function $prove(
   max: CostInputLabel,
-  boundary: CheckedPlan<Cost, unknown> | { readonly _cost: Cost; readonly value: unknown }
+  plan: CheckedPlan<Cost, unknown>
 ): unknown {
-  const level = costLabelByInput[max];
+  return castCost(toCostLevel(max), plan.run().value);
+}
 
-  if (checkedPlanTag in boundary) {
-    return castCost(level, boundary.run().value);
-  }
-  return castCost(level, boundary.value);
+/**
+ * Compile-time checked boundary from a precomputed context.
+ */
+export function $proveCtx<L extends CostInputLabel, C extends Cost, T>(
+  max: L,
+  ctx: Ctx<C, T> & (Leq<C, CostOfLabel<NormalizeCostLabel<L>>> extends true ? unknown : never)
+): Costed<NormalizeCostLabel<L>, T>;
+export function $proveCtx(
+  max: CostInputLabel,
+  ctx: Ctx<Cost, unknown>
+): unknown {
+  return castCost(toCostLevel(max), ctx.value);
 }
 
 /**
@@ -254,7 +286,7 @@ const checkedPlanTag = Symbol('checked-cost-plan');
 
 /**
  * Wrapper for a compile-time checked boundary plan.
- * Use with `$(max, $checked(() => plan))`.
+ * Use with `$prove(max, $checked(() => plan))`.
  */
 export type CheckedPlan<C extends Cost, T> = {
   readonly [checkedPlanTag]: true;
@@ -262,7 +294,7 @@ export type CheckedPlan<C extends Cost, T> = {
 };
 
 /**
- * Mark a cost plan to be validated by `$` against an upper bound.
+ * Mark a cost plan to be validated by `$prove` against an upper bound.
  */
 export function $checked<C extends Cost, T>(run: () => Ctx<C, T>): CheckedPlan<C, T> {
   return {

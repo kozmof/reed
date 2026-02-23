@@ -18,11 +18,46 @@ Updated: 2026-02-23
 
 Note: the original findings below are preserved as a historical snapshot from 2026-02-22; line references in those original sections may no longer match current HEAD.
 
+## Focused Formalize: Issue 2.1 (2026-02-23, Implementation v0)
+
+Decision:
+- Treat `$('O(...)', $cost(value))` as an ambiguous boundary pattern and split unchecked vs checked APIs with a breaking change.
+
+Implemented:
+1. Boundary API split (`src/types/cost.ts`)
+- Added explicit boundary surfaces:
+  - `$declare(level, value)` for unchecked declarations.
+  - `$prove(level, $checked(() => plan))` for checked plans.
+  - `$proveCtx(level, ctx)` for checked contexts.
+- Added `UncheckedBoundaryValue<T>` so `$declare` rejects context/plan-like inputs at compile time.
+
+2. Migration in implementation modules
+- Replaced declaration boundaries of the form `$declare('O(...)', $cost(...))` with plain-value declarations in:
+  - `src/store/core/line-index.ts`
+  - `src/store/core/piece-table.ts`
+  - `src/store/features/diff.ts`
+  - `src/store/features/rendering.ts`
+- Preserved checked boundaries through `$prove`/`$proveCtx`.
+
+3. Contract tests updated (`src/types/branded.test.ts`)
+- Added negative type checks to enforce that:
+  - `$declare` rejects context input.
+  - `$prove` rejects unwrapped callback plans.
+- Updated plan/context examples to use `$prove` and `$proveCtx` exclusively.
+
+4. Post-migration scan
+- Production code has no remaining `$declare(..., $cost(...))` boundaries.
+- One intentional negative test remains to assert the compile-time rejection rule.
+
 ### Resolved
 
 - **1.1 Label normalization duplication**
   - Runtime and type-level normalization now share `costLabelByInput` in `src/types/cost.ts:62`.
-  - `$` now uses that mapping directly in `src/types/cost.ts:178`.
+  - `$declare`/`$prove`/`$proveCtx` now use that mapping directly in `src/types/cost.ts`.
+
+- **2.1 Boundary API still allows unchecked declaration in practice**
+  - Boundary API was split into explicit unchecked/checked surfaces (`$declare`, `$prove`, `$proveCtx`) in `src/types/cost.ts`.
+  - Ambiguous `$('O(...)', $cost(value))`-style declarations were removed from production modules in this review scope.
 
 - **2.2 `getLineRangePrecise` overload mismatch**
   - Both overload paths now return `LogCost` in `src/store/core/line-index.ts:1714`.
@@ -48,10 +83,6 @@ Note: the original findings below are preserved as a historical snapshot from 20
 
 ### Partially Resolved
 
-- **2.1 Boundary API still allows unchecked declaration in practice**
-  - `diff`/`setValue` path was migrated to checked composition (`src/store/features/diff.ts:566`).
-  - Broad use of direct `$('O(...)', $cost(...))` boundaries remains in other modules and needs a separate policy pass.
-
 - **3.3 Mixed precision policy remains implicit**
   - Some high-level paths now use checked plans more consistently (notably diff/setValue), but module-level criteria for when checked plans are required is still undocumented.
 
@@ -70,7 +101,7 @@ Note: the original findings below are preserved as a historical snapshot from 20
 ### Verification
 
 - `npx tsc --noEmit` passes.
-- `npm test` passes (488 tests).
+- `npm test` passes (489 tests).
 
 ## 1) Data Structures
 
