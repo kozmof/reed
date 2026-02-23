@@ -18,7 +18,9 @@ import type { ReadTextFn, DeleteBoundaryContext } from '../../types/store.ts';
 import {
   $declare,
   $prove,
+  $proveCtx,
   $checked,
+  $lift,
   $from,
   $pipe,
   $andThen,
@@ -234,11 +236,14 @@ export function findLineAtPosition(
     } else {
       // Position is in this line (or at end and no right subtree)
       const node = current;
-      const location = $declare('O(log n)', {
-        node,
-        lineNumber: lineNumber + leftLineCount,
-        offsetInLine: pos - lineStart,
-      });
+      const location = $proveCtx(
+        'O(log n)',
+        $lift('O(log n)', {
+          node,
+          lineNumber: lineNumber + leftLineCount,
+          offsetInLine: pos - lineStart,
+        })
+      );
       return location;
     }
   }
@@ -270,7 +275,7 @@ export function findLineByNumber(
       current = current.right;
     } else {
       // This is the target line
-      const line = $declare('O(log n)', current);
+      const line = $proveCtx('O(log n)', $lift('O(log n)', current));
       return line;
     }
   }
@@ -318,7 +323,7 @@ export function getLineStartOffset(
     }
   }
 
-  const startOffset = $declare('O(log n)', foundOffset ?? offset);
+  const startOffset = $proveCtx('O(log n)', $lift('O(log n)', foundOffset ?? offset));
   return startOffset;
 }
 
@@ -360,7 +365,7 @@ export function getCharStartOffset(
     }
   }
 
-  const startOffset = $declare('O(log n)', foundOffset ?? offset);
+  const startOffset = $proveCtx('O(log n)', $lift('O(log n)', foundOffset ?? offset));
   return startOffset;
 }
 
@@ -393,10 +398,13 @@ export function findLineAtCharPosition(
       pos -= lineEnd;
       current = current.right;
     } else {
-      const location = $declare('O(log n)', {
-        lineNumber: lineNumber + leftLineCount,
-        charOffsetInLine: pos - lineStart,
-      });
+      const location = $proveCtx(
+        'O(log n)',
+        $lift('O(log n)', {
+          lineNumber: lineNumber + leftLineCount,
+          charOffsetInLine: pos - lineStart,
+        })
+      );
       return location;
     }
   }
@@ -1382,15 +1390,24 @@ export function mergeDirtyRanges(
   // Safety cap: if too many ranges accumulated, collapse to full-document rebuild
   if (merged.length > 32) {
     const maxVersion = merged.reduce((v, r) => Math.max(v, r.createdAtVersion), 0);
-    return $declare('O(n log n)', [Object.freeze({
-      startLine: 0,
-      endLine: Number.MAX_SAFE_INTEGER,
-      offsetDelta: 0,
-      createdAtVersion: maxVersion,
-    })]);
+    return $proveCtx(
+      'O(n log n)',
+      $lift<'O(n log n)', readonly DirtyLineRange[]>(
+        'O(n log n)',
+        [Object.freeze({
+          startLine: 0,
+          endLine: Number.MAX_SAFE_INTEGER,
+          offsetDelta: 0,
+          createdAtVersion: maxVersion,
+        })]
+      )
+    );
   }
 
-  return $declare('O(n log n)', merged);
+  return $proveCtx(
+    'O(n log n)',
+    $lift<'O(n log n)', readonly DirtyLineRange[]>('O(n log n)', merged)
+  );
 }
 
 /**
@@ -1418,7 +1435,7 @@ export function getOffsetDeltaForLine(
       delta += range.offsetDelta;
     }
   }
-  return $declare('O(n)', delta);
+  return $proveCtx('O(n)', $lift('O(n)', delta));
 }
 
 /**
@@ -1792,12 +1809,18 @@ export function reconcileRange(
   }
   const remainingRanges = mergeDirtyRanges(remaining);
 
-  return $declare('O(n log n)', withLineIndexState(state, {
-    root: newRoot,
-    dirtyRanges: Object.freeze(remainingRanges),
-    lastReconciledVersion: version,
-    rebuildPending: remainingRanges.length > 0,
-  }));
+  return $proveCtx(
+    'O(n log n)',
+    $lift(
+      'O(n log n)',
+      withLineIndexState(state, {
+        root: newRoot,
+        dirtyRanges: Object.freeze(remainingRanges),
+        lastReconciledVersion: version,
+        rebuildPending: remainingRanges.length > 0,
+      })
+    )
+  );
 }
 
 /**
@@ -1933,15 +1956,24 @@ export function reconcileFull(
       const endLine = Math.min(range.endLine, current.lineCount - 1);
       current = reconcileRange(current, range.startLine, endLine, version);
     }
-    return $declare('O(n log n)', toEagerLineIndexState(current, version));
+    return $proveCtx(
+      'O(n log n)',
+      $lift('O(n log n)', toEagerLineIndexState(current, version))
+    );
   }
 
   // Slow path: in-place O(n) walk with structural sharing (no collect-rebuild)
   const newRoot = reconcileInPlace(state.root, { offset: 0 });
 
-  return $declare('O(n log n)', toEagerLineIndexState(state, version, {
-    root: newRoot,
-  }));
+  return $proveCtx(
+    'O(n log n)',
+    $lift(
+      'O(n log n)',
+      toEagerLineIndexState(state, version, {
+        root: newRoot,
+      })
+    )
+  );
 }
 
 /**

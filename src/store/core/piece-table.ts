@@ -16,6 +16,7 @@ import { byteOffset, byteLength, type ByteOffset, type ByteLength } from '../../
 import {
   $declare,
   $prove,
+  $proveCtx,
   $checked,
   $from,
   $lift,
@@ -139,12 +140,15 @@ export function findPieceAtPosition(
       currentOffset = pieceEnd;
       current = current.right;
     } else {
-      return $declare('O(log n)', {
-        node: current,
-        offsetInPiece: position - pieceStart,
-        pieceStartOffset: pieceStart,
-        path,
-      });
+      return $proveCtx(
+        'O(log n)',
+        $lift('O(log n)', {
+          node: current,
+          offsetInPiece: position - pieceStart,
+          pieceStartOffset: pieceStart,
+          path,
+        })
+      );
     }
   }
 
@@ -168,12 +172,15 @@ export function findLastPiece(root: PieceNode | null): LogCost<PieceLocation> | 
   }
 
   const leftLength = current.left?.subtreeLength ?? 0;
-  return $declare('O(log n)', {
-    node: current,
-    offsetInPiece: current.length,
-    pieceStartOffset: currentOffset + leftLength,
-    path,
-  });
+  return $proveCtx(
+    'O(log n)',
+    $lift('O(log n)', {
+      node: current,
+      offsetInPiece: current.length,
+      pieceStartOffset: currentOffset + leftLength,
+      path,
+    })
+  );
 }
 
 /**
@@ -1164,7 +1171,7 @@ export function byteToCharOffset(text: string, byteOffset: number): LinearCost<n
     charPos += seqLen === 4 ? 2 : 1;
   }
 
-  return $declare('O(n)', charPos);
+  return $proveCtx('O(n)', $lift('O(n)', charPos));
 }
 
 // =============================================================================

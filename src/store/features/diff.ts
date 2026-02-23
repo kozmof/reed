@@ -139,7 +139,10 @@ export function diff(oldText: string, newText: string): QuadCost<DiffResult> {
     }
   }
 
-  return $declare('O(n^2)', { edits, distance });
+  return $proveCtx(
+    'O(n^2)',
+    $lift<'O(n^2)', DiffResult>('O(n^2)', { edits, distance })
+  );
 }
 
 /**
@@ -440,7 +443,10 @@ export function computeSetValueActions(
     }
   }
 
-  return $declare('O(n^2)', actions);
+  return $proveCtx(
+    'O(n^2)',
+    $lift<'O(n^2)', DocumentAction[]>('O(n^2)', actions)
+  );
 }
 
 /**
@@ -519,16 +525,25 @@ export function computeSetValueActionsOptimized(
 
   if (deletedText.length === 0) {
     // Pure insert
-    return $declare('O(n)', [DocumentActions.insert(byteStart, insertedText)]);
+    return $proveCtx(
+      'O(n)',
+      $lift<'O(n)', DocumentAction[]>('O(n)', [DocumentActions.insert(byteStart, insertedText)])
+    );
   }
 
   if (insertedText.length === 0) {
     // Pure delete
-    return $declare('O(n)', [DocumentActions.delete(byteStart, byteOldEnd)]);
+    return $proveCtx(
+      'O(n)',
+      $lift<'O(n)', DocumentAction[]>('O(n)', [DocumentActions.delete(byteStart, byteOldEnd)])
+    );
   }
 
   // Replace
-  return $declare('O(n)', [DocumentActions.replace(byteStart, byteOldEnd, insertedText)]);
+  return $proveCtx(
+    'O(n)',
+    $lift<'O(n)', DocumentAction[]>('O(n)', [DocumentActions.replace(byteStart, byteOldEnd, insertedText)])
+  );
 }
 
 // =============================================================================

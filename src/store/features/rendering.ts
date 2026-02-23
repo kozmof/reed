@@ -180,12 +180,18 @@ export function getVisibleLines(
     }
   }
 
-  return $declare('O(n)', Object.freeze({
-    lines: Object.freeze(lines),
-    firstLine,
-    lastLine,
-    totalLines,
-  }));
+  return $proveCtx(
+    'O(n)',
+    $lift<'O(n)', VisibleLinesResult>(
+      'O(n)',
+      Object.freeze({
+        lines: Object.freeze(lines),
+        firstLine,
+        lastLine,
+        totalLines,
+      })
+    )
+  );
 }
 
 /**
@@ -301,7 +307,7 @@ export function estimateTotalHeight(
         totalHeight += $from(estimateLineHeight(line, config)).value;
       }
     }
-    return $declare('O(n)', totalHeight);
+    return $proveCtx('O(n)', $lift('O(n)', totalHeight));
   }
 
   // Large document: sample and extrapolate
@@ -318,7 +324,7 @@ export function estimateTotalHeight(
   const sampledLines = Math.ceil(totalLines / step);
   const avgLineHeight = sampleHeight / sampledLines;
 
-  return $declare('O(n)', Math.ceil(totalLines * avgLineHeight));
+  return $proveCtx('O(n)', $lift('O(n)', Math.ceil(totalLines * avgLineHeight)));
 }
 
 // =============================================================================
