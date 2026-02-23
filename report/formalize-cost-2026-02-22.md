@@ -76,6 +76,67 @@ Verification result:
 - For the stated strategy ("remove boundary ambiguity caused by `$('O(...)', $cost(value))`"), application is correct across the codebase.
 - Remaining formalization work is policy-level (where checked plans should be mandatory), not boundary API ambiguity.
 
+## Remaining Unchecked Declarations Analysis (2026-02-23)
+
+Scope:
+- Non-test files under `src/**` only.
+- Unchecked boundary = `$declare(...)`.
+
+Inventory:
+- Total unchecked declarations: `97`
+- By file:
+  - `src/store/core/line-index.ts`: `43`
+  - `src/store/core/piece-table.ts`: `27`
+  - `src/store/features/diff.ts`: `11`
+  - `src/store/features/rendering.ts`: `16`
+
+Risk-band heuristic:
+- High (`22`): declaration happens after loop-driven or aggregation-heavy logic in the same function.
+- Medium (`49`): non-trivial unchecked declaration without clear post-loop aggregation signal.
+- Low (`26`): guard/constructor-style declarations (`null`, `''`, `0`, `[]`).
+
+### High-Priority Unchecked Zones
+
+1. `src/store/features/diff.ts`
+- `diff` final aggregation boundary: `src/store/features/diff.ts:142`
+- `computeSetValueActions` final action materialization: `src/store/features/diff.ts:443`
+- `computeSetValueActionsOptimized` action construction branches:
+  - `src/store/features/diff.ts:522`
+  - `src/store/features/diff.ts:527`
+  - `src/store/features/diff.ts:531`
+
+2. `src/store/features/rendering.ts`
+- `getVisibleLines` post-loop boundary: `src/store/features/rendering.ts:183`
+- `estimateTotalHeight` sampled/aggregated boundaries:
+  - `src/store/features/rendering.ts:304`
+  - `src/store/features/rendering.ts:321`
+
+3. `src/store/core/line-index.ts`
+- `mergeDirtyRanges` sort/merge outputs:
+  - `src/store/core/line-index.ts:1385`
+  - `src/store/core/line-index.ts:1393`
+- `getOffsetDeltaForLine` loop accumulation result: `src/store/core/line-index.ts:1421`
+- `reconcileRange` final reconstructed state: `src/store/core/line-index.ts:1795`
+- `reconcileFull` fast/slow path finalization:
+  - `src/store/core/line-index.ts:1936`
+  - `src/store/core/line-index.ts:1942`
+
+### Lower-Priority / Likely Acceptable For v0
+
+- Tree search primitives that return located nodes/positions:
+  - `src/store/core/line-index.ts:237`
+  - `src/store/core/line-index.ts:273`
+  - `src/store/core/line-index.ts:396`
+  - `src/store/core/piece-table.ts:142`
+  - `src/store/core/piece-table.ts:171`
+- Guard-return boundaries (`null`/`0`/empty) spread across line-index/piece-table/rendering.
+
+### Formalization Interpretation
+
+- The ambiguity problem is solved (unchecked vs checked API boundary is explicit).
+- Remaining risk is not API ambiguity; it is declaration dominance in algorithmic hotspots.
+- Next formalization step should target the high-priority zones above and define a rule for when loop/aggregation paths must use checked plans.
+
 ### Resolved
 
 - **1.1 Label normalization duplication**
