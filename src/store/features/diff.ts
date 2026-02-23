@@ -11,7 +11,6 @@ import { byteOffset } from '../../types/branded.ts';
 import { DocumentActions } from './actions.ts';
 import { textEncoder } from '../core/encoding.ts';
 import {
-  $declare,
   $prove,
   $proveCtx,
   $checked,
@@ -387,7 +386,7 @@ export function computeSetValueActions(
   newContent: string
 ): QuadCost<DocumentAction[]> {
   if (oldContent === newContent) {
-    return $declare('O(n^2)', []);
+    return $proveCtx('O(n^2)', $lift('O(n^2)', []));
   }
 
   const diffResult = diff(oldContent, newContent);
@@ -480,7 +479,7 @@ export function computeSetValueActionsOptimized(
   newContent: string
 ): LinearCost<DocumentAction[]> {
   if (oldContent === newContent) {
-    return $declare('O(n)', []);
+    return $proveCtx('O(n)', $lift('O(n)', []));
   }
 
   // Find the differing region (in string indices)
@@ -516,7 +515,7 @@ export function computeSetValueActionsOptimized(
   const insertedText = newContent.slice(start, newEnd);
 
   if (deletedText.length === 0 && insertedText.length === 0) {
-    return $declare('O(n)', []);
+    return $proveCtx('O(n)', $lift('O(n)', []));
   }
 
   // Convert string indices to byte indices for the piece table

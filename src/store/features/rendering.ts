@@ -6,7 +6,6 @@
 import type { DocumentState, SelectionRange, CharSelectionRange } from '../../types/state.ts';
 import { byteOffset, charOffset, addByteOffset, type ByteOffset } from '../../types/branded.ts';
 import {
-  $declare,
   $prove,
   $proveCtx,
   $checked,
@@ -204,13 +203,13 @@ export function getVisibleLine(
   const totalLines = getLineCountFromIndex(state.lineIndex);
 
   if (lineNumber < 0 || lineNumber >= totalLines) {
-    return $declare('O(n)', null);
+    return $proveCtx('O(n)', $lift('O(n)', null));
   }
 
   // Use getLineRangePrecise to handle dirty line indices correctly
   const range = getLineRangePrecise(state.lineIndex, lineNumber);
   if (!range) {
-    return $declare('O(n)', null);
+    return $proveCtx('O(n)', $lift('O(n)', null));
   }
 
   return $prove('O(n)', $checked(() => $pipe(
@@ -391,7 +390,7 @@ export function positionToLineColumn(
     )));
   }
 
-  return $declare('O(n)', null);
+  return $proveCtx('O(n)', $lift('O(n)', null));
 }
 
 /**
@@ -405,7 +404,7 @@ export function lineColumnToPosition(
   // Use getLineRangePrecise to handle dirty line indices correctly
   const range = getLineRangePrecise(state.lineIndex, line);
   if (!range) {
-    return $declare('O(n)', null);
+    return $proveCtx('O(n)', $lift('O(n)', null));
   }
 
   return $prove('O(n)', $checked(() => $pipe(
@@ -443,7 +442,7 @@ function byteOffsetToCharOffset(
   position: ByteOffset
 ): LinearCost<number> {
   const posNum = position;
-  if (posNum <= 0) return $declare('O(n)', 0);
+  if (posNum <= 0) return $proveCtx('O(n)', $lift('O(n)', 0));
 
   const location = findLineAtPosition(state.lineIndex.root, position);
   if (location === null) {

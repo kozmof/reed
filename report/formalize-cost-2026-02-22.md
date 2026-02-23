@@ -67,10 +67,10 @@ Verification result:
   - `$prove('O(log n)', unwrappedCallback)` is rejected.
 
 3. Usage distribution (non-test code):
-- `$declare`: 26 calls
+- `$declare`: 0 calls
 - `$prove`: 20 calls
-- `$proveCtx`: 76 calls
-- This indicates the ambiguity fix is applied and checked-context boundaries are now the dominant modality.
+- `$proveCtx`: 102 calls
+- This indicates the ambiguity fix is applied and production boundaries are now fully checked (`$prove`/`$proveCtx`).
 
 4. Strategy evaluation:
 - For the stated strategy ("remove boundary ambiguity caused by `$('O(...)', $cost(value))`"), application is correct across the codebase.
@@ -83,17 +83,17 @@ Scope:
 - Unchecked boundary = `$declare(...)`.
 
 Inventory:
-- Total unchecked declarations: `26`
+- Total unchecked declarations: `0`
 - By file:
-  - `src/store/core/line-index.ts`: `8`
-  - `src/store/core/piece-table.ts`: `10`
-  - `src/store/features/diff.ts`: `3`
-  - `src/store/features/rendering.ts`: `5`
+  - `src/store/core/line-index.ts`: `0`
+  - `src/store/core/piece-table.ts`: `0`
+  - `src/store/features/diff.ts`: `0`
+  - `src/store/features/rendering.ts`: `0`
 
 Risk-band heuristic:
 - High (`0`): declaration happens after loop-driven or aggregation-heavy logic in the same function.
 - Medium (`0`): non-trivial unchecked declaration without clear post-loop aggregation signal.
-- Low (`26`): guard/constructor-style declarations (`null`, `''`, `0`, `[]`).
+- Low (`0`): guard/constructor-style declarations (`null`, `''`, `0`, `[]`).
 
 ### High-Priority Unchecked Zones (Resolved)
 
@@ -106,21 +106,17 @@ Current high-risk bucket is empty under this heuristic.
 
 ### Next Priority (Low-Risk)
 
-Remaining unchecked declarations are now limited to guard/constructor-style returns:
-- `null` fallback returns.
-- Empty string/array returns.
-- Scalar zero/boolean-style guard returns.
+No remaining unchecked declarations in production code.
 
 ### Lower-Priority / Likely Acceptable For v0
 
-- Guard-return boundaries (`null`/`0`/empty) across line-index/piece-table/rendering.
-- O(1) constructor-style boundaries where the returned value is directly computed from local scalars.
+- None.
 
 ### Formalization Interpretation
 
 - The ambiguity problem is solved (unchecked vs checked API boundary is explicit).
-- Remaining risk is not API ambiguity; it is only low-risk guard/constructor declarations.
-- Next formalization step is optional policy tightening for low-risk paths (for example, whether to fully eliminate `$declare` in favor of checked wrappers everywhere).
+- Remaining risk is no longer boundary-API related in production paths.
+- Next formalization step is optional simplification (for example, reducing repetitive `$proveCtx + $lift` ceremony).
 
 ### Resolved
 

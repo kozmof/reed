@@ -16,7 +16,6 @@ import type {
 import { byteOffset, byteLength as toByteLengthBrand, type ByteOffset, type ByteLength } from '../../types/branded.ts';
 import type { ReadTextFn, DeleteBoundaryContext } from '../../types/store.ts';
 import {
-  $declare,
   $prove,
   $proveCtx,
   $checked,
@@ -291,11 +290,11 @@ export function getLineStartOffset(
   lineNumber: number
 ): LogCost<number> {
   if (root === null) {
-    const emptyOffset = $declare('O(log n)', 0);
+    const emptyOffset = $proveCtx('O(log n)', $lift('O(log n)', 0));
     return emptyOffset;
   }
   if (lineNumber < 0) {
-    const invalidOffset = $declare('O(log n)', 0);
+    const invalidOffset = $proveCtx('O(log n)', $lift('O(log n)', 0));
     return invalidOffset;
   }
 
@@ -336,11 +335,11 @@ export function getCharStartOffset(
   lineNumber: number
 ): LogCost<number> {
   if (root === null) {
-    const emptyOffset = $declare('O(log n)', 0);
+    const emptyOffset = $proveCtx('O(log n)', $lift('O(log n)', 0));
     return emptyOffset;
   }
   if (lineNumber < 0) {
-    const invalidOffset = $declare('O(log n)', 0);
+    const invalidOffset = $proveCtx('O(log n)', $lift('O(log n)', 0));
     return invalidOffset;
   }
 
@@ -536,7 +535,7 @@ export function lineIndexInsert(
   }
 
   const location: LogCost<LineLocation | null> =
-    findLineAtPosition(state.root, position) ?? $declare('O(log n)', null);
+    findLineAtPosition(state.root, position) ?? $proveCtx('O(log n)', $lift('O(log n)', null));
 
   return $prove('O(n)', $checked(() => $pipe(
     $from(location),
@@ -982,7 +981,7 @@ export function lineIndexDelete(
   }
 
   const startLocation: LogCost<LineLocation | null> =
-    findLineAtPosition(state.root, start) ?? $declare('O(log n)', null);
+    findLineAtPosition(state.root, start) ?? $proveCtx('O(log n)', $lift('O(log n)', null));
 
   return $prove('O(n log n)', $checked(() => $pipe(
     $from(startLocation),
@@ -1487,7 +1486,7 @@ export function lineIndexInsertLazy(
   }
 
   const location: LogCost<LineLocation | null> =
-    findLineAtPosition(state.root, position) ?? $declare('O(log n)', null);
+    findLineAtPosition(state.root, position) ?? $proveCtx('O(log n)', $lift('O(log n)', null));
 
   return $prove('O(n)', $checked(() => $pipe(
     $from(location),
@@ -1612,7 +1611,7 @@ export function lineIndexDeleteLazy(
   }
 
   const startLocation: LogCost<LineLocation | null> =
-    findLineAtPosition(state.root, start) ?? $declare('O(log n)', null);
+    findLineAtPosition(state.root, start) ?? $proveCtx('O(log n)', $lift('O(log n)', null));
 
   return $prove('O(n log n)', $checked(() => $pipe(
     $from(startLocation),

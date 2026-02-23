@@ -14,7 +14,6 @@ import type {
 } from '../../types/state.ts';
 import { byteOffset, byteLength, type ByteOffset, type ByteLength } from '../../types/branded.ts';
 import {
-  $declare,
   $prove,
   $proveCtx,
   $checked,
@@ -359,7 +358,7 @@ export function pieceTableInsert(
   }
 
   const location: LogCost<PieceLocation | null> =
-    findPieceAtPosition(state.root, position) ?? $declare('O(log n)', null);
+    findPieceAtPosition(state.root, position) ?? $proveCtx('O(log n)', $lift('O(log n)', null));
 
   return $prove('O(n)', $checked(() => $pipe(
     $from(location),
@@ -803,7 +802,7 @@ function joinLeft(
  * Get the entire document content as a string.
  */
 export function getValue(state: PieceTableState): LinearCost<string> {
-  if (state.root === null) return $declare('O(n)', '');
+  if (state.root === null) return $proveCtx('O(n)', $lift('O(n)', ''));
 
   return $prove('O(n)', $checked(() => $pipe(
     $from(collectPieces(state.root)),
@@ -837,10 +836,10 @@ export function getText(
   start: ByteOffset,
   end: ByteOffset
 ): LinearCost<string> {
-  if (state.root === null) return $declare('O(n)', '');
-  if (start < 0) return $declare('O(n)', '');
-  if (start >= end) return $declare('O(n)', '');
-  if (start >= state.totalLength) return $declare('O(n)', '');
+  if (state.root === null) return $proveCtx('O(n)', $lift('O(n)', ''));
+  if (start < 0) return $proveCtx('O(n)', $lift('O(n)', ''));
+  if (start >= end) return $proveCtx('O(n)', $lift('O(n)', ''));
+  if (start >= state.totalLength) return $proveCtx('O(n)', $lift('O(n)', ''));
 
   const actualEnd = Math.min(end, state.totalLength);
 
@@ -910,8 +909,8 @@ export function getLength(state: PieceTableState): ConstCost<number> {
  * For line-index based line access with DocumentState, use `getLineContent()` from rendering.ts.
  */
 export function getLineLinearScan(state: PieceTableState, lineNumber: number): LinearCost<string> {
-  if (state.root === null) return $declare('O(n)', '');
-  if (lineNumber < 0) return $declare('O(n)', '');
+  if (state.root === null) return $proveCtx('O(n)', $lift('O(n)', ''));
+  if (lineNumber < 0) return $proveCtx('O(n)', $lift('O(n)', ''));
 
   // Find line start and end offsets by scanning for newlines
   return $prove('O(n)', $checked(() => $pipe(
@@ -931,7 +930,7 @@ function findLineOffsets(
   state: PieceTableState,
   lineNumber: number
 ): LinearCost<{ start: ByteOffset; end: ByteOffset } | null> {
-  if (state.root === null) return $declare('O(n)', null);
+  if (state.root === null) return $proveCtx('O(n)', $lift('O(n)', null));
 
   return $prove('O(n)', $checked(() => $pipe(
     $from(collectPieces(state.root)),
@@ -1148,7 +1147,7 @@ export function charToByteOffset(text: string, charOffset: number): LinearCost<n
  * ```
  */
 export function byteToCharOffset(text: string, byteOffset: number): LinearCost<number> {
-  if (byteOffset <= 0) return $declare('O(n)', 0);
+  if (byteOffset <= 0) return $proveCtx('O(n)', $lift('O(n)', 0));
 
   const bytes = textEncoder.encode(text);
   if (byteOffset >= bytes.length) return $proveCtx('O(n)', $lift('O(n)', text.length));
