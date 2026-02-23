@@ -1,8 +1,8 @@
 # Reed Text Editor Library — Consolidated Report
 
-**Date:** 2026-02-22
-**Merged from:** 6 reports (2026-02-16 through 2026-02-21)
-**Test Status:** 465/465 tests passing (11 test files)
+**Date:** 2026-02-23
+**Merged from:** 7 reports (2026-02-16 through 2026-02-23)
+**Test Status:** 489/489 tests passing (11 test files)
 **Codebase Version:** `main` branch
 
 ---
@@ -329,6 +329,21 @@ The store interface says batched actions form a single undo unit (`store.ts:63`)
 
 `pnpm build` fails because Vite expects `index.html` (app build) while the repo is library-first. Library-only typecheck/build targets should be separated from optional app preview targets.
 
+### 5.24 Cost Lattice Partially Open/Closed
+**Severity:** Low | **First reported:** 2026-02-22
+
+`Nat` allows `3` as "3 or more" (`src/types/cost.ts:27`), and `Nest` can produce higher exponents (`src/types/cost.ts:99`). Public labels only model up to `quad` (`src/types/cost.ts:58`, `src/types/cost.ts:73`). Extension rules above `O(n^2)` are undefined at the API level, so nested compositions can exceed the label space with no explicit formalized boundary type.
+
+### 5.25 Cost Branding Is Intentionally Permeable
+**Severity:** Low | **First reported:** 2026-02-22
+
+`Costed<Level, T>` is `T & brand` (`src/types/cost.ts:119`), so values remain directly consumable as plain `T`. Branded outputs are routinely used as unbranded values without contextual composition, turning the modality from enforced composition into optional annotation.
+
+### 5.26 Mixed Precision Policy Is Implicit
+**Severity:** Low | **First reported:** 2026-02-22, partially resolved 2026-02-23
+
+Some paths use `$checked + $pipe` plans; adjacent paths of similar complexity use direct `$cost` wrapping only. Without formalized criteria for when checked plans are required, extensibility depends on contributor preference rather than module-level rules.
+
 ---
 
 ## 6. Resolved Issues Summary
@@ -425,6 +440,36 @@ The store interface says batched actions form a single undo unit (`store.ts:63`)
 
 - **P0** — `getLineRangePrecise` dirty-path double-correction removed. `withLineIndexNode` keeps `subtreeByteLength` current on every tree mutation, so `getLineStartOffset` (subtree aggregate) is authoritative in all states. Dirty delta overlay was incorrect and produced wrong visible lines after inserts.
 
+### Resolved 2026-02-23 (Formalization Review — cost.ts)
+
+- **1.1 Label normalization duplication** — Runtime and type-level normalization now share `costLabelByInput` in `src/types/cost.ts:62`. `$declare`/`$prove`/`$proveCtx` now use that mapping directly.
+
+- **2.1 Boundary API ambiguity** — Boundary API split into explicit unchecked/checked surfaces:
+  - `$declare(level, value)` for unchecked declarations; rejects context/plan-like inputs at compile time via `UncheckedBoundaryValue<T>`
+  - `$prove(level, $checked(() => plan))` for checked plans
+  - `$proveCtx(level, ctx)` for checked contexts
+  - Ambiguous `$('O(...)', $cost(value))`-style declarations removed from all production modules
+
+- **2.2 `getLineRangePrecise` overload mismatch** — Both overload paths now return `LogCost` in `src/store/core/line-index.ts:1714`.
+
+- **2.3 Low-adoption combinator re-exports** — `$sort`/`$filter` removed from public re-export surfaces in `src/types/index.ts:133` and `src/index.ts:125`.
+
+- **3.1 Constant-cost declarations hiding linear scans** — `isLineDirty` and `getOffsetDeltaForLine` are now `LinearCost` with `O(n)` boundaries in `src/store/core/line-index.ts`.
+
+- **3.2 `setValue` cost composition** — `setValue` and `computeSetValueActionsFromState` now compose via `$checked + $pipe` with explicit branch lifting in `src/store/features/diff.ts`.
+
+- **4.1 Assertion casts bypassing eager-mode invariants** — Reconciliation now funnels through a validated eager-state conversion helper `toEagerLineIndexState` in `src/store/core/line-index.ts:1888`. Prior `as LineIndexState<'eager'>` returns in `reconcileFull` were removed.
+
+- **4.3 Nested wrapper ceremony for null/fallback branches** — Introduced `$lift` in `src/types/cost.ts:292`; replaced nested `$from($('O(...)', $cost(...)))` patterns in `rendering.ts`, `piece-table.ts`.
+
+- **4.4 Reducer-local wrappers re-annotating already-costed operations** — Reducer piece-table helpers now return plain values without re-branding in `src/store/features/reducer.ts`.
+
+**Post-migration verification (2026-02-23):**
+- `npx tsc --noEmit` passes
+- `npm test` passes (489 tests)
+- Usage distribution in non-test code: `$declare` 0 calls, `$prove` 20 calls, `$proveCtx` 102 calls
+- No legacy `$` boundary helper usage remains in source code
+
 ---
 
 ## 7. Implementation Status
@@ -471,6 +516,9 @@ Replace the narrow `isTextEditAction` guard with a single authoritative `isConte
 ### 8.5 Single Transaction Primitive
 Refactor `batch` execution so that one transaction primitive owns undo grouping, reconciliation scheduling, and event emission — eliminating the parallel implementation in `createDocumentStoreWithEvents.batch`.
 
+### 8.6 Formalize Mixed Precision Policy
+Document module-level criteria for when `$checked + $pipe` plans are required versus direct `$cost` wrapping, so extensibility is rule-driven rather than contributor-preference-driven.
+
 ---
 
 ## 9. Fragility Points (Current)
@@ -482,6 +530,7 @@ Refactor `batch` execution so that one transaction primitive owns undo grouping,
 5. **`charLength` / `subtreeCharLength` aggregate** — Every code path creating or modifying `LineIndexNode` must correctly maintain this aggregate. The `withLineIndexNode` helper recomputes `subtreeCharLength` automatically, but per-node `charLength` must be set correctly at every insert/delete/split site.
 6. **Unicode correctness in setValue** — The non-optimized diff path (`useReplace: false`) lacks surrogate-boundary guards, producing replacement characters on emoji/surrogate edits.
 7. **`ReadTextFn` optional callback** — When absent, `charLength` falls back to `0`, silently corrupting `subtreeCharLength` aggregates and all downstream char-offset queries without any error signal.
+8. **Cost lattice upper bound** — Compositions above `O(n^2)` exceed the defined label space with no explicit boundary type; new higher-complexity code has no formal classification.
 
 ---
 
@@ -522,8 +571,9 @@ Refactor `batch` execution so that one transaction primitive owns undo grouping,
 | `applyEdit` unified pipeline | Single code path for INSERT/DELETE/REPLACE prevents symmetry drift. |
 | Cost brands + namespace stratification | Algorithmic complexity is structurally visible at the type level and at the import site. |
 | `EvaluationMode` type parameter | Lazy/eager distinction enforced by the type system; stale-data bugs become compile errors. |
+| `$declare`/`$prove`/`$proveCtx` split | Unchecked vs checked boundary surfaces are explicit; ambiguous `$cost`-seeded declarations are rejected at compile time. |
 
 ---
 
-*Consolidated from: merged-report-2026-02-16.md, formalize-transparent-complexity-2026-02-16.md, formalize-2026-02-18.md, 2026-02-21-cost-ts-analysis.md, formalize-2026-02-21.md, 2026-02-21-code-analyze.md*
-*Generated on 2026-02-22*
+*Consolidated from: merged-report-2026-02-16.md, formalize-transparent-complexity-2026-02-16.md, formalize-2026-02-18.md, 2026-02-21-cost-ts-analysis.md, formalize-2026-02-21.md, 2026-02-21-code-analyze.md, formalize-cost-2026-02-22.md*
+*Generated on 2026-02-23*
