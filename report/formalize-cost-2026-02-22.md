@@ -49,6 +49,33 @@ Implemented:
 - Production code has no remaining `$declare(..., $cost(...))` boundaries.
 - One intentional negative test remains to assert the compile-time rejection rule.
 
+## Whole-Codebase Re-check (2026-02-23)
+
+Audit target:
+- All `src/**/*.ts` files (production + tests).
+
+Verification result:
+1. Type/lint safety gates:
+- `npx tsc --noEmit` passes.
+- `npm test` passes (489 tests).
+
+2. Boundary split integrity:
+- No legacy `$` boundary helper usage remains in source code.
+- `$declare` now blocks context/plan-like inputs at the type layer (`src/types/cost.ts`).
+- Contract tests assert the split (`src/types/branded.test.ts`):
+  - `$declare('O(1)', $cost(...))` is rejected.
+  - `$prove('O(log n)', unwrappedCallback)` is rejected.
+
+3. Usage distribution (non-test code):
+- `$declare`: 97 calls
+- `$prove`: 20 calls
+- `$proveCtx`: 5 calls
+- This indicates the ambiguity fix is applied, while unchecked declarations remain the dominant modality.
+
+4. Strategy evaluation:
+- For the stated strategy ("remove boundary ambiguity caused by `$('O(...)', $cost(value))`"), application is correct across the codebase.
+- Remaining formalization work is policy-level (where checked plans should be mandatory), not boundary API ambiguity.
+
 ### Resolved
 
 - **1.1 Label normalization duplication**
