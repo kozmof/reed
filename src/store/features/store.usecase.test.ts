@@ -343,6 +343,22 @@ describe('Editor Use Cases', () => {
       store.dispatch(DocumentActions.insert(byteOffset(6), '\nLine 2'));
       expect(store.getSnapshot().lineIndex.lineCount).toBe(2);
     });
+
+    it('should keep line count when deleting only CR from a CRLF separator', () => {
+      const store = createDocumentStore({ content: 'A\r\nB' });
+      expect(store.getSnapshot().lineIndex.lineCount).toBe(2);
+
+      store.dispatch(DocumentActions.delete(byteOffset(1), byteOffset(2)));
+      expect(store.getSnapshot().lineIndex.lineCount).toBe(2);
+    });
+
+    it('should keep line count when deleting only LF from a CRLF separator', () => {
+      const store = createDocumentStore({ content: 'A\r\nB' });
+      expect(store.getSnapshot().lineIndex.lineCount).toBe(2);
+
+      store.dispatch(DocumentActions.delete(byteOffset(2), byteOffset(3)));
+      expect(store.getSnapshot().lineIndex.lineCount).toBe(2);
+    });
   });
 
   describe('Large Document Editing', () => {

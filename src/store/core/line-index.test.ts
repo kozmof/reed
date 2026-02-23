@@ -14,6 +14,7 @@ import {
   collectLines,
   rebuildLineIndex,
   lineIndexInsertLazy,
+  lineIndexDeleteLazy,
   reconcileFull,
   reconcileRange,
   reconcileViewport,
@@ -525,5 +526,53 @@ describe('mergeDirtyRanges improvements', () => {
     expect(merged).toHaveLength(1);
     expect(merged[0].startLine).toBe(0);
     expect(merged[0].endLine).toBe(10);
+  });
+});
+
+describe('CR-only line ending edits', () => {
+  it('lineIndexInsertLazy should split lines for CR-only inserts', () => {
+    const initial = createLineIndexState('A\rB');
+    expect(initial.lineCount).toBe(2);
+
+    const dirty = lineIndexInsertLazy(initial, byteOffset(3), '\rC', 1);
+    expect(dirty.lineCount).toBe(3);
+  });
+
+  it('lineIndexDeleteLazy should merge lines when deleting CR-only separator', () => {
+    const initial = createLineIndexState('A\rB');
+    expect(initial.lineCount).toBe(2);
+
+    const dirty = lineIndexDeleteLazy(initial, byteOffset(1), byteOffset(2), '\r', 1);
+    expect(dirty.lineCount).toBe(1);
+  });
+
+  it('lineIndexDeleteLazy should keep line count when deleting only CR from CRLF', () => {
+    const initial = createLineIndexState('A\r\nB');
+    expect(initial.lineCount).toBe(2);
+
+    const dirty = lineIndexDeleteLazy(
+      initial,
+      byteOffset(1),
+      byteOffset(2),
+      '\r',
+      1,
+      { nextChar: '\n' }
+    );
+    expect(dirty.lineCount).toBe(2);
+  });
+
+  it('lineIndexDeleteLazy should keep line count when deleting only LF from CRLF', () => {
+    const initial = createLineIndexState('A\r\nB');
+    expect(initial.lineCount).toBe(2);
+
+    const dirty = lineIndexDeleteLazy(
+      initial,
+      byteOffset(2),
+      byteOffset(3),
+      '\n',
+      1,
+      { prevChar: '\r' }
+    );
+    expect(dirty.lineCount).toBe(2);
   });
 });

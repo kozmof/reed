@@ -7,7 +7,7 @@
 import type { DocumentState, HistoryEntry, HistoryChange, SelectionState, SelectionRange } from '../../types/state.ts';
 import type { DocumentAction } from '../../types/actions.ts';
 import type { ByteOffset } from '../../types/branded.ts';
-import type { LineIndexStrategy } from '../../types/store.ts';
+import type { LineIndexStrategy, DeleteBoundaryContext } from '../../types/store.ts';
 import { byteOffset } from '../../types/branded.ts';
 import { withState } from '../core/state.ts';
 import { $, $cost, type LinearCost } from '../../types/cost.ts';
@@ -117,8 +117,8 @@ export const eagerLineIndex: LineIndexStrategy<'eager'> = {
   insert: (lineIndex, position, text, _version, readText) => {
     return liInsert(lineIndex, position, text, readText);
   },
-  delete: (lineIndex, start, end, deletedText, _version) => {
-    return liDelete(lineIndex, start, end, deletedText);
+  delete: (lineIndex, start, end, deletedText, _version, deleteContext) => {
+    return liDelete(lineIndex, start, end, deletedText, deleteContext);
   },
 };
 
@@ -130,10 +130,32 @@ export const lazyLineIndex: LineIndexStrategy<'lazy'> = {
   insert: (lineIndex, position, text, version, readText) => {
     return liInsertLazy(lineIndex, position, text, version, readText);
   },
-  delete: (lineIndex, start, end, deletedText, version) => {
-    return liDeleteLazy(lineIndex, start, end, deletedText, version);
+  delete: (lineIndex, start, end, deletedText, version, deleteContext) => {
+    return liDeleteLazy(lineIndex, start, end, deletedText, version, deleteContext);
   },
 };
+
+function getDeleteBoundaryContext(
+  state: DocumentState,
+  start: ByteOffset,
+  end: ByteOffset
+): DeleteBoundaryContext {
+  const startN = start as number;
+  const endN = end as number;
+  const totalLength = state.pieceTable.totalLength;
+
+  const prevChar = startN > 0
+    ? getText(state.pieceTable, byteOffset(startN - 1), start)
+    : '';
+  const nextChar = endN < totalLength
+    ? getText(state.pieceTable, end, byteOffset(endN + 1))
+    : '';
+
+  return {
+    prevChar: prevChar.length > 0 ? prevChar : undefined,
+    nextChar: nextChar.length > 0 ? nextChar : undefined,
+  };
+}
 
 // =============================================================================
 // History Operations
@@ -424,15 +446,17 @@ function applyChange(state: DocumentState, change: HistoryChange, version: numbe
     }
     case 'delete': {
       const end = byteOffset(change.position + change.byteLength);
+      const deleteContext = getDeleteBoundaryContext(state, change.position, end);
       const s = pieceTableDelete(state, change.position, end);
-      const newLineIndex = eagerLineIndex.delete(reconciledLI, change.position, end, change.text, version);
+      const newLineIndex = eagerLineIndex.delete(reconciledLI, change.position, end, change.text, version, deleteContext);
       return withState(s, { lineIndex: newLineIndex });
     }
     case 'replace': {
       const deleteEnd = byteOffset(change.position + textEncoder.encode(change.oldText).length);
+      const deleteContext = getDeleteBoundaryContext(state, change.position, deleteEnd);
       const s = pieceTableDelete(state, change.position, deleteEnd);
       const { state: s2 } = pieceTableInsert(s, change.position, change.text);
-      const li1 = eagerLineIndex.delete(reconciledLI, change.position, deleteEnd, change.oldText, version);
+      const li1 = eagerLineIndex.delete(reconciledLI, change.position, deleteEnd, change.oldText, version, deleteContext);
       const readText = (start: ByteOffset, end: ByteOffset) => getText(s2.pieceTable, start, end);
       const li2 = eagerLineIndex.insert(li1, change.position, change.text, version, readText);
       return withState(s2, { lineIndex: li2 });
@@ -501,8 +525,16 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
 
   // Delete phase
   if (op.deleteEnd !== undefined) {
+    const deleteContext = getDeleteBoundaryContext(newState, op.position, op.deleteEnd);
+    const delLineIndex = lazyLineIndex.delete(
+      newState.lineIndex,
+      op.position,
+      op.deleteEnd,
+      op.deletedText!,
+      nextVersion,
+      deleteContext
+    );
     newState = pieceTableDelete(newState, op.position, op.deleteEnd);
-    const delLineIndex = lazyLineIndex.delete(newState.lineIndex, op.position, op.deleteEnd, op.deletedText!, nextVersion);
     newState = withState(newState, { lineIndex: delLineIndex });
   }
 
@@ -645,8 +677,16 @@ export function documentReducer(
           // Capture deleted text before deleting for line index update
           const endPosition = byteOffset(change.start + change.length);
           const deletedText = getTextRange(newState, change.start, endPosition);
+          const deleteContext = getDeleteBoundaryContext(newState, change.start, endPosition);
+          const li = lazyLineIndex.delete(
+            newState.lineIndex,
+            change.start,
+            endPosition,
+            deletedText,
+            nextVersion,
+            deleteContext
+          );
           newState = pieceTableDelete(newState, change.start, endPosition);
-          const li = lazyLineIndex.delete(newState.lineIndex, change.start, endPosition, deletedText, nextVersion);
           newState = withState(newState, { lineIndex: li });
         }
       }

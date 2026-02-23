@@ -14,7 +14,7 @@ import type {
   EvaluationMode,
 } from '../../types/state.ts';
 import { byteOffset, byteLength as toByteLengthBrand, type ByteOffset, type ByteLength } from '../../types/branded.ts';
-import type { ReadTextFn } from '../../types/store.ts';
+import type { ReadTextFn, DeleteBoundaryContext } from '../../types/store.ts';
 import {
   $,
   $checked,
@@ -41,41 +41,87 @@ const withLine: WithNodeFn<LineIndexNode> = withLineIndexNode;
 // =============================================================================
 
 /**
- * Find byte-offset positions of all newline characters in text,
+ * Find byte-offset positions of all line breaks in text,
  * and compute the total UTF-8 byte length.
  *
- * Encodes text to UTF-8 bytes once, then scans for 0x0A.
- * This is correct because '\n' is always a single byte (0x0A) in UTF-8
- * and never appears as part of a multi-byte sequence.
+ * Supports LF (\n), CR (\r), and CRLF (\r\n) line endings.
+ * For CRLF, records the position of '\n' so the break width is included.
+ *
+ * Encodes text to UTF-8 bytes once, then scans for 0x0A/0x0D.
+ * This is correct because these ASCII bytes never appear in UTF-8 continuation bytes.
  */
 function findNewlineBytePositions(text: string): { positions: number[]; byteLength: number } {
   const bytes = textEncoder.encode(text);
   const positions: number[] = [];
   for (let i = 0; i < bytes.length; i++) {
-    if (bytes[i] === 0x0A) positions.push(i);
+    if (bytes[i] === 0x0D) {
+      if (i + 1 < bytes.length && bytes[i + 1] === 0x0A) {
+        positions.push(i + 1);
+        i++;
+      } else {
+        positions.push(i);
+      }
+    } else if (bytes[i] === 0x0A) {
+      positions.push(i);
+    }
   }
   return { positions, byteLength: bytes.length };
 }
 
 /**
- * Count newline characters in text.
+ * Count logical line breaks in text.
+ * Treats LF, CR, and CRLF as one line break each.
  * Shared between eager and lazy delete operations.
  */
 function countNewlines(text: string): number {
   let count = 0;
   for (let i = 0; i < text.length; i++) {
-    if (text[i] === '\n') count++;
+    if (text[i] === '\r') {
+      count++;
+      if (i + 1 < text.length && text[i + 1] === '\n') {
+        i++;
+      }
+    } else if (text[i] === '\n') {
+      count++;
+    }
   }
   return count;
 }
 
 /**
- * Find char (UTF-16) positions of newlines in a string.
+ * Count how many logical line breaks are actually removed by a delete.
+ * Uses optional one-char boundary context to correctly handle partial CRLF deletes.
+ */
+function countDeletedLineBreaks(
+  deletedText: string,
+  context?: DeleteBoundaryContext
+): number {
+  if (context === undefined || (context.prevChar === undefined && context.nextChar === undefined)) {
+    return countNewlines(deletedText);
+  }
+
+  const before = `${context.prevChar ?? ''}${deletedText}${context.nextChar ?? ''}`;
+  const after = `${context.prevChar ?? ''}${context.nextChar ?? ''}`;
+  return Math.max(0, countNewlines(before) - countNewlines(after));
+}
+
+/**
+ * Find UTF-16 positions of line-break endpoints in a string.
+ * Supports LF, CR, and CRLF.
  */
 function findNewlineCharPositions(text: string): number[] {
   const positions: number[] = [];
   for (let i = 0; i < text.length; i++) {
-    if (text[i] === '\n') positions.push(i);
+    if (text[i] === '\r') {
+      if (i + 1 < text.length && text[i + 1] === '\n') {
+        positions.push(i + 1);
+        i++;
+      } else {
+        positions.push(i);
+      }
+    } else if (text[i] === '\n') {
+      positions.push(i);
+    }
   }
   return positions;
 }
@@ -842,13 +888,14 @@ export function lineIndexDelete(
   state: LineIndexState,
   start: ByteOffset,
   end: ByteOffset,
-  deletedText: string
+  deletedText: string,
+  deleteContext?: DeleteBoundaryContext
 ): NLogNCost<LineIndexState> {
   if (start >= end) return $('O(n log n)', $cost(state));
   if (state.root === null) return $('O(n log n)', $cost(state));
 
   const deleteLength = end - start;
-  const deletedNewlines = countNewlines(deletedText);
+  const deletedNewlines = countDeletedLineBreaks(deletedText, deleteContext);
 
   // If no newlines deleted, just update line length
   if (deletedNewlines === 0) {
@@ -1456,13 +1503,14 @@ export function lineIndexDeleteLazy(
   start: ByteOffset,
   end: ByteOffset,
   deletedText: string,
-  currentVersion: number
+  currentVersion: number,
+  deleteContext?: DeleteBoundaryContext
 ): NLogNCost<LineIndexState> {
   if (start >= end) return $('O(n log n)', $cost(state));
   if (state.root === null) return $('O(n log n)', $cost(state));
 
   const deleteLength = end - start;
-  const deletedNewlines = countNewlines(deletedText);
+  const deletedNewlines = countDeletedLineBreaks(deletedText, deleteContext);
 
   // No newlines: just update line length
   if (deletedNewlines === 0) {
