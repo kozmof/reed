@@ -104,7 +104,7 @@ export function getVisibleLineRange(
   const startLine = Math.max(0, firstVisibleLine - overscan);
   const endLine = Math.min(totalLines - 1, lastVisibleLine + overscan);
 
-  return $declare('O(1)', { startLine, endLine });
+  return $proveCtx('O(1)', $lift('O(1)', { startLine, endLine }));
 }
 
 /**
@@ -268,16 +268,16 @@ export function estimateLineHeight(
   config: LineHeightConfig
 ): ConstCost<number> {
   if (!config.softWrap) {
-    return $declare('O(1)', config.baseLineHeight);
+    return $proveCtx('O(1)', $lift('O(1)', config.baseLineHeight));
   }
 
   const charsPerLine = Math.floor(config.viewportWidth / config.charWidth);
   if (charsPerLine <= 0) {
-    return $declare('O(1)', config.baseLineHeight);
+    return $proveCtx('O(1)', $lift('O(1)', config.baseLineHeight));
   }
 
   const wrappedLines = Math.ceil(line.content.length / charsPerLine) || 1;
-  return $declare('O(1)', wrappedLines * config.baseLineHeight);
+  return $proveCtx('O(1)', $lift('O(1)', wrappedLines * config.baseLineHeight));
 }
 
 /**
@@ -291,7 +291,7 @@ export function estimateTotalHeight(
 
   if (!config.softWrap) {
     // Fixed height mode: simple multiplication
-    return $declare('O(n)', totalLines * config.baseLineHeight);
+    return $proveCtx('O(n)', $lift('O(n)', totalLines * config.baseLineHeight));
   }
 
   // Variable height mode: we need to estimate
@@ -506,19 +506,19 @@ function charOffsetToByteOffset(
   charPos: number
 ): LinearCost<ByteOffset> {
   if (charPos <= 0) {
-    return $declare('O(n)', byteOffset(0));
+    return $proveCtx('O(n)', $lift('O(n)', byteOffset(0)));
   }
 
   const location = findLineAtCharPosition(state.lineIndex.root, charPos);
   if (location === null) {
     // charPos is at or past end of document
-    return $declare('O(n)', byteOffset(state.pieceTable.totalLength));
+    return $proveCtx('O(n)', $lift('O(n)', byteOffset(state.pieceTable.totalLength)));
   }
 
   // Get the byte range of the target line
   const range = getLineRangePrecise(state.lineIndex, location.lineNumber);
   if (range === null) {
-    return $declare('O(n)', byteOffset(state.pieceTable.totalLength));
+    return $proveCtx('O(n)', $lift('O(n)', byteOffset(state.pieceTable.totalLength)));
   }
 
   return $prove('O(n)', $checked(() => $pipe(

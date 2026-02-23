@@ -63,24 +63,24 @@ export interface DiffResult {
 export function diff(oldText: string, newText: string): QuadCost<DiffResult> {
   // Handle trivial cases
   if (oldText === newText) {
-    return $declare('O(n^2)', {
+    return $proveCtx('O(n^2)', $lift('O(n^2)', {
       edits: oldText.length > 0 ? [{ type: 'equal', text: oldText, oldPos: 0, newPos: 0 }] : [],
       distance: 0,
-    } satisfies DiffResult);
+    } satisfies DiffResult));
   }
 
   if (oldText.length === 0) {
-    return $declare('O(n^2)', {
+    return $proveCtx('O(n^2)', $lift('O(n^2)', {
       edits: [{ type: 'insert', text: newText, oldPos: 0, newPos: 0 }],
       distance: newText.length,
-    } satisfies DiffResult);
+    } satisfies DiffResult));
   }
 
   if (newText.length === 0) {
-    return $declare('O(n^2)', {
+    return $proveCtx('O(n^2)', $lift('O(n^2)', {
       edits: [{ type: 'delete', text: oldText, oldPos: 0, newPos: 0 }],
       distance: oldText.length,
-    } satisfies DiffResult);
+    } satisfies DiffResult));
   }
 
   // Find common prefix

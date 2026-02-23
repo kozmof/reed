@@ -426,7 +426,7 @@ export function collectLines(root: LineIndexNode | null): LinearCost<readonly Li
   }
 
   inOrder(root);
-  return $declare('O(n)', result);
+  return $proveCtx('O(n)', $lift('O(n)', result));
 }
 
 // =============================================================================
@@ -518,7 +518,7 @@ export function lineIndexInsert(
   text: string,
   readText?: ReadTextFn
 ): LinearCost<LineIndexState> {
-  if (text.length === 0) return $declare('O(n)', state);
+  if (text.length === 0) return $proveCtx('O(n)', $lift('O(n)', state));
 
   const { positions: newlinePositions, byteLength } = findNewlineBytePositions(text);
   const insertContext = getInsertBoundaryContext(position, byteLength, readText);
@@ -527,12 +527,12 @@ export function lineIndexInsert(
   // Structural incremental logic assumes inserted line breaks are self-contained;
   // cross-boundary CRLF composition violates that assumption. Rebuild for correctness.
   if (readText && hasCrossBoundaryCRLFMerge(text, insertContext)) {
-    return $declare('O(n)', rebuildFromReadText(state, readText, state.lastReconciledVersion));
+    return $proveCtx('O(n)', $lift('O(n)', rebuildFromReadText(state, readText, state.lastReconciledVersion)));
   }
 
   // If no newlines, just update the length of the affected line
   if (newlinePositions.length === 0) {
-    return $declare('O(n)', updateLineLength(state, position, byteLength, text.length));
+    return $proveCtx('O(n)', $lift('O(n)', updateLineLength(state, position, byteLength, text.length)));
   }
 
   const location: LogCost<LineLocation | null> =
@@ -970,15 +970,15 @@ export function lineIndexDelete(
   deletedText: string,
   deleteContext?: DeleteBoundaryContext
 ): NLogNCost<LineIndexState> {
-  if (start >= end) return $declare('O(n log n)', state);
-  if (state.root === null) return $declare('O(n log n)', state);
+  if (start >= end) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
+  if (state.root === null) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
 
   const deleteLength = end - start;
   const deletedNewlines = countDeletedLineBreaks(deletedText, deleteContext);
 
   // If no newlines deleted, just update line length
   if (deletedNewlines === 0) {
-    return $declare('O(n log n)', updateLineLength(state, start, -deleteLength, -deletedText.length));
+    return $proveCtx('O(n log n)', $lift('O(n log n)', updateLineLength(state, start, -deleteLength, -deletedText.length)));
   }
 
   const startLocation: LogCost<LineLocation | null> =
@@ -1308,14 +1308,14 @@ function removeLinesToEnd(
  * Use this when the line index gets out of sync.
  */
 export function rebuildLineIndex(content: string): LinearCost<LineIndexState> {
-  return $declare('O(n)', buildLineIndexFromText(content, 0));
+  return $proveCtx('O(n)', $lift('O(n)', buildLineIndexFromText(content, 0)));
 }
 
 /**
  * Get line count from the state.
  */
 export function getLineCountFromIndex(state: LineIndexState): ConstCost<number> {
-  const lineCount = $declare('O(1)', state.lineCount);
+  const lineCount = $proveCtx('O(1)', $lift('O(1)', state.lineCount));
   return lineCount;
 }
 
@@ -1350,7 +1350,7 @@ export function getLineRange(
 export function mergeDirtyRanges(
   ranges: readonly DirtyLineRange[]
 ): NLogNCost<readonly DirtyLineRange[]> {
-  if (ranges.length <= 1) return $declare('O(n log n)', [...ranges]);
+  if (ranges.length <= 1) return $proveCtx('O(n log n)', $lift('O(n log n)', [...ranges]));
 
   // Sort by startLine
   const sorted = [...ranges].sort((a, b) => a.startLine - b.startLine);
@@ -1417,9 +1417,9 @@ export function isLineDirty(
   dirtyRanges: readonly DirtyLineRange[],
   lineNumber: number
 ): LinearCost<boolean> {
-  return $declare('O(n)', dirtyRanges.some(
+  return $proveCtx('O(n)', $lift('O(n)', dirtyRanges.some(
     r => lineNumber >= r.startLine && lineNumber <= r.endLine
-  ));
+  )));
 }
 
 /**
@@ -1471,19 +1471,19 @@ export function lineIndexInsertLazy(
   currentVersion: number,
   readText?: ReadTextFn
 ): LinearCost<LineIndexState> {
-  if (text.length === 0) return $declare('O(n)', state);
+  if (text.length === 0) return $proveCtx('O(n)', $lift('O(n)', state));
 
   const { positions: newlinePositions, byteLength } = findNewlineBytePositions(text);
   const insertContext = getInsertBoundaryContext(position, byteLength, readText);
 
   // Same cross-boundary CRLF case as eager insert; rebuild to guarantee correctness.
   if (readText && hasCrossBoundaryCRLFMerge(text, insertContext)) {
-    return $declare('O(n)', rebuildFromReadText(state, readText, currentVersion));
+    return $proveCtx('O(n)', $lift('O(n)', rebuildFromReadText(state, readText, currentVersion)));
   }
 
   // No newlines: simple length update (O(log n), no lazy needed)
   if (newlinePositions.length === 0) {
-    return $declare('O(n)', updateLineLengthLazy(state, position, byteLength, text.length));
+    return $proveCtx('O(n)', $lift('O(n)', updateLineLengthLazy(state, position, byteLength, text.length)));
   }
 
   const location: LogCost<LineLocation | null> =
@@ -1600,15 +1600,15 @@ export function lineIndexDeleteLazy(
   currentVersion: number,
   deleteContext?: DeleteBoundaryContext
 ): NLogNCost<LineIndexState> {
-  if (start >= end) return $declare('O(n log n)', state);
-  if (state.root === null) return $declare('O(n log n)', state);
+  if (start >= end) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
+  if (state.root === null) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
 
   const deleteLength = end - start;
   const deletedNewlines = countDeletedLineBreaks(deletedText, deleteContext);
 
   // No newlines: just update line length
   if (deletedNewlines === 0) {
-    return $declare('O(n log n)', updateLineLengthLazy(state, start, -deleteLength, -deletedText.length));
+    return $proveCtx('O(n log n)', $lift('O(n log n)', updateLineLengthLazy(state, start, -deleteLength, -deletedText.length)));
   }
 
   const startLocation: LogCost<LineLocation | null> =
@@ -1765,10 +1765,10 @@ export function reconcileRange(
   endLine: number,
   version: number
 ): NLogNCost<LineIndexState> {
-  if (state.root === null || state.dirtyRanges.length === 0) return $declare('O(n log n)', state);
+  if (state.root === null || state.dirtyRanges.length === 0) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
   const clampedStart = Math.max(0, startLine);
   const clampedEnd = Math.min(endLine, state.lineCount - 1);
-  if (clampedStart > clampedEnd) return $declare('O(n log n)', state);
+  if (clampedStart > clampedEnd) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
 
   // For each line in range, compute correct offset and update
   let newRoot = state.root!;
@@ -1928,13 +1928,13 @@ export function reconcileFull(
   config?: ReconciliationConfig
 ): NLogNCost<LineIndexState<'eager'>> {
   if (state.dirtyRanges.length === 0) {
-    return $declare('O(n log n)', toEagerLineIndexState(state, version));
+    return $proveCtx('O(n log n)', $lift('O(n log n)', toEagerLineIndexState(state, version)));
   }
 
   if (state.root === null) {
-    return $declare('O(n log n)', toEagerLineIndexState(state, version, {
+    return $proveCtx('O(n log n)', $lift('O(n log n)', toEagerLineIndexState(state, version, {
       lineCount: 1,
-    }));
+    })));
   }
 
   // Fast path: incremental for small dirty ranges — O(k * log n)
@@ -1986,12 +1986,12 @@ export function reconcileViewport(
   endLine: number,
   version: number
 ): NLogNCost<LineIndexState> {
-  if (state.dirtyRanges.length === 0) return $declare('O(n log n)', state);
+  if (state.dirtyRanges.length === 0) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
   const normalizedStart = Math.min(startLine, endLine);
   const normalizedEnd = Math.max(startLine, endLine);
   const clampedStart = Math.max(0, normalizedStart);
   const clampedEnd = Math.min(normalizedEnd, state.lineCount - 1);
-  if (clampedStart > clampedEnd) return $declare('O(n log n)', state);
+  if (clampedStart > clampedEnd) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
 
   // Check if any viewport lines are dirty
   const viewportDirty = state.dirtyRanges.some(range => {
@@ -1999,7 +1999,7 @@ export function reconcileViewport(
     return range.startLine <= clampedEnd && rangeEnd >= clampedStart;
   });
 
-  if (!viewportDirty) return $declare('O(n log n)', state);
+  if (!viewportDirty) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
 
   // Reconcile only the viewport range
   return reconcileRange(state, clampedStart, clampedEnd, version);
