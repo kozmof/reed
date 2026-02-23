@@ -5,7 +5,7 @@
  * 1. Use `$prove(level, $checked(() => plan))` or `$proveCtx(level, planCtx)`
  *    for compile-time checked boundaries.
  * 2. Use `$declare(level, value)` for explicit unchecked declarations.
- * 3. Start plans from `$cost(value)` and compose with pipeline combinators.
+ * 3. Start plans from `$lift('O(1)', value)` and compose with pipeline combinators.
  * 4. Keep internal arithmetic/data as plain types and apply branding only
  *    at explicit boundaries (or via `CostFn` wrappers).
  * 5. Avoid direct cast helpers in store/application code.
@@ -304,12 +304,6 @@ export function $checked<C extends Cost, T>(run: () => Ctx<C, T>): CheckedPlan<C
 }
 
 /**
- * Start a cost-typed pipeline with O(1) seed cost.
- */
-export const $cost = <T>(value: T): Ctx<C_CONST, T> =>
-  ({ value } as Ctx<C_CONST, T>);
-
-/**
  * Lift a branded value into a context so it can participate in `$pipe` plans.
  */
 export const $from = <L extends CostLevel, T>(
@@ -319,6 +313,7 @@ export const $from = <L extends CostLevel, T>(
 
 /**
  * Lift a plain value into a context at a declared upper bound.
+ * Use `O(1)` when seeding a new plan.
  * Useful in checked plans where branch costs must align.
  */
 export function $lift<L extends CostInputLabel, T>(

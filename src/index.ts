@@ -131,7 +131,6 @@ export {
   $linearCostFn,
   $nlognCostFn,
   $quadCostFn,
-  $cost,
   $from,
   $lift,
   $pipe,

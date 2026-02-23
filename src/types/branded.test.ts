@@ -35,7 +35,7 @@ import {
   $quadCostFn,
   $zipCtx,
   $checked,
-  $cost,
+  $lift,
   $pipe,
   $from,
   $andThen,
@@ -189,13 +189,13 @@ describe('Branded Types', () => {
     it('should reject unwrapped callback plan', () => {
       if (false) {
         // @ts-expect-error $prove requires a checked plan wrapper
-        $prove('O(log n)', () => $pipe($cost([1, 2, 3]), $binarySearch(2)));
+        $prove('O(log n)', () => $pipe($lift('O(1)', [1, 2, 3]), $binarySearch(2)));
       }
     });
 
     it('should reject context input for unchecked declaration', () => {
       // @ts-expect-error $declare only accepts plain values
-      $declare('O(1)', $cost(7));
+      $declare('O(1)', $lift('O(1)', 7));
     });
 
     it('should declare plain values at unchecked boundary', () => {
@@ -211,7 +211,7 @@ describe('Branded Types', () => {
 
     it('should validate $checked log plan', () => {
       const result = $prove('O(log n)', $checked(() => $pipe(
-        $cost([1, 2, 3]),
+        $lift('O(1)', [1, 2, 3]),
         $binarySearch(2),
       )));
       expect(result).toBe(1);
@@ -219,7 +219,7 @@ describe('Branded Types', () => {
 
     it('should validate linear context', () => {
       const linearCtx = $pipe(
-        $cost([1, 2, 3]),
+        $lift('O(1)', [1, 2, 3]),
         $linearScan((x: number) => x === 2),
       );
       const result = $proveCtx('O(n)', linearCtx);
@@ -231,7 +231,7 @@ describe('Branded Types', () => {
       const result = $prove('O(log n)', $checked(() => {
         calls += 1;
         return $pipe(
-          $cost([1, 2, 3]),
+          $lift('O(1)', [1, 2, 3]),
           $binarySearch(2),
         );
       }));
@@ -241,8 +241,8 @@ describe('Branded Types', () => {
 
     it('should support compact $ boundary helper', () => {
       const c = $declare('O(1)', 1);
-      const l = $proveCtx('O(log n)', $pipe($cost([1, 2, 3]), $binarySearch(2)));
-      const n = $proveCtx('O(n)', $pipe($cost([1, 2, 3]), $linearScan((x: number) => x === 3)));
+      const l = $proveCtx('O(log n)', $pipe($lift('O(1)', [1, 2, 3]), $binarySearch(2)));
+      const n = $proveCtx('O(n)', $pipe($lift('O(1)', [1, 2, 3]), $linearScan((x: number) => x === 3)));
       expect(c + l + (n ?? 0)).toBe(5);
     });
   });
@@ -328,7 +328,7 @@ describe('Branded Types', () => {
   describe('cost context pipeline', () => {
     it('should validate $checked plan boundaries', () => {
       const checkedLogPlan = $checked(() => $pipe(
-        $cost([1, 2, 3]),
+        $lift('O(1)', [1, 2, 3]),
         $binarySearch(2),
       ));
 
@@ -339,7 +339,7 @@ describe('Branded Types', () => {
 
     it('should model sequential composition as dominant cost', () => {
       const seqLog = $pipe(
-        $cost([1, 2, 3]),
+        $lift('O(1)', [1, 2, 3]),
         $binarySearch(2),
         $map((index: number) => index + 10),
       );
@@ -351,10 +351,10 @@ describe('Branded Types', () => {
 
     it('should infer nlogn for linear nesting with log body', () => {
       const nestedNlogn = $pipe(
-        $cost([1, 2, 3, 4]),
+        $lift('O(1)', [1, 2, 3, 4]),
         $forEachN((x: number) =>
           $pipe(
-            $cost([1, 2, 3, 4, 5]),
+            $lift('O(1)', [1, 2, 3, 4, 5]),
             $binarySearch(x),
           )
         ),
@@ -368,10 +368,10 @@ describe('Branded Types', () => {
 
     it('should infer quad for linear nesting with linear body', () => {
       const nestedQuad = $pipe(
-        $cost([1, 2, 3, 4]),
+        $lift('O(1)', [1, 2, 3, 4]),
         $forEachN((x: number) =>
           $pipe(
-            $cost([1, 2, 3, 4, 5]),
+            $lift('O(1)', [1, 2, 3, 4, 5]),
             $linearScan((y: number) => y === x),
           )
         ),
