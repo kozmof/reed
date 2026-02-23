@@ -7,7 +7,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { createDocumentStore } from './store.ts';
 import { DocumentActions } from './actions.ts';
 import { byteOffset } from '../../types/branded.ts';
-import { rebuildLineIndex, getLineStartOffset } from '../core/line-index.ts';
+import { rebuildLineIndex, getLineStartOffset, getCharStartOffset } from '../core/line-index.ts';
 import { getText } from '../core/piece-table.ts';
 
 function createDeterministicRng(seed: number): () => number {
@@ -20,6 +20,24 @@ function createDeterministicRng(seed: number): () => number {
 
 function randomInt(rng: () => number, min: number, max: number): number {
   return min + Math.floor(rng() * (max - min + 1));
+}
+
+function charIndexToByteOffset(text: string, charIndex: number): number {
+  if (charIndex <= 0) return 0;
+  if (charIndex >= text.length) return new TextEncoder().encode(text).length;
+  return new TextEncoder().encode(text.slice(0, charIndex)).length;
+}
+
+function codePointIndexToCharIndex(text: string, codePointIndex: number): number {
+  if (codePointIndex <= 0) return 0;
+  let cp = 0;
+  let charIndex = 0;
+  while (charIndex < text.length && cp < codePointIndex) {
+    const code = text.codePointAt(charIndex);
+    charIndex += code !== undefined && code > 0xFFFF ? 2 : 1;
+    cp++;
+  }
+  return charIndex;
 }
 
 function assertLineIndexMatchesRebuild(store: ReturnType<typeof createDocumentStore>, expectedContent?: string): void {
@@ -38,6 +56,32 @@ function assertLineIndexMatchesRebuild(store: ReturnType<typeof createDocumentSt
   for (let line = 0; line < rebuilt.lineCount; line++) {
     expect(getLineStartOffset(reconciled.lineIndex.root, line)).toBe(
       getLineStartOffset(rebuilt.root, line)
+    );
+  }
+}
+
+function assertLineAndCharOffsetsMatchRebuild(
+  store: ReturnType<typeof createDocumentStore>,
+  expectedContent?: string
+): void {
+  const reconciled = store.reconcileNow();
+  const content = getText(
+    reconciled.pieceTable,
+    byteOffset(0),
+    byteOffset(reconciled.pieceTable.totalLength)
+  );
+  if (expectedContent !== undefined) {
+    expect(content).toBe(expectedContent);
+  }
+  const rebuilt = rebuildLineIndex(content);
+
+  expect(reconciled.lineIndex.lineCount).toBe(rebuilt.lineCount);
+  for (let line = 0; line < rebuilt.lineCount; line++) {
+    expect(getLineStartOffset(reconciled.lineIndex.root, line)).toBe(
+      getLineStartOffset(rebuilt.root, line)
+    );
+    expect(getCharStartOffset(reconciled.lineIndex.root, line)).toBe(
+      getCharStartOffset(rebuilt.root, line)
     );
   }
 }
@@ -664,6 +708,129 @@ describe('Editor Use Cases', () => {
               error instanceof Error ? error.message : String(error)
             }`
           );
+        }
+      }
+    });
+
+    it('should stay line and char offset correct across randomized unicode and mixed line endings', () => {
+      const seeds = [5, 17, 29];
+      const pool = [
+        'x',
+        'é',
+        '中',
+        '😀',
+        '\n',
+        '\r',
+        '\r\n',
+        '中\n😀',
+        '😀\r\n',
+        '\n中',
+        'é\r',
+      ];
+
+      for (const seed of seeds) {
+        const initialContent = `S${seed}\nπ\n終`;
+        const store = createDocumentStore({ content: initialContent });
+        let model = initialContent;
+        const rng = createDeterministicRng(seed * 131);
+
+        for (let i = 0; i < 180; i++) {
+          const op = randomInt(rng, 0, 2);
+          const cpLen = Array.from(model).length;
+
+          if (op === 0 || cpLen === 0) {
+            const cpPos = randomInt(rng, 0, cpLen);
+            const charPos = codePointIndexToCharIndex(model, cpPos);
+            const text = pool[randomInt(rng, 0, pool.length - 1)];
+            const pos = charIndexToByteOffset(model, charPos);
+            store.dispatch(DocumentActions.insert(byteOffset(pos), text));
+            model = model.slice(0, charPos) + text + model.slice(charPos);
+          } else if (op === 1) {
+            const startCp = randomInt(rng, 0, cpLen - 1);
+            const endCp = randomInt(rng, startCp + 1, cpLen);
+            const startChar = codePointIndexToCharIndex(model, startCp);
+            const endChar = codePointIndexToCharIndex(model, endCp);
+            const start = charIndexToByteOffset(model, startChar);
+            const end = charIndexToByteOffset(model, endChar);
+            store.dispatch(DocumentActions.delete(byteOffset(start), byteOffset(end)));
+            model = model.slice(0, startChar) + model.slice(endChar);
+          } else {
+            const startCp = randomInt(rng, 0, cpLen - 1);
+            const endCp = randomInt(rng, startCp + 1, cpLen);
+            const startChar = codePointIndexToCharIndex(model, startCp);
+            const endChar = codePointIndexToCharIndex(model, endCp);
+            const text = pool[randomInt(rng, 0, pool.length - 1)];
+            const start = charIndexToByteOffset(model, startChar);
+            const end = charIndexToByteOffset(model, endChar);
+            store.dispatch(DocumentActions.replace(byteOffset(start), byteOffset(end), text));
+            model = model.slice(0, startChar) + text + model.slice(endChar);
+          }
+
+          if (randomInt(rng, 0, 2) === 0) {
+            const lineCount = model.split(/\r\n|\r|\n/).length;
+            const startLine = randomInt(rng, -5, lineCount + 5);
+            const endLine = randomInt(rng, -5, lineCount + 5);
+            store.setViewport(startLine, endLine);
+          }
+
+          assertLineAndCharOffsetsMatchRebuild(store, model);
+        }
+      }
+    });
+
+    it('should keep reconciliation stable across randomized APPLY_REMOTE changes', () => {
+      const seeds = [11, 33, 77, 143];
+      const pool = ['x', 'yy', '\n', '\r', '\r\n', 'p\r', '\nq', 'r\r\ns'];
+
+      for (const seed of seeds) {
+        const initialContent = Array.from({ length: 12 }, (_, i) => `R${seed}-${i}`).join('\n');
+        const store = createDocumentStore({ content: initialContent });
+        let model = initialContent;
+        const rng = createDeterministicRng(seed * 313);
+
+        for (let i = 0; i < 160; i++) {
+          const changeCount = randomInt(rng, 1, 3);
+          const changes: Array<
+            { type: 'insert'; start: number; text: string } |
+            { type: 'delete'; start: number; length: number }
+          > = [];
+
+          for (let c = 0; c < changeCount; c++) {
+            const op = randomInt(rng, 0, 1);
+            if (op === 0 || model.length === 0) {
+              const pos = randomInt(rng, 0, model.length);
+              const text = pool[randomInt(rng, 0, pool.length - 1)];
+              changes.push({ type: 'insert', start: pos, text });
+              model = model.slice(0, pos) + text + model.slice(pos);
+            } else {
+              const start = randomInt(rng, 0, model.length - 1);
+              const end = randomInt(rng, start + 1, model.length);
+              changes.push({ type: 'delete', start, length: end - start });
+              model = model.slice(0, start) + model.slice(end);
+            }
+          }
+
+          store.dispatch(DocumentActions.applyRemote(
+            changes.map(change => change.type === 'insert'
+              ? { type: 'insert' as const, start: byteOffset(change.start), text: change.text }
+              : { type: 'delete' as const, start: byteOffset(change.start), length: change.length })
+          ));
+
+          if (randomInt(rng, 0, 2) === 0) {
+            const lineCount = model.split(/\r\n|\r|\n/).length;
+            const mode = randomInt(rng, 0, 2);
+            if (mode === 0) {
+              store.setViewport(-20, lineCount + 20);
+            } else if (mode === 1) {
+              store.setViewport(Number.NaN, Number.POSITIVE_INFINITY);
+            } else {
+              const startLine = randomInt(rng, -6, lineCount + 6);
+              const endLine = randomInt(rng, -6, lineCount + 6);
+              store.setViewport(startLine, endLine);
+            }
+          }
+
+          assertLineIndexMatchesRebuild(store, model);
         }
       }
     });
