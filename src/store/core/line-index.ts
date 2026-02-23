@@ -1624,41 +1624,44 @@ export function reconcileRange(
   version: number
 ): NLogNCost<LineIndexState> {
   if (state.root === null || state.dirtyRanges.length === 0) return $('O(n log n)', $cost(state));
+  const clampedStart = Math.max(0, startLine);
+  const clampedEnd = Math.min(endLine, state.lineCount - 1);
+  if (clampedStart > clampedEnd) return $('O(n log n)', $cost(state));
 
   // For each line in range, compute correct offset and update
   let newRoot = state.root!;
-  for (let line = startLine; line <= endLine && line < state.lineCount; line++) {
+  for (let line = clampedStart; line <= clampedEnd; line++) {
     const delta = getOffsetDeltaForLine(state.dirtyRanges, line);
     if (delta !== 0) {
       newRoot = updateLineOffsetByNumber(newRoot, line, delta);
     }
   }
 
-  // Keep only the parts of dirty ranges that are outside [startLine, endLine].
+  // Keep only the parts of dirty ranges that are outside [clampedStart, clampedEnd].
   const remaining: DirtyLineRange[] = [];
   for (const range of state.dirtyRanges) {
     const rangeEnd = Math.min(range.endLine, state.lineCount - 1);
     if (range.startLine > rangeEnd) continue;
 
     // No overlap with reconciled window.
-    if (rangeEnd < startLine || range.startLine > endLine) {
+    if (rangeEnd < clampedStart || range.startLine > clampedEnd) {
       remaining.push(range);
       continue;
     }
 
     // Left-side remainder.
-    if (range.startLine < startLine) {
+    if (range.startLine < clampedStart) {
       remaining.push(Object.freeze({
         ...range,
-        endLine: startLine - 1,
+        endLine: clampedStart - 1,
       }));
     }
 
     // Right-side remainder.
-    if (rangeEnd > endLine) {
+    if (rangeEnd > clampedEnd) {
       remaining.push(Object.freeze({
         ...range,
-        startLine: endLine + 1,
+        startLine: clampedEnd + 1,
       }));
     }
   }
@@ -1809,15 +1812,20 @@ export function reconcileViewport(
   version: number
 ): NLogNCost<LineIndexState> {
   if (state.dirtyRanges.length === 0) return $('O(n log n)', $cost(state));
+  const normalizedStart = Math.min(startLine, endLine);
+  const normalizedEnd = Math.max(startLine, endLine);
+  const clampedStart = Math.max(0, normalizedStart);
+  const clampedEnd = Math.min(normalizedEnd, state.lineCount - 1);
+  if (clampedStart > clampedEnd) return $('O(n log n)', $cost(state));
 
   // Check if any viewport lines are dirty
   const viewportDirty = state.dirtyRanges.some(range => {
     const rangeEnd = range.endLine;
-    return range.startLine <= endLine && rangeEnd >= startLine;
+    return range.startLine <= clampedEnd && rangeEnd >= clampedStart;
   });
 
   if (!viewportDirty) return $('O(n log n)', $cost(state));
 
   // Reconcile only the viewport range
-  return reconcileRange(state, startLine, endLine, version);
+  return reconcileRange(state, clampedStart, clampedEnd, version);
 }

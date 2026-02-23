@@ -10,6 +10,38 @@ import { byteOffset } from '../../types/branded.ts';
 import { rebuildLineIndex, getLineStartOffset } from '../core/line-index.ts';
 import { getText } from '../core/piece-table.ts';
 
+function createDeterministicRng(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
+
+function randomInt(rng: () => number, min: number, max: number): number {
+  return min + Math.floor(rng() * (max - min + 1));
+}
+
+function assertLineIndexMatchesRebuild(store: ReturnType<typeof createDocumentStore>, expectedContent?: string): void {
+  const reconciled = store.reconcileNow();
+  const content = getText(
+    reconciled.pieceTable,
+    byteOffset(0),
+    byteOffset(reconciled.pieceTable.totalLength)
+  );
+  if (expectedContent !== undefined) {
+    expect(content).toBe(expectedContent);
+  }
+  const rebuilt = rebuildLineIndex(content);
+
+  expect(reconciled.lineIndex.lineCount).toBe(rebuilt.lineCount);
+  for (let line = 0; line < rebuilt.lineCount; line++) {
+    expect(getLineStartOffset(reconciled.lineIndex.root, line)).toBe(
+      getLineStartOffset(rebuilt.root, line)
+    );
+  }
+}
+
 describe('Editor Use Cases', () => {
   describe('Basic Text Editing', () => {
     it('should handle typing a sentence character by character', () => {
@@ -352,6 +384,158 @@ describe('Editor Use Cases', () => {
         expect(getLineStartOffset(reconciled.lineIndex.root, line)).toBe(
           getLineStartOffset(rebuilt.root, line)
         );
+      }
+    });
+
+    it('should keep line index consistent after rapid mixed edits and viewport updates', () => {
+      const initialContent = Array.from({ length: 60 }, (_, i) => `L${i}`).join('\n');
+      const store = createDocumentStore({ content: initialContent });
+      let model = initialContent;
+      const rng = createDeterministicRng(0xC0FFEE);
+      const pool = ['x', 'yz', '\n', 'a\nb', '\n\n', 'END\n'];
+
+      for (let i = 0; i < 400; i++) {
+        const op = randomInt(rng, 0, 2);
+
+        if (op === 0 || model.length === 0) {
+          const pos = randomInt(rng, 0, model.length);
+          const text = pool[randomInt(rng, 0, pool.length - 1)];
+          store.dispatch(DocumentActions.insert(byteOffset(pos), text));
+          model = model.slice(0, pos) + text + model.slice(pos);
+        } else if (op === 1) {
+          const start = randomInt(rng, 0, model.length - 1);
+          const end = randomInt(rng, start + 1, model.length);
+          store.dispatch(DocumentActions.delete(byteOffset(start), byteOffset(end)));
+          model = model.slice(0, start) + model.slice(end);
+        } else {
+          const start = randomInt(rng, 0, model.length - 1);
+          const end = randomInt(rng, start + 1, model.length);
+          const text = pool[randomInt(rng, 0, pool.length - 1)];
+          store.dispatch(DocumentActions.replace(byteOffset(start), byteOffset(end), text));
+          model = model.slice(0, start) + text + model.slice(end);
+        }
+
+        if (randomInt(rng, 0, 4) === 0) {
+          const lineCount = model.split('\n').length;
+          const startLine = randomInt(rng, -5, lineCount + 5);
+          const endLine = randomInt(rng, -5, lineCount + 5);
+          store.setViewport(startLine, endLine);
+        }
+      }
+
+      assertLineIndexMatchesRebuild(store, model);
+    });
+
+    it('should keep pending reconciliation stable with reversed and negative viewports', () => {
+      const initialContent = Array.from({ length: 80 }, (_, i) => `Line ${i}`).join('\n');
+      const store = createDocumentStore({ content: initialContent });
+
+      for (let i = 0; i < 40; i++) {
+        store.dispatch(DocumentActions.insert(byteOffset(0), `X${i}\n`));
+      }
+      expect(store.getSnapshot().lineIndex.rebuildPending).toBe(true);
+
+      store.setViewport(70, 20); // Reversed bounds
+      store.setViewport(-10, 5); // Negative start
+      expect(store.getSnapshot().lineIndex.rebuildPending).toBe(true);
+
+      assertLineIndexMatchesRebuild(store);
+    });
+
+    it('should preserve line index through rapid multiline edits with full undo/redo', () => {
+      const initialContent = Array.from({ length: 25 }, (_, i) => `Base ${i}`).join('\n');
+      const store = createDocumentStore({ content: initialContent });
+      let model = initialContent;
+      const rng = createDeterministicRng(0xA11CE);
+      const pool = ['x', 'yy', '\n', 'm\nn', '\n\n', 'tail\n'];
+      let editCount = 0;
+
+      for (let i = 0; i < 250; i++) {
+        const op = randomInt(rng, 0, 2);
+
+        if (op === 0 || model.length === 0) {
+          const pos = randomInt(rng, 0, model.length);
+          const text = pool[randomInt(rng, 0, pool.length - 1)];
+          store.dispatch(DocumentActions.insert(byteOffset(pos), text));
+          model = model.slice(0, pos) + text + model.slice(pos);
+          editCount++;
+        } else if (op === 1) {
+          const start = randomInt(rng, 0, model.length - 1);
+          const end = randomInt(rng, start + 1, model.length);
+          store.dispatch(DocumentActions.delete(byteOffset(start), byteOffset(end)));
+          model = model.slice(0, start) + model.slice(end);
+          editCount++;
+        } else {
+          const start = randomInt(rng, 0, model.length - 1);
+          const end = randomInt(rng, start + 1, model.length);
+          const text = pool[randomInt(rng, 0, pool.length - 1)];
+          store.dispatch(DocumentActions.replace(byteOffset(start), byteOffset(end), text));
+          model = model.slice(0, start) + text + model.slice(end);
+          editCount++;
+        }
+
+        if (i % 9 === 0) {
+          const lineCount = model.split('\n').length;
+          const startLine = randomInt(rng, 0, Math.max(0, lineCount - 1));
+          const endLine = randomInt(rng, startLine, Math.max(startLine, lineCount - 1));
+          store.setViewport(startLine, endLine);
+        }
+      }
+
+      const editedContent = model;
+      assertLineIndexMatchesRebuild(store, editedContent);
+
+      for (let i = 0; i < editCount; i++) {
+        store.dispatch(DocumentActions.undo());
+      }
+      assertLineIndexMatchesRebuild(store, initialContent);
+
+      for (let i = 0; i < editCount; i++) {
+        store.dispatch(DocumentActions.redo());
+      }
+      assertLineIndexMatchesRebuild(store, editedContent);
+    });
+
+    it('should stay line-index correct across multiple randomized edit seeds', () => {
+      const seeds = [1, 7, 13, 21, 42, 84, 123, 256, 512, 1024];
+      const pool = ['a', 'bb', '\n', 'p\nq', '\n\n', 'tail\n'];
+
+      for (const seed of seeds) {
+        const initialContent = Array.from({ length: 18 }, (_, i) => `S${seed}-L${i}`).join('\n');
+        const store = createDocumentStore({ content: initialContent });
+        let model = initialContent;
+        const rng = createDeterministicRng(seed);
+
+        for (let i = 0; i < 180; i++) {
+          const op = randomInt(rng, 0, 2);
+
+          if (op === 0 || model.length === 0) {
+            const pos = randomInt(rng, 0, model.length);
+            const text = pool[randomInt(rng, 0, pool.length - 1)];
+            store.dispatch(DocumentActions.insert(byteOffset(pos), text));
+            model = model.slice(0, pos) + text + model.slice(pos);
+          } else if (op === 1) {
+            const start = randomInt(rng, 0, model.length - 1);
+            const end = randomInt(rng, start + 1, model.length);
+            store.dispatch(DocumentActions.delete(byteOffset(start), byteOffset(end)));
+            model = model.slice(0, start) + model.slice(end);
+          } else {
+            const start = randomInt(rng, 0, model.length - 1);
+            const end = randomInt(rng, start + 1, model.length);
+            const text = pool[randomInt(rng, 0, pool.length - 1)];
+            store.dispatch(DocumentActions.replace(byteOffset(start), byteOffset(end), text));
+            model = model.slice(0, start) + text + model.slice(end);
+          }
+
+          if (randomInt(rng, 0, 3) === 0) {
+            const lineCount = model.split('\n').length;
+            const startLine = randomInt(rng, -4, lineCount + 4);
+            const endLine = randomInt(rng, -4, lineCount + 4);
+            store.setViewport(startLine, endLine);
+          }
+        }
+
+        assertLineIndexMatchesRebuild(store, model);
       }
     });
 

@@ -16,6 +16,7 @@ import {
   lineIndexInsertLazy,
   reconcileFull,
   reconcileRange,
+  reconcileViewport,
   mergeDirtyRanges,
 } from './line-index.ts';
 import { createLineIndexState, createEmptyLineIndexState } from './state.ts';
@@ -458,6 +459,25 @@ describe('Reconciliation version tracking (P6 fix)', () => {
     );
     expect(hasLineOneStillDirty).toBe(true);
     expect(hasViewportLineStillDirty).toBe(false);
+  });
+
+  it('reconcileRange should no-op for invalid clamped windows', () => {
+    const initial = createLineIndexState(Array.from({ length: 30 }, (_, i) => `Line ${i}`).join('\n'));
+    const dirty = lineIndexInsertLazy(initial, byteOffset(0), 'X\n', 1);
+    const noOp = reconcileRange(dirty, 20, 5, 2);
+
+    expect(noOp).toBe(dirty);
+  });
+
+  it('reconcileViewport should normalize reversed bounds', () => {
+    const initial = createLineIndexState(Array.from({ length: 40 }, (_, i) => `Line ${i}`).join('\n'));
+    const dirty = lineIndexInsertLazy(initial, byteOffset(0), 'X\n', 1);
+
+    const reversed = reconcileViewport(dirty, 12, 3, 2);
+    const normalized = reconcileViewport(dirty, 3, 12, 2);
+
+    expect(reversed.dirtyRanges).toEqual(normalized.dirtyRanges);
+    expect(reversed.lineCount).toBe(normalized.lineCount);
   });
 });
 
