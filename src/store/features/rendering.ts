@@ -10,6 +10,7 @@ import {
   $checked,
   $cost,
   $from,
+  $lift,
   $pipe,
   $andThen,
   $map,
@@ -130,7 +131,7 @@ export const getLineContent: CostFn<'linear', [DocumentState, number], string> =
         getText(
           state.pieceTable,
           resolvedRange.start,
-          addByteOffset(resolvedRange.start, resolvedRange.length as number)
+          addByteOffset(resolvedRange.start, resolvedRange.length)
         )
       )
     ),
@@ -161,7 +162,7 @@ export function getVisibleLines(
     const range = getLineRangePrecise(state.lineIndex, lineNum);
     if (range) {
       const startOffset = range.start;
-      const endOffset = addByteOffset(range.start, range.length as number);
+      const endOffset = addByteOffset(range.start, range.length);
       const rawContent = getText(state.pieceTable, startOffset, endOffset);
 
       // Check if line ends with newline and strip it for display
@@ -213,14 +214,14 @@ export function getVisibleLine(
         getText(
           state.pieceTable,
           resolvedRange.start,
-          addByteOffset(resolvedRange.start, resolvedRange.length as number)
+          addByteOffset(resolvedRange.start, resolvedRange.length)
         )
       ),
       $map((text: string) => ({ resolvedRange, text })),
     )),
     $map(({ resolvedRange, text }) => {
       const startOffset = resolvedRange.start;
-      const endOffset = addByteOffset(resolvedRange.start, resolvedRange.length as number);
+      const endOffset = addByteOffset(resolvedRange.start, resolvedRange.length);
       const hasNewline = text.endsWith('\n');
       const content = hasNewline ? text.slice(0, -1) : text;
       return Object.freeze({
@@ -367,9 +368,9 @@ export function positionToLineColumn(
       $andThen((resolvedTotalLines) => $pipe(
         $from(lastLineRange),
         $andThen((resolvedLastLineRange) => {
-          const endOffset = addByteOffset(resolvedLastLineRange.start, resolvedLastLineRange.length as number);
+          const endOffset = addByteOffset(resolvedLastLineRange.start, resolvedLastLineRange.length);
           if (position !== endOffset) {
-            return $from($('O(n)', $cost<{ line: number; column: number } | null>(null)));
+            return $lift<'O(n)', { line: number; column: number } | null>('O(n)', null);
           }
           return $pipe(
             $from(getText(state.pieceTable, resolvedLastLineRange.start, endOffset)),
@@ -407,7 +408,7 @@ export function lineColumnToPosition(
         getText(
           state.pieceTable,
           resolvedRange.start,
-          addByteOffset(resolvedRange.start, resolvedRange.length as number)
+          addByteOffset(resolvedRange.start, resolvedRange.length)
         )
       ),
       $map((lineContent: string) => ({ resolvedRange, lineContent })),
@@ -434,7 +435,7 @@ function byteOffsetToCharOffset(
   state: DocumentState,
   position: ByteOffset
 ): LinearCost<number> {
-  const posNum = position as number;
+  const posNum = position;
   if (posNum <= 0) return $('O(n)', $cost(0));
 
   const location = findLineAtPosition(state.lineIndex.root, position);
@@ -519,7 +520,7 @@ function charOffsetToByteOffset(
       $from(getText(
         state.pieceTable,
         resolvedRange.start,
-        addByteOffset(resolvedRange.start, resolvedRange.length as number)
+        addByteOffset(resolvedRange.start, resolvedRange.length)
       )),
       $andThen((lineText: string) => {
         const charInLine = Math.min(location.charOffsetInLine, lineText.length);

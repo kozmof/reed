@@ -59,13 +59,19 @@ export type CostLabel = 'const' | 'log' | 'linear' | 'nlogn' | 'quad';
 export type CostLevel = CostLabel;
 export type CostBigO = 'O(1)' | 'O(log n)' | 'O(n)' | 'O(n log n)' | 'O(n^2)';
 export type CostInputLabel = CostLabel | CostBigO;
-export type NormalizeCostLabel<L extends CostInputLabel> =
-  L extends 'O(1)' ? 'const' :
-  L extends 'O(log n)' ? 'log' :
-  L extends 'O(n)' ? 'linear' :
-  L extends 'O(n log n)' ? 'nlogn' :
-  L extends 'O(n^2)' ? 'quad' :
-  L;
+const costLabelByInput = {
+  const: 'const',
+  log: 'log',
+  linear: 'linear',
+  nlogn: 'nlogn',
+  quad: 'quad',
+  'O(1)': 'const',
+  'O(log n)': 'log',
+  'O(n)': 'linear',
+  'O(n log n)': 'nlogn',
+  'O(n^2)': 'quad',
+} as const satisfies Record<CostInputLabel, CostLabel>;
+export type NormalizeCostLabel<L extends CostInputLabel> = (typeof costLabelByInput)[L];
 
 /**
  * Label -> cost pair mapping.
@@ -169,13 +175,7 @@ export function $(
   max: CostInputLabel,
   boundary: CheckedPlan<Cost, unknown> | { readonly _cost: Cost; readonly value: unknown }
 ): unknown {
-  const level: CostLevel =
-    max === 'O(1)' ? 'const' :
-    max === 'O(log n)' ? 'log' :
-    max === 'O(n)' ? 'linear' :
-    max === 'O(n log n)' ? 'nlogn' :
-    max === 'O(n^2)' ? 'quad' :
-    max;
+  const level = costLabelByInput[max];
 
   if (checkedPlanTag in boundary) {
     return castCost(level, boundary.run().value);
@@ -284,6 +284,17 @@ export const $from = <L extends CostLevel, T>(
   value: Costed<L, T>
 ): Ctx<CostOfLabel<L>, T> =>
   ({ value: value as unknown as T } as Ctx<CostOfLabel<L>, T>);
+
+/**
+ * Lift a plain value into a context at a declared upper bound.
+ * Useful in checked plans where branch costs must align.
+ */
+export function $lift<L extends CostInputLabel, T>(
+  _level: L,
+  value: T
+): Ctx<CostOfLabel<NormalizeCostLabel<L>>, T> {
+  return ({ value } as Ctx<CostOfLabel<NormalizeCostLabel<L>>, T>);
+}
 
 export function $pipe<C extends Cost, T>(
   ctx: Ctx<C, T>

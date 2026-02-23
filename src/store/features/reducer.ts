@@ -10,7 +10,6 @@ import type { ByteOffset } from '../../types/branded.ts';
 import type { LineIndexStrategy, DeleteBoundaryContext } from '../../types/store.ts';
 import { byteOffset } from '../../types/branded.ts';
 import { withState } from '../core/state.ts';
-import { $, $cost, type LinearCost } from '../../types/cost.ts';
 import {
   pieceTableInsert as ptInsert,
   pieceTableDelete as ptDelete,
@@ -75,12 +74,12 @@ function pieceTableInsert(
   state: DocumentState,
   position: ByteOffset,
   text: string
-): LinearCost<{ state: DocumentState; insertedByteLength: number }> {
+): { state: DocumentState; insertedByteLength: number } {
   const result = ptInsert(state.pieceTable, position, text);
-  return $('O(n)', $cost({
+  return {
     state: withState(state, { pieceTable: result.state }),
     insertedByteLength: result.insertedByteLength,
-  }));
+  };
 }
 
 /**
@@ -91,18 +90,18 @@ function pieceTableDelete(
   state: DocumentState,
   start: ByteOffset,
   end: ByteOffset
-): LinearCost<DocumentState> {
+): DocumentState {
   const newPieceTable = ptDelete(state.pieceTable, start, end);
-  return $('O(n)', $cost(withState(state, {
+  return withState(state, {
     pieceTable: newPieceTable,
-  })));
+  });
 }
 
 /**
  * Get text in a range from the piece table.
  * Used for capturing deleted text for undo.
  */
-function getTextRange(state: DocumentState, start: ByteOffset, end: ByteOffset): LinearCost<string> {
+function getTextRange(state: DocumentState, start: ByteOffset, end: ByteOffset): string {
   return getText(state.pieceTable, start, end);
 }
 
@@ -141,8 +140,8 @@ function getDeleteBoundaryContext(
   start: ByteOffset,
   end: ByteOffset
 ): DeleteBoundaryContext {
-  const startN = start as number;
-  const endN = end as number;
+  const startN = start;
+  const endN = end;
   const totalLength = state.pieceTable.totalLength;
 
   const prevChar = startN > 0
@@ -604,7 +603,7 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
       type: 'delete' as const,
       position: op.position,
       text: op.deletedText!,
-      byteLength: (op.deleteEnd as number) - (op.position as number),
+      byteLength: op.deleteEnd - op.position,
     });
   } else {
     historyChange = Object.freeze({

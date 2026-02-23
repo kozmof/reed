@@ -12,7 +12,13 @@ import { DocumentActions } from './actions.ts';
 import { textEncoder } from '../core/encoding.ts';
 import {
   $,
+  $checked,
   $cost,
+  $from,
+  $lift,
+  $pipe,
+  $andThen,
+  $map,
   type LinearCost,
   type QuadCost,
 } from '../../types/cost.ts';
@@ -532,6 +538,14 @@ import type { DocumentState, PieceTableState } from '../../types/state.ts';
 import { documentReducer } from './reducer.ts';
 import { getValue } from '../core/piece-table.ts';
 
+function applyDocumentActions(state: DocumentState, actions: readonly DocumentAction[]): DocumentState {
+  let nextState = state;
+  for (const action of actions) {
+    nextState = documentReducer(nextState, action);
+  }
+  return nextState;
+}
+
 /**
  * Options for setValue operation.
  */
@@ -556,30 +570,28 @@ export function setValue(
 ): QuadCost<DocumentState> {
   const { useReplace = true } = options;
 
-  // Get current content
-  const oldContent = getValue(state.pieceTable);
+  return $('O(n^2)', $checked(() => $pipe(
+    $from(getValue(state.pieceTable)),
+    $andThen((oldContent) => {
+      if (oldContent === newContent) {
+        return $lift('O(n^2)', state);
+      }
 
-  if (oldContent === newContent) {
-    return $('O(n^2)', $cost(state));
-  }
+      const actions = useReplace
+        ? $('O(n^2)', $from(computeSetValueActionsOptimized(oldContent, newContent)))
+        : computeSetValueActions(oldContent, newContent);
 
-  // Compute actions
-  const actions = useReplace
-    ? computeSetValueActionsOptimized(oldContent, newContent)
-    : computeSetValueActions(oldContent, newContent);
-
-  if (actions.length === 0) {
-    return $('O(n^2)', $cost(state));
-  }
-
-  // Apply actions directly through the reducer.
-  // For transaction semantics (single undo unit), callers should use store.batch().
-  let newState = state;
-  for (const action of actions) {
-    newState = documentReducer(newState, action);
-  }
-
-  return $('O(n^2)', $cost(newState));
+      return $pipe(
+        $from(actions),
+        $map((resolvedActions) => {
+          if (resolvedActions.length === 0) return state;
+          // Apply actions directly through the reducer.
+          // For transaction semantics (single undo unit), callers should use store.batch().
+          return applyDocumentActions(state, resolvedActions);
+        }),
+      );
+    }),
+  )));
 }
 
 /**
@@ -591,13 +603,16 @@ export function computeSetValueActionsFromState(
   newContent: string,
   useReplace: boolean = true
 ): QuadCost<DocumentAction[]> {
-  const oldContent = getValue(pieceTable);
-
-  if (oldContent === newContent) {
-    return $('O(n^2)', $cost([]));
-  }
-
-  return useReplace
-    ? computeSetValueActionsOptimized(oldContent, newContent)
-    : computeSetValueActions(oldContent, newContent);
+  return $('O(n^2)', $checked(() => $pipe(
+    $from(getValue(pieceTable)),
+    $andThen((oldContent) => {
+      if (oldContent === newContent) {
+        return $lift<'O(n^2)', DocumentAction[]>('O(n^2)', []);
+      }
+      const actions = useReplace
+        ? $('O(n^2)', $from(computeSetValueActionsOptimized(oldContent, newContent)))
+        : computeSetValueActions(oldContent, newContent);
+      return $from(actions);
+    }),
+  )));
 }

@@ -18,6 +18,7 @@ import {
   $checked,
   $cost,
   $from,
+  $lift,
   $pipe,
   $andThen,
   $map,
@@ -189,7 +190,7 @@ export function collectPieces(root: PieceNode | null): LinearCost<readonly Piece
   }
 
   inOrder(root);
-  return $('O(n)', $cost(result as readonly PieceNode[]));
+  return $('O(n)', $cost(result));
 }
 
 // =============================================================================
@@ -384,12 +385,12 @@ export function pieceTableInsert(
         ));
       }
       // Split path performs O(log n) insertions as well.
-      return $from($('O(log n)', $cost(insertWithSplit(
+      return $lift('O(log n)', insertWithSplit(
         resolvedLocation,
         'add',
         byteOffset(newAddStart),
         byteLength(textBytes.length)
-      ))));
+      ));
     }),
     $map((newRoot) => ({
       state: Object.freeze({
@@ -909,7 +910,7 @@ export function getLineLinearScan(state: PieceTableState, lineNumber: number): L
   return $('O(n)', $checked(() => $pipe(
     $from(findLineOffsets(state, lineNumber)),
     $andThen((lineOffsets) => {
-      if (lineOffsets === null) return $from($('O(n)', $cost('')));
+      if (lineOffsets === null) return $lift('O(n)', '');
       return $from(getText(state, lineOffsets.start, lineOffsets.end));
     }),
   )));
@@ -1013,22 +1014,22 @@ export function compactAddBuffer(
     $andThen((stats) => {
       // Don't compact if waste is below threshold
       if (stats.wasteRatio < threshold) {
-        return $from($('O(n)', $cost(state)));
+        return $lift('O(n)', state);
       }
 
       // Don't compact if there's nothing to compact
       if (stats.addBufferUsed === 0) {
         // No add buffer content - reset to empty
-        return $from($('O(n)', $cost(Object.freeze({
+        return $lift('O(n)', Object.freeze({
           root: state.root,
           originalBuffer: state.originalBuffer,
           addBuffer: GrowableBuffer.empty(1024),
           totalLength: state.totalLength,
-        }))));
+        }));
       }
 
       if (state.root === null) {
-        return $from($('O(n)', $cost(state)));
+        return $lift('O(n)', state);
       }
 
       return $pipe(
@@ -1043,7 +1044,7 @@ export function compactAddBuffer(
             if (piece.bufferType === 'add') {
               offsetMap.set(piece.start, writeOffset);
               newBuffer.set(
-                state.addBuffer.subarray(piece.start as number, (piece.start as number) + (piece.length as number)),
+                state.addBuffer.subarray(piece.start, piece.start + piece.length),
                 writeOffset
               );
               writeOffset += piece.length;

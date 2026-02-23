@@ -28,7 +28,7 @@ import {
   type LogCost,
   type NLogNCost,
 } from '../../types/cost.ts';
-import { createLineIndexNode, withLineIndexNode, withLineIndexState } from './state.ts';
+import { asEagerLineIndex, createLineIndexNode, withLineIndexNode, withLineIndexState } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
 
 // Type-safe wrapper for withLineIndexNode to use with generic R-B tree functions
@@ -138,7 +138,7 @@ function getInsertBoundaryContext(
 ): InsertBoundaryContext {
   if (!readText) return {};
 
-  const pos = position as number;
+  const pos = position;
 
   const prevChar = pos > 0
     ? readText(byteOffset(pos - 1), position)
@@ -418,7 +418,7 @@ export function collectLines(root: LineIndexNode | null): LinearCost<readonly Li
   }
 
   inOrder(root);
-  return $('O(n)', $cost(result as readonly LineIndexNode[]));
+  return $('O(n)', $cost(result));
 }
 
 // =============================================================================
@@ -564,7 +564,7 @@ function updateLineLength(
     });
   }
 
-  const newRoot = updateLineLengthInTree(state.root, position as number, lengthDelta, charLengthDelta);
+  const newRoot = updateLineLengthInTree(state.root, position, lengthDelta, charLengthDelta);
   return withLineIndexState(state, {
     root: newRoot,
   });
@@ -1387,10 +1387,10 @@ export function mergeDirtyRanges(
       endLine: Number.MAX_SAFE_INTEGER,
       offsetDelta: 0,
       createdAtVersion: maxVersion,
-    })] as readonly DirtyLineRange[]));
+    })]));
   }
 
-  return $('O(n log n)', $cost(merged as readonly DirtyLineRange[]));
+  return $('O(n log n)', $cost(merged));
 }
 
 /**
@@ -1399,8 +1399,8 @@ export function mergeDirtyRanges(
 export function isLineDirty(
   dirtyRanges: readonly DirtyLineRange[],
   lineNumber: number
-): ConstCost<boolean> {
-  return $('O(1)', $cost(dirtyRanges.some(
+): LinearCost<boolean> {
+  return $('O(n)', $cost(dirtyRanges.some(
     r => lineNumber >= r.startLine && lineNumber <= r.endLine
   )));
 }
@@ -1411,14 +1411,14 @@ export function isLineDirty(
 export function getOffsetDeltaForLine(
   dirtyRanges: readonly DirtyLineRange[],
   lineNumber: number
-): ConstCost<number> {
+): LinearCost<number> {
   let delta = 0;
   for (const range of dirtyRanges) {
     if (lineNumber >= range.startLine && lineNumber <= range.endLine) {
       delta += range.offsetDelta;
     }
   }
-  return $('O(1)', $cost(delta));
+  return $('O(n)', $cost(delta));
 }
 
 /**
@@ -1477,7 +1477,7 @@ export function lineIndexInsertLazy(
     $map((resolvedLocation) => {
       if (resolvedLocation === null) {
         // Position at or past end - use eager approach for simplicity
-        return appendLinesLazy(state, position as number, text, newlinePositions, byteLength, currentVersion);
+        return appendLinesLazy(state, position, text, newlinePositions, byteLength, currentVersion);
       }
 
       // Insert new lines and mark downstream as dirty
@@ -1718,11 +1718,11 @@ export function getLineRangePrecise(
 export function getLineRangePrecise<M extends EvaluationMode>(
   state: LineIndexState<M>,
   lineNumber: number
-): LinearCost<{ start: ByteOffset; length: ByteLength }> | null;
+): LogCost<{ start: ByteOffset; length: ByteLength }> | null;
 export function getLineRangePrecise(
   state: LineIndexState,
   lineNumber: number
-): LogCost<{ start: ByteOffset; length: ByteLength }> | LinearCost<{ start: ByteOffset; length: ByteLength }> | null {
+): LogCost<{ start: ByteOffset; length: ByteLength }> | null {
   const node = findLineByNumber(state.root, lineNumber);
   if (node === null) return null;
 
@@ -1885,20 +1885,33 @@ export interface ReconciliationConfig {
 const defaultThresholdFn = (lineCount: number): number =>
   Math.max(64, Math.floor(lineCount / Math.log2(lineCount + 1)));
 
+function toEagerLineIndexState(
+  state: LineIndexState,
+  version: number,
+  changes: Partial<LineIndexState> = {}
+): LineIndexState<'eager'> {
+  const reconciled = withLineIndexState(state, {
+    dirtyRanges: Object.freeze([]),
+    lastReconciledVersion: version,
+    rebuildPending: false,
+    ...changes,
+  });
+  return asEagerLineIndex(reconciled);
+}
+
 export function reconcileFull(
   state: LineIndexState,
   version: number,
   config?: ReconciliationConfig
 ): NLogNCost<LineIndexState<'eager'>> {
-  if (state.dirtyRanges.length === 0) return $('O(n log n)', $cost(state as LineIndexState<'eager'>));
+  if (state.dirtyRanges.length === 0) {
+    return $('O(n log n)', $cost(toEagerLineIndexState(state, version)));
+  }
 
   if (state.root === null) {
-    return $('O(n log n)', $cost(withLineIndexState(state, {
+    return $('O(n log n)', $cost(toEagerLineIndexState(state, version, {
       lineCount: 1,
-      dirtyRanges: Object.freeze([]) as readonly [],
-      lastReconciledVersion: version,
-      rebuildPending: false as const,
-    }) as LineIndexState<'eager'>));
+    })));
   }
 
   // Fast path: incremental for small dirty ranges — O(k * log n)
@@ -1920,18 +1933,15 @@ export function reconcileFull(
       const endLine = Math.min(range.endLine, current.lineCount - 1);
       current = reconcileRange(current, range.startLine, endLine, version);
     }
-    return $('O(n log n)', $cost(current as LineIndexState<'eager'>));
+    return $('O(n log n)', $cost(toEagerLineIndexState(current, version)));
   }
 
   // Slow path: in-place O(n) walk with structural sharing (no collect-rebuild)
   const newRoot = reconcileInPlace(state.root, { offset: 0 });
 
-  return $('O(n log n)', $cost(withLineIndexState(state, {
+  return $('O(n log n)', $cost(toEagerLineIndexState(state, version, {
     root: newRoot,
-    dirtyRanges: Object.freeze([]) as readonly [],
-    lastReconciledVersion: version,
-    rebuildPending: false as const,
-  }) as LineIndexState<'eager'>));
+  })));
 }
 
 /**

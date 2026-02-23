@@ -1,6 +1,7 @@
 # Formalization Review: `cost.ts` and Usage Sites
 
 Date: 2026-02-22
+Updated: 2026-02-23
 
 ## Scope
 
@@ -12,6 +13,64 @@ Date: 2026-02-22
 - `src/store/features/reducer.ts`
 - `src/types/index.ts` (cost API re-export)
 - `src/index.ts` (cost API re-export)
+
+## Update Status (2026-02-23)
+
+Note: the original findings below are preserved as a historical snapshot from 2026-02-22; line references in those original sections may no longer match current HEAD.
+
+### Resolved
+
+- **1.1 Label normalization duplication**
+  - Runtime and type-level normalization now share `costLabelByInput` in `src/types/cost.ts:62`.
+  - `$` now uses that mapping directly in `src/types/cost.ts:178`.
+
+- **2.2 `getLineRangePrecise` overload mismatch**
+  - Both overload paths now return `LogCost` in `src/store/core/line-index.ts:1714`.
+
+- **2.3 Low-adoption combinator re-exports**
+  - `$sort`/`$filter` removed from public re-export surfaces in `src/types/index.ts:133` and `src/index.ts:125`.
+
+- **3.1 Constant-cost declarations hiding linear scans**
+  - `isLineDirty` and `getOffsetDeltaForLine` are now `LinearCost` with `O(n)` boundaries in `src/store/core/line-index.ts:1399` and `src/store/core/line-index.ts:1411`.
+
+- **3.2 `setValue` cost composition mostly declarative**
+  - `setValue` and `computeSetValueActionsFromState` now compose via `$checked + $pipe` with explicit branch lifting in `src/store/features/diff.ts:566` and `src/store/features/diff.ts:601`.
+
+- **4.1 Assertion casts bypassing eager-mode invariants**
+  - Reconciliation now funnels through a validated eager-state conversion helper `toEagerLineIndexState` in `src/store/core/line-index.ts:1888`.
+  - Prior `as LineIndexState<'eager'>` returns in `reconcileFull` were removed.
+
+- **4.3 Nested wrapper ceremony for null/fallback branches**
+  - Introduced `$lift` in `src/types/cost.ts:292` and replaced nested `$from($('O(...)', $cost(...)))` patterns (for example `src/store/features/rendering.ts:373`, `src/store/core/piece-table.ts:913`, `src/store/core/piece-table.ts:1017`).
+
+- **4.4 Reducer-local wrappers re-annotating already-costed operations**
+  - Reducer piece-table helpers now return plain values without re-branding in `src/store/features/reducer.ts:73` and `src/store/features/reducer.ts:89`.
+
+### Partially Resolved
+
+- **2.1 Boundary API still allows unchecked declaration in practice**
+  - `diff`/`setValue` path was migrated to checked composition (`src/store/features/diff.ts:566`).
+  - Broad use of direct `$('O(...)', $cost(...))` boundaries remains in other modules and needs a separate policy pass.
+
+- **3.3 Mixed precision policy remains implicit**
+  - Some high-level paths now use checked plans more consistently (notably diff/setValue), but module-level criteria for when checked plans are required is still undocumented.
+
+### Open
+
+- **1.2 Cost lattice partially open/closed**
+  - No API-level extension strategy was added for costs above `quad`.
+
+- **1.3 Permeable cost branding**
+  - `Costed<Level, T> = T & brand` remains unchanged by design.
+
+### Cast Reduction Notes
+
+- In the scoped files from this review (`cost.ts`, `line-index.ts`, `piece-table.ts`, `rendering.ts`, `diff.ts`, `reducer.ts`), direct `as number` casts and mutable-to-readonly assertion casts previously called out by this report were removed.
+
+### Verification
+
+- `npx tsc --noEmit` passes.
+- `npm test` passes (488 tests).
 
 ## 1) Data Structures
 
