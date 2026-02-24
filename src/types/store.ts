@@ -62,7 +62,7 @@ export interface DocumentStore {
   /**
    * Batch multiple actions into a single state update.
    * Listeners are notified only once after all actions complete.
-   * All actions form a single undo unit.
+   * Actions keep their normal history behavior (one entry per action unless coalesced).
    * @param actions - Array of actions to apply
    * @returns New state after applying all actions
    */

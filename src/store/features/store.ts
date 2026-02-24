@@ -110,6 +110,9 @@ export function createDocumentStore(
       const result = transaction.commit();
       if (result.isOutermost) {
         notifyListeners();
+        if (state.lineIndex.rebuildPending) {
+          scheduleReconciliation();
+        }
       }
       return state;
     }
@@ -149,7 +152,7 @@ export function createDocumentStore(
   /**
    * Batch multiple actions into a single state update.
    * Listeners are notified only once after all actions complete.
-   * All actions form a single undo unit.
+   * Actions keep their normal history behavior (one entry per action unless coalesced).
    *
    * @param actions - Array of actions to apply
    * @returns New state after applying all actions
@@ -344,8 +347,8 @@ export function createDocumentStoreWithEvents(
     prevState: DocumentState,
     nextState: DocumentState
   ): void {
-    // Content change events for text editing actions
-    if (isTextEditAction(action)) {
+    // Content change events for local text edits and remote content updates
+    if (isTextEditAction(action) || action.type === 'APPLY_REMOTE') {
       emitter.emit(
         'content-change',
         createContentChangeEvent(action, prevState, nextState, getAffectedRange(action))

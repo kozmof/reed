@@ -271,10 +271,10 @@ describe('Editor Use Cases', () => {
   });
 
   describe('Transaction Workflows', () => {
-    it('should batch multiple operations as a single undo unit', () => {
+    it('should batch multiple operations while keeping per-action history entries', () => {
       const store = createDocumentStore({ content: '' });
 
-      // Batch insert "Hello World" as single transaction
+      // Batch insert "Hello World" as a single transaction notification boundary.
       store.batch([
         DocumentActions.insert(byteOffset(0), 'Hello'),
         DocumentActions.insert(byteOffset(5), ' '),
@@ -347,6 +347,39 @@ describe('Editor Use Cases', () => {
       store.dispatch(DocumentActions.transactionCommit()); // Outer commit (notification)
 
       expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('should schedule reconciliation after outermost transaction commit when pending', () => {
+      const g = globalThis as {
+        requestIdleCallback?: (callback: () => void) => number;
+        cancelIdleCallback?: (id: number) => void;
+      };
+      const originalRequestIdleCallback = g.requestIdleCallback;
+      const originalCancelIdleCallback = g.cancelIdleCallback;
+      const scheduledCallbacks: Array<() => void> = [];
+
+      g.requestIdleCallback = (callback: () => void): number => {
+        scheduledCallbacks.push(callback);
+        return scheduledCallbacks.length;
+      };
+      g.cancelIdleCallback = (): void => {
+        // noop for test
+      };
+
+      try {
+        const store = createDocumentStore({ content: '' });
+
+        store.dispatch(DocumentActions.transactionStart());
+        store.dispatch(DocumentActions.insert(byteOffset(0), 'A\nB\nC'));
+        expect(store.getSnapshot().lineIndex.rebuildPending).toBe(true);
+        expect(scheduledCallbacks).toHaveLength(0);
+
+        store.dispatch(DocumentActions.transactionCommit());
+        expect(scheduledCallbacks).toHaveLength(1);
+      } finally {
+        g.requestIdleCallback = originalRequestIdleCallback;
+        g.cancelIdleCallback = originalCancelIdleCallback;
+      }
     });
 
     it('should rollback only inner transaction in nested transactions', () => {

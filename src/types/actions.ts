@@ -95,8 +95,8 @@ export interface HistoryClearAction {
 // =============================================================================
 
 /**
- * Start a transaction (batched changes).
- * Changes within a transaction form a single undo unit.
+ * Start a transaction (batched notification boundary).
+ * Actions still apply immediately and record history per action.
  */
 export interface TransactionStartAction {
   readonly type: 'TRANSACTION_START';
@@ -104,7 +104,7 @@ export interface TransactionStartAction {
 
 /**
  * Commit a transaction.
- * Notifies listeners and finalizes the undo entry.
+ * Notifies listeners when the outermost transaction completes.
  */
 export interface TransactionCommitAction {
   readonly type: 'TRANSACTION_COMMIT';
@@ -267,6 +267,7 @@ export function isDocumentAction(value: unknown): value is DocumentAction {
       return Array.isArray((action as SetSelectionAction).ranges);
     case 'UNDO':
     case 'REDO':
+    case 'HISTORY_CLEAR':
     case 'TRANSACTION_START':
     case 'TRANSACTION_COMMIT':
     case 'TRANSACTION_ROLLBACK':

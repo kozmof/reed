@@ -593,6 +593,31 @@ describe('Document Reducer', () => {
 
       expect(newState.history.undoStack.length).toBe(0);
     });
+
+    it('should mark state as dirty after remote content changes', () => {
+      const state = createInitialState({ content: 'Hello' });
+      const newState = documentReducer(
+        state,
+        DocumentActions.applyRemote([
+          { type: 'insert', start: byteOffset(5), text: '!' },
+        ])
+      );
+
+      expect(newState.metadata.isDirty).toBe(true);
+    });
+
+    it('should return the same state for no-op remote payloads', () => {
+      const state = createInitialState({ content: 'Hello' });
+      const newState = documentReducer(
+        state,
+        DocumentActions.applyRemote([
+          { type: 'insert', start: byteOffset(5), text: '' },
+          { type: 'delete', start: byteOffset(0), length: 0 },
+        ])
+      );
+
+      expect(newState).toBe(state);
+    });
   });
 
   describe('Transaction actions', () => {
@@ -865,6 +890,7 @@ describe('Type Guards', () => {
     it('should validate simple actions', () => {
       expect(isDocumentAction({ type: 'UNDO' })).toBe(true);
       expect(isDocumentAction({ type: 'REDO' })).toBe(true);
+      expect(isDocumentAction({ type: 'HISTORY_CLEAR' })).toBe(true);
       expect(isDocumentAction({ type: 'TRANSACTION_START' })).toBe(true);
       expect(isDocumentAction({ type: 'TRANSACTION_COMMIT' })).toBe(true);
       expect(isDocumentAction({ type: 'TRANSACTION_ROLLBACK' })).toBe(true);

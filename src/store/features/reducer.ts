@@ -706,13 +706,16 @@ export function documentReducer(
       // Apply remote changes from collaboration
       const nextVersion = state.version + 1;
       let newState = state;
+      let didApplyChange = false;
       for (const change of action.changes) {
         if (change.type === 'insert' && change.text) {
+          didApplyChange = true;
           newState = pieceTableInsert(newState, change.start, change.text).state;
           const readText = (start: ByteOffset, end: ByteOffset) => getText(newState.pieceTable, start, end);
           const li = lazyLineIndex.insert(newState.lineIndex, change.start, change.text, nextVersion, readText);
           newState = withState(newState, { lineIndex: li });
-        } else if (change.type === 'delete' && change.length) {
+        } else if (change.type === 'delete' && typeof change.length === 'number' && change.length > 0) {
+          didApplyChange = true;
           // Capture deleted text before deleting for line index update
           const endPosition = byteOffset(change.start + change.length);
           const deletedText = getTextRange(newState, change.start, endPosition);
@@ -734,9 +737,19 @@ export function documentReducer(
           }
         }
       }
+      if (!didApplyChange) {
+        return state;
+      }
       // Remote changes don't push to history (they come from network)
+      const metadata = newState.metadata.isDirty
+        ? newState.metadata
+        : Object.freeze({
+          ...newState.metadata,
+          isDirty: true,
+        });
       return withState(newState, {
         version: nextVersion,
+        metadata,
       });
     }
 

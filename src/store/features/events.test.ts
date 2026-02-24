@@ -294,6 +294,16 @@ describe('getAffectedRange', () => {
 
     expect(range).toEqual([0, 0]);
   });
+
+  it('should calculate merged range for APPLY_REMOTE changes', () => {
+    const action = DocumentActions.applyRemote([
+      { type: 'insert', start: byteOffset(2), text: 'XY' },
+      { type: 'delete', start: byteOffset(10), length: 4 },
+    ]);
+    const range = getAffectedRange(action);
+
+    expect(range).toEqual([2, 14]);
+  });
 });
 
 describe('Batch event emission with intermediate states', () => {
@@ -322,5 +332,36 @@ describe('Batch event emission with intermediate states', () => {
     expect(events[0].nextLength).toBe(5);
     expect(events[1].prevLength).toBe(5);
     expect(events[1].nextLength).toBe(11);
+  });
+});
+
+describe('Store event integration', () => {
+  it('should emit content-change for APPLY_REMOTE', () => {
+    const store = createDocumentStoreWithEvents({ content: 'Hello' });
+    const handler = vi.fn();
+    store.addEventListener('content-change', handler);
+
+    store.dispatch(DocumentActions.applyRemote([
+      { type: 'insert', start: byteOffset(5), text: '!' },
+    ]));
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const event = handler.mock.calls[0][0] as { action: { type: string }; affectedRange: readonly [number, number] };
+    expect(event.action.type).toBe('APPLY_REMOTE');
+    expect(event.affectedRange).toEqual([5, 6]);
+  });
+
+  it('should emit dirty-change for APPLY_REMOTE when document becomes dirty', () => {
+    const store = createDocumentStoreWithEvents({ content: 'Hello' });
+    const handler = vi.fn();
+    store.addEventListener('dirty-change', handler);
+
+    store.dispatch(DocumentActions.applyRemote([
+      { type: 'insert', start: byteOffset(5), text: '!' },
+    ]));
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const event = handler.mock.calls[0][0] as { isDirty: boolean };
+    expect(event.isDirty).toBe(true);
   });
 });

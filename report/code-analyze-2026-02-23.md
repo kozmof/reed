@@ -1,10 +1,10 @@
-# Code Analysis Report - 2026-02-23
+# Code Analysis Report - 2026-02-23 (Updated 2026-02-24)
 
 ## Scope and method
 - Target: current `reed` codebase in `src/` and `spec/`.
 - Approach: read core/store/api/type layers, trace function relationships, and validate reliability through tests.
-- Verification run: `pnpm test` on 2026-02-23.
-- Test result: `11` test files, `489` tests passed.
+- Verification run: `pnpm test` on 2026-02-24.
+- Test result: `11` test files, `495` tests passed.
 
 ## 1. Code organization and structure
 - Layering is clear and mostly consistent:
@@ -29,7 +29,7 @@
   - `LineIndexState<'eager'>` guarantees no dirty ranges and `rebuildPending: false`.
   - `LineIndexState<'lazy'>` allows dirty ranges and deferred reconciliation.
 - `LineIndexStrategy<M>` in `src/types/store.ts` formalizes eager/lazy dual behavior and keeps reducer wiring generic.
-- `DocumentAction` union in `src/types/actions.ts` is comprehensive, but runtime guard behavior is slightly inconsistent (see pitfalls).
+- `DocumentAction` union in `src/types/actions.ts` is comprehensive, and runtime action guard coverage is now aligned with the union (including `HISTORY_CLEAR`).
 - Branded offset types (`ByteOffset`, `CharOffset`, `ByteLength`) reduce class-of-bug mixing position units.
 
 ## 3. Relations of implementations (functions)
@@ -60,55 +60,56 @@
 - Context: collaboration-like updates.
   - `APPLY_REMOTE` mutates content/line index without writing to local history.
 
-## 5. Pitfalls
-- Runtime guard mismatch for history clear:
-  - `isDocumentAction` does not accept `HISTORY_CLEAR` although it is in `DocumentAction`.
-  - Reference: `src/types/actions.ts:242`, `src/types/actions.ts:443`.
-- Batch semantics mismatch:
-  - Store comment says batch actions form a single undo unit, but behavior keeps per-action history entries.
-  - Reference: `src/store/features/store.ts:152`, `src/store/features/store.usecase.test.ts:274`.
-- Reconciliation scheduling gap on transaction commit:
-  - `rebuildPending` scheduling occurs in non-transaction dispatch path, but commit path only notifies listeners.
-  - Reference: `src/store/features/store.ts:109`, `src/store/features/store.ts:140`.
-- Event contract mismatch for remote changes:
-  - Doc comment says `content-change` fires for `APPLY_REMOTE`, but implementation only emits for `isTextEditAction` (INSERT/DELETE/REPLACE).
-  - Reference: `src/store/features/store.ts:313`, `src/store/features/store.ts:348`.
-- Metadata/event ambiguity for remote changes:
-  - `APPLY_REMOTE` increments version but does not set `metadata.isDirty`, so dirty-change event may not fire for remote content changes.
-  - Reference: `src/store/features/reducer.ts:705`.
+## 5. Pitfalls (status as of 2026-02-24)
+- Runtime guard mismatch for history clear: resolved.
+  - `isDocumentAction` now accepts `HISTORY_CLEAR`.
+  - Reference: `src/types/actions.ts`.
+- Batch semantics mismatch: resolved by contract alignment.
+  - Behavior remains per-action history entries; comments/tests now match this behavior.
+  - Reference: `src/store/features/store.ts`, `src/types/store.ts`, `src/store/features/store.usecase.test.ts`.
+- Reconciliation scheduling gap on transaction commit: resolved.
+  - Outermost `TRANSACTION_COMMIT` now schedules background reconciliation when `rebuildPending` is true.
+  - Reference: `src/store/features/store.ts`.
+- Event contract mismatch for remote changes: resolved.
+  - `createDocumentStoreWithEvents` now emits `content-change` for `APPLY_REMOTE`.
+  - Reference: `src/store/features/store.ts`, `src/store/features/events.ts`.
+- Metadata/event ambiguity for remote changes: resolved.
+  - `APPLY_REMOTE` now marks document dirty on actual remote content mutation; no-op remote payloads return unchanged state.
+  - Reference: `src/store/features/reducer.ts`.
 
 ## 6. Improvement points 1 (design overview)
 - Make behavior contracts executable:
-  - Align comments/specs/tests for batch undo semantics and event semantics.
-  - Decide whether batch should be one undo unit or documented as multi-entry.
+  - Completed: comments/tests now match batch history behavior (multi-entry).
+  - Completed: remote event semantics (`content-change`) and dirty semantics are now explicit in implementation/tests.
 - Tighten reconciliation lifecycle:
-  - Ensure commit path schedules reconciliation when `rebuildPending` is true.
+  - Completed: commit path schedules reconciliation when pending.
 - Clarify collaboration policy:
-  - Define whether remote changes should affect dirty state and events.
+  - Completed (current policy): remote content changes are first-class content changes, set dirty state, and do not push local undo history.
 - Add a concise invariant document for core structures:
   - Piece table subtree fields, line index mode guarantees, reconciliation invariants.
 
 ## 7. Improvement points 2 (types/interfaces)
 - Fix runtime action guard consistency:
-  - Include `HISTORY_CLEAR` in `isDocumentAction`.
+  - Completed: `HISTORY_CLEAR` is included in `isDocumentAction`.
 - Consider stricter remote change typing:
   - Separate `length` into branded byte length to reduce accidental unit misuse.
 - Strengthen event typing around remote mutations:
-  - If remote content changes are first-class, encode that in dispatch/event contracts rather than comments only.
+  - Partially completed: remote content changes are treated as first-class in dispatch/event behavior; event payload types remain generic `DocumentAction`.
 - Consider action schema-centric validation:
   - Reduce divergence between union definition, type guards, and validation logic.
 
 ## 8. Improvement points 3 (implementations)
 - Implementation fixes:
-  - Add `HISTORY_CLEAR` branch to `isDocumentAction`.
-  - Schedule reconciliation after outermost `TRANSACTION_COMMIT` when pending.
-  - Update `emitEventsForAction` to include `APPLY_REMOTE` content-change if intended.
-  - Reconcile/store docs vs observed batch history behavior.
+  - Completed: added `HISTORY_CLEAR` branch to `isDocumentAction`.
+  - Completed: schedule reconciliation after outermost `TRANSACTION_COMMIT` when pending.
+  - Completed: updated `emitEventsForAction` to include `APPLY_REMOTE` content-change.
+  - Completed: reconciled store/type/docs comments vs observed batch history behavior.
+  - Completed: remote apply path now marks dirty on actual mutation and no-ops on empty remote payloads.
 - Regression tests to add:
-  - `isDocumentAction({ type: 'HISTORY_CLEAR' }) === true`.
-  - Batch + undo behavior test that matches intended contract.
-  - Transaction commit path triggers reconciliation scheduling when `rebuildPending`.
-  - `createDocumentStoreWithEvents` emits/does not emit `content-change` on `APPLY_REMOTE` based on chosen policy.
+  - Added: `isDocumentAction({ type: 'HISTORY_CLEAR' }) === true`.
+  - Added/updated: batch semantics test now explicitly validates per-action history behavior.
+  - Added: transaction commit path test that verifies reconciliation scheduling when `rebuildPending`.
+  - Added: event-store tests for `APPLY_REMOTE` `content-change` and dirty-change behavior.
 - Performance confidence:
   - Add benchmark harness for large doc edits, mixed line endings, and reconciliation thresholds.
 
@@ -130,9 +131,9 @@
   - Goal: follow randomized and edge-case tests to reason about invariants.
 
 ## Reliability snapshot
-- Overall reliability: good for core editing behavior, line-ending edge cases, and immutable transition logic.
+- Overall reliability: good for core editing behavior, line-ending edge cases, immutable transition logic, and event/store contract alignment.
 - Confidence basis:
-  - Broad tests across core/features with `489` passing tests.
+  - Broad tests across core/features with `495` passing tests.
   - Randomized reconciliation tests for mixed line endings, Unicode, and remote changes.
 - Main risks:
-  - Contract mismatches (docs/comments vs runtime behavior) around batch history, remote events, and reconciliation scheduling.
+  - Core complexity remains high (piece table + lazy/eager line index); invariant drift risk remains without dedicated invariant docs/benchmarks.

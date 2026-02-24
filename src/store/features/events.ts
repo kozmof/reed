@@ -300,6 +300,28 @@ export function getAffectedRange(action: DocumentAction): readonly [number, numb
       const insertLength = textEncoder.encode(action.text).length;
       return [action.start, action.start + insertLength];
     }
+    case 'APPLY_REMOTE': {
+      let minStart = Number.POSITIVE_INFINITY;
+      let maxEnd = Number.NEGATIVE_INFINITY;
+
+      for (const change of action.changes) {
+        if (change.type === 'insert' && change.text) {
+          const insertLength = textEncoder.encode(change.text).length;
+          if (insertLength > 0) {
+            minStart = Math.min(minStart, change.start);
+            maxEnd = Math.max(maxEnd, change.start + insertLength);
+          }
+          continue;
+        }
+
+        if (change.type === 'delete' && typeof change.length === 'number' && change.length > 0) {
+          minStart = Math.min(minStart, change.start);
+          maxEnd = Math.max(maxEnd, change.start + change.length);
+        }
+      }
+
+      return minStart === Number.POSITIVE_INFINITY ? [0, 0] : [minStart, maxEnd];
+    }
     default:
       return [0, 0];
   }

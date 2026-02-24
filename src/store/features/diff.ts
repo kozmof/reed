@@ -601,7 +601,7 @@ export function setValue(
         $map((resolvedActions) => {
           if (resolvedActions.length === 0) return state;
           // Apply actions directly through the reducer.
-          // For transaction semantics (single undo unit), callers should use store.batch().
+          // For store semantics (single notification and rollback safety), callers should use store.batch().
           return applyDocumentActions(state, resolvedActions);
         }),
       );
