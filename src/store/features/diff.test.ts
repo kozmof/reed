@@ -8,6 +8,7 @@ import {
   computeSetValueActions,
   computeSetValueActionsOptimized,
   setValue,
+  setValueWithDiff,
 } from './diff.ts';
 import { createInitialState } from '../core/state.ts';
 import { getValue } from '../core/piece-table.ts';
@@ -191,9 +192,9 @@ describe('Diff Algorithm', () => {
       expect(newState.metadata.isDirty).toBe(true);
     });
 
-    it('should work with useReplace=false (minimal diff)', () => {
+    it('should work with setValueWithDiff (minimal diff)', () => {
       const state = createInitialState({ content: 'hello' });
-      const newState = setValue(state, 'hello world', { useReplace: false });
+      const newState = setValueWithDiff(state, 'hello world');
       expect(getValue(newState.pieceTable)).toBe('hello world');
     });
 

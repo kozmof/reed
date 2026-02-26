@@ -255,9 +255,11 @@ export {
   computeSetValueActions,
   computeSetValueActionsOptimized,
   computeSetValueActionsFromState,
+  computeSetValueActionsFromStateWithDiff,
   setValue,
+  setValueWithDiff,
 } from './store/index.ts';
-export type { DiffEdit, DiffResult, SetValueOptions } from './store/index.ts';
+export type { DiffEdit, DiffResult } from './store/index.ts';
 
 // =============================================================================
 // Event System

@@ -3,7 +3,7 @@
 **Date:** 2026-02-26
 **Version:** 0.0.0
 **Lines of Source:** ~2,554 TypeScript
-**Tests:** 465 passing across 11 test files
+**Tests:** 495 passing across 11 test files
 
 ---
 
@@ -113,7 +113,8 @@ createDocumentStore()
 |---------|-------------|--------------|
 | Normal typing | `DocumentActions.insert(pos, text)` → `dispatch` | Lazy line index, coalescing history |
 | Undo/Redo | `DocumentActions.undo()` → reducer | Eager line index reconstructed before replay |
-| Bulk replace | `setValue(store, text)` | Myers diff → minimal edit actions |
+| Bulk replace (common) | `setValue(state, text)` | Single optimized REPLACE action — O(n) |
+| Bulk replace (minimal diff) | `setValueWithDiff(state, text)` | Myers diff → minimal edit actions — O(n²) |
 | Viewport rendering | `query.getVisibleLines(state, start, end)` | Needs reconciled (eager) line index |
 | Remote collaboration | `DocumentActions.applyRemote(changes)` | No history push, lazy line index |
 | Background work | `store.scheduleReconciliation()` | `requestIdleCallback` fills null offsets |
@@ -123,11 +124,11 @@ createDocumentStore()
 
 ### 5. Pitfalls
 
-1. **Silent fallback in lazy mode rendering.** `getLineContent()` returns an empty string when the line's offset is not yet computed. There is no warning or error; callers see blank content.
+1. ~~**Silent fallback in lazy mode rendering.** `getLineContent()` returns an empty string when the line's offset is not yet computed. There is no warning or error; callers see blank content.~~ **Fixed.** Return type changed to `string | null`; out-of-range lookups now return `null`, making "line does not exist" distinguishable from "line exists with no content" (`''`).
 
 2. **`primaryIndex` is unconstrained.** `SelectionState.primaryIndex` can exceed `ranges.length` with no type protection. `ranges[primaryIndex]` fails silently.
 
-3. **Cost labels are phantom.** `LinearCost<T>`, `LogCost<T>`, etc. carry no runtime enforcement. A function returning `O(1)` cost may perform O(n) work; the type system will not catch it.
+3. **Cost labels are phantom.** `LinearCost<T>`, `LogCost<T>`, etc. carry no runtime enforcement. A function returning `O(1)` cost may perform O(n) work; the type system will not catch it. *Partially addressed:* over-labeling of the `setValue()` common path has been resolved by splitting the API (see §4 §4.6 fix); internal trivial-branch labels in `diff()`, `rendering.ts`, and `line-index.ts` have also been corrected. The structural issue — no runtime enforcement — remains.
 
 4. **Branded type constructors accept invalid values.** `byteOffset(-1)`, `byteOffset(NaN)`, `byteOffset(Infinity)` all compile. The `isValidOffset()` utility is not called automatically.
 
@@ -177,7 +178,7 @@ createDocumentStore()
 
 3. **Transaction rollback does not guard against unmatched calls.** `rollback()` pops from `snapshotStack` and decrements `depth` without checking whether a matching `begin()` was called. Calling `rollback()` an extra time decrements `depth` to `-1` silently.
 
-4. **Lazy diff cost contract overstates worst case.** `diff()` always returns `QuadCost` even though the Myers path for D-small inputs is O((n+m)D). The inflated cost label may cause callers to avoid the function for use cases where it would be inexpensive.
+4. ~~**Lazy diff cost contract overstates worst case.** `diff()` always returns `QuadCost` even though the Myers path for D-small inputs is O((n+m)D). The inflated cost label may cause callers to avoid the function for use cases where it would be inexpensive.~~ **Fixed.** See §4 §4.6.
 
 5. **`getValueStream()` triggers O(n) work during iteration, not on call.** The `collectPieces()` call sits inside the generator body. Callers that hold a generator reference and delay iteration will trigger allocation at unpredictable times.
 
@@ -285,13 +286,29 @@ In `events.ts`, if a handler throws, subsequent handlers in the same iteration s
 
 `rollback()` calls `snapshotStack.pop()` and decrements `depth` without checking whether a corresponding `begin()` was called. An extra `rollback()` produces `depth = -1` and returns `snapshot = undefined`. Subsequent operations see negative depth; subsequent dispatches may notify listeners prematurely or skip notifications.
 
-#### 4.6 `diff()` — Cost Label Overstates Worst Case
+#### ~~4.6 `diff()` / `setValue()` — Cost Label Overstates Worst Case~~ (Fixed)
 
-The function always returns `QuadCost<DiffResult>` even for the Myers fast path, which is O((n+m)D) where D is edit distance. For near-identical texts with small D, the actual cost is closer to linear. The inflated annotation causes callers to treat the function as inherently expensive when it may not be.
+~~The function always returns `QuadCost<DiffResult>` even for the Myers fast path, which is O((n+m)D) where D is edit distance. For near-identical texts with small D, the actual cost is closer to linear. The inflated annotation causes callers to treat the function as inherently expensive when it may not be.~~
 
-#### 4.7 `getLineContent()` — Silent Empty Return on Stale Offset
+**Root cause clarified:** `diff()` itself is correctly labeled `QuadCost` — its `simpleDiff` branch uses an O(n·m) DP table, so O(n²) worst case is genuine. The real over-labeling was in `setValue()`, which always returned `QuadCost` even though its default path (`useReplace: true`) delegates entirely to `computeSetValueActionsOptimized`, an O(n) linear scan.
 
-When the line index is in lazy mode and the target line's offset is not yet computed, `getLineRangePrecise()` returns `null`. The fallback is `getText(state.pieceTable, byteOffset(0), byteOffset(0))`, which returns an empty string. There is no warning, error, or distinct return value that distinguishes "line is empty" from "line offset is stale."
+**Fix applied (`diff.ts`):**
+- `setValue(state, newContent)` now returns `LinearCost<DocumentState>`. The `options` parameter has been removed; the body always uses `computeSetValueActionsOptimized`.
+- `setValueWithDiff(state, newContent)` is a new export returning `QuadCost<DocumentState>`, running the full Myers diff. Use when fine-grained history entries matter.
+- `computeSetValueActionsFromState(pieceTable, newContent)` similarly narrowed to `LinearCost<DocumentAction[]>`.
+- `computeSetValueActionsFromStateWithDiff(pieceTable, newContent)` added for the Myers path (`QuadCost<DocumentAction[]>`).
+- Internal trivial-branch labels inside `diff()` corrected: the identical-strings branch now lifts at `'O(n)'` (a string comparison that already happened), and the empty-input branches lift at `'O(1)'`; all are still widened to `QuadCost` at the function boundary via `$proveCtx`.
+- Same internal-label corrections applied to null/bounds early-return branches in `rendering.ts` (`getLineContent`, `getVisibleLine`, `estimateTotalHeight`) and `line-index.ts` (`getLineStartOffset`, `getCharStartOffset`).
+
+`SetValueOptions` is retained as a deprecated exported type for any callers that reference it by name.
+
+#### ~~4.7 `getLineContent()` — Silent Empty Return on Stale Offset~~ (Fixed)
+
+~~When the line index is in lazy mode and the target line's offset is not yet computed, `getLineRangePrecise()` returns `null`. The fallback is `getText(state.pieceTable, byteOffset(0), byteOffset(0))`, which returns an empty string. There is no warning, error, or distinct return value that distinguishes "line is empty" from "line offset is stale."~~
+
+**Correction on root cause:** `getLineRangePrecise()` returns `null` only when the line number is out of range — it uses `subtreeByteLength` aggregates, which are maintained in both eager and lazy modes, so stale `documentOffset` values do not cause a `null` return. The actual bug was that `null` (out of range) and `''` (empty line) were conflated via the zero-range `getText` fallback.
+
+**Fix applied (`rendering.ts`):** Return type widened to `CostFn<'linear', [DocumentState, number], string | null>`. The `null` branch now lifts `null` directly within the cost algebra instead of calling `getText`. Semantics: `null` = line number out of range; `''` = line exists with no content (e.g. bare newline or empty document's single line 0). Tests updated accordingly.
 
 ---
 

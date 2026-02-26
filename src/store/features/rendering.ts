@@ -121,7 +121,7 @@ export const getLineContent: CostFn<'linear', [DocumentState, number], string | 
 {
   const range = getLineRangePrecise(state.lineIndex, lineNum);
   if (range === null) {
-    return $proveCtx('O(n)', $lift('O(n)', null));
+    return $proveCtx('O(n)', $lift('O(log n)', null));
   }
 
   return $prove('O(n)', $checked(() => $pipe(
@@ -203,13 +203,13 @@ export function getVisibleLine(
   const totalLines = getLineCountFromIndex(state.lineIndex);
 
   if (lineNumber < 0 || lineNumber >= totalLines) {
-    return $proveCtx('O(n)', $lift('O(n)', null));
+    return $proveCtx('O(n)', $lift('O(1)', null));
   }
 
   // Use getLineRangePrecise to handle dirty line indices correctly
   const range = getLineRangePrecise(state.lineIndex, lineNumber);
   if (!range) {
-    return $proveCtx('O(n)', $lift('O(n)', null));
+    return $proveCtx('O(n)', $lift('O(log n)', null));
   }
 
   return $prove('O(n)', $checked(() => $pipe(
@@ -290,7 +290,7 @@ export function estimateTotalHeight(
 
   if (!config.softWrap) {
     // Fixed height mode: simple multiplication
-    return $proveCtx('O(n)', $lift('O(n)', totalLines * config.baseLineHeight));
+    return $proveCtx('O(n)', $lift('O(1)', totalLines * config.baseLineHeight));
   }
 
   // Variable height mode: we need to estimate

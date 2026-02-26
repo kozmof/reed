@@ -290,11 +290,11 @@ export function getLineStartOffset(
   lineNumber: number
 ): LogCost<number> {
   if (root === null) {
-    const emptyOffset = $proveCtx('O(log n)', $lift('O(log n)', 0));
+    const emptyOffset = $proveCtx('O(log n)', $lift('O(1)', 0));
     return emptyOffset;
   }
   if (lineNumber < 0) {
-    const invalidOffset = $proveCtx('O(log n)', $lift('O(log n)', 0));
+    const invalidOffset = $proveCtx('O(log n)', $lift('O(1)', 0));
     return invalidOffset;
   }
 
@@ -335,11 +335,11 @@ export function getCharStartOffset(
   lineNumber: number
 ): LogCost<number> {
   if (root === null) {
-    const emptyOffset = $proveCtx('O(log n)', $lift('O(log n)', 0));
+    const emptyOffset = $proveCtx('O(log n)', $lift('O(1)', 0));
     return emptyOffset;
   }
   if (lineNumber < 0) {
-    const invalidOffset = $proveCtx('O(log n)', $lift('O(log n)', 0));
+    const invalidOffset = $proveCtx('O(log n)', $lift('O(1)', 0));
     return invalidOffset;
   }
 

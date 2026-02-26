@@ -62,21 +62,21 @@ export interface DiffResult {
 export function diff(oldText: string, newText: string): QuadCost<DiffResult> {
   // Handle trivial cases
   if (oldText === newText) {
-    return $proveCtx('O(n^2)', $lift('O(n^2)', {
+    return $proveCtx('O(n^2)', $lift('O(n)', {
       edits: oldText.length > 0 ? [{ type: 'equal', text: oldText, oldPos: 0, newPos: 0 }] : [],
       distance: 0,
     } satisfies DiffResult));
   }
 
   if (oldText.length === 0) {
-    return $proveCtx('O(n^2)', $lift('O(n^2)', {
+    return $proveCtx('O(n^2)', $lift('O(1)', {
       edits: [{ type: 'insert', text: newText, oldPos: 0, newPos: 0 }],
       distance: newText.length,
     } satisfies DiffResult));
   }
 
   if (newText.length === 0) {
-    return $proveCtx('O(n^2)', $lift('O(n^2)', {
+    return $proveCtx('O(n^2)', $lift('O(1)', {
       edits: [{ type: 'delete', text: oldText, oldPos: 0, newPos: 0 }],
       distance: oldText.length,
     } satisfies DiffResult));
@@ -386,7 +386,7 @@ export function computeSetValueActions(
   newContent: string
 ): QuadCost<DocumentAction[]> {
   if (oldContent === newContent) {
-    return $proveCtx('O(n^2)', $lift('O(n^2)', []));
+    return $proveCtx('O(n^2)', $lift('O(1)', []));
   }
 
   const diffResult = diff(oldContent, newContent);
@@ -562,46 +562,30 @@ function applyDocumentActions(state: DocumentState, actions: readonly DocumentAc
 }
 
 /**
- * Options for setValue operation.
- */
-export interface SetValueOptions {
-  /** Use optimized single REPLACE action instead of minimal diff */
-  useReplace?: boolean;
-}
-
-/**
- * Set the entire document value to new content.
- * Uses diff to compute minimal changes and applies them.
+ * Set the entire document value to new content using a single optimized REPLACE operation.
+ * Scans for the changed region and emits at most one action — O(n) in document size.
+ *
+ * For store semantics (single notification and rollback safety), callers should use store.batch().
  *
  * @param state - Current document state
  * @param newContent - The new content to set
- * @param options - Options for the operation
  * @returns New document state with the content changed
  */
 export function setValue(
   state: DocumentState,
   newContent: string,
-  options: SetValueOptions = {}
-): QuadCost<DocumentState> {
-  const { useReplace = true } = options;
-
-  return $prove('O(n^2)', $checked(() => $pipe(
+): LinearCost<DocumentState> {
+  return $prove('O(n)', $checked(() => $pipe(
     $from(getValue(state.pieceTable)),
     $andThen((oldContent) => {
       if (oldContent === newContent) {
-        return $lift('O(n^2)', state);
+        return $lift('O(n)', state);
       }
 
-      const actions = useReplace
-        ? $proveCtx('O(n^2)', $from(computeSetValueActionsOptimized(oldContent, newContent)))
-        : computeSetValueActions(oldContent, newContent);
-
       return $pipe(
-        $from(actions),
+        $from(computeSetValueActionsOptimized(oldContent, newContent)),
         $map((resolvedActions) => {
           if (resolvedActions.length === 0) return state;
-          // Apply actions directly through the reducer.
-          // For store semantics (single notification and rollback safety), callers should use store.batch().
           return applyDocumentActions(state, resolvedActions);
         }),
       );
@@ -610,13 +594,73 @@ export function setValue(
 }
 
 /**
- * Set value on a piece table state directly.
- * Returns the actions that would be applied.
+ * Set the entire document value to new content using the Myers diff algorithm.
+ * Computes a minimal edit script — O(n²) worst case, but produces finer-grained history entries.
+ *
+ * Prefer `setValue` for interactive use. Use this when minimal diff granularity matters.
+ *
+ * For store semantics (single notification and rollback safety), callers should use store.batch().
+ *
+ * @param state - Current document state
+ * @param newContent - The new content to set
+ * @returns New document state with the content changed
+ */
+export function setValueWithDiff(
+  state: DocumentState,
+  newContent: string,
+): QuadCost<DocumentState> {
+  return $prove('O(n^2)', $checked(() => $pipe(
+    $from(getValue(state.pieceTable)),
+    $andThen((oldContent) => {
+      if (oldContent === newContent) {
+        return $lift('O(n^2)', state);
+      }
+
+      return $pipe(
+        $from(computeSetValueActions(oldContent, newContent)),
+        $map((resolvedActions) => {
+          if (resolvedActions.length === 0) return state;
+          return applyDocumentActions(state, resolvedActions);
+        }),
+      );
+    }),
+  )));
+}
+
+/**
+ * Compute the optimized REPLACE actions needed to transform a piece table to new content.
+ * O(n) — uses `computeSetValueActionsOptimized` internally.
+ *
+ * @param pieceTable - Current piece table state
+ * @param newContent - The desired new content
+ * @returns Array of DocumentActions to apply
  */
 export function computeSetValueActionsFromState(
   pieceTable: PieceTableState,
   newContent: string,
-  useReplace: boolean = true
+): LinearCost<DocumentAction[]> {
+  return $prove('O(n)', $checked(() => $pipe(
+    $from(getValue(pieceTable)),
+    $andThen((oldContent) => {
+      if (oldContent === newContent) {
+        return $lift<'O(n)', DocumentAction[]>('O(n)', []);
+      }
+      return $from(computeSetValueActionsOptimized(oldContent, newContent));
+    }),
+  )));
+}
+
+/**
+ * Compute the minimal Myers-diff actions needed to transform a piece table to new content.
+ * O(n²) worst case — use when fine-grained diff granularity is required.
+ *
+ * @param pieceTable - Current piece table state
+ * @param newContent - The desired new content
+ * @returns Array of DocumentActions to apply
+ */
+export function computeSetValueActionsFromStateWithDiff(
+  pieceTable: PieceTableState,
+  newContent: string,
 ): QuadCost<DocumentAction[]> {
   return $prove('O(n^2)', $checked(() => $pipe(
     $from(getValue(pieceTable)),
@@ -624,10 +668,7 @@ export function computeSetValueActionsFromState(
       if (oldContent === newContent) {
         return $lift<'O(n^2)', DocumentAction[]>('O(n^2)', []);
       }
-      const actions = useReplace
-        ? $proveCtx('O(n^2)', $from(computeSetValueActionsOptimized(oldContent, newContent)))
-        : computeSetValueActions(oldContent, newContent);
-      return $from(actions);
+      return $from(computeSetValueActions(oldContent, newContent));
     }),
   )));
 }
