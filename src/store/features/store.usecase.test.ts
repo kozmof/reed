@@ -938,6 +938,58 @@ describe('Editor Use Cases', () => {
 
       expect(normalListener).toHaveBeenCalled();
     });
+
+    it('should deliver to listeners registered at dispatch start even if removed mid-notify', () => {
+      const store = createDocumentStore({ content: '' });
+      const listener2 = vi.fn();
+      let unsubscribe2: (() => void) | undefined;
+      const listener1 = vi.fn(() => {
+        unsubscribe2?.();
+      });
+
+      store.subscribe(listener1);
+      unsubscribe2 = store.subscribe(listener2);
+
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'A'));
+      store.dispatch(DocumentActions.insert(byteOffset(1), 'B'));
+
+      expect(listener1).toHaveBeenCalledTimes(2);
+      expect(listener2).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Snapshot Gating', () => {
+    it('should detect stale snapshots after state changes', () => {
+      const store = createDocumentStore({ content: '' });
+      const stale = store.getSnapshot();
+
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'A'));
+
+      expect(store.isCurrentSnapshot(stale)).toBe(false);
+      expect(store.isCurrentSnapshot(store.getSnapshot())).toBe(true);
+    });
+
+    it('should return null when reconciling a stale snapshot', () => {
+      const store = createDocumentStore({ content: '' });
+      const stale = store.getSnapshot();
+
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'A\nB'));
+      expect(store.getSnapshot().lineIndex.rebuildPending).toBe(true);
+
+      expect(store.reconcileNow(stale)).toBeNull();
+    });
+
+    it('should reconcile when the provided snapshot is current', () => {
+      const store = createDocumentStore({ content: '' });
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'A\nB'));
+
+      const current = store.getSnapshot();
+      const reconciled = store.reconcileNow(current);
+
+      expect(reconciled).not.toBeNull();
+      expect(reconciled!.lineIndex.rebuildPending).toBe(false);
+      expect(store.isCurrentSnapshot(reconciled!)).toBe(true);
+    });
   });
 
   describe('Real World Scenarios', () => {

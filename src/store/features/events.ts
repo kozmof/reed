@@ -190,7 +190,9 @@ export function createEventEmitter(): DocumentEventEmitter {
     ): void {
       const typeHandlers = handlers.get(type);
       if (typeHandlers) {
-        for (const handler of typeHandlers) {
+        // Snapshot handlers to guarantee stable delivery under subscribe/unsubscribe churn.
+        const handlersSnapshot = Array.from(typeHandlers);
+        for (const handler of handlersSnapshot) {
           try {
             handler(event);
           } catch (error) {

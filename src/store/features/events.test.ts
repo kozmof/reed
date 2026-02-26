@@ -135,6 +135,25 @@ describe('Event Emitter', () => {
       expect(goodHandler).toHaveBeenCalledTimes(1);
     });
 
+    it('should deliver to handlers registered at emit start even if removed mid-emit', () => {
+      const emitter = createEventEmitter();
+      const handler2 = vi.fn();
+      let unsubscribe2: (() => void) | undefined;
+      const handler1 = vi.fn(() => {
+        unsubscribe2?.();
+      });
+
+      emitter.addEventListener('save', handler1);
+      unsubscribe2 = emitter.addEventListener('save', handler2);
+
+      const state = createInitialState();
+      emitter.emit('save', createSaveEvent(state));
+      emitter.emit('save', createSaveEvent(state));
+
+      expect(handler1).toHaveBeenCalledTimes(2);
+      expect(handler2).toHaveBeenCalledTimes(1);
+    });
+
     it('should not call handlers for other event types', () => {
       const emitter = createEventEmitter();
       const saveHandler = vi.fn();

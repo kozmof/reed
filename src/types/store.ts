@@ -52,6 +52,12 @@ export interface DocumentStore {
   getServerSnapshot?(): DocumentState;
 
   /**
+   * Check whether a previously captured snapshot is still current.
+   * Useful to guard against stale references during async workflows.
+   */
+  isCurrentSnapshot(snapshot: DocumentState): boolean;
+
+  /**
    * Dispatch an action to modify state.
    * Returns the new state after the action is applied.
    * @param action - Action to dispatch
@@ -90,6 +96,13 @@ export interface ReconcilableDocumentStore extends DocumentStore {
   reconcileNow(): DocumentState<'eager'>;
 
   /**
+   * Snapshot-gated reconciliation.
+   * Returns null when `snapshot` is stale, preventing mode transitions
+   * from being applied to an out-of-date view.
+   */
+  reconcileNow(snapshot: DocumentState): DocumentState<'eager'> | null;
+
+  /**
    * Set viewport bounds and ensure those lines have accurate offsets.
    * Reconciles visible lines immediately while deferring off-screen updates.
    * @param startLine - First visible line (0-indexed)
@@ -106,6 +119,7 @@ export interface ReadonlyDocumentStore {
   subscribe(listener: StoreListener): Unsubscribe;
   getSnapshot(): DocumentState;
   getServerSnapshot?(): DocumentState;
+  isCurrentSnapshot(snapshot: DocumentState): boolean;
 }
 
 /**

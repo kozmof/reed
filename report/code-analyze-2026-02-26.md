@@ -3,7 +3,7 @@
 **Date:** 2026-02-26
 **Version:** 0.0.0
 **Lines of Source:** ~2,554 TypeScript
-**Tests:** 495 passing across 11 test files
+**Tests:** 502 passing across 12 test files
 
 ---
 
@@ -144,15 +144,15 @@ createDocumentStore()
 
 ### 6. Improvement Points — Design Overview
 
-1. **Mode propagation through the public API is implicit.** Functions in `query.*` accept `DocumentState` (union mode) without communicating whether the line index is reconciled. A caller cannot safely use `getLineRange()` without checking reconciliation state first.
+1. ~~**Mode propagation through the public API is implicit.** Functions in `query.*` accept `DocumentState` (union mode) without communicating whether the line index is reconciled. A caller cannot safely use `getLineRange()` without checking reconciliation state first.~~ **Fixed.** `src/api/query.ts` now exposes explicit mode contracts: `query.isReconciledState`, `query.assertReconciledState`, eager-only `query.getLineRange`, checked `query.getLineRangeChecked`, lazy-safe `query.getLineRangePrecise`, and a low-level `query.lineIndex.*` escape hatch for direct line-index access.
 
-2. **No version-gating at mode transitions.** When `reconcileNow()` returns a `DocumentState<'eager'>`, there is no mechanism to ensure stale `DocumentState<'lazy'>` snapshots held by consumers are invalidated.
+2. ~~**No version-gating at mode transitions.** When `reconcileNow()` returns a `DocumentState<'eager'>`, there is no mechanism to ensure stale `DocumentState<'lazy'>` snapshots held by consumers are invalidated.~~ **Fixed.** Store snapshots can now be validated via `isCurrentSnapshot(snapshot)`, and `reconcileNow(snapshot)` is snapshot-gated (returns `null` for stale snapshots).
 
 3. **Chunk loading is a stub.** The `LOAD_CHUNK` / `EVICT_CHUNK` action handlers are not implemented. The `DocumentState` already holds `metadata` for these, creating a false impression of readiness.
 
-4. **Event delivery is not transactional.** If a listener throws midway through `notifyListeners()`, the state change has persisted but some listeners never received the event. There is no recovery path.
+4. ~~**Event delivery is not transactional.** If a listener throws midway through `notifyListeners()`, the state change has persisted but some listeners never received the event. There is no recovery path.~~ **Fixed.** Both store listeners and typed event handlers now iterate over a snapshot array, guaranteeing delivery to all subscribers registered at emit/notify start even when listeners unsubscribe or throw during delivery.
 
-5. **Reconciliation is never triggered by `batch()`.** After a batch of actions that sets `rebuildPending = true`, reconciliation must be scheduled manually.
+5. ~~**Reconciliation is never triggered by `batch()`.** After a batch of actions that sets `rebuildPending = true`, reconciliation must be scheduled manually.~~ **Fixed.** `batch()` now includes an explicit post-batch reconciliation scheduling safety check when `rebuildPending` remains true and no transaction is active.
 
 ---
 
@@ -320,4 +320,4 @@ In `events.ts`, if a handler throws, subsequent handlers in the same iteration s
 
 2. **Implicit ordering and context dependencies.** R-B tree path ordering, `splitPiece` leaf assumptions, and the `Number.MAX_SAFE_INTEGER` sentinel are conventions that exist outside the type system. They will be bypassed or misunderstood as the codebase grows.
 
-3. **Silent failures at mode boundaries.** Lazy-to-eager transitions, half-delivered events, and stale offset fallbacks all degrade silently. A caller that receives wrong data (empty line, missed notification, incorrect undo) has no signal that something went wrong.
+3. **Boundary checks still rely on conventions in several areas.** Mode transitions and listener delivery are now guarded, but other boundary semantics (sentinel values, implicit tree assumptions, byte/char boundary coupling) still depend on discipline more than enforcement.

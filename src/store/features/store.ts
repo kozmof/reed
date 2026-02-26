@@ -53,11 +53,22 @@ export function createDocumentStore(
   };
 
   /**
+   * Replace internal state reference only when it changes.
+   */
+  function setState(nextState: DocumentState): void {
+    if (nextState !== state) {
+      state = nextState;
+    }
+  }
+
+  /**
    * Notify all listeners of state change.
    * Only called when not in a transaction.
    */
   function notifyListeners(): void {
-    for (const listener of listeners) {
+    // Snapshot listeners to guarantee stable delivery even if subscribers mutate during notification.
+    const currentListeners = Array.from(listeners);
+    for (const listener of currentListeners) {
       try {
         listener();
       } catch (error) {
@@ -95,6 +106,13 @@ export function createDocumentStore(
   }
 
   /**
+   * Check whether a previously captured snapshot is still current.
+   */
+  function isCurrentSnapshot(snapshot: DocumentState): boolean {
+    return snapshot === state;
+  }
+
+  /**
    * Dispatch an action to modify state.
    * @param action - Action to dispatch
    * @returns New state after applying the action
@@ -120,7 +138,7 @@ export function createDocumentStore(
     if (action.type === 'TRANSACTION_ROLLBACK') {
       const result = transaction.rollback();
       if (result.snapshot) {
-        state = result.snapshot;
+        setState(result.snapshot);
       }
       notifyListeners();
       return state;
@@ -131,7 +149,7 @@ export function createDocumentStore(
 
     // Only update if state actually changed (referential equality)
     if (newState !== state) {
-      state = newState;
+      setState(newState);
 
       if (transaction.isActive) {
         transaction.trackAction(action);
@@ -184,11 +202,16 @@ export function createDocumentStore(
           // If rollback fails, reset transaction state to prevent corruption
           const earliest = transaction.emergencyReset();
           if (earliest) {
-            state = earliest;
+            setState(earliest);
           }
           notifyListeners();
         }
       }
+    }
+
+    // Ensure batch-triggered dirty line indexes always get reconciliation scheduled.
+    if (!transaction.isActive && state.lineIndex.rebuildPending) {
+      scheduleReconciliation();
     }
 
     return state;
@@ -225,11 +248,11 @@ export function createDocumentStore(
         const nextVersion = state.version + 1;
         const newLineIndex = reconcileFull(state.lineIndex, nextVersion);
         if (newLineIndex !== state.lineIndex) {
-          state = Object.freeze({
+          setState(Object.freeze({
             ...state,
             lineIndex: newLineIndex,
             version: nextVersion,
-          });
+          }));
           // Don't notify listeners - this is a background optimization
           // that doesn't change visible content
         }
@@ -252,7 +275,13 @@ export function createDocumentStore(
    * Force immediate reconciliation (blocking).
    * Use sparingly - prefer scheduleReconciliation().
    */
-  function reconcileNow(): DocumentState<'eager'> {
+  function reconcileNow(): DocumentState<'eager'>;
+  function reconcileNow(snapshot: DocumentState): DocumentState<'eager'> | null;
+  function reconcileNow(snapshot?: DocumentState): DocumentState<'eager'> | null {
+    if (snapshot !== undefined && !isCurrentSnapshot(snapshot)) {
+      return null;
+    }
+
     // Cancel any pending idle callback
     if (reconciliation.idleCallbackId !== null) {
       if (typeof cancelIdleCallback !== 'undefined') {
@@ -270,11 +299,11 @@ export function createDocumentStore(
     const nextVersion = state.version + 1;
     const newLineIndex = reconcileFull(state.lineIndex, nextVersion);
     if (newLineIndex !== state.lineIndex) {
-      state = Object.freeze({
+      setState(Object.freeze({
         ...state,
         lineIndex: newLineIndex,
         version: nextVersion,
-      });
+      }));
     }
     return state as DocumentState<'eager'>;
   }
@@ -285,10 +314,10 @@ export function createDocumentStore(
   function setViewport(startLine: number, endLine: number): void {
     const newLineIndex = reconcileViewport(state.lineIndex, startLine, endLine, state.version);
     if (newLineIndex !== state.lineIndex) {
-      state = Object.freeze({
+      setState(Object.freeze({
         ...state,
         lineIndex: newLineIndex,
-      });
+      }));
     }
 
     // Schedule background reconciliation for remaining dirty ranges
@@ -300,6 +329,7 @@ export function createDocumentStore(
     subscribe,
     getSnapshot,
     getServerSnapshot,
+    isCurrentSnapshot,
     dispatch,
     batch,
     scheduleReconciliation,
@@ -432,6 +462,7 @@ export function createDocumentStoreWithEvents(
     subscribe: baseStore.subscribe,
     getSnapshot: baseStore.getSnapshot,
     getServerSnapshot: baseStore.getServerSnapshot,
+    isCurrentSnapshot: baseStore.isCurrentSnapshot,
     scheduleReconciliation: baseStore.scheduleReconciliation,
     reconcileNow: baseStore.reconcileNow,
     setViewport: baseStore.setViewport,
@@ -460,6 +491,7 @@ export function isDocumentStore(value: unknown): value is DocumentStore {
   return (
     typeof store.subscribe === 'function' &&
     typeof store.getSnapshot === 'function' &&
+    typeof store.isCurrentSnapshot === 'function' &&
     typeof store.dispatch === 'function' &&
     typeof store.batch === 'function'
   );
