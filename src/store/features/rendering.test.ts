@@ -388,17 +388,18 @@ describe('getLineContent (optimization)', () => {
     expect(getLineContent(state, 2)).toBe('Line 3');
   });
 
-  it('should return empty string for out-of-range line', () => {
+  it('should return null for out-of-range line', () => {
     const state = createInitialState({
       content: 'Hello',
     });
 
-    expect(getLineContent(state, -1)).toBe('');
-    expect(getLineContent(state, 5)).toBe('');
+    expect(getLineContent(state, -1)).toBeNull();
+    expect(getLineContent(state, 5)).toBeNull();
   });
 
-  it('should handle empty document', () => {
+  it('should return empty string for empty document', () => {
     const state = createInitialState();
+    // Line 0 exists (empty document has one empty line); content is '' not null.
     expect(getLineContent(state, 0)).toBe('');
   });
 

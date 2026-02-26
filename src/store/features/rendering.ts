@@ -114,14 +114,14 @@ export function getVisibleLineRange(
  *
  * @param state - The full document state (needs both pieceTable and lineIndex)
  * @param lineNum - 0-indexed line number
- * @returns The line text (without trailing newline), or empty string if out of range
+ * @returns The line text (without trailing newline), `null` if the line number is out
+ * of range, or `''` if the line exists but has no content (e.g. a bare newline).
  */
-export const getLineContent: CostFn<'linear', [DocumentState, number], string> = (state, lineNum) =>
+export const getLineContent: CostFn<'linear', [DocumentState, number], string | null> = (state, lineNum) =>
 {
   const range = getLineRangePrecise(state.lineIndex, lineNum);
   if (range === null) {
-    // Keep linear-cost contract without assertion casting.
-    return getText(state.pieceTable, byteOffset(0), byteOffset(0));
+    return $proveCtx('O(n)', $lift('O(n)', null));
   }
 
   return $prove('O(n)', $checked(() => $pipe(
