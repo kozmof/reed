@@ -27,13 +27,6 @@ function isReconciledState(state: DocumentState): state is DocumentState<'eager'
   return state.lineIndex.rebuildPending === false && state.lineIndex.dirtyRanges.length === 0;
 }
 
-function assertReconciledState(state: DocumentState): asserts state is DocumentState<'eager'> {
-  if (!isReconciledState(state)) {
-    throw new Error(
-      'Line index is not reconciled. Call store.reconcileNow() first or use query.getLineRangePrecise().'
-    );
-  }
-}
 
 function findLineAtPosition(
   state: DocumentState,
@@ -85,9 +78,7 @@ export const query = {
   findPieceAtPosition,
   /** @complexity O(1) — runtime mode check for line-index cleanliness */
   isReconciledState,
-  /** @complexity O(1) — runtime assertion with narrowed mode on success */
-  assertReconciledState,
-  /** @complexity O(log n) — tree walk to find line at byte position */
+/** @complexity O(log n) — tree walk to find line at byte position */
   findLineAtPosition,
   /** @complexity O(log n) — tree walk to find line by 1-based line number */
   findLineByNumber,

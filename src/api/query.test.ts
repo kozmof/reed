@@ -15,7 +15,6 @@ describe('query mode contracts', () => {
     const dirty = store.getSnapshot();
 
     expect(query.isReconciledState(dirty)).toBe(false);
-    expect(() => query.assertReconciledState(dirty)).toThrow(/not reconciled/i);
   });
 
   it('should separate precise (lazy-safe) and eager-only line range lookups', () => {
