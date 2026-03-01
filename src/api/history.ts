@@ -2,6 +2,7 @@
  * History namespace — undo/redo state queries.
  */
 
+import { $constCostFn } from '../types/cost.ts';
 import {
   canUndo,
   canRedo,
@@ -9,11 +10,12 @@ import {
   getRedoCount,
   isHistoryEmpty,
 } from '../store/features/history.ts';
+import type { HistoryApi } from './interfaces.ts';
 
 export const history = {
-  canUndo,
-  canRedo,
-  getUndoCount,
-  getRedoCount,
-  isHistoryEmpty,
-} as const;
+  canUndo: $constCostFn(canUndo),
+  canRedo: $constCostFn(canRedo),
+  getUndoCount: $constCostFn(getUndoCount),
+  getRedoCount: $constCostFn(getRedoCount),
+  isHistoryEmpty: $constCostFn(isHistoryEmpty),
+} satisfies HistoryApi;

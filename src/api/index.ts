@@ -12,6 +12,7 @@
  * - `cost.*`      — cost algebra for annotating algorithmic complexity
  */
 
+export type { QueryApi, QueryLineIndexApi, ScanApi, HistoryApi } from './interfaces.ts';
 export { store } from './store.ts';
 export { query } from './query.ts';
 export { scan } from './scan.ts';

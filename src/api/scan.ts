@@ -4,6 +4,7 @@
  * Use `query.*` for efficient lookups when possible.
  */
 
+import { $linearCostFn } from '../types/cost.ts';
 import {
   getValue,
   getValueStream,
@@ -13,16 +14,17 @@ import {
   collectLines,
   rebuildLineIndex,
 } from '../store/core/line-index.ts';
+import type { ScanApi } from './interfaces.ts';
 
 export const scan = {
   /** @complexity O(n) — collects all pieces into a single string */
   getValue,
   /** @complexity O(n) — streaming variant, yields chunks */
-  getValueStream,
+  getValueStream: $linearCostFn(getValueStream),
   /** @complexity O(n) — in-order tree walk of all piece nodes */
   collectPieces,
   /** @complexity O(n) — in-order tree walk of all line nodes */
   collectLines,
   /** @complexity O(n) — full rebuild of line index from content */
   rebuildLineIndex,
-} as const;
+} satisfies ScanApi;

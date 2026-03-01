@@ -5,6 +5,7 @@
  */
 
 import type { DocumentState } from '../types/state.ts';
+import { $constCostFn } from '../types/cost.ts';
 import {
   getText,
   getLength,
@@ -22,6 +23,7 @@ import {
   findLineAtCharPosition as findLineAtCharPositionFromRoot,
 } from '../store/core/line-index.ts';
 import { asEagerLineIndex } from '../store/core/state.ts';
+import type { QueryApi } from './interfaces.ts';
 
 function isReconciledState(state: DocumentState): state is DocumentState<'eager'> {
   return state.lineIndex.rebuildPending === false && state.lineIndex.dirtyRanges.length === 0;
@@ -77,7 +79,7 @@ export const query = {
   /** @complexity O(log n) — tree walk to find piece at position */
   findPieceAtPosition,
   /** @complexity O(1) — runtime mode check for line-index cleanliness */
-  isReconciledState,
+  isReconciledState: $constCostFn(isReconciledState),
 /** @complexity O(log n) — tree walk to find line at byte position */
   findLineAtPosition,
   /** @complexity O(log n) — tree walk to find line by 1-based line number */
@@ -107,4 +109,4 @@ export const query = {
     getCharStartOffset: getCharStartOffsetFromRoot,
     findLineAtCharPosition: findLineAtCharPositionFromRoot,
   },
-} as const;
+} satisfies QueryApi;
