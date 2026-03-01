@@ -1,6 +1,7 @@
 /**
  * Query namespace — O(1), O(log n), and bounded linear operations.
  * Functions here are read-only selectors over immutable document state.
+ * For O(n) traversals see `scan.*`. For rendering utilities see `rendering.*`.
  */
 
 import type { DocumentState } from '../types/state.ts';
@@ -12,6 +13,8 @@ import {
 } from '../store/core/piece-table.ts';
 import {
   findLineAtPosition as findLineAtPositionFromRoot,
+  findLineByNumber as findLineByNumberFromRoot,
+  getLineStartOffset as getLineStartOffsetFromRoot,
   getLineRange as getLineRangeFromIndex,
   getLineRangePrecise as getLineRangePreciseFromIndex,
   getLineCountFromIndex as getLineCountFromIndexState,
@@ -19,13 +22,6 @@ import {
   findLineAtCharPosition as findLineAtCharPositionFromRoot,
 } from '../store/core/line-index.ts';
 import { asEagerLineIndex } from '../store/core/state.ts';
-import {
-  getLineContent,
-  getVisibleLine,
-  getVisibleLines,
-  positionToLineColumn,
-  lineColumnToPosition,
-} from '../store/features/rendering.ts';
 
 function isReconciledState(state: DocumentState): state is DocumentState<'eager'> {
   return state.lineIndex.rebuildPending === false && state.lineIndex.dirtyRanges.length === 0;
@@ -44,6 +40,14 @@ function findLineAtPosition(
   position: Parameters<typeof findLineAtPositionFromRoot>[1]
 ) {
   return findLineAtPositionFromRoot(state.lineIndex.root, position);
+}
+
+function findLineByNumber(state: DocumentState, lineNumber: number) {
+  return findLineByNumberFromRoot(state.lineIndex.root, lineNumber);
+}
+
+function getLineStartOffset(state: DocumentState, lineNumber: number) {
+  return getLineStartOffsetFromRoot(state.lineIndex.root, lineNumber);
 }
 
 function getLineRange(state: DocumentState<'eager'>, lineNumber: number) {
@@ -85,6 +89,10 @@ export const query = {
   assertReconciledState,
   /** @complexity O(log n) — tree walk to find line at byte position */
   findLineAtPosition,
+  /** @complexity O(log n) — tree walk to find line by 1-based line number */
+  findLineByNumber,
+  /** @complexity O(log n) — byte offset of line start via prefix sum */
+  getLineStartOffset,
   /** @complexity O(log n) — tree walk; requires eager DocumentState */
   getLineRange,
   /** @complexity O(log n) — runtime-checked eager range; throws on dirty lazy state */
@@ -97,19 +105,11 @@ export const query = {
   getCharStartOffset,
   /** @complexity O(log n) — tree descent via subtreeCharLength */
   findLineAtCharPosition,
-  /** @complexity O(log n + line_length) — line lookup + text extraction */
-  getLineContent,
-  /** @complexity O(log n + line_length) — single line lookup and text extraction */
-  getVisibleLine,
-  /** @complexity O(k * log n) — k line lookups for visible range */
-  getVisibleLines,
-  /** @complexity O(log n + line_length) — byte position to line/column */
-  positionToLineColumn,
-  /** @complexity O(log n + line_length) — line/column to byte position */
-  lineColumnToPosition,
   /** Low-level line-index selectors for callers operating directly on LineIndexState/root. */
   lineIndex: {
     findLineAtPosition: findLineAtPositionFromRoot,
+    findLineByNumber: findLineByNumberFromRoot,
+    getLineStartOffset: getLineStartOffsetFromRoot,
     getLineRange: getLineRangeFromIndex,
     getLineRangePrecise: getLineRangePreciseFromIndex,
     getLineCount: getLineCountFromIndexState,
