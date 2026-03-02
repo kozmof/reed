@@ -2,7 +2,7 @@
  * Tests for the event system.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   createEventEmitter,
   createContentChangeEvent,
@@ -114,6 +114,13 @@ describe('Event Emitter', () => {
   });
 
   describe('emit', () => {
+    beforeEach(() => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
     it('should handle errors in handlers gracefully', () => {
       const emitter = createEventEmitter();
       const errorHandler = vi.fn(() => {

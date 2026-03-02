@@ -3,7 +3,7 @@
  * Tests simulate real-world editing scenarios and workflows.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createDocumentStore, withTransaction } from './store.ts';
 import { DocumentActions } from './actions.ts';
 import { byteOffset } from '../../types/branded.ts';
@@ -947,6 +947,13 @@ describe('Editor Use Cases', () => {
   });
 
   describe('Subscriber Notifications', () => {
+    beforeEach(() => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
     it('should notify all subscribers on state change', () => {
       const store = createDocumentStore({ content: '' });
       const listener1 = vi.fn();
