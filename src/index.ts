@@ -79,7 +79,6 @@ export type {
   DocumentStoreWithEvents,
   ReadonlyDocumentStore,
   DocumentReducer,
-  LineIndexStrategy,
 } from './types/index.ts';
 
 // Branded position types

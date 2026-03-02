@@ -23,7 +23,7 @@ import {
   withPieceNode,
   withLineIndexNode,
 } from '../store/core/state.ts';
-import { documentReducer, eagerLineIndex, lazyLineIndex } from '../store/features/reducer.ts';
+import { documentReducer } from '../store/features/reducer.ts';
 import {
   pieceTableInsert,
   pieceTableDelete,
@@ -57,10 +57,8 @@ export const store = {
   createDocumentStoreWithEvents,
   isDocumentStore,
 
-  // Reducer + line index strategies
+  // Reducer
   documentReducer,
-  eagerLineIndex,
-  lazyLineIndex,
 
   // Actions
   DocumentActions,

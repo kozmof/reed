@@ -1351,8 +1351,12 @@ export function mergeDirtyRanges(
 ): NLogNCost<readonly DirtyLineRange[]> {
   if (ranges.length <= 1) return $proveCtx('O(n log n)', $lift('O(n log n)', [...ranges]));
 
-  // Sort by startLine
-  const sorted = [...ranges].sort((a, b) => a.startLine - b.startLine);
+  // Sort by startLine — skip sort if already in order (common case: appended sequentially)
+  let needsSort = false;
+  for (let j = 1; j < ranges.length; j++) {
+    if (ranges[j].startLine < ranges[j - 1].startLine) { needsSort = true; break; }
+  }
+  const sorted = needsSort ? [...ranges].sort((a, b) => a.startLine - b.startLine) : [...ranges];
   const merged: DirtyLineRange[] = [];
   let i = 0;
   let current = sorted[0];
@@ -1961,8 +1965,13 @@ export interface ReconciliationConfig {
   thresholdFn?: (lineCount: number) => number;
 }
 
+// Incremental reconciliation total cost: O(K² + totalDirty) where K ≤ 32 (sentinel cap).
+// Full-walk cost: O(n). Incremental is cheaper when totalDirty + 1024 ≤ n, i.e. when
+// totalDirty ≤ n − 1024 ≈ 0.75n for typical documents. The old formula (n / log₂n) was
+// calibrated for the former O(V×K) reconcileRange; the sweep-line O(K+V) implementation
+// makes incremental viable up to ~75% dirty lines.
 const defaultThresholdFn = (lineCount: number): number =>
-  Math.max(64, Math.floor(lineCount / Math.log2(lineCount + 1)));
+  Math.max(256, Math.floor(lineCount * 0.75));
 
 function toEagerLineIndexState(
   state: LineIndexState,
@@ -1993,7 +2002,7 @@ export function reconcileFull(
     })));
   }
 
-  // Fast path: incremental for small dirty ranges — O(k * log n)
+  // Fast path: incremental reconciliation — O(K² + totalDirty) via sweep-line reconcileRange
   const totalDirty = computeTotalDirtyLines(state.dirtyRanges, state.lineCount);
   const thresholdFn = config?.thresholdFn ?? defaultThresholdFn;
   const threshold = thresholdFn(state.lineCount);
@@ -2055,4 +2064,43 @@ export function reconcileViewport(
 
   // Reconcile only the viewport range
   return reconcileRange(state, clampedStart, clampedEnd, version);
+}
+
+// =============================================================================
+// Debug Utilities
+// =============================================================================
+
+/**
+ * Spot-check that every sampled line in an eager state has a correct documentOffset.
+ *
+ * Compares each sampled node's `documentOffset` against the value computed by
+ * `getLineStartOffset` (an independent O(log n) tree walk that accumulates byte
+ * lengths). Throws an `Error` describing the first mismatch found.
+ *
+ * This does NOT guarantee correctness for un-sampled lines — it is a probabilistic
+ * sanity check for use in tests and debug/dev builds. It is never called by
+ * production code paths.
+ *
+ * @param state  Eager line index state to verify.
+ * @param sampleSize  Number of evenly-distributed lines to check. Defaults to 10.
+ */
+export function assertEagerOffsets(
+  state: LineIndexState<'eager'>,
+  sampleSize = 10
+): void {
+  if (state.root === null || state.lineCount <= 0) return;
+
+  const step = Math.max(1, Math.floor(state.lineCount / sampleSize));
+  for (let i = 0; i < state.lineCount; i += step) {
+    const node = findLineByNumber(state.root, i);
+    if (node === null) continue;
+
+    const expectedOffset = getLineStartOffset(state.root, i);
+    if (node.documentOffset !== expectedOffset) {
+      throw new Error(
+        `assertEagerOffsets: line ${i} has documentOffset=${node.documentOffset} ` +
+        `but expected ${expectedOffset}`
+      );
+    }
+  }
 }

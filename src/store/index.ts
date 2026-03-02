@@ -25,8 +25,8 @@ export {
   withLineIndexNode,
 } from './core/state.ts';
 
-// Reducer and line index strategies
-export { documentReducer, eagerLineIndex, lazyLineIndex } from './features/reducer.ts';
+// Reducer
+export { documentReducer } from './features/reducer.ts';
 
 // Piece table operations
 export {
@@ -75,6 +75,8 @@ export {
   reconcileFull,
   reconcileViewport,
   type ReconciliationConfig,
+  // Debug utilities
+  assertEagerOffsets,
 } from './core/line-index.ts';
 
 // Diff and setValue operations

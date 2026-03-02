@@ -45,14 +45,46 @@ function getLineStartOffset(state: DocumentState, lineNumber: number) {
   return getLineStartOffsetFromRoot(state.lineIndex.root, lineNumber);
 }
 
+/**
+ * Return the byte range of a line. Requires an eager state (all offsets resolved).
+ *
+ * Use this when the caller already holds a `DocumentState<'eager'>` — e.g. the
+ * result of `store.reconcileNow()` or after an undo/redo operation.
+ * Guaranteed non-null at compile time; no runtime check overhead.
+ *
+ * Decision guide:
+ *  - Caller has eager state (post-reconcile, undo/redo) → use `getLineRange`
+ *  - Caller has unknown state and wants a throw on violation → use `getLineRangeChecked`
+ *  - Caller needs best-effort from any state, tolerates null → use `getLineRangePrecise`
+ *  - Caller needs to reconcile on demand → call `store.reconcileNow()` first
+ */
 function getLineRange(state: DocumentState<'eager'>, lineNumber: number) {
   return getLineRangeFromIndex(state.lineIndex, lineNumber);
 }
 
+/**
+ * Return the byte range of a line after asserting the state is eager at runtime.
+ *
+ * Accepts any `DocumentState` but throws if `dirtyRanges` is non-empty or
+ * `rebuildPending` is true (`asEagerLineIndex` invariant). Use when the caller
+ * cannot guarantee eager state at compile time but wants an explicit failure
+ * rather than a silent null.
+ *
+ * @throws if state has unreconciled dirty ranges or a pending rebuild
+ */
 function getLineRangeChecked(state: DocumentState, lineNumber: number) {
   return getLineRangeFromIndex(asEagerLineIndex(state.lineIndex), lineNumber);
 }
 
+/**
+ * Return the byte range of a line without requiring reconciliation.
+ *
+ * Works on any `DocumentState` regardless of mode. Returns `null` for the
+ * `documentOffset` field on lines whose offsets have not yet been computed
+ * (lazy state, post-edit before reconciliation). Use when rendering or
+ * displaying lines where a best-effort result is acceptable and reconciliation
+ * overhead must be avoided on the critical path.
+ */
 function getLineRangePrecise(state: DocumentState, lineNumber: number) {
   return getLineRangePreciseFromIndex(state.lineIndex, lineNumber);
 }
