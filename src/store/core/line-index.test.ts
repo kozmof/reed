@@ -690,3 +690,297 @@ describe('assertEagerOffsets', () => {
       .toThrow(/documentOffset/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Edge-case tests for remapDirtyRangesForInsert / remapDirtyRangesForDelete
+//
+// These helpers are internal (not exported), so all assertions are made via
+// the public lazy-insert / lazy-delete + reconcileFull + assertEagerOffsets
+// pipeline.  The key invariant: after any sequence of lazy edits followed by
+// reconcileFull, assertEagerOffsets must not throw.
+// ---------------------------------------------------------------------------
+
+describe('dirty range remapping — sequential edits', () => {
+  // -------------------------------------------------------------------------
+  // Helper: build a document large enough to always trigger reconcileInPlace
+  // (the slow path), which recomputes all documentOffsets from scratch and
+  // is immune to the fast-path delta-only limitation.
+  // Threshold = max(256, lineCount * 0.75); with N=400 and a dirty range
+  // covering ~380 lines, totalDirty=380 > max(256, 300)=300 → slow path.
+  // -------------------------------------------------------------------------
+  function makeDoc(lines: number) {
+    return createLineIndexState(
+      Array.from({ length: lines }, (_, i) => `L${i}`).join('\n')
+    );
+  }
+  const LARGE = 400; // forces reconcileInPlace
+
+  // -------------------------------------------------------------------------
+  // Insert remapping
+  // -------------------------------------------------------------------------
+
+  it('insert before existing dirty range shifts range up', () => {
+    const base = makeDoc(LARGE);
+    // First lazy insert at line 300 → dirty range [301, MAX, ...]
+    const off1 = getLineStartOffset(base.root, 300);
+    const s1 = lineIndexInsertLazy(base, byteOffset(off1), 'NEW\n', 1);
+    expect(s1.dirtyRanges.some(r => r.startLine <= 301 && r.endLine >= 301)).toBe(true);
+
+    // Second lazy insert at line 50 (well before the existing dirty range)
+    const off2 = getLineStartOffset(s1.root, 50);
+    const s2 = lineIndexInsertLazy(s1, byteOffset(off2), 'INS\n', 2);
+
+    const eager = reconcileFull(s2, 3);
+    expect(() => assertEagerOffsets(eager)).not.toThrow();
+  });
+
+  it('two sequential inserts both before baseline: assertEagerOffsets passes', () => {
+    const base = makeDoc(LARGE);
+    const off1 = getLineStartOffset(base.root, 350);
+    const s1 = lineIndexInsertLazy(base, byteOffset(off1), 'A\nB\n', 1);
+    const off2 = getLineStartOffset(s1.root, 30);
+    const s2 = lineIndexInsertLazy(s1, byteOffset(off2), 'C\nD\nE\n', 2);
+
+    const eager = reconcileFull(s2, 3);
+    expect(() => assertEagerOffsets(eager)).not.toThrow();
+  });
+
+  it('insert entirely after existing dirty range: assertEagerOffsets passes', () => {
+    // Insert at line 10 → dirty range [11, MAX]; then insert at line 380 (after existing dirty range)
+    const base = makeDoc(LARGE);
+    const off1 = getLineStartOffset(base.root, 10);
+    const s1 = lineIndexInsertLazy(base, byteOffset(off1), 'X\n', 1);
+
+    // Insert at line 380 (both inserts overlap in [11, MAX] range)
+    const off2 = getLineStartOffset(s1.root, 380);
+    const s2 = lineIndexInsertLazy(s1, byteOffset(off2), 'Z\n', 2);
+
+    const eager = reconcileFull(s2, 3);
+    expect(() => assertEagerOffsets(eager)).not.toThrow();
+  });
+
+  it('insert at the boundary of an existing dirty range: assertEagerOffsets passes', () => {
+    const base = makeDoc(LARGE);
+    const off1 = getLineStartOffset(base.root, 200);
+    const s1 = lineIndexInsertLazy(base, byteOffset(off1), 'A\n', 1);
+    // dirty range starts at 201; insert exactly at 201 in s1
+    const off2 = getLineStartOffset(s1.root, 201);
+    const s2 = lineIndexInsertLazy(s1, byteOffset(off2), 'B\nC\n', 2);
+
+    const eager = reconcileFull(s2, 3);
+    expect(() => assertEagerOffsets(eager)).not.toThrow();
+  });
+
+  it('three sequential inserts: assertEagerOffsets passes', () => {
+    const base = makeDoc(LARGE);
+    const off1 = getLineStartOffset(base.root, 350);
+    const s1 = lineIndexInsertLazy(base, byteOffset(off1), 'A\n', 1);
+    const off2 = getLineStartOffset(s1.root, 200);
+    const s2 = lineIndexInsertLazy(s1, byteOffset(off2), 'B\nC\n', 2);
+    const off3 = getLineStartOffset(s2.root, 50);
+    const s3 = lineIndexInsertLazy(s2, byteOffset(off3), 'D\n', 3);
+
+    const eager = reconcileFull(s3, 4);
+    expect(() => assertEagerOffsets(eager)).not.toThrow();
+  });
+
+  // -------------------------------------------------------------------------
+  // Delete remapping
+  // -------------------------------------------------------------------------
+
+  it('delete before existing dirty range shifts range down', () => {
+    const base = makeDoc(LARGE);
+    const off1 = getLineStartOffset(base.root, 300);
+    const s1 = lineIndexInsertLazy(base, byteOffset(off1), 'NEW\n', 1);
+
+    // Delete one line at 50 (before dirty range at 301)
+    const delStart = getLineStartOffset(s1.root, 50);
+    const delEnd   = getLineStartOffset(s1.root, 51);
+    const s2 = lineIndexDeleteLazy(s1, byteOffset(delStart), byteOffset(delEnd), 'x\n', 2);
+
+    const eager = reconcileFull(s2, 3);
+    expect(() => assertEagerOffsets(eager)).not.toThrow();
+  });
+
+  it('delete spanning the start of a dirty range: assertEagerOffsets passes', () => {
+    const base = makeDoc(LARGE);
+    const off1 = getLineStartOffset(base.root, 200);
+    const s1 = lineIndexInsertLazy(base, byteOffset(off1), 'A\n', 1);
+    // dirty range starts at 201; delete lines 198..204 (spans the boundary)
+    const delStart = getLineStartOffset(s1.root, 198);
+    const delEnd   = getLineStartOffset(s1.root, 205);
+    // Deleting 7 lines means 7 newlines
+    const s2 = lineIndexDeleteLazy(s1, byteOffset(delStart), byteOffset(delEnd), 'x\n'.repeat(7), 2);
+
+    const eager = reconcileFull(s2, 3);
+    expect(() => assertEagerOffsets(eager)).not.toThrow();
+  });
+
+  it('delete entirely before dirty range: assertEagerOffsets passes', () => {
+    const base = makeDoc(LARGE);
+    const off1 = getLineStartOffset(base.root, 300);
+    const s1 = lineIndexInsertLazy(base, byteOffset(off1), 'NEW\n', 1);
+    // Delete lines 100..102 (entirely before the dirty range)
+    const delStart = getLineStartOffset(s1.root, 100);
+    const delEnd   = getLineStartOffset(s1.root, 103);
+    const s2 = lineIndexDeleteLazy(s1, byteOffset(delStart), byteOffset(delEnd), 'x\n'.repeat(3), 2);
+
+    const eager = reconcileFull(s2, 3);
+    expect(() => assertEagerOffsets(eager)).not.toThrow();
+  });
+
+  // -------------------------------------------------------------------------
+  // Mixed insert/delete sequences
+  // -------------------------------------------------------------------------
+
+  it('insert then delete before dirty range: assertEagerOffsets passes', () => {
+    const base = makeDoc(LARGE);
+    const off1 = getLineStartOffset(base.root, 350);
+    const s1 = lineIndexInsertLazy(base, byteOffset(off1), 'A\n', 1);
+    // Delete at line 100 (before dirty range)
+    const delStart = getLineStartOffset(s1.root, 100);
+    const delEnd   = getLineStartOffset(s1.root, 101);
+    const s2 = lineIndexDeleteLazy(s1, byteOffset(delStart), byteOffset(delEnd), 'x\n', 2);
+
+    const eager = reconcileFull(s2, 3);
+    expect(() => assertEagerOffsets(eager)).not.toThrow();
+  });
+
+  it('delete then insert before dirty range: assertEagerOffsets passes', () => {
+    const base = makeDoc(LARGE);
+    // Delete at line 300 → dirty [300, MAX]
+    const delStart = getLineStartOffset(base.root, 300);
+    const delEnd   = getLineStartOffset(base.root, 301);
+    const s1 = lineIndexDeleteLazy(base, byteOffset(delStart), byteOffset(delEnd), 'x\n', 1);
+    // Insert at line 50 (before dirty range)
+    const off2 = getLineStartOffset(s1.root, 50);
+    const s2 = lineIndexInsertLazy(s1, byteOffset(off2), 'B\nC\n', 2);
+
+    const eager = reconcileFull(s2, 3);
+    expect(() => assertEagerOffsets(eager)).not.toThrow();
+  });
+
+  it('alternating inserts and deletes: assertEagerOffsets passes', () => {
+    const base = makeDoc(LARGE);
+    const off1 = getLineStartOffset(base.root, 350);
+    const s1 = lineIndexInsertLazy(base, byteOffset(off1), 'NEW\n', 1);
+    const del2s = getLineStartOffset(s1.root, 100);
+    const del2e = getLineStartOffset(s1.root, 101);
+    const s2 = lineIndexDeleteLazy(s1, byteOffset(del2s), byteOffset(del2e), 'x\n', 2);
+    const off3 = getLineStartOffset(s2.root, 200);
+    const s3 = lineIndexInsertLazy(s2, byteOffset(off3), 'MID\n', 3);
+    const del4s = getLineStartOffset(s3.root, 50);
+    const del4e = getLineStartOffset(s3.root, 51);
+    const s4 = lineIndexDeleteLazy(s3, byteOffset(del4s), byteOffset(del4e), 'x\n', 4);
+
+    const eager = reconcileFull(s4, 5);
+    expect(() => assertEagerOffsets(eager)).not.toThrow();
+  });
+
+  // -------------------------------------------------------------------------
+  // MAX_SAFE_INTEGER endLine passthrough
+  // Only checks the structural property (endLine preserved), not assertEagerOffsets,
+  // since the structural check is independent of document size.
+  // -------------------------------------------------------------------------
+
+  it('MAX_SAFE_INTEGER endLine stays MAX_SAFE_INTEGER after insert remap', () => {
+    const base = makeDoc(LARGE);
+    const off1 = getLineStartOffset(base.root, 300);
+    const s1 = lineIndexInsertLazy(base, byteOffset(off1), 'A\n', 1);
+    // Every lazy insert creates a [startLine, MAX_SAFE_INTEGER, ...] dirty range
+    expect(s1.dirtyRanges.some(r => r.endLine === Number.MAX_SAFE_INTEGER)).toBe(true);
+
+    // Insert before the dirty range — endLine must remain MAX_SAFE_INTEGER
+    const off2 = getLineStartOffset(s1.root, 50);
+    const s2 = lineIndexInsertLazy(s1, byteOffset(off2), 'B\n', 2);
+    expect(s2.dirtyRanges.some(r => r.endLine === Number.MAX_SAFE_INTEGER)).toBe(true);
+
+    const eager = reconcileFull(s2, 3);
+    expect(() => assertEagerOffsets(eager)).not.toThrow();
+  });
+
+  it('MAX_SAFE_INTEGER endLine stays MAX_SAFE_INTEGER after delete remap', () => {
+    const base = makeDoc(LARGE);
+    const off1 = getLineStartOffset(base.root, 300);
+    const s1 = lineIndexInsertLazy(base, byteOffset(off1), 'A\n', 1);
+    expect(s1.dirtyRanges.some(r => r.endLine === Number.MAX_SAFE_INTEGER)).toBe(true);
+
+    // Delete before the dirty range — endLine must remain MAX_SAFE_INTEGER
+    const delStart = getLineStartOffset(s1.root, 50);
+    const delEnd   = getLineStartOffset(s1.root, 51);
+    const s2 = lineIndexDeleteLazy(s1, byteOffset(delStart), byteOffset(delEnd), 'x\n', 2);
+    expect(s2.dirtyRanges.some(r => r.endLine === Number.MAX_SAFE_INTEGER)).toBe(true);
+
+    const eager = reconcileFull(s2, 3);
+    expect(() => assertEagerOffsets(eager)).not.toThrow();
+  });
+
+  // -------------------------------------------------------------------------
+  // Sentinel passthrough: after Fix 2 in mergeDirtyRanges, a sentinel in the
+  // input produces a sentinel in the output, forcing reconcileInPlace (slow path).
+  // -------------------------------------------------------------------------
+
+  it('sentinel dirty range is preserved as-is through an insert remap', () => {
+    const base = makeDoc(10); // small doc OK; reconcileFull detects sentinel → slow path
+    const manyRanges = Array.from({ length: 40 }, (_, i) =>
+      Object.freeze({ startLine: i * 2, endLine: i * 2, offsetDelta: i % 2 === 0 ? 1 : -1 })
+    );
+    const collapsed = mergeDirtyRanges(manyRanges);
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0].isSentinel).toBe(true);
+
+    const sentinelState = withLineIndexState(base, {
+      dirtyRanges: Object.freeze(collapsed),
+      rebuildPending: true,
+    });
+
+    const off = getLineStartOffset(sentinelState.root, 3);
+    const after = lineIndexInsertLazy(sentinelState, byteOffset(off), 'X\n', 1);
+
+    // After Fix 2: mergeDirtyRanges detects sentinel input → result is a sentinel
+    expect(after.dirtyRanges.some(r => r.isSentinel === true)).toBe(true);
+
+    // reconcileFull detects sentinel → slow path → correct offsets
+    const eager = reconcileFull(after, 2);
+    expect(() => assertEagerOffsets(eager)).not.toThrow();
+  });
+
+  it('sentinel dirty range is preserved as-is through a delete remap', () => {
+    const base = makeDoc(10);
+    const manyRanges = Array.from({ length: 40 }, (_, i) =>
+      Object.freeze({ startLine: i * 2, endLine: i * 2, offsetDelta: i % 2 === 0 ? 1 : -1 })
+    );
+    const collapsed = mergeDirtyRanges(manyRanges);
+    const sentinelState = withLineIndexState(base, {
+      dirtyRanges: Object.freeze(collapsed),
+      rebuildPending: true,
+    });
+
+    const delStart = getLineStartOffset(sentinelState.root, 2);
+    const delEnd   = getLineStartOffset(sentinelState.root, 3);
+    const after = lineIndexDeleteLazy(sentinelState, byteOffset(delStart), byteOffset(delEnd), 'x\n', 1);
+
+    // Sentinel must survive the delete remap + merge
+    expect(after.dirtyRanges.some(r => r.isSentinel === true)).toBe(true);
+
+    const eager = reconcileFull(after, 2);
+    expect(() => assertEagerOffsets(eager)).not.toThrow();
+  });
+
+  // -------------------------------------------------------------------------
+  // No-op edge cases: empty dirty ranges, insertedCount=0
+  // -------------------------------------------------------------------------
+
+  it('dirty ranges stay correct when inserting into a clean eager state', () => {
+    const base = makeDoc(LARGE);
+    // Reconcile immediately — no dirty ranges
+    const eager0 = reconcileFull(lineIndexInsertLazy(base, byteOffset(0), 'seed\n', 0), 0);
+    expect(eager0.dirtyRanges.length).toBe(0);
+
+    // Insert into the clean state → only this insert's dirty range
+    const off = getLineStartOffset(eager0.root, 100);
+    const s1 = lineIndexInsertLazy(eager0, byteOffset(off), 'W\n', 1);
+    const eager1 = reconcileFull(s1, 2);
+    expect(() => assertEagerOffsets(eager1)).not.toThrow();
+  });
+});

@@ -1351,6 +1351,23 @@ export function mergeDirtyRanges(
 ): NLogNCost<readonly DirtyLineRange[]> {
   if (ranges.length <= 1) return $proveCtx('O(n log n)', $lift('O(n log n)', [...ranges]));
 
+  // If any range is a sentinel (full-rebuild marker), the merged result must also be a sentinel.
+  // Sentinel flag must never be lost during decomposition.
+  if (ranges.some(r => r.isSentinel === true)) {
+    return $proveCtx(
+      'O(n log n)',
+      $lift<'O(n log n)', readonly DirtyLineRange[]>(
+        'O(n log n)',
+        [Object.freeze({
+          startLine: 0,
+          endLine: Number.MAX_SAFE_INTEGER,
+          offsetDelta: 0,
+          isSentinel: true as const,
+        })]
+      )
+    );
+  }
+
   // Sort by startLine — skip sort if already in order (common case: appended sequentially)
   let needsSort = false;
   for (let j = 1; j < ranges.length; j++) {
@@ -1366,8 +1383,8 @@ export function mergeDirtyRanges(
     i++;
     const next = sorted[i];
     if (next.startLine <= current.endLine + 1) {
-      if (next.offsetDelta === current.offsetDelta) {
-        // Same delta — extend current to cover both
+      if (next.offsetDelta === current.offsetDelta && next.startLine > current.endLine) {
+        // Adjacent (non-overlapping) same delta — extend current to cover both
         current = Object.freeze({
           startLine: current.startLine,
           endLine: Math.max(current.endLine, next.endLine),
@@ -1498,6 +1515,83 @@ function createDirtyRange(
   });
 }
 
+/**
+ * Remap dirty range line numbers after inserting `insertedCount` new lines at `insertionLine+1`.
+ * Lines 0..insertionLine keep their indices; lines insertionLine+1..N shift up by insertedCount.
+ * Ranges that span the insertion point are split into a before-part and a shifted after-part.
+ */
+function remapDirtyRangesForInsert(
+  ranges: readonly DirtyLineRange[],
+  insertionLine: number,
+  insertedCount: number
+): readonly DirtyLineRange[] {
+  if (ranges.length === 0 || insertedCount === 0) return ranges;
+  const result: DirtyLineRange[] = [];
+  for (const range of ranges) {
+    if (range.isSentinel) { result.push(range); continue; }
+    const { startLine: s, endLine: e, offsetDelta: d } = range;
+    if (e < insertionLine + 1) {
+      // Entirely at or before insertionLine — indices unchanged
+      result.push(range);
+    } else if (s > insertionLine) {
+      // Entirely after insertionLine — shift both bounds up
+      result.push(Object.freeze({
+        startLine: s + insertedCount,
+        endLine: e === Number.MAX_SAFE_INTEGER ? e : e + insertedCount,
+        offsetDelta: d,
+      }));
+    } else {
+      // Spans the insertion: s <= insertionLine < insertionLine+1 <= e
+      // Before part: s..insertionLine — indices unchanged
+      result.push(Object.freeze({ startLine: s, endLine: insertionLine, offsetDelta: d }));
+      // After part: old insertionLine+1..e → new insertionLine+insertedCount+1..e+insertedCount
+      result.push(Object.freeze({
+        startLine: insertionLine + 1 + insertedCount,
+        endLine: e === Number.MAX_SAFE_INTEGER ? e : e + insertedCount,
+        offsetDelta: d,
+      }));
+    }
+  }
+  return result;
+}
+
+/**
+ * Remap dirty range line numbers after deleting lines deleteZoneStart..deleteZoneEnd (inclusive).
+ * Lines 0..deleteZoneStart-1 keep their indices; lines in the deleted zone are dropped;
+ * lines deleteZoneEnd+1..N shift down by (deleteZoneEnd - deleteZoneStart + 1).
+ */
+function remapDirtyRangesForDelete(
+  ranges: readonly DirtyLineRange[],
+  deleteZoneStart: number,
+  deleteZoneEnd: number,
+): readonly DirtyLineRange[] {
+  const deletedCount = deleteZoneEnd - deleteZoneStart + 1;
+  if (ranges.length === 0 || deletedCount <= 0) return ranges;
+  const result: DirtyLineRange[] = [];
+  for (const range of ranges) {
+    if (range.isSentinel) { result.push(range); continue; }
+    const { startLine: s, endLine: e, offsetDelta: d } = range;
+    // Before zone: keep s..min(e, deleteZoneStart-1) unchanged
+    if (s < deleteZoneStart) {
+      result.push(Object.freeze({
+        startLine: s,
+        endLine: Math.min(e, deleteZoneStart - 1),
+        offsetDelta: d,
+      }));
+    }
+    // After zone: shift max(s, deleteZoneEnd+1)..e down by deletedCount
+    const postStart = Math.max(s, deleteZoneEnd + 1);
+    if (postStart <= e) {
+      result.push(Object.freeze({
+        startLine: postStart - deletedCount,
+        endLine: e === Number.MAX_SAFE_INTEGER ? e : e - deletedCount,
+        offsetDelta: d,
+      }));
+    }
+  }
+  return result;
+}
+
 // =============================================================================
 // Lazy Line Index Operations
 // =============================================================================
@@ -1614,6 +1708,9 @@ function insertLinesAtPositionLazy(
     charsBefore
   );
 
+  // Remap existing dirty ranges to new tree line numbering before merging
+  const remappedRanges = remapDirtyRangesForInsert(state.dirtyRanges, location.lineNumber, newlinePositions.length);
+
   // Mark all lines after the insertion as dirty (they have stale offsets)
   const newDirtyRange = createDirtyRange(
     location.lineNumber + 1, // First inserted line and all after
@@ -1621,7 +1718,7 @@ function insertLinesAtPositionLazy(
     byteLength // Offset delta
   );
 
-  const mergedRanges = mergeDirtyRanges([...state.dirtyRanges, newDirtyRange]);
+  const mergedRanges = mergeDirtyRanges([...remappedRanges, newDirtyRange]);
 
   return withLineIndexState(state, {
     root: result.root,
@@ -1724,6 +1821,9 @@ function deleteLineRangeLazy(
   // Future optimization: track deleted ranges for lazy reconciliation
   const newState = rebuildWithDeletedRange(state.root!, startLine, endLine, mergedLength, mergedCharLength);
 
+  // Remap existing dirty ranges to new tree line numbering before merging
+  const remappedRanges = remapDirtyRangesForDelete(state.dirtyRanges, startLine + 1, endLine);
+
   // Mark lines after deletion as dirty
   const newDirtyRange = createDirtyRange(
     startLine + 1,
@@ -1731,7 +1831,7 @@ function deleteLineRangeLazy(
     -deleteLength
   );
 
-  const mergedRanges = mergeDirtyRanges([...state.dirtyRanges, newDirtyRange]);
+  const mergedRanges = mergeDirtyRanges([...remappedRanges, newDirtyRange]);
 
   return withLineIndexState(state, {
     root: newState.root,
