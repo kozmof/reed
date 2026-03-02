@@ -134,8 +134,9 @@ export interface DirtyLineRange {
   readonly endLine: number;
   /** Byte delta to apply to lines in this range */
   readonly offsetDelta: number;
-  /** Version when this dirty range was created */
-  readonly createdAtVersion: number;
+  /** True only on the synthetic full-document sentinel produced by mergeDirtyRanges
+   *  when the range count exceeds 32. Distinguishes it from a legitimate net-zero edit. */
+  readonly isSentinel?: true;
 }
 
 /** Evaluation mode for the line index: eager has no dirty ranges, lazy may. */

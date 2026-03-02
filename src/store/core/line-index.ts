@@ -1354,18 +1354,20 @@ export function mergeDirtyRanges(
   // Sort by startLine
   const sorted = [...ranges].sort((a, b) => a.startLine - b.startLine);
   const merged: DirtyLineRange[] = [];
+  let i = 0;
   let current = sorted[0];
+  let exhausted = false;
 
-  for (let i = 1; i < sorted.length; i++) {
+  while (i < sorted.length - 1) {
+    i++;
     const next = sorted[i];
     if (next.startLine <= current.endLine + 1) {
       if (next.offsetDelta === current.offsetDelta) {
-        // Same delta — merge as before
+        // Same delta — extend current to cover both
         current = Object.freeze({
           startLine: current.startLine,
           endLine: Math.max(current.endLine, next.endLine),
           offsetDelta: current.offsetDelta,
-          createdAtVersion: Math.max(current.createdAtVersion, next.createdAtVersion),
         });
       } else if (next.startLine === current.startLine) {
         // Same start, different delta — sum deltas (equivalent to applying both)
@@ -1373,22 +1375,62 @@ export function mergeDirtyRanges(
           startLine: current.startLine,
           endLine: Math.max(current.endLine, next.endLine),
           offsetDelta: current.offsetDelta + next.offsetDelta,
-          createdAtVersion: Math.max(current.createdAtVersion, next.createdAtVersion),
         });
       } else {
-        merged.push(current);
-        current = next;
+        // True overlap: s1 < s2 <= e1, different deltas.
+        // Decompose into: [s1, s2-1, d1], [s2, min(e1,e2), d1+d2], tail.
+        merged.push(Object.freeze({
+          startLine: current.startLine,
+          endLine: next.startLine - 1,
+          offsetDelta: current.offsetDelta,
+        }));
+        const combinedDelta = current.offsetDelta + next.offsetDelta;
+        if (current.endLine < next.endLine) {
+          // current ends first — overlap ends at current.endLine
+          merged.push(Object.freeze({
+            startLine: next.startLine,
+            endLine: current.endLine,
+            offsetDelta: combinedDelta,
+          }));
+          current = Object.freeze({
+            startLine: current.endLine + 1,
+            endLine: next.endLine,
+            offsetDelta: next.offsetDelta,
+          });
+        } else if (current.endLine > next.endLine) {
+          // next ends first — overlap ends at next.endLine
+          merged.push(Object.freeze({
+            startLine: next.startLine,
+            endLine: next.endLine,
+            offsetDelta: combinedDelta,
+          }));
+          current = Object.freeze({
+            startLine: next.endLine + 1,
+            endLine: current.endLine,
+            offsetDelta: current.offsetDelta,
+          });
+        } else {
+          // e1 === e2: both fully consumed; no tail remains
+          merged.push(Object.freeze({
+            startLine: next.startLine,
+            endLine: current.endLine,
+            offsetDelta: combinedDelta,
+          }));
+          i++;
+          if (i >= sorted.length) { exhausted = true; break; }
+          current = sorted[i];
+        }
       }
     } else {
+      // No overlap — finalize current, start fresh
       merged.push(current);
       current = next;
     }
   }
-  merged.push(current);
+  if (!exhausted) merged.push(current);
 
   // Safety cap: if too many ranges accumulated, collapse to full-document rebuild
   if (merged.length > 32) {
-    const maxVersion = merged.reduce((v, r) => Math.max(v, r.createdAtVersion), 0);
     return $proveCtx(
       'O(n log n)',
       $lift<'O(n log n)', readonly DirtyLineRange[]>(
@@ -1397,7 +1439,7 @@ export function mergeDirtyRanges(
           startLine: 0,
           endLine: Number.MAX_SAFE_INTEGER,
           offsetDelta: 0,
-          createdAtVersion: maxVersion,
+          isSentinel: true as const,
         })]
       )
     );
@@ -1443,14 +1485,12 @@ export function getOffsetDeltaForLine(
 function createDirtyRange(
   startLine: number,
   endLine: number,
-  offsetDelta: number,
-  version: number
+  offsetDelta: number
 ): DirtyLineRange {
   return Object.freeze({
     startLine,
     endLine,
     offsetDelta,
-    createdAtVersion: version,
   });
 }
 
@@ -1574,8 +1614,7 @@ function insertLinesAtPositionLazy(
   const newDirtyRange = createDirtyRange(
     location.lineNumber + 1, // First inserted line and all after
     Number.MAX_SAFE_INTEGER, // To end of document
-    byteLength, // Offset delta
-    currentVersion
+    byteLength // Offset delta
   );
 
   const mergedRanges = mergeDirtyRanges([...state.dirtyRanges, newDirtyRange]);
@@ -1685,8 +1724,7 @@ function deleteLineRangeLazy(
   const newDirtyRange = createDirtyRange(
     startLine + 1,
     Number.MAX_SAFE_INTEGER,
-    -deleteLength,
-    currentVersion
+    -deleteLength
   );
 
   const mergedRanges = mergeDirtyRanges([...state.dirtyRanges, newDirtyRange]);
@@ -1769,12 +1807,31 @@ export function reconcileRange(
   const clampedEnd = Math.min(endLine, state.lineCount - 1);
   if (clampedStart > clampedEnd) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
 
-  // For each line in range, compute correct offset and update
+  // Build sweep events from sorted, non-overlapping dirty ranges — O(K)
+  // Each range contributes a +delta event at its effective start and
+  // a -delta event at its effective end+1 within [clampedStart, clampedEnd].
+  const events: Array<{ line: number; delta: number }> = [];
+  for (const range of state.dirtyRanges) {
+    const effectiveStart = Math.max(range.startLine, clampedStart);
+    const effectiveEnd = Math.min(range.endLine, clampedEnd);
+    if (effectiveStart > effectiveEnd) continue;
+    events.push({ line: effectiveStart, delta: range.offsetDelta });
+    if (effectiveEnd < clampedEnd) {
+      events.push({ line: effectiveEnd + 1, delta: -range.offsetDelta });
+    }
+  }
+
+  // Sweep [clampedStart, clampedEnd] with a running cumulative delta — O(K + V)
   let newRoot = state.root!;
+  let cumDelta = 0;
+  let evtIdx = 0;
   for (let line = clampedStart; line <= clampedEnd; line++) {
-    const delta = getOffsetDeltaForLine(state.dirtyRanges, line);
-    if (delta !== 0) {
-      newRoot = updateLineOffsetByNumber(newRoot, line, delta);
+    while (evtIdx < events.length && events[evtIdx].line === line) {
+      cumDelta += events[evtIdx].delta;
+      evtIdx++;
+    }
+    if (cumDelta !== 0) {
+      newRoot = updateLineOffsetByNumber(newRoot, line, cumDelta);
     }
   }
 
@@ -1940,11 +1997,7 @@ export function reconcileFull(
   const totalDirty = computeTotalDirtyLines(state.dirtyRanges, state.lineCount);
   const thresholdFn = config?.thresholdFn ?? defaultThresholdFn;
   const threshold = thresholdFn(state.lineCount);
-  const hasCollapsedCapSentinel = state.dirtyRanges.some(range =>
-    range.startLine === 0 &&
-    range.endLine === Number.MAX_SAFE_INTEGER &&
-    range.offsetDelta === 0
-  );
+  const hasCollapsedCapSentinel = state.dirtyRanges.some(range => range.isSentinel === true);
 
   // mergeDirtyRanges may collapse many heterogeneous ranges into a single
   // full-document sentinel with offsetDelta=0. Delta detail is lost there,

@@ -245,16 +245,16 @@ export function createDocumentStore(
       reconciliation.isReconciling = true;
 
       try {
-        const nextVersion = state.version + 1;
-        const newLineIndex = reconcileFull(state.lineIndex, nextVersion);
+        // Pass the current version (not version+1): reconciliation is
+        // version-neutral and does not change visible content.
+        const newLineIndex = reconcileFull(state.lineIndex, state.version);
         if (newLineIndex !== state.lineIndex) {
           setState(Object.freeze({
             ...state,
             lineIndex: newLineIndex,
-            version: nextVersion,
+            // state.version is intentionally unchanged — background reconciliation
+            // is invisible to listeners and should not produce a version bump.
           }));
-          // Don't notify listeners - this is a background optimization
-          // that doesn't change visible content
         }
       } finally {
         reconciliation.isReconciling = false;
@@ -266,8 +266,9 @@ export function createDocumentStore(
         timeout: 1000, // Max 1 second delay
       });
     } else {
-      // Fallback to setTimeout for environments without requestIdleCallback
-      reconciliation.idleCallbackId = setTimeout(callback, 16) as unknown as number;
+      // Fallback to setTimeout for environments without requestIdleCallback.
+      // 200ms avoids the 16ms frame-rate storm in high-throughput Node.js scenarios.
+      reconciliation.idleCallbackId = setTimeout(callback, 200) as unknown as number;
     }
   }
 

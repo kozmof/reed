@@ -488,10 +488,48 @@ describe('Reconciliation version tracking (P6 fix)', () => {
 });
 
 describe('mergeDirtyRanges improvements', () => {
+  it('should decompose overlapping ranges with different startLine and delta (next contained in current)', () => {
+    // current=[0,10,d1=5], next=[4,7,d2=-3]  → [0,3,5], [4,7,2], [8,10,5]
+    const ranges = [
+      Object.freeze({ startLine: 0, endLine: 10, offsetDelta: 5 }),
+      Object.freeze({ startLine: 4, endLine: 7, offsetDelta: -3 }),
+    ];
+    const merged = mergeDirtyRanges(ranges);
+    expect(merged).toHaveLength(3);
+    expect(merged[0]).toMatchObject({ startLine: 0, endLine: 3, offsetDelta: 5 });
+    expect(merged[1]).toMatchObject({ startLine: 4, endLine: 7, offsetDelta: 2 });
+    expect(merged[2]).toMatchObject({ startLine: 8, endLine: 10, offsetDelta: 5 });
+  });
+
+  it('should decompose overlapping ranges with different startLine and delta (current ends first)', () => {
+    // current=[0,6,d1=4], next=[3,10,d2=-2]  → [0,2,4], [3,6,2], [7,10,-2]
+    const ranges = [
+      Object.freeze({ startLine: 0, endLine: 6, offsetDelta: 4 }),
+      Object.freeze({ startLine: 3, endLine: 10, offsetDelta: -2 }),
+    ];
+    const merged = mergeDirtyRanges(ranges);
+    expect(merged).toHaveLength(3);
+    expect(merged[0]).toMatchObject({ startLine: 0, endLine: 2, offsetDelta: 4 });
+    expect(merged[1]).toMatchObject({ startLine: 3, endLine: 6, offsetDelta: 2 });
+    expect(merged[2]).toMatchObject({ startLine: 7, endLine: 10, offsetDelta: -2 });
+  });
+
+  it('should decompose overlapping ranges with different startLine and delta (same end)', () => {
+    // current=[0,8,d1=3], next=[5,8,d2=-1]  → [0,4,3], [5,8,2]
+    const ranges = [
+      Object.freeze({ startLine: 0, endLine: 8, offsetDelta: 3 }),
+      Object.freeze({ startLine: 5, endLine: 8, offsetDelta: -1 }),
+    ];
+    const merged = mergeDirtyRanges(ranges);
+    expect(merged).toHaveLength(2);
+    expect(merged[0]).toMatchObject({ startLine: 0, endLine: 4, offsetDelta: 3 });
+    expect(merged[1]).toMatchObject({ startLine: 5, endLine: 8, offsetDelta: 2 });
+  });
+
   it('should merge same-start ranges with different deltas by summing', () => {
     const ranges = [
-      Object.freeze({ startLine: 5, endLine: 10 , offsetDelta: 3, createdAtVersion: 1 }),
-      Object.freeze({ startLine: 5, endLine: 12 , offsetDelta: -2, createdAtVersion: 2 }),
+      Object.freeze({ startLine: 5, endLine: 10 , offsetDelta: 3 }),
+      Object.freeze({ startLine: 5, endLine: 12 , offsetDelta: -2 }),
     ];
 
     const merged = mergeDirtyRanges(ranges);
@@ -499,7 +537,6 @@ describe('mergeDirtyRanges improvements', () => {
     expect(merged[0].startLine).toBe(5);
     expect(merged[0].endLine).toBe(12);
     expect(merged[0].offsetDelta).toBe(1); // 3 + (-2)
-    expect(merged[0].createdAtVersion).toBe(2);
   });
 
   it('should collapse to single range when exceeding 32 ranges', () => {
@@ -509,7 +546,6 @@ describe('mergeDirtyRanges improvements', () => {
         startLine: i * 10,
         endLine: (i * 10 + 5) ,
         offsetDelta: i % 2 === 0 ? 1 : -1,
-        createdAtVersion: i,
       }));
     }
 
@@ -518,13 +554,12 @@ describe('mergeDirtyRanges improvements', () => {
     expect(merged[0].startLine).toBe(0);
     expect(merged[0].endLine).toBe(Number.MAX_SAFE_INTEGER);
     expect(merged[0].offsetDelta).toBe(0);
-    expect(merged[0].createdAtVersion).toBe(39);
   });
 
   it('should still merge adjacent same-delta ranges normally', () => {
     const ranges = [
-      Object.freeze({ startLine: 0, endLine: 5 , offsetDelta: 2, createdAtVersion: 1 }),
-      Object.freeze({ startLine: 6, endLine: 10 , offsetDelta: 2, createdAtVersion: 2 }),
+      Object.freeze({ startLine: 0, endLine: 5 , offsetDelta: 2 }),
+      Object.freeze({ startLine: 6, endLine: 10 , offsetDelta: 2 }),
     ];
 
     const merged = mergeDirtyRanges(ranges);
@@ -544,7 +579,6 @@ describe('mergeDirtyRanges improvements', () => {
         startLine: i * 2,
         endLine: i * 2,
         offsetDelta: i % 2 === 0 ? 1 : -1,
-        createdAtVersion: i + 1,
       }));
     }
     const collapsed = mergeDirtyRanges(manyRanges);

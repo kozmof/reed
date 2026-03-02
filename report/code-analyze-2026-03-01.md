@@ -1,6 +1,7 @@
 # Code Analysis: Reconciliation Implementations
 
 **Date:** 2026-03-01
+**Revised:** 2026-03-02 — P1, P2, P3, P6, Impl1, Impl4 fixed
 **Scope:** Lazy/eager line index reconciliation system
 
 ---
@@ -33,7 +34,7 @@ LineIndexState<M> {
   lastReconciledVersion: number
 }
 
-DirtyLineRange { startLine, endLine, offsetDelta, createdAtVersion }
+DirtyLineRange { startLine, endLine, offsetDelta, isSentinel? }
 
 DocumentState<M> { lineIndex: LineIndexState<M>, ... }
 ```
@@ -100,25 +101,32 @@ shouldRebuildLineIndexForDelete → true
 
 **Remote collaboration** (`APPLY_REMOTE`) uses `lazyLineIndex` and does not push to history, but follows the same dirty-range tracking as local edits.
 
-**Background idle reconciliation** uses `requestIdleCallback` with a 1-second timeout, or `setTimeout(16ms)` fallback. It deliberately does **not** notify listeners — reconciliation is an invisible internal optimization.
+**Background idle reconciliation** uses `requestIdleCallback` with a 1-second timeout, or `setTimeout(200ms)` fallback. It deliberately does **not** notify listeners and does not bump `state.version` — reconciliation is an invisible internal optimization.
 
 ---
 
 ## 5. Pitfalls
 
-**P1 — `mergeDirtyRanges` merges overlapping ranges with unequal deltas incorrectly when `startLine` values differ.**
+**P1 — ~~`mergeDirtyRanges` merges overlapping ranges with unequal deltas incorrectly when `startLine` values differ.~~ (Fixed 2026-03-02)**
 
-When two ranges overlap (`next.startLine > current.startLine`) with different `offsetDelta`, the code pushes `current` and sets `current = next`. The overlap region from `next.startLine` to `current.endLine` then has only `next.offsetDelta` applied instead of the combined delta. Lines in that overlap will be under-corrected during reconciliation.
-(`src/store/core/line-index.ts:1378–1385`)
+~~When two ranges overlap (`next.startLine > current.startLine`) with different `offsetDelta`, the code pushes `current` and sets `current = next`. The overlap region from `next.startLine` to `current.endLine` then has only `next.offsetDelta` applied instead of the combined delta. Lines in that overlap will be under-corrected during reconciliation.~~
 
-**P2 — The collapsed-cap sentinel `{startLine:0, endLine:MAX_SAFE_INT, delta:0}` is indistinguishable from a legitimate full-document zero-delta range.**
+The merge loop was rewritten as a `while` loop. Overlapping ranges with `s1 < s2` and different deltas are now decomposed into up to three non-overlapping sub-ranges: `[s1, s2-1, d1]`, `[s2, min(e1,e2), d1+d2]`, and the tail (if any).
+(`src/store/core/line-index.ts`)
 
-`reconcileFull` detects it by shape (`line-index.ts:1943–1947`). A net-zero edit sequence (insert then delete same range) could naturally produce the same shape, causing the slow path (`reconcileInPlace`) to always be selected even when incremental would be correct.
+**P2 — ~~The collapsed-cap sentinel `{startLine:0, endLine:MAX_SAFE_INT, delta:0}` is indistinguishable from a legitimate full-document zero-delta range.~~ (Fixed 2026-03-02)**
 
-**P3 — `DirtyLineRange.createdAtVersion` is tracked but never read in any reconciliation logic.**
+~~`reconcileFull` detects it by shape (`line-index.ts:1943–1947`). A net-zero edit sequence (insert then delete same range) could naturally produce the same shape, causing the slow path (`reconcileInPlace`) to always be selected even when incremental would be correct.~~
 
-The field is created, merged (taking `max`), and stored in state, but no code path uses it to skip or prioritize ranges. It is effectively dead data in the current implementation.
-(`src/store/core/line-index.ts:1443–1455`)
+`DirtyLineRange` now carries an optional `isSentinel?: true` field. `mergeDirtyRanges` sets it on the cap sentinel; `reconcileFull` uses `range.isSentinel === true` instead of shape-matching.
+(`src/types/state.ts`, `src/store/core/line-index.ts`)
+
+**P3 — ~~`DirtyLineRange.createdAtVersion` is tracked but never read in any reconciliation logic.~~ (Fixed 2026-03-02)**
+
+~~The field is created, merged (taking `max`), and stored in state, but no code path uses it to skip or prioritize ranges. It is effectively dead data in the current implementation.~~
+
+`createdAtVersion` was removed from `DirtyLineRange` and all creation/merge sites. See also T2.
+(`src/types/state.ts`, `src/store/core/line-index.ts`)
 
 **P4 — `asEagerLineIndex` narrows via a structural check, not an offset correctness check.**
 
@@ -130,10 +138,12 @@ If `reconcileInPlace` had a bug in offset accumulation, `toEagerLineIndexState` 
 For multi-line deletions, the structural tree rebuild cannot be deferred because the resulting tree shape changes. This means lazy delete with newlines has the same O(n) cost as eager delete, negating the lazy optimization for this case.
 (`src/store/core/line-index.ts:1682`)
 
-**P6 — `scheduleReconciliation`'s `setTimeout(16ms)` fallback runs at near-frame-rate frequency in non-browser environments.**
+**P6 — ~~`scheduleReconciliation`'s `setTimeout(16ms)` fallback runs at near-frame-rate frequency in non-browser environments.~~ (Fixed 2026-03-02)**
 
-In Node.js (no `requestIdleCallback`), every edit with newlines schedules a 16ms timeout. For high-throughput batch edits, this creates a continuous storm of 16ms-interval reconciliations regardless of system load.
-(`src/store/features/store.ts:270`)
+~~In Node.js (no `requestIdleCallback`), every edit with newlines schedules a 16ms timeout. For high-throughput batch edits, this creates a continuous storm of 16ms-interval reconciliations regardless of system load.~~
+
+Fallback delay changed from 16ms to 200ms.
+(`src/store/features/store.ts`)
 
 ---
 
@@ -159,9 +169,11 @@ It scales by `lineCount / log2(lineCount)` — roughly O(n/log n) dirty lines tr
 
 All tree operations must carry `<M extends EvaluationMode>`. Since `M` only affects `documentOffset` nullability, keeping nodes unparameterized and parameterizing only `LineIndexState<M>` would simplify type signatures significantly.
 
-**T2: `DirtyLineRange.createdAtVersion` should either be used or removed.**
+**T2: ~~`DirtyLineRange.createdAtVersion` should either be used or removed.~~ (Fixed 2026-03-02 — see P3)**
 
-If intended for future use (e.g., per-range reconciliation priority), this should be documented with the intended semantic. If unused, it should be removed to avoid confusion.
+~~If intended for future use (e.g., per-range reconciliation priority), this should be documented with the intended semantic. If unused, it should be removed to avoid confusion.~~
+
+Field removed. `DirtyLineRange` now carries `isSentinel?: true` instead (see P2).
 
 **T3: `getLineRange` and `getLineRangeChecked` expose the same semantic but with different type contracts.**
 
@@ -171,9 +183,12 @@ If intended for future use (e.g., per-range reconciliation priority), this shoul
 
 ## 8. Improvement Points — Implementations
 
-**Impl1: `reconcileRange` applies `getOffsetDeltaForLine` (O(k)) per line in a loop of `(endLine - startLine)` lines.**
+**Impl1: ~~`reconcileRange` applies `getOffsetDeltaForLine` (O(k)) per line in a loop of `(endLine - startLine)` lines.~~ (Fixed 2026-03-02)**
 
-For a viewport of V lines with K dirty ranges, this is O(V × K). A single pass over dirty ranges to build a prefix-sum array, then O(1) delta lookup per line, would reduce this to O(K + V).
+~~For a viewport of V lines with K dirty ranges, this is O(V × K). A single pass over dirty ranges to build a prefix-sum array, then O(1) delta lookup per line, would reduce this to O(K + V).~~
+
+`reconcileRange` now builds sweep-line events from the sorted dirty ranges (O(K)), then sweeps `[clampedStart, clampedEnd]` with a running cumulative delta (O(K + V) total). `getOffsetDeltaForLine` is retained as a public utility but no longer called in the hot path.
+(`src/store/core/line-index.ts`)
 
 **Impl2: `mergeDirtyRanges` sorts on every call (O(k log k)), even when ranges are appended in order.**
 
@@ -183,9 +198,12 @@ Since `createDirtyRange` always uses `Number.MAX_SAFE_INTEGER` as `endLine` and 
 
 The short-circuit `node.documentOffset !== correctOffset` avoids node allocation but not subtree traversal. A subtree-level correctness flag (analogous to `rebuildPending` at the state level) would allow pruning entire subtrees known to be clean.
 
-**Impl4: `reconcileNow` and the background `scheduleReconciliation` callback both increment `state.version + 1`.**
+**Impl4: ~~`reconcileNow` and the background `scheduleReconciliation` callback both increment `state.version + 1`.~~ (Partially fixed 2026-03-02)**
 
-Both produce a version bump for what is semantically the same state mutation (reconciling dirty ranges). Callers comparing versions would see unexpected increments. Reconciliation could be treated as version-neutral since it does not change visible content.
+~~Both produce a version bump for what is semantically the same state mutation (reconciling dirty ranges). Callers comparing versions would see unexpected increments. Reconciliation could be treated as version-neutral since it does not change visible content.~~
+
+The background `scheduleReconciliation` callback now passes `state.version` (not `state.version + 1`) to `reconcileFull` and omits the version increment from `setState`. `reconcileNow` continues to increment the version — it is a user-visible synchronous operation that undo/redo depends on.
+(`src/store/features/store.ts`)
 
 ---
 
