@@ -194,21 +194,20 @@ export function createDocumentStore(
         dispatch(action);
       }
 
-      // Commit transaction
-      dispatch({ type: 'TRANSACTION_COMMIT' });
+      // Mark success before COMMIT: if TRANSACTION_COMMIT itself throws (e.g.
+      // assertInvariant detects a depth/snapshotStack drift), the finally block
+      // must NOT attempt TRANSACTION_ROLLBACK on a half-committed transaction
+      // (depth already decremented, snapshot already popped).  Let the error
+      // propagate cleanly instead.
       success = true;
+      dispatch({ type: 'TRANSACTION_COMMIT' });
     } finally {
       // Ensure transaction state is always cleaned up, even if rollback fails
       if (!success) {
         try {
           dispatch({ type: 'TRANSACTION_ROLLBACK' });
         } catch {
-          // If rollback fails, reset transaction state to prevent corruption
-          const earliest = transaction.emergencyReset();
-          if (earliest) {
-            setState(earliest);
-          }
-          notifyListeners();
+          emergencyReset();
         }
       }
     }
@@ -460,8 +459,10 @@ export function createDocumentStoreWithEvents(
       for (const action of actions) {
         dispatch(action);
       }
-      baseStore.dispatch({ type: 'TRANSACTION_COMMIT' });
+      // Same rationale as base store batch: set success before COMMIT so a
+      // COMMIT-throw does not trigger a rollback on half-committed state.
       success = true;
+      baseStore.dispatch({ type: 'TRANSACTION_COMMIT' });
     } finally {
       if (!success) {
         try {
@@ -529,8 +530,8 @@ export function withTransaction<T>(
   let success = false;
   try {
     const result = fn(store);
-    store.dispatch({ type: 'TRANSACTION_COMMIT' });
     success = true;
+    store.dispatch({ type: 'TRANSACTION_COMMIT' });
     return result;
   } finally {
     if (!success) {

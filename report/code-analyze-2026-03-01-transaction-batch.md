@@ -1,7 +1,7 @@
 # Code Analysis: Transaction and Batch Implementations
 
 **Date:** 2026-03-01
-**Updated:** 2026-03-02 — 12 issues resolved (P1, P2/D2, P4, P5\*, T1, T3, Impl1, D1, D3, D4, Impl3, Impl5)
+**Updated:** 2026-03-02 — 14 issues resolved (P1, P2/D2, P4, P5\*, T1, T3, Impl1, D1, D3, D4, Impl3, Impl5, Impl2, Impl4)
 **Scope:** Transaction management, batch dispatch, and their integration with the store and event system
 
 ---
@@ -206,16 +206,16 @@ Actions created by `DocumentActions.*` are `Object.freeze`d, so in practice they
 **~~Impl1~~ — ~~`createDocumentStore.batch` has a subtle double-scheduling opportunity.~~**
 **Fixed (2026-03-02).** The redundant `scheduleReconciliation` check after the `finally` block has been removed. Reconciliation is scheduled once inside `dispatch(TRANSACTION_COMMIT)` when `rebuildPending` is true; the post-batch repeat was dead code.
 
-**Impl2: `createDocumentStoreWithEvents.batch` does not pass `success = true` within a `try/finally` — it uses a try/finally with a separate flag, matching the base store, but the `TRANSACTION_COMMIT` is placed inside the `try` block.**
-
-If `TRANSACTION_COMMIT` dispatch throws (e.g., a listener throws), `success` remains `false` and the `finally` block attempts `TRANSACTION_ROLLBACK`. But the commit may have already partially applied (state updated, depth decremented), making the rollback inconsistent. The base store has the same issue.
+**~~Impl2~~ — ~~`TRANSACTION_COMMIT` is placed inside the `try` block, so a COMMIT-throw causes the `finally` block to attempt `TRANSACTION_ROLLBACK` on a half-committed transaction.~~**
+**Fixed (2026-03-02).** In all three sites — `createDocumentStore.batch`, `createDocumentStoreWithEvents.batch`, and `withTransaction` — `success = true` is now set immediately before `dispatch({ type: 'TRANSACTION_COMMIT' })`. If `TRANSACTION_COMMIT` throws (e.g. `assertInvariant` detects a `depth`/`snapshotStack` drift), `success` is already `true` so the `finally` block skips the rollback attempt. The error propagates cleanly rather than triggering a no-op rollback on state with `depth` already decremented and the snapshot already popped.
+(`src/store/features/store.ts`)
 
 **~~Impl3~~ — ~~No assertion to detect `snapshotStack`/`depth` drift.~~**
 **Fixed (2026-03-02).** `createTransactionManager` now has a private `assertInvariant(op)` helper that throws if `snapshotStack.length !== depth`. It is called at the end of `begin`, `commit`, and `rollback`. Any future bug that causes a begin/commit/rollback imbalance will surface immediately with a descriptive error rather than silently corrupting state.
 
-**Impl4: `emergencyReset` returns `snapshotStack[0]` (the earliest/outermost snapshot) but the store uses it as the recovery state.**
-
-The outermost snapshot represents the state at the moment the outermost `TRANSACTION_START` was processed. If multiple actions were applied before the outermost `begin`, this snapshot is accurate. However, any state changes that occurred *between* the outer `begin` and the failure are correctly discarded — this is the intended behavior. The naming `emergencyReset` adequately signals the exceptional nature of this path.
+**~~Impl4~~ — ~~`createDocumentStore.batch` duplicates the `emergencyReset()` logic inline rather than calling the store's own function.~~**
+**Fixed (2026-03-02).** The three-line inline block in `createDocumentStore.batch`'s rollback-failure catch (`transaction.emergencyReset()` + `setState` + `notifyListeners()`) is replaced with a single `emergencyReset()` call. The base store's `batch` now mirrors the events store, which already called `baseStore.emergencyReset()`. Future changes to the emergency recovery path only need to be applied once.
+(`src/store/features/store.ts`)
 
 **~~Impl5~~ — ~~No round-trip test for transaction action serialization.~~**
 **Fixed (2026-03-02).** A new dedicated test file `src/store/features/actions.test.ts` covers `serializeAction` / `deserializeAction` for all 12 action types, including all three transaction actions, plus `LOAD_CHUNK` Uint8Array preservation, unicode text, and error cases (unknown type, invalid JSON, missing fields). The tests confirm that transaction actions serialize to plain `{ type }` JSON objects and round-trip without data loss.
