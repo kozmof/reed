@@ -116,6 +116,10 @@ export function createDocumentStore(
    * Dispatch an action to modify state.
    * @param action - Action to dispatch
    * @returns New state after applying the action
+   *
+   * **Notification contract:** listeners are notified synchronously on every
+   * non-transaction dispatch. During an active transaction notifications are
+   * suppressed and delivered as a single call on outermost commit or outermost rollback.
    */
   function dispatch(action: DocumentAction): DocumentState {
     // Handle transaction control actions
@@ -140,7 +144,9 @@ export function createDocumentStore(
       if (result.snapshot) {
         setState(result.snapshot);
       }
-      notifyListeners();
+      if (result.isOutermost) {
+        notifyListeners();
+      }
       return state;
     }
 
@@ -151,9 +157,7 @@ export function createDocumentStore(
     if (newState !== state) {
       setState(newState);
 
-      if (transaction.isActive) {
-        transaction.trackAction(action);
-      } else {
+      if (!transaction.isActive) {
         // Notify listeners immediately if not in transaction
         notifyListeners();
 
@@ -175,7 +179,7 @@ export function createDocumentStore(
    * @param actions - Array of actions to apply
    * @returns New state after applying all actions
    */
-  function batch(actions: DocumentAction[]): DocumentState {
+  function batch(actions: readonly DocumentAction[]): DocumentState {
     if (actions.length === 0) {
       return state;
     }
@@ -209,12 +213,20 @@ export function createDocumentStore(
       }
     }
 
-    // Ensure batch-triggered dirty line indexes always get reconciliation scheduled.
-    if (!transaction.isActive && state.lineIndex.rebuildPending) {
-      scheduleReconciliation();
-    }
-
     return state;
+  }
+
+  /**
+   * Emergency reset when a rollback dispatch itself throws.
+   * Clears all transaction state, restores the earliest snapshot, and notifies listeners.
+   */
+  function emergencyReset(): DocumentState | null {
+    const earliest = transaction.emergencyReset();
+    if (earliest) {
+      setState(earliest);
+    }
+    notifyListeners();
+    return earliest ?? null;
   }
 
   /**
@@ -336,6 +348,7 @@ export function createDocumentStore(
     scheduleReconciliation,
     reconcileNow,
     setViewport,
+    emergencyReset,
   };
 }
 
@@ -435,7 +448,7 @@ export function createDocumentStoreWithEvents(
    * Uses the enhanced dispatch (which captures before/after for events)
    * within a transaction, eliminating the need to replay the reducer.
    */
-  function batch(actions: DocumentAction[]): DocumentState {
+  function batch(actions: readonly DocumentAction[]): DocumentState {
     if (actions.length === 0) {
       return baseStore.getSnapshot();
     }
@@ -451,7 +464,11 @@ export function createDocumentStoreWithEvents(
       success = true;
     } finally {
       if (!success) {
-        baseStore.dispatch({ type: 'TRANSACTION_ROLLBACK' });
+        try {
+          baseStore.dispatch({ type: 'TRANSACTION_ROLLBACK' });
+        } catch {
+          baseStore.emergencyReset();
+        }
       }
     }
 
@@ -467,6 +484,7 @@ export function createDocumentStoreWithEvents(
     scheduleReconciliation: baseStore.scheduleReconciliation,
     reconcileNow: baseStore.reconcileNow,
     setViewport: baseStore.setViewport,
+    emergencyReset: baseStore.emergencyReset,
 
     // Enhanced methods with event emission
     dispatch,
@@ -477,6 +495,52 @@ export function createDocumentStoreWithEvents(
     removeEventListener: emitter.removeEventListener,
     events: emitter,
   };
+}
+
+/**
+ * Execute a callback within a transaction boundary on the given store.
+ *
+ * Provides the same error-handling resilience as `batch`: the callback runs
+ * inside a TRANSACTION_START / TRANSACTION_COMMIT bracket; on any exception
+ * a TRANSACTION_ROLLBACK is attempted, falling back to `emergencyReset` if
+ * the rollback dispatch itself throws.
+ *
+ * Nests correctly: if the store is already in a transaction, this starts an
+ * inner transaction and only the outermost completion notifies listeners.
+ *
+ * @param store - The store to transact against
+ * @param fn - Callback that performs work using the store; its return value is forwarded
+ * @returns The value returned by `fn`
+ *
+ * @example
+ * ```ts
+ * const newState = withTransaction(store, (s) => {
+ *   s.dispatch(DocumentActions.insert(byteOffset(0), 'Hello'));
+ *   s.dispatch(DocumentActions.insert(byteOffset(5), ' World'));
+ *   return s.getSnapshot();
+ * });
+ * ```
+ */
+export function withTransaction<T>(
+  store: ReconcilableDocumentStore,
+  fn: (store: ReconcilableDocumentStore) => T
+): T {
+  store.dispatch({ type: 'TRANSACTION_START' });
+  let success = false;
+  try {
+    const result = fn(store);
+    store.dispatch({ type: 'TRANSACTION_COMMIT' });
+    success = true;
+    return result;
+  } finally {
+    if (!success) {
+      try {
+        store.dispatch({ type: 'TRANSACTION_ROLLBACK' });
+      } catch {
+        store.emergencyReset();
+      }
+    }
+  }
 }
 
 /**

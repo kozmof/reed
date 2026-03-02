@@ -72,7 +72,7 @@ export interface DocumentStore {
    * @param actions - Array of actions to apply
    * @returns New state after applying all actions
    */
-  batch(actions: DocumentAction[]): DocumentState;
+  batch(actions: readonly DocumentAction[]): DocumentState;
 }
 
 /**
@@ -109,6 +109,13 @@ export interface ReconcilableDocumentStore extends DocumentStore {
    * @param endLine - Last visible line (0-indexed)
    */
   setViewport(startLine: number, endLine: number): void;
+
+  /**
+   * Emergency reset when a rollback dispatch itself throws.
+   * Clears all transaction state, restores the earliest snapshot, and notifies listeners.
+   * Returns the restored state, or null if no snapshot was available.
+   */
+  emergencyReset(): DocumentState | null;
 }
 
 /**

@@ -6,6 +6,7 @@ import {
   createDocumentStore,
   createDocumentStoreWithEvents,
   isDocumentStore,
+  withTransaction,
 } from '../store/features/store.ts';
 import { DocumentActions, serializeAction, deserializeAction } from '../store/features/actions.ts';
 import {
@@ -56,6 +57,7 @@ export const store = {
   createDocumentStore,
   createDocumentStoreWithEvents,
   isDocumentStore,
+  withTransaction,
 
   // Reducer
   documentReducer,

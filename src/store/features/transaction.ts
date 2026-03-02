@@ -4,23 +4,34 @@
  */
 
 import type { DocumentState } from '../../types/state.ts';
-import type { DocumentAction } from '../../types/actions.ts';
 
 /**
- * Result of a commit or rollback operation.
+ * Result of a commit operation.
  */
-export interface TransactionResult {
+export interface CommitResult {
+  readonly kind: 'commit';
   /** Whether this completed the outermost transaction. */
   readonly isOutermost: boolean;
-  /** For rollback: the snapshot to restore to. Null for commit or when no snapshot exists. */
-  readonly snapshot: DocumentState | null;
-  /** For outermost commit: the accumulated pending actions. Empty otherwise. */
-  readonly pendingActions: readonly DocumentAction[];
 }
 
 /**
- * Manages nested transaction state: depth tracking, snapshot stack,
- * and pending action accumulation.
+ * Result of a rollback operation.
+ */
+export interface RollbackResult {
+  readonly kind: 'rollback';
+  /** Whether this completed the outermost transaction. */
+  readonly isOutermost: boolean;
+  /** The snapshot to restore to. Null when depth was already 0. */
+  readonly snapshot: DocumentState | null;
+}
+
+/**
+ * Discriminated union of commit and rollback results.
+ */
+export type TransactionResult = CommitResult | RollbackResult;
+
+/**
+ * Manages nested transaction state: depth tracking and snapshot stack.
  *
  * This is a stateful coordinator — it does NOT own the document state
  * or know how to apply actions. The store provides state and interprets results.
@@ -30,22 +41,16 @@ export interface TransactionManager {
   begin(currentState: DocumentState): void;
 
   /** Commit the current transaction level. */
-  commit(): TransactionResult;
+  commit(): CommitResult;
 
   /** Rollback the current transaction level. Returns the snapshot to restore. */
-  rollback(): TransactionResult;
-
-  /** Track an action dispatched during a transaction. */
-  trackAction(action: DocumentAction): void;
+  rollback(): RollbackResult;
 
   /** Current nesting depth (0 = not in transaction). */
   readonly depth: number;
 
   /** Whether currently inside any transaction. */
   readonly isActive: boolean;
-
-  /** Pending actions accumulated in the current outermost transaction. */
-  readonly pendingActions: readonly DocumentAction[];
 
   /**
    * Emergency reset: clears all transaction state and returns the
@@ -62,62 +67,50 @@ export interface TransactionManager {
 export function createTransactionManager(): TransactionManager {
   let depth = 0;
   let snapshotStack: DocumentState[] = [];
-  let pending: DocumentAction[] = [];
+
+  function assertInvariant(op: string): void {
+    if (snapshotStack.length !== depth) {
+      throw new Error(
+        `TransactionManager invariant violated after ${op}: ` +
+        `snapshotStack.length=${snapshotStack.length}, depth=${depth}`
+      );
+    }
+  }
 
   function begin(currentState: DocumentState): void {
     snapshotStack.push(currentState);
-    if (depth === 0) {
-      pending = [];
-    }
     depth++;
+    assertInvariant('begin');
   }
 
-  function commit(): TransactionResult {
+  function commit(): CommitResult {
     if (depth <= 0) {
-      return { isOutermost: false, snapshot: null, pendingActions: [] };
+      return { kind: 'commit', isOutermost: false };
     }
 
     depth--;
     snapshotStack.pop();
+    assertInvariant('commit');
 
-    if (depth === 0) {
-      const result = pending;
-      pending = [];
-      return { isOutermost: true, snapshot: null, pendingActions: result };
-    }
-
-    return { isOutermost: false, snapshot: null, pendingActions: [] };
+    return { kind: 'commit', isOutermost: depth === 0 };
   }
 
-  function rollback(): TransactionResult {
+  function rollback(): RollbackResult {
     if (depth <= 0) {
-      return { isOutermost: false, snapshot: null, pendingActions: [] };
+      return { kind: 'rollback', isOutermost: false, snapshot: null };
     }
 
     const snapshot = snapshotStack.pop() ?? null;
     depth--;
+    assertInvariant('rollback');
 
-    const isOutermost = depth === 0;
-    if (isOutermost) {
-      pending = [];
-    }
-
-    return {
-      isOutermost,
-      snapshot,
-      pendingActions: [],
-    };
-  }
-
-  function trackAction(action: DocumentAction): void {
-    pending.push(action);
+    return { kind: 'rollback', isOutermost: depth === 0, snapshot };
   }
 
   function emergencyReset(): DocumentState | null {
     const earliest = snapshotStack.length > 0 ? snapshotStack[0] : null;
     depth = 0;
     snapshotStack = [];
-    pending = [];
     return earliest;
   }
 
@@ -125,10 +118,8 @@ export function createTransactionManager(): TransactionManager {
     begin,
     commit,
     rollback,
-    trackAction,
     get depth() { return depth; },
     get isActive() { return depth > 0; },
-    get pendingActions() { return pending; },
     emergencyReset,
   };
 }

@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { createDocumentStore } from './store.ts';
+import { createDocumentStore, withTransaction } from './store.ts';
 import { DocumentActions } from './actions.ts';
 import { byteOffset } from '../../types/branded.ts';
 import { rebuildLineIndex, getLineStartOffset, getCharStartOffset } from '../core/line-index.ts';
@@ -400,6 +400,70 @@ describe('Editor Use Cases', () => {
       // Commit outer
       store.dispatch(DocumentActions.transactionCommit());
       expect(store.getSnapshot().pieceTable.totalLength).toBe(1);
+    });
+  });
+
+  describe('withTransaction helper', () => {
+    it('should commit on success and notify listeners once', () => {
+      const store = createDocumentStore({ content: '' });
+      const listener = vi.fn();
+      store.subscribe(listener);
+
+      withTransaction(store, (s) => {
+        s.dispatch(DocumentActions.insert(byteOffset(0), 'A'));
+        s.dispatch(DocumentActions.insert(byteOffset(1), 'B'));
+      });
+
+      expect(store.getSnapshot().pieceTable.totalLength).toBe(2);
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('should roll back on exception and notify listeners once', () => {
+      const store = createDocumentStore({ content: 'Original' });
+      const originalState = store.getSnapshot();
+      const listener = vi.fn();
+      store.subscribe(listener);
+
+      expect(() =>
+        withTransaction(store, (s) => {
+          s.dispatch(DocumentActions.insert(byteOffset(8), ' modified'));
+          throw new Error('oops');
+        })
+      ).toThrow('oops');
+
+      expect(store.getSnapshot()).toBe(originalState);
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('should return the value produced by the callback', () => {
+      const store = createDocumentStore({ content: '' });
+
+      const result = withTransaction(store, (s) => {
+        s.dispatch(DocumentActions.insert(byteOffset(0), 'hello'));
+        return s.getSnapshot().pieceTable.totalLength;
+      });
+
+      expect(result).toBe(5);
+    });
+
+    it('should nest correctly inside an outer transaction', () => {
+      const store = createDocumentStore({ content: '' });
+      const listener = vi.fn();
+      store.subscribe(listener);
+
+      store.dispatch(DocumentActions.transactionStart());
+      store.dispatch(DocumentActions.insert(byteOffset(0), 'A'));
+
+      // Inner withTransaction — should be silent (inner commit)
+      withTransaction(store, (s) => {
+        s.dispatch(DocumentActions.insert(byteOffset(1), 'B'));
+      });
+
+      expect(listener).not.toHaveBeenCalled();
+
+      store.dispatch(DocumentActions.transactionCommit()); // outermost
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(store.getSnapshot().pieceTable.totalLength).toBe(2);
     });
   });
 
