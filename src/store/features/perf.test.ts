@@ -74,7 +74,7 @@ function assertPerf(label: string, elapsedMs: number, thresholdMs: number, itera
 
 const LINES_SM = 10_000;
 const LINES_MD = 50_000;
-const LINES_LG = 100_000;
+const LINES_LG = 900_000;
 
 let content_sm: string;   // ~10k lines ASCII prose
 let content_md: string;   // ~50k lines
