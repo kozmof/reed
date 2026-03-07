@@ -2,19 +2,18 @@
 
 ## 1. Entry Points
 
-Current public surface is exported from `src/index.ts`.
+Current public runtime surface is exported from `src/index.ts` as namespaces:
+- `store`
+- `query`
+- `scan`
+- `events`
+- `rendering`
+- `history`
+- `diff`
+- `position`
+- `cost`
 
-It re-exports:
-- core state/action/store types
-- branded position helpers (`byteOffset`, `charOffset`, etc.)
-- store factories (`createDocumentStore`, `createDocumentStoreWithEvents`)
-- action creators (`DocumentActions`)
-- reducer/state factories
-- piece-table and line-index operations
-- diff and `setValue` helpers
-- events and rendering selectors
-- transaction/history helpers
-- complexity namespaces: `query` and `scan`
+Types are exported flat from the same entry file.
 
 Not present in current codebase:
 - `reed/read` subpath
@@ -22,19 +21,21 @@ Not present in current codebase:
 - `reed/view` subpath
 - framework adapter entry points (React/Vue/Svelte)
 
-## 2. Store API
+## 2. Store API (`store` namespace)
 
-### 2.1 `createDocumentStore(config?)`
+### 2.1 `store.createDocumentStore(config?)`
 
 Returns `ReconcilableDocumentStore` with:
 - `subscribe(listener)`
 - `getSnapshot()`
 - `getServerSnapshot()`
+- `isCurrentSnapshot(snapshot)`
 - `dispatch(action)`
 - `batch(actions)`
 - `scheduleReconciliation()`
-- `reconcileNow()`
+- `reconcileNow()` / `reconcileNow(snapshot)`
 - `setViewport(startLine, endLine)`
+- `emergencyReset()`
 
 Supported config fields (`DocumentStoreConfig`):
 - `content`
@@ -44,53 +45,58 @@ Supported config fields (`DocumentStoreConfig`):
 - `lineEnding`
 - `undoGroupTimeout`
 
-### 2.2 `createDocumentStoreWithEvents(config?)`
+### 2.2 `store.createDocumentStoreWithEvents(config?)`
 
 Wraps the base store and adds:
 - `addEventListener(type, handler)`
 - `removeEventListener(type, handler)`
 - `events` emitter handle
 
-Supported event types in the emitter:
+### 2.3 Additional store namespace exports
+
+- `store.withTransaction(store, fn)`
+- `store.isDocumentStore(value)`
+- `store.DocumentActions`
+- `store.serializeAction` / `store.deserializeAction`
+- `store.documentReducer`
+- immutable state factories/builders
+- piece-table and line-index core mutation helpers
+- reconciliation helpers (`reconcileRange`, `reconcileFull`, `reconcileViewport`)
+- action validators/guards (`isDocumentAction`, `validateAction`, etc.)
+
+## 3. Event Semantics
+
+Supported event types:
 - `content-change`
 - `selection-change`
 - `history-change`
 - `save`
 - `dirty-change`
 
-Auto-emitted by dispatch wrapper:
-- `content-change` (local `INSERT/DELETE/REPLACE`)
+Auto-emitted by `store.createDocumentStoreWithEvents`:
+- `content-change` (`INSERT/DELETE/REPLACE/APPLY_REMOTE`)
 - `selection-change` (`SET_SELECTION`)
 - `history-change` (`UNDO/REDO`)
 - `dirty-change` (when dirty flag changes)
 
-Current caveat:
-- `content-change` is emitted for local text-edit actions (`INSERT/DELETE/REPLACE`) but not for `APPLY_REMOTE`.
-
-## 3. Action API
-
-`DocumentActions` currently includes:
-- text edits: `insert`, `delete`, `replace`
-- selection: `setSelection`
-- history: `undo`, `redo`, `historyClear`
-- transaction control: `transactionStart`, `transactionCommit`, `transactionRollback`
-- collaboration primitive: `applyRemote`
-- chunk primitives: `loadChunk`, `evictChunk`
-
-Notes:
-- Transaction actions are interpreted in the store layer, not reducer state transitions.
-- `LOAD_CHUNK` / `EVICT_CHUNK` are reducer stubs right now.
+Note:
+- `save` exists as an event type/factory, but is not auto-emitted by reducer/store actions.
 
 ## 4. Read APIs
 
 ### 4.1 Query namespace (`query`)
 
 Primary selector namespace for O(1)/O(log n)/bounded operations:
-- `getLength`, `getText`, `getBufferStats`
-- `findPieceAtPosition`, `findLineAtPosition`
-- `getLineRange`, `getLineRangePrecise`, `getLineCount`
-- `getLineContent`, `getVisibleLine`, `getVisibleLines`
-- `positionToLineColumn`, `lineColumnToPosition`
+- `getText`, `getLength`, `getBufferStats`
+- `findPieceAtPosition`
+- `isReconciledState`
+- line lookups and offsets:
+  - `findLineAtPosition`, `findLineByNumber`, `getLineStartOffset`
+  - `getLineRange` (requires eager state)
+  - `getLineRangeChecked` (runtime eager assertion)
+  - `getLineRangePrecise` (safe on eager/lazy states)
+  - `getLineCount`, `getCharStartOffset`, `findLineAtCharPosition`
+- low-level `query.lineIndex.*` selectors
 
 ### 4.2 Scan namespace (`scan`)
 
@@ -99,23 +105,26 @@ Traversal namespace for O(n) operations:
 - `collectPieces`, `collectLines`
 - `rebuildLineIndex`
 
+### 4.3 Rendering/history/diff namespaces
+
+- `rendering.*`: viewport, visible lines, line/column and selection conversions
+- `history.*`: `canUndo`, `canRedo`, `getUndoCount`, `getRedoCount`, `isHistoryEmpty`
+- `diff.*`: diff and setValue action synthesis/application helpers
+
 ## 5. Write APIs
 
-- `documentReducer(state, action)` is pure and immutable.
-- `setValue(state, newContent, options?)` returns a new `DocumentState`.
-- `computeSetValueActions(oldContent, newContent)` and optimized variants return action lists.
+- `store.documentReducer(state, action)` is pure and immutable.
+- `diff.setValue(state, newContent, options?)` returns a new `DocumentState`.
+- `diff.computeSetValueActions*` helpers return action lists/diff metadata.
 
 Important behavior:
-- `setValue` operates on `DocumentState`, not directly on `DocumentStore`.
-- For store semantics (listener batching, transaction flow), callers should dispatch actions through store methods.
+- `setValue` operates on `DocumentState`, not directly on a store instance.
+- For listener/event/transaction semantics, dispatch actions through store methods.
 
-## 6. Rendering Utilities
+## 6. Not Yet Implemented on Public Surface
 
-`src/store/features/rendering.ts` exports selector-style rendering helpers:
-- viewport line range calculation
-- visible line extraction
-- line-height/total-height estimation
-- byte<->line/column conversion
-- selection byte/char conversions
-
-This is utility-layer rendering only; there is no DOM `EditorView` implementation yet.
+- Real chunk loading/eviction runtime behavior
+- Collaboration transport/provider integration
+- Plugin host/runtime
+- DOM `EditorView` runtime
+- Framework adapters

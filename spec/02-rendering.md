@@ -2,7 +2,7 @@
 
 ## 1. Scope of Current Rendering Layer
 
-Current rendering code is a **pure selector/utilities layer** in `src/store/features/rendering.ts`.
+Current rendering code is a **pure selector/utilities layer** in `src/store/features/rendering.ts`, surfaced via `rendering.*`.
 It does not include a DOM `EditorView` component.
 
 Implemented utilities:
@@ -51,6 +51,6 @@ Implemented utilities:
 - Syntax tokenization/render pipeline
 - Scroll event binding/UI layer
 
-## 5. Known Issue
+## 5. Current Accuracy Note
 
-- In lazy line-index states, `getLineRangePrecise` can produce incorrect offsets for some multiline edits before reconciliation, which can affect visible line correctness.
+Rendering helpers now rely on `getLineRangePrecise` behavior that is valid for both eager and lazy line-index states. The previously documented lazy multiline offset issue is not present in the current implementation/test suite.

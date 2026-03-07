@@ -5,15 +5,16 @@
 ### 1.1 Implemented
 
 - Streaming full text via generator:
-  - `getValueStream(state.pieceTable, options)`
+  - `scan.getValueStream(state.pieceTable, options)`
   - supports `chunkSize`, `start`, `end`
-- Add-buffer waste introspection and compaction:
-  - `getBufferStats`
-  - `compactAddBuffer`
+- Add-buffer usage introspection:
+  - `query.getBufferStats`
+- Core piece-table compaction primitive exists internally:
+  - `compactAddBuffer` in `src/store/core/piece-table.ts`
 
 ### 1.2 Partially Implemented / Stubbed
 
-- Action types exist for chunk management:
+- Action types and creators exist for chunk management:
   - `LOAD_CHUNK`
   - `EVICT_CHUNK`
 - Reducer currently treats both as no-ops.
@@ -50,24 +51,25 @@ History is immutable and stored in `DocumentState.history`.
 
 Implemented:
 - `UNDO`, `REDO`, `HISTORY_CLEAR`
-- coalescing logic for consecutive edits (timeout-based)
+- timeout-based coalescing for consecutive edits
 - selection restoration on undo/redo
 
 Transaction behavior:
 - store-level transaction manager tracks depth/snapshots
 - `batch()` executes actions inside transaction and notifies listeners once
 - rollback restores snapshot
+- `withTransaction(store, fn)` wraps begin/commit/rollback with the same safety behavior
 
 Important current behavior:
-- `batch()` does **not** currently collapse all actions into one history entry; each action still contributes history.
+- `batch()` is a notification boundary, not a history-collapsing boundary.
+- Each action still contributes history unless coalesced.
 
 ## 4. Related Events
 
-`createDocumentStoreWithEvents` emits:
-- `content-change` for local text edit actions
+`store.createDocumentStoreWithEvents` emits:
+- `content-change` for local text edits and `APPLY_REMOTE`
 - `selection-change`
 - `history-change`
 - `dirty-change`
 
-Remote action caveat:
-- `APPLY_REMOTE` changes content in reducer but does not currently emit `content-change` in event wrapper.
+`save` event type exists in the event system but is not auto-triggered by reducer/store actions.

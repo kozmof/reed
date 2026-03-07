@@ -21,7 +21,13 @@ Remote changes intentionally do not push undo history.
 - `start`
 - `length`
 
-## 3. What Is Not Implemented
+## 3. Event Semantics (Current)
+
+With `store.createDocumentStoreWithEvents`:
+- `APPLY_REMOTE` emits `content-change`.
+- `dirty-change` is emitted when remote edits transition dirty state.
+
+## 4. What Is Not Implemented
 
 - Yjs integration
 - CRDT bridge
@@ -29,14 +35,9 @@ Remote changes intentionally do not push undo history.
 - Durable Object / WebSocket provider
 - Offline queueing + reconnect merge workflow
 
-## 4. Event Semantics (Current)
-
-- Content mutation from `APPLY_REMOTE` is applied in state.
-- Event wrapper currently emits `content-change` only for `INSERT/DELETE/REPLACE`, not `APPLY_REMOTE`.
-
 ## 5. Recommended Next Collaboration Milestones
 
 1. Add transport/provider abstraction.
 2. Add local<->remote operation translation layer.
-3. Align event emission so remote content changes surface as `content-change`.
-4. Add synchronization conflict/recovery tests.
+3. Add synchronization conflict/recovery tests around reconnect and replay.
+4. Add presence/awareness and remote cursor state propagation.

@@ -2,13 +2,14 @@
 
 ## 1. Implemented Subsystems
 
-### 1.1 Core state and types
+### 1.1 Core state, types, and API namespaces
 
 Implemented in:
 - `src/types/*`
 - `src/store/core/state.ts`
+- `src/api/*`
 
-Includes immutable state factories, branded offset types, action/store contracts, and cost-typing utilities.
+Includes immutable state factories, branded offset types, action/store contracts, cost-typing utilities, and namespaced runtime API modules.
 
 ### 1.2 Text storage and indexing
 
@@ -17,7 +18,7 @@ Implemented in:
 - `src/store/core/line-index.ts`
 - `src/store/core/rb-tree.ts`
 
-Includes piece-table edits, line-index maintenance, lazy/eager reconciliation paths, and streaming reads.
+Includes piece-table edits, line-index maintenance, lazy/eager reconciliation paths, streaming reads, and CR/LF/CRLF-aware boundary handling.
 
 ### 1.3 Reducer/store runtime
 
@@ -27,7 +28,7 @@ Implemented in:
 - `src/store/features/transaction.ts`
 - `src/store/features/history.ts`
 
-Includes immutable reducer transitions, undo/redo, nested transactions, batching, and reconciliation hooks.
+Includes immutable reducer transitions, undo/redo, nested transactions, batching, snapshot-gated reconciliation, and emergency reset paths.
 
 ### 1.4 Diff, events, rendering selectors
 
@@ -36,22 +37,25 @@ Implemented in:
 - `src/store/features/events.ts`
 - `src/store/features/rendering.ts`
 
-Includes Myers-style diff helpers, typed event emitter/store wrapper, and viewport/line selection utilities.
+Includes diff/setValue helpers, typed event emitter/store wrapper, and viewport/line selection utilities.
 
-### 1.5 Public query layers
+### 1.5 Public query/scan/history/diff layers
 
 Implemented in:
 - `src/api/query.ts`
 - `src/api/scan.ts`
+- `src/api/history.ts`
+- `src/api/diff.ts`
 
-Separates query-style lookups from scan-style traversals.
+Separates query-style lookups from scan-style traversals and exposes dedicated history/diff namespaces.
 
 ## 2. Partially Implemented Areas
 
 ### 2.1 Collaboration primitives
 
 Implemented:
-- `RemoteChange` and `APPLY_REMOTE` action path in reducer.
+- `RemoteChange` and `APPLY_REMOTE` reducer path
+- event-store `content-change` emission for remote edits
 
 Missing:
 - transport/provider bridge
@@ -77,12 +81,13 @@ Missing:
 
 ## 4. Current Known Gaps
 
-- `batch()` commit path does not schedule reconciliation for pending lazy line-index rebuilds.
-- event wrapper does not emit `content-change` for `APPLY_REMOTE`.
-- some lazy line-range precision cases remain sensitive before reconciliation.
+No currently confirmed core reducer/store correctness blockers from earlier spec revisions.
+
+Primary remaining gaps are unimplemented runtime layers (chunk runtime, collaboration transport, plugin host, DOM/editor runtime).
 
 ## 5. Near-Term Priorities
 
-1. Fix store/event semantic gaps (`batch()` reconciliation scheduling and `APPLY_REMOTE` content-change emission behavior).
-2. Decide and implement real chunk loading strategy or remove chunk actions from current public contract.
-3. Add collaboration/plugin/view layers only after these core consistency gaps are closed.
+1. Decide and implement real chunk loading strategy (or remove chunk actions from public contract).
+2. Add collaboration transport/provider + synchronization recovery tests.
+3. Define plugin host boundary model and lifecycle hooks.
+4. Add view-layer/runtime integration once core/runtime contracts are finalized.

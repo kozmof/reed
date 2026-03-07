@@ -13,11 +13,11 @@ There is no:
 
 ## 2. Available Extension Surface Today
 
-You can currently extend behavior by wrapping store usage directly:
-- wrap `dispatch`
-- observe `subscribe`
-- use `createDocumentStoreWithEvents` for typed events
-- call pure helpers/selectors on snapshots
+You can currently extend behavior by composing around namespaced APIs:
+- wrap `store.dispatch`
+- observe `store.subscribe`
+- use `store.createDocumentStoreWithEvents` for typed events
+- call pure helpers/selectors (`query`, `scan`, `rendering`, `history`, `diff`)
 
 This is application-level composition, not a formal plugin host.
 

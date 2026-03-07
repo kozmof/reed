@@ -16,12 +16,18 @@
 ### 1.3 Transaction safety
 
 - `batch()` uses transaction rollback on failure.
-- If rollback itself fails, store uses transaction manager `emergencyReset()` and notifies listeners to avoid silent corruption.
+- If rollback itself fails, store calls `emergencyReset()` and notifies listeners.
+- `withTransaction()` uses the same rollback/emergency-reset safety model.
 
 ### 1.4 Action parsing/validation helpers
 
 - `deserializeAction()` throws on invalid payloads.
 - `validateAction()` provides structured validation errors.
+
+### 1.5 Snapshot safety for reconciliation
+
+- `isCurrentSnapshot()` lets callers detect stale snapshots.
+- `reconcileNow(snapshot)` returns `null` for stale snapshots instead of mutating current state from an outdated reference.
 
 ## 2. Current Non-Goals / Not Implemented
 
@@ -31,10 +37,10 @@ The following error domains are not implemented because the related runtime laye
 - plugin sandboxing/fault isolation
 - chunk-cache eviction policies under memory pressure
 
-## 3. Known Behavior Gaps
+## 3. Current Caveats
 
-- `createDocumentStoreWithEvents` documents `APPLY_REMOTE` as a content-change source, but current emission logic only treats local text-edit actions as content-change events.
-- After a successful `batch()` commit, line-index reconciliation is not auto-scheduled even if `rebuildPending` remains true.
+- `LOAD_CHUNK` and `EVICT_CHUNK` actions are accepted but currently no-op in reducer logic.
+- `save` event type exists, but there is no built-in save action/path that auto-emits it.
 
 ## 4. Recommendation for Next Iteration
 

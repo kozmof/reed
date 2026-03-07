@@ -2,14 +2,15 @@
 
 ## 1. Current Document Model
 
-Reed is currently an **immutable state + reducer + store** system.
+Reed is an **immutable state + reducer + store** system with a namespaced API surface.
 
 - Text storage: piece table (`src/store/core/piece-table.ts`)
 - Line model: separate line-index tree (`src/store/core/line-index.ts`)
 - State transition: pure reducer (`src/store/features/reducer.ts`)
-- Runtime orchestration: store factory (`src/store/features/store.ts`)
+- Runtime orchestration: store factory + transaction manager (`src/store/features/store.ts`)
+- Public runtime access: `store/query/scan/events/rendering/history/diff/position/cost` namespaces (`src/api/*`)
 
-The piece table and line index are independent structures. Piece nodes do not store line metadata.
+The piece table and line index remain independent structures. Piece nodes do not store line metadata.
 
 ## 2. Core Data Structures
 
@@ -35,12 +36,12 @@ Notes:
 `LineIndexState<M extends 'eager' | 'lazy'>` contains:
 - `root: LineIndexNode<M> | null`
 - `lineCount`
-- `dirtyRanges` (empty in eager mode)
+- `dirtyRanges` (guaranteed empty in eager mode)
 - `lastReconciledVersion`
 - `rebuildPending`
 
 `LineIndexNode` stores:
-- `documentOffset` (nullable in lazy mode)
+- `documentOffset` (`number` in eager mode, `number | null` in lazy mode)
 - `lineLength`, `charLength`
 - subtree metadata (`subtreeLineCount`, `subtreeByteLength`, `subtreeCharLength`)
 
@@ -51,9 +52,10 @@ Notes:
 `INSERT` / `DELETE` / `REPLACE` flow:
 1. Validate/clamp positions in reducer.
 2. Update piece table.
-3. Update line index via **lazy strategy** for normal editing.
-4. Push history entry.
-5. Increment version and mark dirty.
+3. Update line index via lazy strategy for normal editing.
+4. Force line-index rebuild for CRLF boundary-sensitive delete cases.
+5. Push history entry (with coalescing).
+6. Increment version and mark dirty.
 
 ### 3.2 Undo/redo
 
@@ -61,18 +63,22 @@ Notes:
 
 ### 3.3 Remote edits
 
-`APPLY_REMOTE` applies insert/delete changes to piece table + lazy line index and does not push history.
+`APPLY_REMOTE` applies insert/delete changes to piece table + lazy line index, marks dirty, increments version, and does not push history.
 
 ## 4. Store Runtime
 
-`createDocumentStore()` provides:
+`store.createDocumentStore()` provides:
 - `subscribe`, `getSnapshot`, `getServerSnapshot`
+- `isCurrentSnapshot`
 - `dispatch`, `batch`
 - `scheduleReconciliation`, `reconcileNow`, `setViewport`
+- `emergencyReset`
+
+`store.withTransaction(store, fn)` provides scoped transaction execution with rollback safety.
 
 Transaction control actions (`TRANSACTION_START/COMMIT/ROLLBACK`) are handled at store level, not reducer level.
 
-`createDocumentStoreWithEvents()` wraps the base store with typed event emission.
+`store.createDocumentStoreWithEvents()` wraps the base store with typed event emission.
 
 ## 5. Implemented vs Not Implemented
 
@@ -82,6 +88,7 @@ Implemented:
 - Separate line-index tree with lazy/eager reconciliation
 - Undo/redo/history and transactions
 - Typed events and query/scan API namespaces
+- Snapshot-gated reconciliation (`isCurrentSnapshot` + `reconcileNow(snapshot)`)
 
 Not implemented in current codebase:
 - File I/O layer
@@ -90,7 +97,8 @@ Not implemented in current codebase:
 - Framework adapters (React/Vue/Svelte/Redux/Zustand)
 - CRDT transport/provider bridge
 
-## 6. Known Architecture Gaps
+## 6. Current Gap Summary
 
-- `getLineRangePrecise` dirty-path offset computation can return incorrect ranges after some lazy multiline edits.
-- `batch()` commit path currently does not auto-schedule reconciliation when `rebuildPending` remains true.
+Previously tracked core consistency gaps (`getLineRangePrecise` lazy offset issue, missing `batch()` reconciliation scheduling, missing remote content-change emission) are fixed in current code.
+
+Remaining gaps are roadmap/runtime scope gaps (chunk runtime, collaboration transport, plugin/view/adapters), not core reducer/store correctness blockers.
