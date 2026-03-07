@@ -23,11 +23,39 @@ import { generateLargeContent, makeDeterministicRng } from '../../test-utils/lar
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Measure total wall-clock ms for `iterations` synchronous calls to `fn`. */
-function bench(fn: () => void, iterations = 1): number {
-  const t0 = performance.now();
-  for (let i = 0; i < iterations; i++) fn();
-  return performance.now() - t0;
+interface BenchOptions {
+  /** Number of measured runs; median is returned. */
+  runs?: number;
+  /** Number of unmeasured warm-up runs. */
+  warmupRuns?: number;
+}
+
+const STABLE_READ_BENCH: Readonly<BenchOptions> = Object.freeze({ runs: 3, warmupRuns: 1 });
+
+const utf8Encoder = new TextEncoder();
+
+function utf8ByteLength(text: string): number {
+  return utf8Encoder.encode(text).length;
+}
+
+/** Measure wall-clock ms for `iterations` calls and return median across runs. */
+function bench(fn: () => void, iterations = 1, options: BenchOptions = {}): number {
+  const runs = Math.max(1, Math.floor(options.runs ?? 1));
+  const warmupRuns = Math.max(0, Math.floor(options.warmupRuns ?? 0));
+
+  for (let run = 0; run < warmupRuns; run++) {
+    for (let i = 0; i < iterations; i++) fn();
+  }
+
+  const samples: number[] = [];
+  for (let run = 0; run < runs; run++) {
+    const t0 = performance.now();
+    for (let i = 0; i < iterations; i++) fn();
+    samples.push(performance.now() - t0);
+  }
+
+  samples.sort((a, b) => a - b);
+  return samples[Math.floor(samples.length / 2)];
 }
 
 /**
@@ -97,12 +125,18 @@ describe('Line index queries (O(log n))', () => {
     const state = createInitialState({ content: content_lg });
     const root = state.lineIndex.root;
     const lineCount = state.lineIndex.lineCount;
+    const totalBytes = state.pieceTable.totalLength;
     const rng = makeDeterministicRng(99);
     const ms = bench(() => {
       const line = Math.floor(rng() * lineCount);
       getLineStartOffset(root, line);
-    }, ITERS);
+    }, ITERS, STABLE_READ_BENCH);
     assertPerf(`getLineStartOffset (${LINES_LG.toLocaleString()} lines)`, ms, 1_000, ITERS);
+
+    expect(getLineStartOffset(root, 0)).toBe(0);
+    const lastLineStart = getLineStartOffset(root, lineCount - 1);
+    expect(lastLineStart).toBeGreaterThanOrEqual(0);
+    expect(lastLineStart).toBeLessThan(totalBytes);
   });
 
   it(`findLineByNumber × ${ITERS.toLocaleString()} on ${LINES_LG.toLocaleString()}-line index`, () => {
@@ -112,8 +146,10 @@ describe('Line index queries (O(log n))', () => {
     const ms = bench(() => {
       const line = Math.floor(rng() * lineCount);
       query.findLineByNumber(state, line);
-    }, ITERS);
+    }, ITERS, STABLE_READ_BENCH);
     assertPerf(`findLineByNumber (${LINES_LG.toLocaleString()} lines)`, ms, 1_000, ITERS);
+
+    expect(query.findLineByNumber(state, Math.floor(lineCount / 2))).not.toBeNull();
   });
 
   it(`findLineAtPosition × ${ITERS.toLocaleString()} on ${LINES_LG.toLocaleString()}-line index`, () => {
@@ -123,14 +159,20 @@ describe('Line index queries (O(log n))', () => {
     const ms = bench(() => {
       const pos = byteOffset(Math.floor(rng() * totalBytes));
       query.findLineAtPosition(state, pos);
-    }, ITERS);
+    }, ITERS, STABLE_READ_BENCH);
     assertPerf(`findLineAtPosition (${LINES_LG.toLocaleString()} lines)`, ms, 1_000, ITERS);
+
+    const probe = query.findLineAtPosition(state, byteOffset(Math.floor(totalBytes / 2)));
+    expect(probe).not.toBeNull();
+    expect(probe!.lineNumber).toBeGreaterThanOrEqual(0);
+    expect(probe!.lineNumber).toBeLessThan(state.lineIndex.lineCount);
   });
 
   it(`getLineCount × ${ITERS.toLocaleString()} is O(1)`, () => {
     const state = createInitialState({ content: content_lg });
-    const ms = bench(() => { query.getLineCount(state); }, ITERS);
+    const ms = bench(() => { query.getLineCount(state); }, ITERS, STABLE_READ_BENCH);
     assertPerf(`getLineCount (O(1))`, ms, 100, ITERS);
+    expect(query.getLineCount(state)).toBe(LINES_LG);
   });
 });
 
@@ -147,7 +189,7 @@ describe('Piece table reads (getText)', () => {
       result = getText(state.pieceTable, byteOffset(0), byteOffset(total));
     });
     assertPerf(`getText full doc (${LINES_LG.toLocaleString()} lines)`, ms, 2_000);
-    expect(result!.length).toBeGreaterThan(0);
+    expect(result).toBe(content_lg);
   });
 
   it('reads 1 000 × 200-byte slice (random positions)', () => {
@@ -159,8 +201,12 @@ describe('Piece table reads (getText)', () => {
     const ms = bench(() => {
       const start = Math.floor(rng() * (total - SLICE));
       getText(state.pieceTable, byteOffset(start), byteOffset(start + SLICE));
-    }, ITERS);
+    }, ITERS, STABLE_READ_BENCH);
     assertPerf(`getText 200-byte slice`, ms, 1_000, ITERS);
+
+    const probeStart = Math.floor(total / 3);
+    const probe = getText(state.pieceTable, byteOffset(probeStart), byteOffset(probeStart + SLICE));
+    expect(probe.length).toBe(SLICE);
   });
 });
 
@@ -187,18 +233,19 @@ describe('Edits via store.dispatch', () => {
       store.dispatch(DocumentActions.insert(byteOffset(0), 'x'));
     }, ITERS);
     assertPerf(`prepend × ${ITERS}`, ms, 5_000, ITERS);
+    expect(store.getSnapshot().pieceTable.totalLength).toBe(content_md.length + ITERS);
   });
 
   it('1 000 inserts at document midpoint', () => {
     const ITERS = 1_000;
     const store = createDocumentStore({ content: content_md });
-    const rng = makeDeterministicRng(300);
     const ms = bench(() => {
       const len = store.getSnapshot().pieceTable.totalLength;
       const mid = byteOffset(Math.floor(len / 2));
       store.dispatch(DocumentActions.insert(mid, 'x'));
     }, ITERS);
     assertPerf(`midpoint insert × ${ITERS}`, ms, 5_000, ITERS);
+    expect(store.getSnapshot().pieceTable.totalLength).toBe(content_md.length + ITERS);
   });
 
   it('1 000 random-position single-byte deletes', () => {
@@ -213,6 +260,7 @@ describe('Edits via store.dispatch', () => {
       store.dispatch(DocumentActions.delete(byteOffset(start), byteOffset(start + 1)));
     }, ITERS);
     assertPerf(`random delete × ${ITERS}`, ms, 5_000, ITERS);
+    expect(store.getSnapshot().pieceTable.totalLength).toBe(content_lg.length - ITERS);
   });
 });
 
@@ -271,11 +319,14 @@ describe('Undo / redo', () => {
   it('200 undos then 200 redos on 50k-line document', () => {
     const STEPS = 200;
     const store = createDocumentStore({ content: content_md });
+    let insertedBytes = 0;
 
     // Build undo history
     for (let i = 0; i < STEPS; i++) {
       const len = store.getSnapshot().pieceTable.totalLength;
-      store.dispatch(DocumentActions.insert(byteOffset(len), `${i}\n`));
+      const text = `${i}\n`;
+      insertedBytes += text.length;
+      store.dispatch(DocumentActions.insert(byteOffset(len), text));
     }
 
     const ms = bench(() => {
@@ -287,6 +338,7 @@ describe('Undo / redo', () => {
       }
     });
     assertPerf(`${STEPS} undo + ${STEPS} redo`, ms, 5_000);
+    expect(store.getSnapshot().pieceTable.totalLength).toBe(content_md.length + insertedBytes);
   });
 });
 
@@ -300,6 +352,7 @@ describe('Mixed edit workload', () => {
     const store = createDocumentStore({ content: content_md });
     const rng = makeDeterministicRng(600);
     let queries = 0;
+    let expectedLength = content_md.length;
 
     const ms = bench(() => {
       const state = store.getSnapshot();
@@ -310,10 +363,12 @@ describe('Mixed edit workload', () => {
         // Insert
         const pos = byteOffset(Math.floor(rng() * len));
         store.dispatch(DocumentActions.insert(pos, 'ab'));
+        expectedLength += 2;
       } else if (op < 0.85 && len > 2) {
         // Delete
         const start = Math.floor(rng() * (len - 1));
         store.dispatch(DocumentActions.delete(byteOffset(start), byteOffset(start + 1)));
+        expectedLength -= 1;
       } else {
         // Query
         const lineCount = state.lineIndex.lineCount;
@@ -324,6 +379,8 @@ describe('Mixed edit workload', () => {
     }, ITERS);
 
     assertPerf(`mixed workload × ${ITERS} (${queries} queries)`, ms, 10_000, ITERS);
+    expect(queries).toBeGreaterThan(0);
+    expect(store.getSnapshot().pieceTable.totalLength).toBe(expectedLength);
   });
 });
 
@@ -360,12 +417,18 @@ describe('Multibyte content (kanji + emoji)', () => {
     const state = createInitialState({ content: content_mb });
     const root = state.lineIndex.root;
     const lineCount = state.lineIndex.lineCount;
+    const totalBytes = state.pieceTable.totalLength;
     const rng = makeDeterministicRng(700);
     const ms = bench(() => {
       const line = Math.floor(rng() * lineCount);
       getLineStartOffset(root, line);
-    }, ITERS);
+    }, ITERS, STABLE_READ_BENCH);
     assertPerf(`getLineStartOffset byte (multibyte)`, ms, 1_000, ITERS);
+
+    expect(getLineStartOffset(root, 0)).toBe(0);
+    const lastStart = getLineStartOffset(root, lineCount - 1);
+    expect(lastStart).toBeGreaterThanOrEqual(0);
+    expect(lastStart).toBeLessThan(totalBytes);
   });
 
   it(`getCharStartOffset (UTF-16) × 10 000 on multibyte index`, () => {
@@ -377,28 +440,36 @@ describe('Multibyte content (kanji + emoji)', () => {
     const ms = bench(() => {
       const line = Math.floor(rng() * lineCount);
       getCharStartOffset(root, line);
-    }, ITERS);
+    }, ITERS, STABLE_READ_BENCH);
     assertPerf(`getCharStartOffset UTF-16 (multibyte)`, ms, 1_000, ITERS);
 
     // Sanity: for multibyte content, char offsets must differ from byte offsets
     const byteOff = getLineStartOffset(root, LINES_MB - 1);
     const charOff = getCharStartOffset(root, LINES_MB - 1);
     expect(charOff).toBeLessThan(byteOff);
+
+    const probeLine = Math.floor(lineCount / 2);
+    const probeLoc = query.findLineAtCharPosition(state, getCharStartOffset(root, probeLine));
+    expect(probeLoc?.lineNumber).toBe(probeLine);
   });
 
   it(`findLineAtCharPosition × 10 000 on multibyte index`, () => {
     const ITERS = 10_000;
     const state = createInitialState({ content: content_mb });
     const root = state.lineIndex.root;
-    // Total char length = charOffset of last line + its charLength
-    const totalChars = getCharStartOffset(root, LINES_MB - 1) +
-      (state.lineIndex.root?.subtreeCharLength ?? 0);
+    const totalChars = state.lineIndex.root?.subtreeCharLength ?? 0;
     const rng = makeDeterministicRng(702);
     const ms = bench(() => {
       const pos = Math.floor(rng() * totalChars);
       query.findLineAtCharPosition(state, pos);
-    }, ITERS);
+    }, ITERS, STABLE_READ_BENCH);
     assertPerf(`findLineAtCharPosition (multibyte)`, ms, 1_000, ITERS);
+
+    expect(totalChars).toBeGreaterThan(0);
+    expect(query.findLineAtCharPosition(state, 0)?.lineNumber).toBe(0);
+    const nearEnd = query.findLineAtCharPosition(state, Math.max(0, totalChars - 1));
+    expect(nearEnd).not.toBeNull();
+    expect(nearEnd!.lineNumber).toBeLessThan(LINES_MB);
   });
 
   it('getText on multibyte document', () => {
@@ -416,24 +487,35 @@ describe('Multibyte content (kanji + emoji)', () => {
     const ITERS = 1_000;
     // Tokens to append — mix of kanji (3 bytes) and emoji (4 bytes each)
     const tokens = ['日本語', '😀', '世界', '🚀', '漢字', '🎉'];
+    const tokenBytes = tokens.map(utf8ByteLength);
     const store = createDocumentStore({ content: content_mb });
+    const initialBytes = store.getSnapshot().pieceTable.totalLength;
+    let insertedBytes = 0;
     let t = 0;
     const ms = bench(() => {
       const len = store.getSnapshot().pieceTable.totalLength;
-      store.dispatch(DocumentActions.insert(byteOffset(len), tokens[t++ % tokens.length]));
+      const tokenIndex = t++ % tokens.length;
+      store.dispatch(DocumentActions.insert(byteOffset(len), tokens[tokenIndex]));
+      insertedBytes += tokenBytes[tokenIndex];
     }, ITERS);
     assertPerf(`append kanji/emoji × ${ITERS}`, ms, 5_000, ITERS);
+    expect(store.getSnapshot().pieceTable.totalLength).toBe(initialBytes + insertedBytes);
   });
 
   it('1 000 inserts of kanji + emoji at line boundaries', () => {
     const ITERS = 1_000;
     const tokens = ['日本語\n', '😀\n', '世界\n', '🚀\n'];
+    const tokenBytes = tokens.map(utf8ByteLength);
     const store = createDocumentStore({ content: content_mb });
+    const initial = store.getSnapshot();
+    const initialBytes = initial.pieceTable.totalLength;
+    const initialLineCount = initial.lineIndex.lineCount;
     // Reconcile once to get valid byte-boundary line offsets
     const reconciled = store.reconcileNow();
     const lineCount = reconciled.lineIndex.lineCount;
     const rng = makeDeterministicRng(710);
     let inserted = 0;
+    let insertedBytes = 0;
     const ms = bench(() => {
       // Re-read state each time — previous inserts shift offsets, so use line 0
       // (offset 0) to stay at a guaranteed byte boundary regardless of insertions.
@@ -441,21 +523,30 @@ describe('Multibyte content (kanji + emoji)', () => {
       // getLineStartOffset on the *current* (lazy) state root still returns the
       // stored offset for unmodified lines near the start of the document.
       const off = getLineStartOffset(store.getSnapshot().lineIndex.root, targetLine);
-      store.dispatch(DocumentActions.insert(byteOffset(off), tokens[inserted++ % tokens.length]));
+      const tokenIndex = inserted++ % tokens.length;
+      store.dispatch(DocumentActions.insert(byteOffset(off), tokens[tokenIndex]));
+      insertedBytes += tokenBytes[tokenIndex];
     }, ITERS);
     assertPerf(`insert kanji/emoji at line boundary × ${ITERS}`, ms, 5_000, ITERS);
+    const final = store.getSnapshot();
+    expect(final.pieceTable.totalLength).toBe(initialBytes + insertedBytes);
+    expect(final.lineIndex.lineCount).toBe(initialLineCount + ITERS);
   });
 
   it('reconcileNow after 500 multibyte inserts', () => {
     const EDITS = 500;
     const store = createDocumentStore({ content: content_mb });
     const tokens = ['日本語', '😀世界', '漢字🚀', '🎉🌟'];
+    const initialLineCount = store.getSnapshot().lineIndex.lineCount;
     for (let i = 0; i < EDITS; i++) {
       const len = store.getSnapshot().pieceTable.totalLength;
       store.dispatch(DocumentActions.insert(byteOffset(len), tokens[i % tokens.length] + '\n'));
     }
     const ms = bench(() => { store.reconcileNow(); });
     assertPerf(`reconcileNow after ${EDITS} multibyte edits`, ms, 10_000);
-    expect(store.getSnapshot().lineIndex.dirtyRanges.length).toBe(0);
+    const final = store.getSnapshot();
+    expect(final.lineIndex.dirtyRanges.length).toBe(0);
+    expect(final.lineIndex.rebuildPending).toBe(false);
+    expect(final.lineIndex.lineCount).toBe(initialLineCount + EDITS);
   });
 });
