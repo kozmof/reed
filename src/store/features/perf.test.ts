@@ -184,7 +184,7 @@ describe('Piece table reads (getText)', () => {
   it('reads full 100k-line document', () => {
     const state = createInitialState({ content: content_lg });
     const total = state.pieceTable.totalLength;
-    let result: string;
+    let result = '';
     const ms = bench(() => {
       result = getText(state.pieceTable, byteOffset(0), byteOffset(total));
     });
@@ -456,7 +456,6 @@ describe('Multibyte content (kanji + emoji)', () => {
   it(`findLineAtCharPosition × 10 000 on multibyte index`, () => {
     const ITERS = 10_000;
     const state = createInitialState({ content: content_mb });
-    const root = state.lineIndex.root;
     const totalChars = state.lineIndex.root?.subtreeCharLength ?? 0;
     const rng = makeDeterministicRng(702);
     const ms = bench(() => {
