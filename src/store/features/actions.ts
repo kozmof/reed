@@ -4,7 +4,7 @@
  */
 
 import type { SelectionRange } from '../../types/state.ts';
-import type { ByteOffset } from '../../types/branded.ts';
+import type { ByteOffset, ReadonlyUint8Array } from '../../types/branded.ts';
 import type {
   DocumentAction,
   InsertAction,
@@ -120,7 +120,7 @@ export const DocumentActions = {
    * @param chunkIndex - Index of the chunk
    * @param data - Chunk data
    */
-  loadChunk(chunkIndex: number, data: Uint8Array): LoadChunkAction {
+  loadChunk(chunkIndex: number, data: ReadonlyUint8Array): LoadChunkAction {
     return Object.freeze({ type: 'LOAD_CHUNK', chunkIndex, data });
   },
 

@@ -88,6 +88,7 @@ export type {
   CharOffset,
   LineNumber,
   ColumnNumber,
+  ReadonlyUint8Array,
 } from './branded.ts';
 
 export type {

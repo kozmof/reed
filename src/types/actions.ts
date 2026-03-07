@@ -5,7 +5,7 @@
  */
 
 import type { SelectionRange } from './state.ts';
-import type { ByteOffset } from './branded.ts';
+import type { ByteOffset, ReadonlyUint8Array } from './branded.ts';
 
 // =============================================================================
 // Text Editing Actions
@@ -152,8 +152,8 @@ export interface LoadChunkAction {
   readonly type: 'LOAD_CHUNK';
   /** Index of the chunk */
   readonly chunkIndex: number;
-  /** Chunk data */
-  readonly data: Uint8Array;
+  /** Chunk data (readonly — callers must not mutate the buffer after dispatch) */
+  readonly data: ReadonlyUint8Array;
 }
 
 /**

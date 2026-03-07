@@ -736,7 +736,7 @@ The background `scheduleReconciliation` callback now passes `state.version` (not
 # Report 4: 2026-03-01 — Transaction and Batch Implementations
 
 **Updated:** 2026-03-02 — 14 issues resolved (P1, P2/D2, P4, P5\*, T1, T3, Impl1, D1, D3, D4, Impl3, Impl5, Impl2, Impl4)
-**Updated:** 2026-03-07 — P6 fixed
+**Updated:** 2026-03-07 — P6 fixed; T2 fixed (`LoadChunkAction.data` → `ReadonlyUint8Array`)
 **Scope:** Transaction management, batch dispatch, and their integration with the store and event system
 
 ---
@@ -930,9 +930,8 @@ This is correct semantically but is a common source of confusion: inner rollback
 **~~T1~~ — ~~`TransactionResult` carries three fields, but commit and rollback never use all three simultaneously.~~**
 **Fixed (2026-03-02).** `TransactionResult` is now a discriminated union of `CommitResult` (`kind: 'commit'`, `isOutermost`, `pendingActions`) and `RollbackResult` (`kind: 'rollback'`, `isOutermost`, `snapshot`). `commit()` returns `CommitResult`; `rollback()` returns `RollbackResult`. The `kind` field enables exhaustive narrowing at call sites.
 
-**T2: `TransactionManager.pendingActions` is a `readonly DocumentAction[]` getter, but its elements are mutable actions.**
-
-Actions created by `DocumentActions.*` are `Object.freeze`d, so in practice they are immutable. However, the type does not express this — `readonly DocumentAction[]` only prevents reassignment of the array reference, not mutation of individual elements. Using `ReadonlyArray<Readonly<DocumentAction>>` would be more precise.
+**~~T2~~ — ~~`TransactionManager.pendingActions` is a `readonly DocumentAction[]` getter, but its elements are mutable actions.~~**
+**Fixed (2026-03-07).** `pendingActions` itself was removed by D3. The remaining live instance of the same class of issue was `LoadChunkAction.data: Uint8Array` — the field was `readonly` (preventing reference reassignment) but the buffer contents were mutable. `data` is now typed as `ReadonlyUint8Array` (defined in `src/types/branded.ts` as `Readonly<Uint8Array> & { readonly [index: number]: number }`), which blocks both named-method writes (`set`, `fill`, `copyWithin`, …) and indexed assignment (`data[0] = 5`) at the type level. Runtime behaviour is unchanged: all instances are still plain `Uint8Array` so `instanceof Uint8Array` checks and `new Uint8Array(action.data)` in `serializeAction` continue to work. The `loadChunk` action creator parameter type was updated to match. `ReadonlyUint8Array` is exported from `src/types/index.ts` alongside the other branded types.
 
 **~~T3~~ — ~~`DocumentStore.batch` is typed as accepting `DocumentAction[]` (mutable array) rather than `readonly DocumentAction[]`.~~**
 **Fixed (2026-03-02).** `DocumentStore.batch` and both store implementations now accept `readonly DocumentAction[]`. Callers with a `readonly` array no longer need to cast.

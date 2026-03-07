@@ -44,6 +44,23 @@ interface Brand<B> {
 type Branded<T, B> = T & Brand<B>;
 
 // =============================================================================
+// Readonly Typed Array
+// =============================================================================
+
+/**
+ * Read-only view of a Uint8Array.
+ * Named properties (set, fill, copyWithin, …) and numeric index writes are
+ * both blocked at the type level, preventing callers from mutating a buffer
+ * after dispatching it in a LoadChunkAction.
+ *
+ * At runtime every instance is still a plain Uint8Array — no wrapper is
+ * allocated. instanceof Uint8Array checks continue to work.
+ */
+export type ReadonlyUint8Array = Readonly<Uint8Array> & {
+  readonly [index: number]: number;
+};
+
+// =============================================================================
 // Position Types
 // =============================================================================
 
