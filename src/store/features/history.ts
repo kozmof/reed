@@ -4,6 +4,7 @@
  */
 
 import type { DocumentState, HistoryState } from '../../types/state.ts';
+import { pstackSize } from '../../types/state.ts';
 
 /**
  * Check if undo is available.
@@ -12,7 +13,7 @@ import type { DocumentState, HistoryState } from '../../types/state.ts';
  */
 export function canUndo(state: DocumentState | HistoryState): boolean {
   const history = 'history' in state ? state.history : state;
-  return history.undoStack.length > 0;
+  return history.undoStack !== null;
 }
 
 /**
@@ -22,7 +23,7 @@ export function canUndo(state: DocumentState | HistoryState): boolean {
  */
 export function canRedo(state: DocumentState | HistoryState): boolean {
   const history = 'history' in state ? state.history : state;
-  return history.redoStack.length > 0;
+  return history.redoStack !== null;
 }
 
 /**
@@ -32,7 +33,7 @@ export function canRedo(state: DocumentState | HistoryState): boolean {
  */
 export function getUndoCount(state: DocumentState | HistoryState): number {
   const history = 'history' in state ? state.history : state;
-  return history.undoStack.length;
+  return pstackSize(history.undoStack);
 }
 
 /**
@@ -42,7 +43,7 @@ export function getUndoCount(state: DocumentState | HistoryState): number {
  */
 export function getRedoCount(state: DocumentState | HistoryState): number {
   const history = 'history' in state ? state.history : state;
-  return history.redoStack.length;
+  return pstackSize(history.redoStack);
 }
 
 /**
@@ -52,5 +53,5 @@ export function getRedoCount(state: DocumentState | HistoryState): number {
  */
 export function isHistoryEmpty(state: DocumentState | HistoryState): boolean {
   const history = 'history' in state ? state.history : state;
-  return history.undoStack.length === 0 && history.redoStack.length === 0;
+  return history.undoStack === null && history.redoStack === null;
 }

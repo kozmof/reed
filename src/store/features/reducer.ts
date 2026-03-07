@@ -5,6 +5,7 @@
  */
 
 import type { DocumentState, HistoryEntry, HistoryChange, SelectionState, SelectionRange } from '../../types/state.ts';
+import { pstackPush, pstackPeek, pstackPop, pstackSize, pstackToArray, pstackFromArray } from '../../types/state.ts';
 import type { DocumentAction } from '../../types/actions.ts';
 import type { ByteOffset } from '../../types/branded.ts';
 import type { DeleteBoundaryContext } from '../../types/store.ts';
@@ -278,7 +279,7 @@ function historyPush(
   const selectionAfter = computeSelectionAfterChange(state, change);
 
   // Try to coalesce with the last entry
-  const lastEntry = history.undoStack[history.undoStack.length - 1];
+  const lastEntry = pstackPeek(history.undoStack);
   if (lastEntry && canCoalesce(lastEntry, change, history.coalesceTimeout, now)) {
     const merged = coalesceChanges(lastEntry.changes[0], change);
     const mergedEntry: HistoryEntry = Object.freeze({
@@ -287,12 +288,12 @@ function historyPush(
       selectionAfter,
       timestamp: now,
     });
-    const undoStack = [...history.undoStack.slice(0, -1), mergedEntry];
+    const [, restUndo] = pstackPop(history.undoStack!);
     return withState(state, {
       history: Object.freeze({
         ...history,
-        undoStack: Object.freeze(undoStack),
-        redoStack: Object.freeze([]),
+        undoStack: pstackPush(restUndo, mergedEntry),
+        redoStack: null,
       }),
     });
   }
@@ -305,16 +306,17 @@ function historyPush(
   });
 
   // Trim undo stack if it exceeds limit
-  let undoStack = [...history.undoStack, entry];
-  if (undoStack.length > history.limit) {
-    undoStack = undoStack.slice(undoStack.length - history.limit);
+  let undoStack = pstackPush(history.undoStack, entry);
+  if (pstackSize(undoStack) > history.limit) {
+    const arr = pstackToArray(undoStack);
+    undoStack = pstackFromArray(arr.slice(arr.length - history.limit));
   }
 
   return withState(state, {
     history: Object.freeze({
       ...history,
-      undoStack: Object.freeze(undoStack),
-      redoStack: Object.freeze([]), // Clear redo stack on new change
+      undoStack,
+      redoStack: null, // Clear redo stack on new change
     }),
   });
 }
@@ -325,18 +327,17 @@ function historyPush(
  */
 function historyUndo(state: DocumentState, version: number): DocumentState {
   const history = state.history;
-  if (history.undoStack.length === 0) return state;
+  if (history.undoStack === null) return state;
 
-  const entry = history.undoStack[history.undoStack.length - 1];
-  const newUndoStack = history.undoStack.slice(0, -1);
-  const newRedoStack = [...history.redoStack, entry];
+  const [entry, newUndoStack] = pstackPop(history.undoStack);
+  const newRedoStack = pstackPush(history.redoStack, entry);
 
   // Apply inverse changes
   let newState = withState(state, {
     history: Object.freeze({
       ...history,
-      undoStack: Object.freeze(newUndoStack),
-      redoStack: Object.freeze(newRedoStack),
+      undoStack: newUndoStack,
+      redoStack: newRedoStack,
     }),
   });
 
@@ -360,18 +361,17 @@ function historyUndo(state: DocumentState, version: number): DocumentState {
  */
 function historyRedo(state: DocumentState, version: number): DocumentState {
   const history = state.history;
-  if (history.redoStack.length === 0) return state;
+  if (history.redoStack === null) return state;
 
-  const entry = history.redoStack[history.redoStack.length - 1];
-  const newRedoStack = history.redoStack.slice(0, -1);
-  const newUndoStack = [...history.undoStack, entry];
+  const [entry, newRedoStack] = pstackPop(history.redoStack);
+  const newUndoStack = pstackPush(history.undoStack, entry);
 
   // Apply changes
   let newState = withState(state, {
     history: Object.freeze({
       ...history,
-      undoStack: Object.freeze(newUndoStack),
-      redoStack: Object.freeze(newRedoStack),
+      undoStack: newUndoStack,
+      redoStack: newRedoStack,
     }),
   });
 
@@ -662,8 +662,8 @@ export function documentReducer(
       // Clear both undo and redo stacks while preserving config
       return withState(state, {
         history: Object.freeze({
-          undoStack: Object.freeze([]),
-          redoStack: Object.freeze([]),
+          undoStack: null,
+          redoStack: null,
           limit: state.history.limit,
           coalesceTimeout: state.history.coalesceTimeout,
         }),

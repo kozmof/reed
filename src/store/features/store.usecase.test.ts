@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { pstackSize } from '../../types/state.ts';
 import { createDocumentStore, withTransaction } from './store.ts';
 import { DocumentActions } from './actions.ts';
 import { byteOffset } from '../../types/branded.ts';
@@ -202,11 +203,11 @@ describe('Editor Use Cases', () => {
 
       store.dispatch(DocumentActions.insert(byteOffset(0), 'ABC'));
       store.dispatch(DocumentActions.undo());
-      expect(store.getSnapshot().history.redoStack.length).toBe(1);
+      expect(pstackSize(store.getSnapshot().history.redoStack)).toBe(1);
 
       // New edit should clear redo stack
       store.dispatch(DocumentActions.insert(byteOffset(0), 'X'));
-      expect(store.getSnapshot().history.redoStack.length).toBe(0);
+      expect(pstackSize(store.getSnapshot().history.redoStack)).toBe(0);
     });
 
     it('should do nothing when undoing with empty undo stack', () => {
@@ -282,7 +283,7 @@ describe('Editor Use Cases', () => {
       ]);
 
       expect(store.getSnapshot().pieceTable.totalLength).toBe(11);
-      expect(store.getSnapshot().history.undoStack.length).toBe(3);
+      expect(pstackSize(store.getSnapshot().history.undoStack)).toBe(3);
     });
 
     it('should notify listeners only once for batched operations', () => {

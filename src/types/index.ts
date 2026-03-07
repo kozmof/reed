@@ -25,9 +25,20 @@ export type {
   HistoryChange,
   HistoryEntry,
   HistoryState,
+  PStack,
   DocumentMetadata,
   DocumentState,
   DocumentStoreConfig,
+} from './state.ts';
+
+export {
+  pstackEmpty,
+  pstackPush,
+  pstackPeek,
+  pstackPop,
+  pstackSize,
+  pstackToArray,
+  pstackFromArray,
 } from './state.ts';
 
 // Action types

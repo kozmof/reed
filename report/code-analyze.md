@@ -736,6 +736,7 @@ The background `scheduleReconciliation` callback now passes `state.version` (not
 # Report 4: 2026-03-01 — Transaction and Batch Implementations
 
 **Updated:** 2026-03-02 — 14 issues resolved (P1, P2/D2, P4, P5\*, T1, T3, Impl1, D1, D3, D4, Impl3, Impl5, Impl2, Impl4)
+**Updated:** 2026-03-07 — P6 fixed
 **Scope:** Transaction management, batch dispatch, and their integration with the store and event system
 
 ---
@@ -899,9 +900,12 @@ This is correct semantically but is a common source of confusion: inner rollback
 
 *Note: the related concern — outermost rollback notifying when state is unchanged — is not addressed. Listeners still cannot distinguish "state changed" from "state was rolled back to what it already was."*
 
-**P6 — `snapshotStack` in `TransactionManager` stores full `DocumentState` references per nesting level.**
+**~~P6~~ — ~~`snapshotStack` in `TransactionManager` stores full `DocumentState` references per nesting level.~~ (Fixed 2026-03-07)**
 
-For deeply nested transactions with large documents, the snapshot stack can hold many references to immutable-but-still-referenced state trees. Structural sharing in the piece table limits memory impact, but the line index and history stacks are duplicated across snapshots per nesting level.
+~~For deeply nested transactions with large documents, the snapshot stack can hold many references to immutable-but-still-referenced state trees. Structural sharing in the piece table limits memory impact, but the line index and history stacks are duplicated across snapshots per nesting level.~~
+
+`HistoryState.undoStack` and `redoStack` are now `PStack<HistoryEntry>` — a persistent singly-linked stack defined in `src/types/state.ts`. Each push creates a new cons node pointing to the previous tail; all snapshot levels sharing history entries up to their `begin()` point share those nodes automatically. Snapshot overhead for history drops from O(K × H) pointer slots to O(K) cons-node allocations. The piece table and line index already use structural sharing; history is now consistent with that pattern.
+(`src/types/state.ts`, `src/store/features/reducer.ts`, `src/store/features/history.ts`, `src/store/core/state.ts`)
 
 ---
 

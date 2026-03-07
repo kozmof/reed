@@ -15,6 +15,7 @@ import { createInitialState } from './../core/state.ts';
 import { documentReducer } from './reducer.ts';
 import { DocumentActions } from './actions.ts';
 import type { HistoryState } from '../../types/state.ts';
+import { pstackFromArray } from '../../types/state.ts';
 import { byteOffset } from '../../types/branded.ts';
 
 // =============================================================================
@@ -42,15 +43,15 @@ describe('canUndo', () => {
 
   it('should work with HistoryState directly', () => {
     const historyState: HistoryState = {
-      undoStack: [
+      undoStack: pstackFromArray([
         {
           changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: 1 }],
           selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
           selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
           timestamp: Date.now(),
         },
-      ],
-      redoStack: [],
+      ]),
+      redoStack: null,
       limit: 1000,
       coalesceTimeout: 0,
     };
@@ -99,15 +100,15 @@ describe('canRedo', () => {
 
   it('should work with HistoryState directly', () => {
     const historyState: HistoryState = {
-      undoStack: [],
-      redoStack: [
+      undoStack: null,
+      redoStack: pstackFromArray([
         {
           changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: 1 }],
           selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
           selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
           timestamp: Date.now(),
         },
-      ],
+      ]),
       limit: 1000,
       coalesceTimeout: 0,
     };
@@ -149,7 +150,7 @@ describe('getUndoCount', () => {
 
   it('should work with HistoryState directly', () => {
     const historyState: HistoryState = {
-      undoStack: [
+      undoStack: pstackFromArray([
         {
           changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: 1 }],
           selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
@@ -162,8 +163,8 @@ describe('getUndoCount', () => {
           selectionAfter: { ranges: [{ anchor: byteOffset(2), head: byteOffset(2) }], primaryIndex: 0 },
           timestamp: Date.now(),
         },
-      ],
-      redoStack: [],
+      ]),
+      redoStack: null,
       limit: 1000,
       coalesceTimeout: 0,
     };
@@ -208,15 +209,15 @@ describe('getRedoCount', () => {
 
   it('should work with HistoryState directly', () => {
     const historyState: HistoryState = {
-      undoStack: [],
-      redoStack: [
+      undoStack: null,
+      redoStack: pstackFromArray([
         {
           changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: 1 }],
           selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
           selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
           timestamp: Date.now(),
         },
-      ],
+      ]),
       limit: 1000,
       coalesceTimeout: 0,
     };
@@ -258,23 +259,23 @@ describe('isHistoryEmpty', () => {
 
   it('should work with HistoryState directly', () => {
     const emptyHistory: HistoryState = {
-      undoStack: [],
-      redoStack: [],
+      undoStack: null,
+      redoStack: null,
       limit: 1000,
       coalesceTimeout: 0,
     };
     expect(isHistoryEmpty(emptyHistory)).toBe(true);
 
     const nonEmptyHistory: HistoryState = {
-      undoStack: [
+      undoStack: pstackFromArray([
         {
           changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: 1 }],
           selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
           selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
           timestamp: Date.now(),
         },
-      ],
-      redoStack: [],
+      ]),
+      redoStack: null,
       limit: 1000,
       coalesceTimeout: 0,
     };

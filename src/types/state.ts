@@ -262,14 +262,45 @@ export interface HistoryEntry {
   readonly timestamp: number;
 }
 
+// =============================================================================
+// Persistent Stack
+// =============================================================================
+
+/**
+ * Persistent singly-linked stack with O(1) push/pop/peek and automatic
+ * structural sharing across snapshots. Empty stack is `null`.
+ */
+export type PStack<T> = null | { readonly top: T; readonly rest: PStack<T>; readonly size: number };
+
+export const pstackEmpty = <T>(): PStack<T> => null;
+export const pstackPush = <T>(s: PStack<T>, v: T): PStack<T> => ({ top: v, rest: s, size: (s?.size ?? 0) + 1 });
+export const pstackPeek = <T>(s: PStack<T>): T | undefined => s?.top;
+export const pstackPop = <T>(s: NonNullable<PStack<T>>): [T, PStack<T>] => [s.top, s.rest];
+export const pstackSize = <T>(s: PStack<T>): number => s?.size ?? 0;
+export const pstackToArray = <T>(s: PStack<T>): T[] => {
+  const arr: T[] = [];
+  let cur = s;
+  while (cur !== null) { arr.push(cur.top); cur = cur.rest; }
+  arr.reverse();
+  return arr;
+};
+export const pstackFromArray = <T>(arr: readonly T[]): PStack<T> =>
+  arr.reduce<PStack<T>>((acc, v) => pstackPush(acc, v), null);
+
+// =============================================================================
+// History Types
+// =============================================================================
+
 /**
  * Immutable history state for undo/redo.
+ * `undoStack` and `redoStack` use persistent stacks for O(1) structural
+ * sharing across transaction snapshots.
  */
 export interface HistoryState {
-  /** Stack of undo entries */
-  readonly undoStack: readonly HistoryEntry[];
-  /** Stack of redo entries */
-  readonly redoStack: readonly HistoryEntry[];
+  /** Stack of undo entries (most recent on top) */
+  readonly undoStack: PStack<HistoryEntry>;
+  /** Stack of redo entries (most recent on top) */
+  readonly redoStack: PStack<HistoryEntry>;
   /** Maximum number of entries to keep */
   readonly limit: number;
   /** Timeout in ms for coalescing consecutive same-type changes (0 = disabled) */

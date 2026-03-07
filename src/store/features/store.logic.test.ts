@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { pstackSize, pstackPeek } from '../../types/state.ts';
 import { documentReducer } from './reducer.ts';
 import {
   createInitialState,
@@ -48,8 +49,8 @@ describe('State Factories', () => {
       expect(state.pieceTable.totalLength).toBe(0);
       expect(state.lineIndex.lineCount).toBe(1);
       expect(state.selection.ranges.length).toBe(1);
-      expect(state.history.undoStack.length).toBe(0);
-      expect(state.history.redoStack.length).toBe(0);
+      expect(pstackSize(state.history.undoStack)).toBe(0);
+      expect(pstackSize(state.history.redoStack)).toBe(0);
       expect(state.metadata.isDirty).toBe(false);
     });
 
@@ -228,8 +229,8 @@ describe('State Factories', () => {
     it('should create empty stacks with limit', () => {
       const history = createInitialHistoryState(500);
 
-      expect(history.undoStack.length).toBe(0);
-      expect(history.redoStack.length).toBe(0);
+      expect(pstackSize(history.undoStack)).toBe(0);
+      expect(pstackSize(history.redoStack)).toBe(0);
       expect(history.limit).toBe(500);
     });
 
@@ -330,8 +331,8 @@ describe('Document Reducer', () => {
       const state = createInitialState();
       const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Test'));
 
-      expect(newState.history.undoStack.length).toBe(1);
-      expect(newState.history.undoStack[0].changes[0].type).toBe('insert');
+      expect(pstackSize(newState.history.undoStack)).toBe(1);
+      expect(pstackPeek(newState.history.undoStack)!.changes[0].type).toBe('insert');
     });
 
     it('should update line count for newlines', () => {
@@ -449,12 +450,12 @@ describe('Document Reducer', () => {
     it('should move entry from undo to redo stack', () => {
       let state = createInitialState();
       state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'A'));
-      expect(state.history.undoStack.length).toBe(1);
-      expect(state.history.redoStack.length).toBe(0);
+      expect(pstackSize(state.history.undoStack)).toBe(1);
+      expect(pstackSize(state.history.redoStack)).toBe(0);
 
       state = documentReducer(state, DocumentActions.undo());
-      expect(state.history.undoStack.length).toBe(0);
-      expect(state.history.redoStack.length).toBe(1);
+      expect(pstackSize(state.history.undoStack)).toBe(0);
+      expect(pstackSize(state.history.redoStack)).toBe(1);
     });
 
     it('should return same state when nothing to undo', () => {
@@ -591,7 +592,7 @@ describe('Document Reducer', () => {
         ])
       );
 
-      expect(newState.history.undoStack.length).toBe(0);
+      expect(pstackSize(newState.history.undoStack)).toBe(0);
     });
 
     it('should mark state as dirty after remote content changes', () => {
@@ -687,7 +688,7 @@ describe('Document Reducer', () => {
       }
 
       // Should only keep last 3
-      expect(state.history.undoStack.length).toBe(3);
+      expect(pstackSize(state.history.undoStack)).toBe(3);
     });
   });
 });

@@ -256,8 +256,8 @@ export function createInitialSelectionState(): SelectionState {
  */
 export function createInitialHistoryState(limit: number = 1000, coalesceTimeout: number = 0): HistoryState {
   return Object.freeze({
-    undoStack: Object.freeze([]),
-    redoStack: Object.freeze([]),
+    undoStack: null,
+    redoStack: null,
     limit,
     coalesceTimeout,
   });
