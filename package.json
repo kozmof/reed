@@ -9,6 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:perf": "vitest run --config vitest.perf.config.ts",
+    "test:perf:watch": "vitest --config vitest.perf.config.ts",
     "gen-fixture": "npx tsx scripts/gen-fixture.ts"
   },
   "devDependencies": {

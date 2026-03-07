@@ -6,7 +6,7 @@
  * brittle on slower CI hardware.
  *
  * Run in isolation to get the cleanest numbers:
- *   npx vitest run src/store/features/perf.test.ts
+ *   npm run test:perf
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
