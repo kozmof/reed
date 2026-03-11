@@ -76,31 +76,73 @@ dispatched to Reed. Then `compositionstart` fires and sets `isComposing =
 true`. When the user confirms, `compositionend` dispatches the full composed
 text (`日本語`). Reed ends up with both `n` and `日本語`.
 
-**Fix:** Rollback in `onCompositionStart`.
+#### Original fix: rollback in `onCompositionStart` (superseded)
+
+> This approach still correctly handles the double-insert, but creates two
+> history entries per IME session. See **Current fix** below.
 
 ```
 keydown('n') fires
-  → isComposing.current = false  (compositionstart hasn't fired yet)
   → insert 'n' into Reed
   → lastInsertedChar.current = { pos: cursor, char: 'n' }
 
-compositionstart fires (synchronously after keydown returns)
+compositionstart fires
   → isComposing.current = true
-  → read lastInsertedChar: found { pos, char: 'n' }
   → dispatch delete(pos, pos+1) to Reed  ← rolls back 'n'
-  → setCursor(pos)
   → lastInsertedChar.current = null
-
-...composition proceeds with Reed in the correct pre-'n' state...
 
 compositionend fires
   → dispatch insert(pos, '日本語')
-  → setCursor(pos + 3)
 ```
 
+Problem: two dispatches → two history entries → user must press `u` twice to
+undo one IME session.
+
+#### Current fix: deferred rollback with `insertComposed`
+
+`keydown` still inserts speculatively and records the rollback range.
+`compositionstart` records the rollback info but **does not dispatch** the
+delete. `compositionend` dispatches a single `insertComposed` action, which
+delegates to `REPLACE` and creates **one** history entry.
+
+```
+keydown('n') fires
+  → insert 'n' into Reed
+  → lastInsert = { start: pos, end: byteOffset(pos + byteLen) }
+
+compositionstart fires
+  → isComposing = true
+  → rollback = lastInsert; lastInsert = null
+  → (no dispatch — defer the rollback)
+
+  ...composition proceeds; Reed has 'n' in it but useLayoutEffect
+  skips re-render during composition, so the user never sees it...
+
+compositionend fires
+  → dispatch insertComposed(rollback.start, rollback.end, '日本語', selection)
+     = REPLACE(rollback.start, rollback.end, '日本語')
+     = one HistoryEntry (type 'replace')
+  → one u press undoes the entire session
+```
+
+`DocumentActions.insertComposed` signature:
+
+```ts
+insertComposed(
+  rollbackStart: ByteOffset,
+  rollbackEnd: ByteOffset,
+  composedText: string,
+  selection?: readonly SelectionRange[]
+): ReplaceAction
+```
+
+Edge case: if `compositionend` fires with empty text (user cancelled),
+`REPLACE(start, end, '')` removes the speculative character — still one
+history entry, correct behaviour.
+
 For regular ASCII typing (`a`, `b`, `c`), `compositionstart` never fires, so
-`lastInsertedChar` is simply cleared on the next `onKeyDown` call and the
-char remains in Reed.
+`lastInsert` is cleared on the next `onKeyDown` call and the char remains in
+Reed normally.
 
 ---
 
@@ -108,11 +150,11 @@ char remains in Reed.
 
 | Event | Role |
 |---|---|
-| `onKeyDown` | Handles all keys: special keys (Escape/Enter/Backspace/arrows) and printable chars. Records printable inserts in `lastInsertedChar`. Returns early if `isComposing`. |
-| `onCompositionStart` | Sets `isComposing = true`. Rolls back any premature char insert recorded in `lastInsertedChar`. |
-| `onCompositionEnd` | Sets `isComposing = false`. Dispatches the final composed string to Reed at the (now correct) cursor position. |
-| `onBeforeInput` | Allows all events during composition (browser manages preedit DOM). Blocks all other browser mutations — everything is handled by `onKeyDown`. |
-| `useLayoutEffect` | Rebuilds `innerHTML` from Reed state after every change, **skipping** during composition. In insert mode, calls `placeInsertCursor` to keep the browser's Selection in sync with the logical cursor. |
+| `onKeyDown` | Handles all keys. Records speculative inserts in `lastInsert`. Returns early if `isComposing`. |
+| `onCompositionStart` | Sets `isComposing = true`. Saves rollback info from `lastInsert`; does **not** dispatch a delete. |
+| `onCompositionEnd` | Sets `isComposing = false`. Dispatches `insertComposed(rollback, composed, selection)` — one atomic history entry. |
+| `onBeforeInput` | Allows all events during composition. Blocks all other browser mutations. |
+| `useLayoutEffect` | Rebuilds `innerHTML` from Reed state after every change, **skipping** during composition. In insert mode, calls `placeInsertCursor` to keep browser Selection in sync with the logical cursor. |
 
 ### Key design constraints
 
@@ -125,8 +167,8 @@ char remains in Reed.
   and calls `range.setStart(textNode, offset)`, not
   `setStartBefore(element)`. Text-node ranges are the canonical input for all
   IME implementations.
-- **Rollback, not prevention.** There is no reliable way to detect in
-  `onKeyDown` that a key will start an IME session (the flag
-  `e.nativeEvent.isComposing` is `false` for the triggering key). Inserting
-  optimistically and rolling back in `onCompositionStart` is the correct
-  pattern.
+- **Deferred rollback, not immediate.** `compositionstart` records rollback
+  info but does not dispatch. `compositionend` dispatches a single `REPLACE`
+  via `insertComposed`, keeping the IME session as one undo entry.
+  (`useLayoutEffect` skips during composition, so Reed holding the speculative
+  char is invisible to the user.)

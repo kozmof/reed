@@ -59,7 +59,13 @@ export interface DocumentStore {
 
   /**
    * Dispatch an action to modify state.
-   * Returns the new state after the action is applied.
+   * Returns the new state after the action is applied synchronously.
+   *
+   * For undo/redo, prefer using the return value directly rather than
+   * calling getSnapshot() afterward — they return the same reference.
+   * Alternatively, subscribe to the `history-change` event on a
+   * DocumentStoreWithEvents to centralise cursor sync in one handler.
+   *
    * @param action - Action to dispatch
    * @returns New state after applying the action
    */

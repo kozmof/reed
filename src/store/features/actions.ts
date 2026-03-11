@@ -34,8 +34,8 @@ export const DocumentActions = {
    * @param start - Start position to insert at (0-based byte offset)
    * @param text - Text to insert
    */
-  insert(start: ByteOffset, text: string): InsertAction {
-    return Object.freeze({ type: 'INSERT', start, text });
+  insert(start: ByteOffset, text: string, selection?: readonly SelectionRange[]): InsertAction {
+    return Object.freeze({ type: 'INSERT', start, text, ...(selection && { selection }) });
   },
 
   /**
@@ -43,8 +43,8 @@ export const DocumentActions = {
    * @param start - Start position of deletion (inclusive, byte offset)
    * @param end - End position of deletion (exclusive, byte offset)
    */
-  delete(start: ByteOffset, end: ByteOffset): DeleteAction {
-    return Object.freeze({ type: 'DELETE', start, end });
+  delete(start: ByteOffset, end: ByteOffset, selection?: readonly SelectionRange[]): DeleteAction {
+    return Object.freeze({ type: 'DELETE', start, end, ...(selection && { selection }) });
   },
 
   /**
@@ -53,8 +53,8 @@ export const DocumentActions = {
    * @param end - End position of replacement (exclusive, byte offset)
    * @param text - New text to insert
    */
-  replace(start: ByteOffset, end: ByteOffset, text: string): ReplaceAction {
-    return Object.freeze({ type: 'REPLACE', start, end, text });
+  replace(start: ByteOffset, end: ByteOffset, text: string, selection?: readonly SelectionRange[]): ReplaceAction {
+    return Object.freeze({ type: 'REPLACE', start, end, text, ...(selection && { selection }) });
   },
 
   /**
@@ -84,6 +84,38 @@ export const DocumentActions = {
    */
   historyClear(): HistoryClearAction {
     return Object.freeze({ type: 'HISTORY_CLEAR' });
+  },
+
+  /**
+   * Create a replace action for an IME composition session.
+   *
+   * Use this in `compositionend` when a keydown character was already inserted
+   * speculatively and must be rolled back before the composed text is committed.
+   * Dispatching this single action creates one history entry (type `replace`),
+   * so one `u` press undoes the entire composition session.
+   *
+   * Typical flow:
+   * ```
+   * keydown('n')         → insert 'n'; record { rollbackStart, rollbackEnd }
+   * compositionstart     → set isComposing = true; save rollback info; do NOT dispatch delete
+   * compositionend       → dispatch insertComposed(rollbackStart, rollbackEnd, '日本語', selection)
+   * ```
+   *
+   * If the user cancels composition (composedText is empty), this is equivalent
+   * to a delete of the speculative character — still one history entry.
+   *
+   * @param rollbackStart - Start of the speculatively inserted character(s)
+   * @param rollbackEnd   - End of the speculatively inserted character(s) (exclusive)
+   * @param composedText  - Full composed text from compositionend
+   * @param selection     - Optional cursor position to record as selectionBefore in history
+   */
+  insertComposed(
+    rollbackStart: ByteOffset,
+    rollbackEnd: ByteOffset,
+    composedText: string,
+    selection?: readonly SelectionRange[]
+  ): ReplaceAction {
+    return DocumentActions.replace(rollbackStart, rollbackEnd, composedText, selection);
   },
 
   /**

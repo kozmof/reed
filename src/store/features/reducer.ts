@@ -510,6 +510,7 @@ interface EditOperation {
   deletedText?: string;
   insertText: string;
   timestamp?: number;
+  selection?: readonly SelectionRange[];
 }
 
 /**
@@ -561,6 +562,16 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
 
   if (forceLineIndexRebuild) {
     newState = rebuildLineIndexFromPieceTableState(newState);
+  }
+
+  // Apply inline selection so historyPush records the correct selectionBefore
+  if (op.selection) {
+    newState = withState(newState, {
+      selection: Object.freeze({
+        ranges: Object.freeze(op.selection.map(r => Object.freeze({ ...r }))),
+        primaryIndex: 0,
+      }),
+    });
   }
 
   // Build and push history change
@@ -616,7 +627,7 @@ export function documentReducer(
     case 'INSERT': {
       const position = validatePosition(action.start, state.pieceTable.totalLength);
       if (action.text.length === 0) return state;
-      return applyEdit(state, { position, insertText: action.text, timestamp: action.timestamp });
+      return applyEdit(state, { position, insertText: action.text, timestamp: action.timestamp, selection: action.selection });
     }
 
     case 'DELETE': {
@@ -624,14 +635,14 @@ export function documentReducer(
       if (!valid) return state;
       if (end - start <= 0) return state;
       const deletedText = getTextRange(state, start, end);
-      return applyEdit(state, { position: start, deleteEnd: end, deletedText, insertText: '', timestamp: action.timestamp });
+      return applyEdit(state, { position: start, deleteEnd: end, deletedText, insertText: '', timestamp: action.timestamp, selection: action.selection });
     }
 
     case 'REPLACE': {
       const { start, end, valid } = validateRange(action.start, action.end, state.pieceTable.totalLength);
       if (!valid) return state;
       const oldText = getTextRange(state, start, end);
-      return applyEdit(state, { position: start, deleteEnd: end, deletedText: oldText, insertText: action.text, timestamp: action.timestamp });
+      return applyEdit(state, { position: start, deleteEnd: end, deletedText: oldText, insertText: action.text, timestamp: action.timestamp, selection: action.selection });
     }
 
     case 'SET_SELECTION': {

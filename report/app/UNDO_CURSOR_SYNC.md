@@ -31,25 +31,20 @@ edit was dispatched while `state.selection` was still at its initial value
 history entry. After undo, restoring `selectionBefore` always produced byte
 offset 0 — position `H` of `Hello, Reed!`.
 
-Meanwhile, the undo handler was:
-
-```tsx
-case 'u':
-  if (canUndo) docStore.dispatch(store.DocumentActions.undo())
-  break
-```
-
-After `undo()`, `cursor` (the React state) was never updated either, so it
-stayed at the post-insert position and was clamped by `clampNormal` to some
-valid offset in the now-shorter text — an arbitrary wrong position.
+Meanwhile, after `undo()`, the React `cursor` state was never updated either,
+so it stayed at the post-insert position and was clamped by `clampNormal` to
+some valid offset in the now-shorter text — an arbitrary wrong position.
 
 ---
 
-## Fix — Two-part
+## Original workaround (superseded by Reed API improvements)
 
-### Part 1: Sync `state.selection` to `cursor` before every edit
+> The approach below was the initial fix before the Reed API was updated.
+> See **Current approach** below for the recommended patterns.
 
-A helper is defined inside the component:
+### Part 1: Sync `state.selection` before every edit
+
+A helper was defined inside the component:
 
 ```tsx
 const setSel = (t: string, off: number) =>
@@ -60,93 +55,105 @@ const setSel = (t: string, off: number) =>
   )
 ```
 
-`setSelection` is not an undoable action — it only updates `state.selection`.
-The next edit dispatch will then record the correct `selectionBefore`.
+`setSel(t, cursor)` was called immediately before every `insert` or `delete`
+dispatch at 10+ sites (printable char, Enter, Backspace, Delete, composition
+events, normal-mode `x`/`dd`/`o`/`O`).
 
-`setSel(t, cursor)` is called immediately before every `insert` or `delete`
-dispatch at all sites:
-
-| Site | Notes |
-|---|---|
-| Insert mode — printable char | Before `insert(cursor, key)` |
-| Insert mode — Enter | Before `insert(cursor, '\n')` |
-| Insert mode — Backspace | Before `delete(cursor-1, cursor)` |
-| Insert mode — Delete | Before `delete(cursor, cursor+1)` |
-| `onCompositionEnd` | Before `insert(cursor, composed)` |
-| `onCompositionStart` rollback | Before `delete(pos, pos+charLen)`, using the post-insert position |
-| Normal mode — `x` | Before `delete(cursor, cursor+1)` |
-| Normal mode — `dd` | Before `delete(lineStart, lineEnd)` |
-| Normal mode — `o` | Before `insert(lineEnd, '\n')` |
-| Normal mode — `O` | Before `insert(lineStart, '\n')` |
-
-### Part 2: Read Reed's restored selection after undo/redo
-
-A helper reads the cursor back from the post-dispatch snapshot:
+### Part 2: Read restored cursor via unsafe cast
 
 ```tsx
-function readCursorFromSnapshot(snap: ReturnType<typeof docStore.getSnapshot>): number {
+function readCursorFromSnapshot(snap): number {
   const t = scan.getValue(snap.pieceTable) as string
   const headByte = snap.selection.ranges[0]?.head as unknown as number | undefined
   if (headByte === undefined) return 0
   return store.byteToCharOffset(t, headByte) as unknown as number
 }
-```
 
-`snap.selection.ranges[0].head` is a `ByteOffset` — at runtime it is a plain
-number (cost/brand types are erased). `store.byteToCharOffset` converts it to a
-char offset for the React `cursor` state.
-
-The undo/redo handlers now call `docStore.getSnapshot()` synchronously after
-the dispatch (Reed applies actions synchronously) and update `cursor`:
-
-```tsx
 case 'u':
   if (canUndo) {
     docStore.dispatch(store.DocumentActions.undo())
-    const snapU = docStore.getSnapshot()
-    setCursor(clampNormal(readCursorFromSnapshot(snapU), scan.getValue(snapU.pieceTable) as string))
-  }
-  break
-case 'r':
-  if (e.ctrlKey && canRedo) {
-    docStore.dispatch(store.DocumentActions.redo())
-    const snapR = docStore.getSnapshot()
-    setCursor(clampNormal(readCursorFromSnapshot(snapR), scan.getValue(snapR.pieceTable) as string))
+    const snapU = docStore.getSnapshot()   // redundant — dispatch return value ignored
+    setCursor(clampNormal(readCursorFromSnapshot(snapU), ...))
   }
   break
 ```
 
-`clampNormal` ensures the restored position doesn't land on a newline
-(which is not a valid normal-mode cursor position).
+Problems with the workaround:
+- Two dispatches per edit (`setSelection` + the actual edit)
+- `as unknown as number` double cast to extract a branded `ByteOffset`
+- `getSnapshot()` called redundantly after `dispatch` (which already returns the new state)
+- Cursor-sync logic duplicated at every undo/redo call site
 
 ---
 
-## Why `getSnapshot()` is synchronous
+## Current approach (Reed API improvements applied)
 
-Reed's store applies actions synchronously in `dispatch()`. `getSnapshot()`
-returns the current (already-updated) state. There is no async gap between
-`dispatch(undo())` and `getSnapshot()` — the restored selection is immediately
-readable.
+### Part 1: Inline `selection` on edit actions
+
+Reed's `INSERT`/`DELETE`/`REPLACE` actions now accept an optional `selection`
+field. The reducer applies it to `state.selection` before `historyPush`, so
+`selectionBefore` is recorded correctly in a single dispatch — no separate
+`setSelection` needed.
+
+```tsx
+// One dispatch per edit
+dispatch(DocumentActions.insert(pos, text, [{ anchor: pos, head: pos }]))
+dispatch(DocumentActions.delete(start, end, [{ anchor: start, head: start }]))
+```
+
+### Part 2: Event-driven cursor sync for undo/redo
+
+`HistoryChangeEvent` (from `createDocumentStoreWithEvents`) carries `nextState`
+with the restored `state.selection`. Subscribe once; the keydown handlers no
+longer need any cursor readback logic.
+
+```tsx
+docStore.addEventListener('history-change', ({ nextState }) => {
+  const head = query.getSelectionHead(nextState)       // ByteOffset | undefined
+  if (head !== undefined) {
+    const t = scan.getValue(nextState.pieceTable) as string
+    const charOff = store.byteToCharOffset(t, position.rawByteOffset(head))
+    setCursor(clampNormal(charOff, t))
+  }
+})
+
+// keydown handler:
+case 'u':
+  if (canUndo) docStore.dispatch(store.DocumentActions.undo())
+  break
+case 'r':
+  if (e.ctrlKey && canRedo) docStore.dispatch(store.DocumentActions.redo())
+  break
+```
+
+`query.getSelectionHead` and `position.rawByteOffset` are new Reed API helpers
+that replace the `as unknown as number` cast:
+
+```ts
+// Old
+const headByte = snap.selection.ranges[0]?.head as unknown as number | undefined
+
+// New
+const head = query.getSelectionHead(snap)                 // ByteOffset | undefined
+const headNum = position.rawByteOffset(head ?? position.ZERO_BYTE_OFFSET)
+```
 
 ---
 
 ## IME interaction
 
-For an IME insert sequence, two history entries are created:
-
-1. The rollback `delete` in `onCompositionStart` (removes the premature
-   first-key insert)
-2. The `insert` in `onCompositionEnd` (inserts the composed string)
-
-`setSel` is called before each, so both entries carry the correct
-`selectionBefore`. Pressing `u` twice undoes both in reverse order, landing
-the cursor at the position before the IME session started.
+With the `insertComposed` API (see `IME_ISSUES.md` Issue 3), an IME session now
+produces a **single** `replace` history entry. One `u` press undoes the entire
+session and the `history-change` listener fires once, restoring the cursor to
+the position before the IME session started.
 
 ---
 
 ## Summary
 
-| Problem | Fix |
-|---|---|
-| Reed's `state.selection` always at byte 0 | Call `setSel(t, cursor)` before every `insert`/`delete` dispatch |
-| `cursor` React state not updated after undo/redo | Read `snap.selection.ranges[0].head` via `readCursorFromSnapshot` after each undo/redo dispatch and call `setCursor` |
+| Problem | Original workaround | Current approach |
+|---|---|---|
+| Reed's `state.selection` always at byte 0 | Call `setSel(t, cursor)` before every edit (10+ sites) | Pass `selection` inline on `insert`/`delete`/`replace` |
+| Unsafe `ByteOffset` → `number` cast | `as unknown as number` double cast | `position.rawByteOffset(query.getSelectionHead(snap))` |
+| Redundant `getSnapshot()` after undo/redo | Ignored `dispatch` return value | Use `dispatch` return value directly, or subscribe to `history-change` |
+| Cursor-sync scattered at every undo/redo site | Copy-pasted `readCursorFromSnapshot` calls | Single `addEventListener('history-change', ...)` handler |

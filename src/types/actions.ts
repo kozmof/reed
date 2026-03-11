@@ -22,6 +22,12 @@ export interface InsertAction {
   readonly text: string;
   /** Optional timestamp for deterministic history coalescing (defaults to Date.now()) */
   readonly timestamp?: number;
+  /**
+   * When provided, replaces state.selection before historyPush records selectionBefore.
+   * Use this to pass the logical cursor position inline, eliminating the need for a
+   * separate setSelection dispatch before every edit.
+   */
+  readonly selection?: readonly SelectionRange[];
 }
 
 /**
@@ -35,6 +41,12 @@ export interface DeleteAction {
   readonly end: ByteOffset;
   /** Optional timestamp for deterministic history coalescing (defaults to Date.now()) */
   readonly timestamp?: number;
+  /**
+   * When provided, replaces state.selection before historyPush records selectionBefore.
+   * Use this to pass the logical cursor position inline, eliminating the need for a
+   * separate setSelection dispatch before every edit.
+   */
+  readonly selection?: readonly SelectionRange[];
 }
 
 /**
@@ -50,6 +62,12 @@ export interface ReplaceAction {
   readonly text: string;
   /** Optional timestamp for deterministic history coalescing (defaults to Date.now()) */
   readonly timestamp?: number;
+  /**
+   * When provided, replaces state.selection before historyPush records selectionBefore.
+   * Use this to pass the logical cursor position inline, eliminating the need for a
+   * separate setSelection dispatch before every edit.
+   */
+  readonly selection?: readonly SelectionRange[];
 }
 
 // =============================================================================

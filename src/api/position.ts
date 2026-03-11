@@ -25,6 +25,8 @@ import {
   ZERO_CHAR_OFFSET,
   LINE_ZERO,
   COLUMN_ZERO,
+  rawByteOffset,
+  rawCharOffset,
 } from '../types/branded.ts';
 
 export const position = {
@@ -61,4 +63,8 @@ export const position = {
   ZERO_CHAR_OFFSET,
   LINE_ZERO,
   COLUMN_ZERO,
+
+  // Extraction
+  rawByteOffset,
+  rawCharOffset,
 } as const;

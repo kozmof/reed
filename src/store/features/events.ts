@@ -45,6 +45,23 @@ export interface SelectionChangeEvent extends DocumentEvent {
 
 /**
  * Fired when undo/redo occurs.
+ *
+ * `nextState.selection` holds the cursor position that Reed restored from
+ * the history entry. Subscribe to this event once to keep application cursor
+ * state in sync with undo/redo, rather than calling getSnapshot() after every
+ * undo/redo dispatch.
+ *
+ * @example
+ * ```ts
+ * store.addEventListener('history-change', ({ nextState }) => {
+ *   const head = query.getSelectionHead(nextState);
+ *   if (head !== undefined) {
+ *     const text = scan.getValue(nextState.pieceTable) as string;
+ *     const charOff = store.byteToCharOffset(text, position.rawByteOffset(head));
+ *     setCursor(clampNormal(charOff, text));
+ *   }
+ * });
+ * ```
  */
 export interface HistoryChangeEvent extends DocumentEvent {
   readonly type: 'history-change';

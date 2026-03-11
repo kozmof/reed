@@ -5,6 +5,7 @@
  */
 
 import type { DocumentState } from '../types/state.ts';
+import type { ByteOffset } from '../types/branded.ts';
 import { $constCostFn } from '../types/cost.ts';
 import {
   getText,
@@ -101,6 +102,16 @@ function findLineAtCharPosition(state: DocumentState, charPosition: number) {
   return findLineAtCharPositionFromRoot(state.lineIndex.root, charPosition);
 }
 
+/**
+ * Return the head ByteOffset of the primary selection range.
+ * Convenience accessor for reading cursor position after undo/redo without
+ * indexing into ranges manually or casting through `as unknown as number`.
+ * Returns undefined when the selection has no ranges.
+ */
+function getSelectionHead(state: DocumentState): ByteOffset | undefined {
+  return state.selection.ranges[state.selection.primaryIndex]?.head;
+}
+
 export const query = {
   /** @complexity O(log n + m) — tree traversal to collect byte range */
   getText,
@@ -130,6 +141,8 @@ export const query = {
   getCharStartOffset,
   /** @complexity O(log n) — tree descent via subtreeCharLength */
   findLineAtCharPosition,
+  /** @complexity O(1) — index into selection.ranges array */
+  getSelectionHead: $constCostFn(getSelectionHead),
   /** Low-level line-index selectors for callers operating directly on LineIndexState/root. */
   lineIndex: {
     findLineAtPosition: findLineAtPositionFromRoot,

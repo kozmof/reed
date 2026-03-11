@@ -152,6 +152,28 @@ export function columnNumber(value: number): ColumnNumber {
 }
 
 // =============================================================================
+// Extraction Helpers
+// =============================================================================
+
+/**
+ * Extract the raw number from a ByteOffset.
+ * Identity at runtime — the brand only exists at compile time.
+ * Use this instead of `as unknown as number` when you need a plain number
+ * from a branded offset (e.g. after reading state.selection.ranges[i].head).
+ */
+export function rawByteOffset(o: ByteOffset): number {
+  return o as number;
+}
+
+/**
+ * Extract the raw number from a CharOffset.
+ * Identity at runtime — the brand only exists at compile time.
+ */
+export function rawCharOffset(o: CharOffset): number {
+  return o as number;
+}
+
+// =============================================================================
 // Type Guards
 // =============================================================================
 

@@ -52,6 +52,7 @@ export interface QueryApi {
   getLineCount(state: DocumentState): ConstCost<number>;
   getCharStartOffset(state: DocumentState, lineNumber: number): LogCost<number>;
   findLineAtCharPosition(state: DocumentState, charPosition: number): LogCost<{ lineNumber: number; charOffsetInLine: number }> | null;
+  getSelectionHead(state: DocumentState): ConstCost<ByteOffset | undefined>;
   lineIndex: QueryLineIndexApi;
 }
 
