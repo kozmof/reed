@@ -4,6 +4,8 @@
 
 ## Master Index (Updated 2026-03-25)
 
+> Open issues and improvements have been extracted to [open-issues.md](open-issues.md) (#001–#023).
+
 ### Reports Overview
 
 | # | Date | Scope | Fixed / Total Issues |
