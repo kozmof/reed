@@ -2,15 +2,92 @@
 
 ---
 
+## Master Index (Updated 2026-03-25)
+
+### Reports Overview
+
+| # | Date | Scope | Fixed / Total Issues |
+|---|------|-------|---------------------|
+| [Report 1](#report-1-2026-02-23-updated-2026-02-24) | 2026-02-23 (rev. 2026-02-24) | General codebase: organization, types, functions, pitfalls | 5 / 5 pitfalls resolved |
+| [Report 2](#report-2-2026-02-26--code-analysis--formalization) | 2026-02-26 | Full analysis + formalization; cost labels, sentinel types, R-B tree assumptions | 7 / 7 design items fixed; ~15 open implementation/type items remain |
+| [Report 3](#report-3-2026-03-01--reconciliation-implementations) | 2026-03-01 (rev. 2026-03-02) | Lazy/eager line-index reconciliation system | 9 / 11 fixed; 2 acknowledged / not fixing |
+| [Report 4](#report-4-2026-03-01--transaction-and-batch-implementations) | 2026-03-01 (rev. 2026-03-02, 2026-03-07) | Transaction manager, batch dispatch, store integration | 14 / 15 fixed; 1 by-design |
+
+---
+
+### Open Issues (as of 2026-03-25)
+
+Issues listed below are **not yet fixed**. Items marked *(acknowledged — not fixing)* have a documented rationale for deferral.
+
+#### Architecture / Design
+
+| ID | Issue | Source |
+|----|-------|--------|
+| A1 | `LOAD_CHUNK` / `EVICT_CHUNK` action handlers are stubs; `DocumentMetadata` fields create a false impression of readiness | Report 2 §6.3 |
+
+#### Types & Interfaces
+
+| ID | Issue | Source |
+|----|-------|--------|
+| TY1 | `SelectionState.primaryIndex` unconstrained — can exceed `ranges.length` with no type or runtime protection | Report 2 §5.2, Part 2 §1.4 |
+| TY2 | `DirtyLineRange.endLine` uses `Number.MAX_SAFE_INTEGER` as an untyped sentinel; any integer passes the type check | Report 2 §5.6, §7.3, Part 2 §1.2 |
+| TY3 | `RBNode<T extends RBNode<T>>` over-permissive: `PieceNode.left` could hold a `LineIndexNode` in some generic contexts | Report 2 §7.4, Part 2 §1.3 |
+| TY4 | `BufferType` not sealed: `getPieceBuffer()` uses `if/else` not exhaustive `switch`; a third buffer type silently falls through | Report 2 §7.5, Part 2 §2.3 |
+| TY5 | `HistoryReplaceChange` asymmetric — `insert`/`delete` precompute `byteLength`; `replace` requires recomputation at undo time | Report 2 §7.2, Part 2 §2.1 |
+| TY6 | `LineIndexState<M>` mode not narrowable at the type level; no type guard to distinguish reconciled vs. unreconciled state | Report 2 Part 2 §2.2 |
+| TY7 | `LineIndexNode<M>` phantom type does not enforce that lazy nodes initialize `documentOffset` to `null` | Report 2 Part 2 §1.1 |
+
+#### Algorithms
+
+| ID | Issue | Source |
+|----|-------|--------|
+| AL1 | `splitPiece()` silently relocates children of interior nodes without re-linking; invariant "only split near-leaf nodes" is undocumented | Report 2 §8.1, Part 2 §3.2 |
+| AL2 | `deleteRange()` uses three different boundary check styles; inclusive/exclusive convention varies across guards | Report 2 §8.2, Part 2 §3.3 |
+| AL3 | History coalescing (`position === last.position + last.byteLength`) is byte-based; char-offset callers may see incorrect coalescing | Report 2 §5.7, Part 2 §3.4 |
+| AL4 | `bstInsert()` path ordering (leaf-to-root, then `.reverse()`) is implicit; changing traversal order silently breaks balancing | Report 2 Part 2 §3.1 |
+| AL5 | After `reconcileInPlace`, `asEagerLineIndex` narrowing is structural only; offset correctness is not verified (mitigated by `assertEagerOffsets` debug helper) | Report 2 Part 2 §3.5, Report 3 P4 |
+
+#### Implementations
+
+| ID | Issue | Source |
+|----|-------|--------|
+| IM1 | Cost labels (`$lift`, `$prove`) are phantom — no runtime enforcement; an O(n) function can be annotated O(1) without error | Report 2 §5.3, Part 2 §4.1 |
+| IM2 | Branded type constructors (`byteOffset`, `charOffset`, …) accept `-1`, `NaN`, `Infinity`; `isValidOffset()` is never called automatically | Report 2 §5.4, Part 2 §4.2 |
+| IM3 | `getValueStream()` defers O(n) `collectPieces()` allocation to first iteration; the call site gives no indication of when this work occurs | Report 2 §5.8, §8.5, Part 2 §4.3 |
+| IM4 | `TransactionManager.rollback()` does not guard against unmatched calls; extra `rollback()` decrements `depth` to `-1` silently (partially mitigated by `assertInvariant`) | Report 2 §8.3, Part 2 §4.5 |
+| IM5 | Event delivery half-delivery: if a handler throws mid-iteration, state has changed but some listeners may not receive the event (snapshot delivery mitigates but does not eliminate) | Report 2 Part 2 §4.4 |
+
+#### Acknowledged — Not Fixing
+
+| ID | Issue | Rationale | Source |
+|----|-------|-----------|--------|
+| NF1 | `deleteLineRangeLazy` calls O(n) `rebuildWithDeletedRange` even in lazy mode | R-B tree must be rebalanced after node removal; "lazy" defers only offset recalculation, not structural rebalancing | Report 3 P5 |
+| NF2 | `reconcileInPlace` visits all nodes even when offsets are already correct; no subtree-level correctness flag for pruning | Coordinating invalidation across all lazy mutations is complex; `reconcileInPlace` is already the last resort | Report 3 Impl3 |
+| NF3 | `LineIndexNode<M>` phantom type makes all tree operation signatures verbose | Removing the phantom weakens the API: eager-mode overloads would lose non-null `documentOffset` guarantees | Report 3 T1 |
+| NF4 | Inner rollback restores only the snapshot from the matching `begin`, not the outermost state | Correct semantics for nested transactions; documented in Report 4 §5.P3 | Report 4 P3 |
+
+---
+
+### Fix History Summary
+
+| Date | Report | Fixes Applied |
+|------|--------|---------------|
+| 2026-02-24 | Report 1 | Runtime guard for `HISTORY_CLEAR`; batch semantics alignment; `TRANSACTION_COMMIT` reconciliation scheduling; `APPLY_REMOTE` event/dirty semantics |
+| 2026-02-26 | Report 2 | API mode contracts (`isReconciledState`, `getLineRangePrecise`); snapshot-gated `reconcileNow`; transactional listener delivery; post-batch reconciliation; `setValue`/`setValueWithDiff` API split; `getLineContent` null return |
+| 2026-03-02 | Reports 3 & 4 | `mergeDirtyRanges` overlap fix (P1); `isSentinel` sentinel field (P2); removed `createdAtVersion` (P3/T2); `assertEagerOffsets` debug helper (P4); 200ms setTimeout fallback (P6); `reconcileRange` O(K+V) sweep (Impl1); pre-sort order check (Impl2); `defaultThresholdFn` updated (D3); `LineIndexStrategy` removed (D1); `withTransaction` helper (D4 Report 4); `TransactionResult` discriminated union (T1 Report 4); `trackAction` depth-0 guard (P4 Report 4); rollback notification guard (P5 Report 4); `emergencyReset` parity (P2 Report 4); `pendingActions` removed (D3 Report 4); notification contract documented (D4 Report 4); `readonly DocumentAction[]` batch signature (T3 Report 4); `assertInvariant` (Impl3 Report 4); commit/rollback throw fix (Impl2 Report 4); `emergencyReset` DRY (Impl4 Report 4); serialization test suite (Impl5 Report 4); background reconciliation version-neutral (Impl4 Report 3) |
+| 2026-03-07 | Report 4 | `HistoryState` stacks changed to `PStack<HistoryEntry>` (P6 Report 4); `LoadChunkAction.data` typed as `ReadonlyUint8Array` (T2 Report 4) |
+
+---
+
 # Report 1: 2026-02-23 (Updated 2026-02-24)
 
-## Scope and method
-- Target: current `reed` codebase in `src/` and `spec/`.
-- Approach: read core/store/api/type layers, trace function relationships, and validate reliability through tests.
-- Verification run: `pnpm test` on 2026-02-24.
-- Test result: `11` test files, `495` tests passed.
+**Scope:** General codebase: organization, types, functions, pitfalls
+**Tests:** 495 passing across 11 test files (verification run 2026-02-24)
 
-## 1. Code organization and structure
+---
+
+## 1. Code Organization and Structure
+
 - Layering is clear and mostly consistent:
   - `src/types/*`: domain model, action/store contracts, branded types, cost algebra.
   - `src/store/core/*`: immutable data structures and algorithms (piece table, line index, RB-tree helpers, state factories).
@@ -24,7 +101,8 @@
 - Structural risk:
   - The system combines two complexity-heavy cores (piece table + lazy/eager line index), which raises maintenance overhead for edge-case correctness.
 
-## 2. Relations of implementations (types/interfaces)
+## 2. Types and Interfaces
+
 - `DocumentState<M extends EvaluationMode>` in `src/types/state.ts` is the root model:
   - `pieceTable: PieceTableState`
   - `lineIndex: LineIndexState<M>`
@@ -36,7 +114,8 @@
 - `DocumentAction` union in `src/types/actions.ts` is comprehensive, and runtime action guard coverage is now aligned with the union (including `HISTORY_CLEAR`).
 - Branded offset types (`ByteOffset`, `CharOffset`, `ByteLength`) reduce class-of-bug mixing position units.
 
-## 3. Relations of implementations (functions)
+## 3. Functions and Call Graphs
+
 - Primary write pipeline:
   - `DocumentActions.*` -> `store.dispatch` -> `documentReducer` -> `pieceTable*` + `lineIndex*` updates.
 - `documentReducer` in `src/store/features/reducer.ts`:
@@ -52,7 +131,8 @@
   - `scan.*`: full traversal O(n) operations.
 - Rendering and conversion utilities in `src/store/features/rendering.ts` bridge byte-based storage and user-facing line/column or char-offset behavior.
 
-## 4. Specific contexts and usages
+## 4. Contexts and Usages
+
 - Context: normal editing throughput.
   - Lazy line index defers downstream offset reconciliation, prioritizing edit responsiveness.
 - Context: correctness-sensitive operations.
@@ -64,77 +144,125 @@
 - Context: collaboration-like updates.
   - `APPLY_REMOTE` mutates content/line index without writing to local history.
 
-## 5. Pitfalls (status as of 2026-02-24)
-- Runtime guard mismatch for history clear: resolved.
-  - `isDocumentAction` now accepts `HISTORY_CLEAR`.
-  - Reference: `src/types/actions.ts`.
-- Batch semantics mismatch: resolved by contract alignment.
-  - Behavior remains per-action history entries; comments/tests now match this behavior.
-  - Reference: `src/store/features/store.ts`, `src/types/store.ts`, `src/store/features/store.usecase.test.ts`.
-- Reconciliation scheduling gap on transaction commit: resolved.
-  - Outermost `TRANSACTION_COMMIT` now schedules background reconciliation when `rebuildPending` is true.
-  - Reference: `src/store/features/store.ts`.
-- Event contract mismatch for remote changes: resolved.
-  - `createDocumentStoreWithEvents` now emits `content-change` for `APPLY_REMOTE`.
-  - Reference: `src/store/features/store.ts`, `src/store/features/events.ts`.
-- Metadata/event ambiguity for remote changes: resolved.
-  - `APPLY_REMOTE` now marks document dirty on actual remote content mutation; no-op remote payloads return unchanged state.
-  - Reference: `src/store/features/reducer.ts`.
+## 5. Pitfalls
 
-## 6. Improvement points 1 (design overview)
-- Make behavior contracts executable:
-  - Completed: comments/tests now match batch history behavior (multi-entry).
-  - Completed: remote event semantics (`content-change`) and dirty semantics are now explicit in implementation/tests.
-- Tighten reconciliation lifecycle:
-  - Completed: commit path schedules reconciliation when pending.
-- Clarify collaboration policy:
-  - Completed (current policy): remote content changes are first-class content changes, set dirty state, and do not push local undo history.
-- Add a concise invariant document for core structures:
-  - Piece table subtree fields, line index mode guarantees, reconciliation invariants.
+**P1 — Runtime guard mismatch for history clear** *(Fixed — 2026-02-24)*
 
-## 7. Improvement points 2 (types/interfaces)
-- Fix runtime action guard consistency:
-  - Completed: `HISTORY_CLEAR` is included in `isDocumentAction`.
-- Consider stricter remote change typing:
-  - Separate `length` into branded byte length to reduce accidental unit misuse.
-- Strengthen event typing around remote mutations:
-  - Partially completed: remote content changes are treated as first-class in dispatch/event behavior; event payload types remain generic `DocumentAction`.
-- Consider action schema-centric validation:
-  - Reduce divergence between union definition, type guards, and validation logic.
+`isDocumentAction` now accepts `HISTORY_CLEAR`.
+Reference: `src/types/actions.ts`.
 
-## 8. Improvement points 3 (implementations)
-- Implementation fixes:
-  - Completed: added `HISTORY_CLEAR` branch to `isDocumentAction`.
-  - Completed: schedule reconciliation after outermost `TRANSACTION_COMMIT` when pending.
-  - Completed: updated `emitEventsForAction` to include `APPLY_REMOTE` content-change.
-  - Completed: reconciled store/type/docs comments vs observed batch history behavior.
-  - Completed: remote apply path now marks dirty on actual mutation and no-ops on empty remote payloads.
-- Regression tests to add:
-  - Added: `isDocumentAction({ type: 'HISTORY_CLEAR' }) === true`.
-  - Added/updated: batch semantics test now explicitly validates per-action history behavior.
-  - Added: transaction commit path test that verifies reconciliation scheduling when `rebuildPending`.
-  - Added: event-store tests for `APPLY_REMOTE` `content-change` and dirty-change behavior.
-- Performance confidence:
-  - Add benchmark harness for large doc edits, mixed line endings, and reconciliation thresholds.
+**P2 — Batch semantics mismatch** *(Fixed — 2026-02-24)*
 
-## 9. Learning paths on implementations (entries and goals)
-- Path A: API consumer to internal state flow
-  - Entry: `src/index.ts`, `src/store/features/actions.ts`, `src/store/features/store.ts`
-  - Goal: understand how public actions become immutable state snapshots.
-- Path B: text editing core
-  - Entry: `src/store/features/reducer.ts` -> `src/store/core/piece-table.ts`
-  - Goal: understand insert/delete/replace behavior and history recording.
-- Path C: line indexing and reconciliation
-  - Entry: `src/store/core/line-index.ts`
-  - Goal: understand eager vs lazy modes, dirty ranges, and viewport/full reconciliation.
-- Path D: byte/char correctness and rendering adapters
-  - Entry: `src/store/features/rendering.ts`, `src/store/core/piece-table.ts`
-  - Goal: understand how byte offsets are mapped to user-visible line/column and char offsets.
-- Path E: reliability harness
-  - Entry: `src/store/features/store.usecase.test.ts`, `src/store/core/line-index.test.ts`
-  - Goal: follow randomized and edge-case tests to reason about invariants.
+Resolved by contract alignment. Behavior remains per-action history entries; comments/tests now match this behavior.
+Reference: `src/store/features/store.ts`, `src/types/store.ts`, `src/store/features/store.usecase.test.ts`.
 
-## Reliability snapshot
+**P3 — Reconciliation scheduling gap on transaction commit** *(Fixed — 2026-02-24)*
+
+Outermost `TRANSACTION_COMMIT` now schedules background reconciliation when `rebuildPending` is true.
+Reference: `src/store/features/store.ts`.
+
+**P4 — Event contract mismatch for remote changes** *(Fixed — 2026-02-24)*
+
+`createDocumentStoreWithEvents` now emits `content-change` for `APPLY_REMOTE`.
+Reference: `src/store/features/store.ts`, `src/store/features/events.ts`.
+
+**P5 — Metadata/event ambiguity for remote changes** *(Fixed — 2026-02-24)*
+
+`APPLY_REMOTE` now marks document dirty on actual remote content mutation; no-op remote payloads return unchanged state.
+Reference: `src/store/features/reducer.ts`.
+
+## 6. Improvement Points — Design
+
+**D1 — Make behavior contracts executable** *(Fixed — 2026-02-24)*
+
+Completed: comments/tests now match batch history behavior (multi-entry).
+Completed: remote event semantics (`content-change`) and dirty semantics are now explicit in implementation/tests.
+
+**D2 — Tighten reconciliation lifecycle** *(Fixed — 2026-02-24)*
+
+Completed: commit path schedules reconciliation when pending.
+
+**D3 — Clarify collaboration policy** *(Fixed — 2026-02-24)*
+
+Completed (current policy): remote content changes are first-class content changes, set dirty state, and do not push local undo history.
+
+**D4 — Add a concise invariant document for core structures** *(Open)*
+
+Piece table subtree fields, line index mode guarantees, reconciliation invariants.
+
+## 7. Improvement Points — Types & Interfaces
+
+**T1 — Fix runtime action guard consistency** *(Fixed — 2026-02-24)*
+
+Completed: `HISTORY_CLEAR` is included in `isDocumentAction`.
+
+**T2 — Consider stricter remote change typing** *(Open)*
+
+Separate `length` into branded byte length to reduce accidental unit misuse.
+
+**T3 — Strengthen event typing around remote mutations** *(Open)*
+
+Partially completed: remote content changes are treated as first-class in dispatch/event behavior; event payload types remain generic `DocumentAction`.
+
+**T4 — Consider action schema-centric validation** *(Open)*
+
+Reduce divergence between union definition, type guards, and validation logic.
+
+## 8. Improvement Points — Implementations
+
+**Impl1 — Implementation fixes** *(Fixed — 2026-02-24)*
+
+Completed: added `HISTORY_CLEAR` branch to `isDocumentAction`.
+Completed: schedule reconciliation after outermost `TRANSACTION_COMMIT` when pending.
+Completed: updated `emitEventsForAction` to include `APPLY_REMOTE` content-change.
+Completed: reconciled store/type/docs comments vs observed batch history behavior.
+Completed: remote apply path now marks dirty on actual mutation and no-ops on empty remote payloads.
+
+**Impl2 — Regression tests** *(Fixed — 2026-02-24)*
+
+Added: `isDocumentAction({ type: 'HISTORY_CLEAR' }) === true`.
+Added/updated: batch semantics test now explicitly validates per-action history behavior.
+Added: transaction commit path test that verifies reconciliation scheduling when `rebuildPending`.
+Added: event-store tests for `APPLY_REMOTE` `content-change` and dirty-change behavior.
+
+**Impl3 — Performance confidence** *(Open)*
+
+Add benchmark harness for large doc edits, mixed line endings, and reconciliation thresholds.
+
+## 9. Learning Paths
+
+**Path 1 — API consumer to internal state flow**
+1. `src/index.ts` — aggregated public surface
+2. `src/store/features/actions.ts` — action creators
+3. `src/store/features/store.ts` — dispatch and store lifecycle
+
+**Goal:** understand how public actions become immutable state snapshots.
+
+**Path 2 — Text editing core**
+1. `src/store/features/reducer.ts` — `documentReducer`, `applyEdit`
+2. `src/store/core/piece-table.ts` — insert/delete/replace behavior and history recording
+
+**Goal:** understand insert/delete/replace behavior and history recording.
+
+**Path 3 — Line indexing and reconciliation**
+1. `src/store/core/line-index.ts` — eager vs lazy modes, dirty ranges, viewport/full reconciliation
+
+**Goal:** understand eager vs lazy modes, dirty ranges, and viewport/full reconciliation.
+
+**Path 4 — Byte/char correctness and rendering adapters**
+1. `src/store/features/rendering.ts` — line/column and char-offset mapping
+2. `src/store/core/piece-table.ts` — byte-offset storage
+
+**Goal:** understand how byte offsets are mapped to user-visible line/column and char offsets.
+
+**Path 5 — Reliability harness**
+1. `src/store/features/store.usecase.test.ts` — integration and edge-case tests
+2. `src/store/core/line-index.test.ts` — randomized reconciliation tests
+
+**Goal:** follow randomized and edge-case tests to reason about invariants.
+
+### Reliability snapshot
+
 - Overall reliability: good for core editing behavior, line-ending edge cases, immutable transition logic, and event/store contract alignment.
 - Confidence basis:
   - Broad tests across core/features with `495` passing tests.
@@ -154,7 +282,7 @@
 
 ## Part 1: Code Analysis
 
-### 1. Code Organization and Structure
+## 1. Code Organization and Structure
 
 **Reed** is an immutable text editor library built on two independent Red-Black trees: a Piece Table for raw text storage, and a Line Index for line-to-byte-offset mapping. The directory layout reflects this separation cleanly:
 
@@ -170,9 +298,7 @@ src/
 
 The primary abstraction boundary is between *core* (data structures) and *features* (behavior). The `api/` layer provides the documented public surface, wrapping internals with complexity annotations.
 
----
-
-### 2. Relations of Implementations — Types and Interfaces
+## 2. Types and Interfaces
 
 #### State Hierarchy
 
@@ -201,9 +327,7 @@ DocumentState<M extends EvaluationMode>
 
 `ByteOffset`, `CharOffset`, `ByteLength`, `LineNumber`, `ColumnNumber` are nominal wrappers over `number`. Constructors (`byteOffset()`, `charOffset()`, …) perform no validation; the type safety is purely compile-time.
 
----
-
-### 3. Relations of Implementations — Functions
+## 3. Functions and Call Graphs
 
 #### Piece Table Call Graph
 
@@ -250,9 +374,7 @@ createDocumentStore()
     └── reconcileNow() → reconcileFull() → DocumentState<'eager'>
 ```
 
----
-
-### 4. Specific Contexts and Usages
+## 4. Contexts and Usages
 
 | Context | Entry Point | Key Behavior |
 |---------|-------------|--------------|
@@ -265,81 +387,144 @@ createDocumentStore()
 | Background work | `store.scheduleReconciliation()` | `requestIdleCallback` fills null offsets |
 | Streaming large files | `scan.getValueStream(state)` | Generator; O(n) allocation deferred to iteration |
 
----
+## 5. Pitfalls
 
-### 5. Pitfalls
+**P1 — Silent fallback in lazy mode rendering** *(Fixed — 2026-02-26)*
 
-1. ~~**Silent fallback in lazy mode rendering.** `getLineContent()` returns an empty string when the line's offset is not yet computed. There is no warning or error; callers see blank content.~~ **Fixed.** Return type changed to `string | null`; out-of-range lookups now return `null`, making "line does not exist" distinguishable from "line exists with no content" (`''`).
+~~`getLineContent()` returns an empty string when the line's offset is not yet computed. There is no warning or error; callers see blank content.~~ **Fixed.** Return type changed to `string | null`; out-of-range lookups now return `null`, making "line does not exist" distinguishable from "line exists with no content" (`''`).
 
-2. **`primaryIndex` is unconstrained.** `SelectionState.primaryIndex` can exceed `ranges.length` with no type protection. `ranges[primaryIndex]` fails silently.
+**P2 — `primaryIndex` is unconstrained** *(Open)*
 
-3. **Cost labels are phantom.** `LinearCost<T>`, `LogCost<T>`, etc. carry no runtime enforcement. A function returning `O(1)` cost may perform O(n) work; the type system will not catch it. *Partially addressed:* over-labeling of the `setValue()` common path has been resolved by splitting the API (see §4 §4.6 fix); internal trivial-branch labels in `diff()`, `rendering.ts`, and `line-index.ts` have also been corrected. The structural issue — no runtime enforcement — remains.
+`SelectionState.primaryIndex` can exceed `ranges.length` with no type protection. `ranges[primaryIndex]` fails silently.
 
-4. **Branded type constructors accept invalid values.** `byteOffset(-1)`, `byteOffset(NaN)`, `byteOffset(Infinity)` all compile. The `isValidOffset()` utility is not called automatically.
+**P3 — Cost labels are phantom** *(Open)*
 
-5. **Tree path ordering is implicit.** `bstInsert()` builds a path that is then `.reverse()`d. This ordering dependency is undocumented; if the traversal order changes, balancing silently breaks.
+`LinearCost<T>`, `LogCost<T>`, etc. carry no runtime enforcement. A function returning `O(1)` cost may perform O(n) work; the type system will not catch it. *Partially addressed:* over-labeling of the `setValue()` common path has been resolved by splitting the API (see §4 §4.6 fix); internal trivial-branch labels in `diff()`, `rendering.ts`, and `line-index.ts` have also been corrected. The structural issue — no runtime enforcement — remains.
 
-6. **`Number.MAX_SAFE_INTEGER` as a sentinel.** `DirtyLineRange.endLine` uses this magic constant to mean "to end of document". No type alias or constant enforces this; any integer would pass the type check.
+**P4 — Branded type constructors accept invalid values** *(Open)*
 
-7. **History coalescing mixes byte / char boundaries.** The contiguity check (`newChange.position === last.position + last.byteLength`) uses byte counts from UTF-8 encoding. If an editor layer uses character (UTF-16) positions, edits that feel adjacent may fail to coalesce.
+`byteOffset(-1)`, `byteOffset(NaN)`, `byteOffset(Infinity)` all compile. The `isValidOffset()` utility is not called automatically.
 
-8. **Generator cost deferral is invisible.** `getValueStream()` calls `collectPieces()` only during iteration, not at call time. The O(n) allocation occurs invisibly when the consumer first pulls from the generator.
+**P5 — Tree path ordering is implicit** *(Open)*
 
----
+`bstInsert()` builds a path that is then `.reverse()`d. This ordering dependency is undocumented; if the traversal order changes, balancing silently breaks.
 
-### 6. Improvement Points — Design Overview
+**P6 — `Number.MAX_SAFE_INTEGER` as a sentinel** *(Open)*
 
-1. ~~**Mode propagation through the public API is implicit.** Functions in `query.*` accept `DocumentState` (union mode) without communicating whether the line index is reconciled. A caller cannot safely use `getLineRange()` without checking reconciliation state first.~~ **Fixed.** `src/api/query.ts` now exposes explicit mode contracts: `query.isReconciledState`, `query.assertReconciledState`, eager-only `query.getLineRange`, checked `query.getLineRangeChecked`, lazy-safe `query.getLineRangePrecise`, and a low-level `query.lineIndex.*` escape hatch for direct line-index access.
+`DirtyLineRange.endLine` uses this magic constant to mean "to end of document". No type alias or constant enforces this; any integer would pass the type check.
 
-2. ~~**No version-gating at mode transitions.** When `reconcileNow()` returns a `DocumentState<'eager'>`, there is no mechanism to ensure stale `DocumentState<'lazy'>` snapshots held by consumers are invalidated.~~ **Fixed.** Store snapshots can now be validated via `isCurrentSnapshot(snapshot)`, and `reconcileNow(snapshot)` is snapshot-gated (returns `null` for stale snapshots).
+**P7 — History coalescing mixes byte / char boundaries** *(Open)*
 
-3. **Chunk loading is a stub.** The `LOAD_CHUNK` / `EVICT_CHUNK` action handlers are not implemented. The `DocumentState` already holds `metadata` for these, creating a false impression of readiness.
+The contiguity check (`newChange.position === last.position + last.byteLength`) uses byte counts from UTF-8 encoding. If an editor layer uses character (UTF-16) positions, edits that feel adjacent may fail to coalesce.
 
-4. ~~**Event delivery is not transactional.** If a listener throws midway through `notifyListeners()`, the state change has persisted but some listeners never received the event. There is no recovery path.~~ **Fixed.** Both store listeners and typed event handlers now iterate over a snapshot array, guaranteeing delivery to all subscribers registered at emit/notify start even when listeners unsubscribe or throw during delivery.
+**P8 — Generator cost deferral is invisible** *(Open)*
 
-5. ~~**Reconciliation is never triggered by `batch()`.** After a batch of actions that sets `rebuildPending = true`, reconciliation must be scheduled manually.~~ **Fixed.** `batch()` now includes an explicit post-batch reconciliation scheduling safety check when `rebuildPending` remains true and no transaction is active.
+`getValueStream()` calls `collectPieces()` only during iteration, not at call time. The O(n) allocation occurs invisibly when the consumer first pulls from the generator.
 
----
+## 6. Improvement Points — Design
 
-### 7. Improvement Points — Types and Interfaces
+**D1 — Mode propagation through the public API is implicit** *(Fixed — 2026-02-26)*
 
-1. **`SelectionState.primaryIndex` has no invariant.** Ideally this would be constrained or use a smarter structure (e.g., a non-empty array with a focus indicator) that guarantees validity.
+~~Functions in `query.*` accept `DocumentState` (union mode) without communicating whether the line index is reconciled. A caller cannot safely use `getLineRange()` without checking reconciliation state first.~~ **Fixed.** `src/api/query.ts` now exposes explicit mode contracts: `query.isReconciledState`, `query.assertReconciledState`, eager-only `query.getLineRange`, checked `query.getLineRangeChecked`, lazy-safe `query.getLineRangePrecise`, and a low-level `query.lineIndex.*` escape hatch for direct line-index access.
 
-2. **`HistoryReplaceChange` has asymmetric byte length tracking.** The `byteLength` field tracks the inserted text, but the deleted `oldText` byte length must be recomputed during undo. The other change types precompute length; `replace` diverges from this pattern.
+**D2 — No version-gating at mode transitions** *(Fixed — 2026-02-26)*
 
-3. **`DirtyLineRange.endLine` sentinel is not type-enforced.** A type alias `type EndOfDocument = typeof Number.MAX_SAFE_INTEGER` or a tagged union would make the intent clearer and prevent bugs from alternative sentinel choices.
+~~When `reconcileNow()` returns a `DocumentState<'eager'>`, there is no mechanism to ensure stale `DocumentState<'lazy'>` snapshots held by consumers are invalidated.~~ **Fixed.** Store snapshots can now be validated via `isCurrentSnapshot(snapshot)`, and `reconcileNow(snapshot)` is snapshot-gated (returns `null` for stale snapshots).
 
-4. **`RBNode<T extends RBNode<T>>` does not prevent cross-type node children.** The F-bounded polymorphism is too loose; `PieceNode.left` could technically hold a `LineIndexNode` without a type error in certain generic contexts.
+**D3 — Chunk loading is a stub** *(Open)*
 
-5. **`BufferType` is not sealed against extension.** `BufferReference` is a union, but `getPieceBuffer()` uses an `if/else` rather than exhaustive match; adding a third buffer type would silently fall through to `addBuffer`.
+The `LOAD_CHUNK` / `EVICT_CHUNK` action handlers are not implemented. The `DocumentState` already holds `metadata` for these, creating a false impression of readiness.
 
----
+**D4 — Event delivery is not transactional** *(Fixed — 2026-02-26)*
 
-### 8. Improvement Points — Implementations
+~~If a listener throws midway through `notifyListeners()`, the state change has persisted but some listeners never received the event. There is no recovery path.~~ **Fixed.** Both store listeners and typed event handlers now iterate over a snapshot array, guaranteeing delivery to all subscribers registered at emit/notify start even when listeners unsubscribe or throw during delivery.
 
-1. **`splitPiece()` assumes the split target is a leaf.** The left piece inherits `piece.left`, the right piece inherits `piece.right`. If the split target is an interior node, its existing children are relocated without re-linking; the resulting tree may be structurally invalid.
+**D5 — Reconciliation is never triggered by `batch()`** *(Fixed — 2026-02-26)*
 
-2. **`deleteRange()` has three separate boundary check styles.** The early-exit check, the left-child recurse guard, and the right-child recurse guard use different orderings of `deleteStart`, `deleteEnd`, `pieceStart`, `pieceEnd`, `subtreeEnd`. Inconsistency increases the chance of off-by-one errors across future modifications.
+~~After a batch of actions that sets `rebuildPending = true`, reconciliation must be scheduled manually.~~ **Fixed.** `batch()` now includes an explicit post-batch reconciliation scheduling safety check when `rebuildPending` remains true and no transaction is active.
 
-3. **Transaction rollback does not guard against unmatched calls.** `rollback()` pops from `snapshotStack` and decrements `depth` without checking whether a matching `begin()` was called. Calling `rollback()` an extra time decrements `depth` to `-1` silently.
+## 7. Improvement Points — Types & Interfaces
 
-4. ~~**Lazy diff cost contract overstates worst case.** `diff()` always returns `QuadCost` even though the Myers path for D-small inputs is O((n+m)D). The inflated cost label may cause callers to avoid the function for use cases where it would be inexpensive.~~ **Fixed.** See §4 §4.6.
+**T1 — `SelectionState.primaryIndex` has no invariant** *(Open)*
 
-5. **`getValueStream()` triggers O(n) work during iteration, not on call.** The `collectPieces()` call sits inside the generator body. Callers that hold a generator reference and delay iteration will trigger allocation at unpredictable times.
+Ideally this would be constrained or use a smarter structure (e.g., a non-empty array with a focus indicator) that guarantees validity.
 
----
+**T2 — `HistoryReplaceChange` has asymmetric byte length tracking** *(Open)*
 
-### 9. Learning Paths — Entries and Goals
+The `byteLength` field tracks the inserted text, but the deleted `oldText` byte length must be recomputed during undo. The other change types precompute length; `replace` diverges from this pattern.
 
-| Goal | Entry Point | Path |
-|------|-------------|------|
-| Understand text storage | `src/store/core/piece-table.ts` | `createPieceTableState` → `pieceTableInsert` → `bstInsert` → `fixRedViolations` |
-| Understand line tracking | `src/store/core/line-index.ts` | `lineIndexInsert` → `scanNewlines` → `splitLineNode` → `reconcileFull` |
-| Understand state transitions | `src/store/features/reducer.ts` | `documentReducer` → action switch → edit pipeline |
-| Understand store lifecycle | `src/store/features/store.ts` | `createDocumentStore` → `dispatch` → `notifyListeners` → `scheduleReconciliation` |
-| Understand type safety system | `src/types/branded.ts` + `src/types/cost.ts` | Branded constructors → cost combinators → `$prove` / `$lift` |
-| Understand public API contracts | `src/api/query.ts` | `query.getText` → `query.getVisibleLines` → `query.positionToLineColumn` |
-| Understand undo/redo | `src/store/features/history.ts` | `historyPush` → coalescing → `src/store/features/reducer.ts` UNDO case |
+**T3 — `DirtyLineRange.endLine` sentinel is not type-enforced** *(Open)*
+
+A type alias `type EndOfDocument = typeof Number.MAX_SAFE_INTEGER` or a tagged union would make the intent clearer and prevent bugs from alternative sentinel choices.
+
+**T4 — `RBNode<T extends RBNode<T>>` does not prevent cross-type node children** *(Open)*
+
+The F-bounded polymorphism is too loose; `PieceNode.left` could technically hold a `LineIndexNode` without a type error in certain generic contexts.
+
+**T5 — `BufferType` is not sealed against extension** *(Open)*
+
+`BufferReference` is a union, but `getPieceBuffer()` uses an `if/else` rather than exhaustive match; adding a third buffer type would silently fall through to `addBuffer`.
+
+## 8. Improvement Points — Implementations
+
+**Impl1 — `splitPiece()` assumes the split target is a leaf** *(Open)*
+
+The left piece inherits `piece.left`, the right piece inherits `piece.right`. If the split target is an interior node, its existing children are relocated without re-linking; the resulting tree may be structurally invalid.
+
+**Impl2 — `deleteRange()` has three separate boundary check styles** *(Open)*
+
+The early-exit check, the left-child recurse guard, and the right-child recurse guard use different orderings of `deleteStart`, `deleteEnd`, `pieceStart`, `pieceEnd`, `subtreeEnd`. Inconsistency increases the chance of off-by-one errors across future modifications.
+
+**Impl3 — Transaction rollback does not guard against unmatched calls** *(Open)*
+
+`rollback()` pops from `snapshotStack` and decrements `depth` without checking whether a matching `begin()` was called. Calling `rollback()` an extra time decrements `depth` to `-1` silently.
+
+**Impl4 — Lazy diff cost contract overstates worst case** *(Fixed — 2026-02-26)*
+
+~~`diff()` always returns `QuadCost` even though the Myers path for D-small inputs is O((n+m)D). The inflated cost label may cause callers to avoid the function for use cases where it would be inexpensive.~~ **Fixed.** See §4 §4.6.
+
+**Impl5 — `getValueStream()` triggers O(n) work during iteration, not on call** *(Open)*
+
+The `collectPieces()` call sits inside the generator body. Callers that hold a generator reference and delay iteration will trigger allocation at unpredictable times.
+
+## 9. Learning Paths
+
+**Path 1 — Understand text storage**
+1. `src/store/core/piece-table.ts` — `createPieceTableState` → `pieceTableInsert` → `bstInsert` → `fixRedViolations`
+
+**Goal:** understand how text is stored and mutated in the piece table.
+
+**Path 2 — Understand line tracking**
+1. `src/store/core/line-index.ts` — `lineIndexInsert` → `scanNewlines` → `splitLineNode` → `reconcileFull`
+
+**Goal:** understand how line offsets are maintained in the line index.
+
+**Path 3 — Understand state transitions**
+1. `src/store/features/reducer.ts` — `documentReducer` → action switch → edit pipeline
+
+**Goal:** understand how actions produce new immutable state snapshots.
+
+**Path 4 — Understand store lifecycle**
+1. `src/store/features/store.ts` — `createDocumentStore` → `dispatch` → `notifyListeners` → `scheduleReconciliation`
+
+**Goal:** understand how the store orchestrates dispatch, notification, and background reconciliation.
+
+**Path 5 — Understand type safety system**
+1. `src/types/branded.ts` — branded constructors
+2. `src/types/cost.ts` — cost combinators → `$prove` / `$lift`
+
+**Goal:** understand how nominal type branding and cost algebra are applied.
+
+**Path 6 — Understand public API contracts**
+1. `src/api/query.ts` — `query.getText` → `query.getVisibleLines` → `query.positionToLineColumn`
+
+**Goal:** understand the documented public surface and its complexity guarantees.
+
+**Path 7 — Understand undo/redo**
+1. `src/store/features/history.ts` — `historyPush` → coalescing
+2. `src/store/features/reducer.ts` — UNDO case
+
+**Goal:** understand history coalescing and inverse-change application.
 
 ---
 
@@ -347,9 +532,7 @@ createDocumentStore()
 
 > Formalization is evaluated by: readability improvement, boundary clarity, testability, regularity of patterns, extension rules, value effect simplicity, TypeScript feature usage, first-reader pitfalls, and fragility under future modification.
 
----
-
-### 1. Data Structures
+## 1. Data Structures
 
 #### 1.1 `LineIndexNode<M>` — Incomplete Parametric Constraint
 
@@ -367,9 +550,7 @@ The F-bounded polymorphism allows `left` and `right` to be assigned any `RBNode`
 
 `primaryIndex: number` is unconstrained in the type. There is no non-empty array guarantee, no index bound, and no compile-time protection against `ranges[primaryIndex]` being `undefined`.
 
----
-
-### 2. Interfaces
+## 2. Interfaces
 
 #### 2.1 `HistoryChange` — Asymmetric Field Presence
 
@@ -383,9 +564,7 @@ The F-bounded polymorphism allows `left` and `right` to be assigned any `RBNode`
 
 `getPieceBuffer()` uses `if (ref.bufferType === 'original')` rather than an exhaustive switch. A third buffer type would not cause a type error; it would silently fall through to `addBuffer`. The union type promises safety that the implementation does not deliver.
 
----
-
-### 3. Algorithms
+## 3. Algorithms
 
 #### 3.1 RB-Tree Insertion — Implicit Path Ordering Contract
 
@@ -407,9 +586,7 @@ The contiguity check `newChange.position === last.position + last.byteLength` co
 
 After reconciliation, the returned `DocumentState` holds an eager line index embedded in a type that remains the union default. There is no assertion or type constraint ensuring the mode in `DocumentState.lineIndex` matches what the reducer expected.
 
----
-
-### 4. Specific Implementations
+## 4. Specific Implementations
 
 #### 4.1 Cost Branding — Phantom Types Without Enforcement
 
@@ -489,9 +666,7 @@ The reconciliation system is spread across five layers with clear separation of 
 | **Store** | `src/store/features/store.ts` | `scheduleReconciliation` (idle/timeout), `reconcileNow`, `setViewport` |
 | **Query API** | `src/api/query.ts` | `isReconciledState`, `getLineRange` (eager-only), `getLineRangePrecise` (no-reconcile) |
 
----
-
-## 2. Relations of Implementations — Types & Interfaces
+## 2. Types and Interfaces
 
 ```
 EvaluationMode = 'eager' | 'lazy'
@@ -516,9 +691,7 @@ The conditional types on `dirtyRanges` and `rebuildPending` enforce **at compile
 - `reconcileNow(snapshot?): DocumentState<'eager'> | null`
 - `setViewport(startLine, endLine): void`
 
----
-
-## 3. Relations of Implementations — Functions
+## 3. Functions and Call Graphs
 
 **Normal edit (lazy) path:**
 ```
@@ -559,9 +732,7 @@ shouldRebuildLineIndexForDelete → true
     → getText (full document scan) → rebuildLineIndex (O(n))
 ```
 
----
-
-## 4. Specific Contexts and Usages
+## 4. Contexts and Usages
 
 **Normal editing** uses `lazyLineIndex` via `applyEdit`. Tree structure (line count, lengths) is updated immediately; `documentOffset` values for lines after the edit point are set to `null`. A `DirtyLineRange` is pushed and `rebuildPending` is set true. Listeners are notified before reconciliation.
 
@@ -573,93 +744,87 @@ shouldRebuildLineIndexForDelete → true
 
 **Background idle reconciliation** uses `requestIdleCallback` with a 1-second timeout, or `setTimeout(200ms)` fallback. It deliberately does **not** notify listeners and does not bump `state.version` — reconciliation is an invisible internal optimization.
 
----
-
 ## 5. Pitfalls
 
-**P1 — ~~`mergeDirtyRanges` merges overlapping ranges with unequal deltas incorrectly when `startLine` values differ.~~ (Fixed 2026-03-02)**
+**P1 — `mergeDirtyRanges` merges overlapping ranges with unequal deltas incorrectly when `startLine` values differ** *(Fixed — 2026-03-02)*
 
 ~~When two ranges overlap (`next.startLine > current.startLine`) with different `offsetDelta`, the code pushes `current` and sets `current = next`. The overlap region from `next.startLine` to `current.endLine` then has only `next.offsetDelta` applied instead of the combined delta. Lines in that overlap will be under-corrected during reconciliation.~~
 
 The merge loop was rewritten as a `while` loop. Overlapping ranges with `s1 < s2` and different deltas are now decomposed into up to three non-overlapping sub-ranges: `[s1, s2-1, d1]`, `[s2, min(e1,e2), d1+d2]`, and the tail (if any).
 (`src/store/core/line-index.ts`)
 
-**P2 — ~~The collapsed-cap sentinel `{startLine:0, endLine:MAX_SAFE_INT, delta:0}` is indistinguishable from a legitimate full-document zero-delta range.~~ (Fixed 2026-03-02)**
+**P2 — The collapsed-cap sentinel `{startLine:0, endLine:MAX_SAFE_INT, delta:0}` is indistinguishable from a legitimate full-document zero-delta range** *(Fixed — 2026-03-02)*
 
 ~~`reconcileFull` detects it by shape (`line-index.ts:1943–1947`). A net-zero edit sequence (insert then delete same range) could naturally produce the same shape, causing the slow path (`reconcileInPlace`) to always be selected even when incremental would be correct.~~
 
 `DirtyLineRange` now carries an optional `isSentinel?: true` field. `mergeDirtyRanges` sets it on the cap sentinel; `reconcileFull` uses `range.isSentinel === true` instead of shape-matching.
 (`src/types/state.ts`, `src/store/core/line-index.ts`)
 
-**P3 — ~~`DirtyLineRange.createdAtVersion` is tracked but never read in any reconciliation logic.~~ (Fixed 2026-03-02)**
+**P3 — `DirtyLineRange.createdAtVersion` is tracked but never read in any reconciliation logic** *(Fixed — 2026-03-02)*
 
 ~~The field is created, merged (taking `max`), and stored in state, but no code path uses it to skip or prioritize ranges. It is effectively dead data in the current implementation.~~
 
 `createdAtVersion` was removed from `DirtyLineRange` and all creation/merge sites. See also T2.
 (`src/types/state.ts`, `src/store/core/line-index.ts`)
 
-**P4 — ~~`asEagerLineIndex` narrows via a structural check, not an offset correctness check.~~ (Fixed 2026-03-02)**
+**P4 — `asEagerLineIndex` narrows via a structural check, not an offset correctness check** *(Fixed — 2026-03-02)*
 
 ~~If `reconcileInPlace` had a bug in offset accumulation, `toEagerLineIndexState` would still pass the check and return a `LineIndexState<'eager'>` with incorrect `documentOffset` values — corrupting all downstream line lookups silently.~~
 
 `assertEagerOffsets(state, sampleSize?)` debug helper added to `line-index.ts`. It samples `sampleSize` line nodes at even intervals, computes the expected `documentOffset` via `getLineStartOffset`, and throws if any mismatch is found. Intended for tests and dev builds; not called on production paths.
 (`src/store/core/line-index.ts`)
 
-**P5 — `deleteLineRangeLazy` still calls `rebuildWithDeletedRange` (an O(n) tree rebuild) even in lazy mode. (Acknowledged — not fixing)**
+**P5 — `deleteLineRangeLazy` still calls `rebuildWithDeletedRange` (an O(n) tree rebuild) even in lazy mode** *(Acknowledged — not fixing)*
 
 For multi-line deletions, the structural tree rebuild cannot be deferred because the resulting tree shape changes. This means lazy delete with newlines has the same O(n) cost as eager delete, negating the lazy optimization for this case.
 (`src/store/core/line-index.ts`)
 
 Not fixing: the Red-Black tree must be rebalanced after removing each line node (O(log n) per deleted line). "Lazy" defers only offset recalculation, not structural rebalancing. The current approach is correct.
 
-**P6 — ~~`scheduleReconciliation`'s `setTimeout(16ms)` fallback runs at near-frame-rate frequency in non-browser environments.~~ (Fixed 2026-03-02)**
+**P6 — `scheduleReconciliation`'s `setTimeout(16ms)` fallback runs at near-frame-rate frequency in non-browser environments** *(Fixed — 2026-03-02)*
 
 ~~In Node.js (no `requestIdleCallback`), every edit with newlines schedules a 16ms timeout. For high-throughput batch edits, this creates a continuous storm of 16ms-interval reconciliations regardless of system load.~~
 
 Fallback delay changed from 16ms to 200ms.
 (`src/store/features/store.ts`)
 
----
+## 6. Improvement Points — Design
 
-## 6. Improvement Points — Design Overview
-
-**D1: ~~The eager/lazy duality at the `LineIndexStrategy` level is over-engineered for two concrete implementations.~~ (Fixed 2026-03-02)**
+**D1 — The eager/lazy duality at the `LineIndexStrategy` level is over-engineered for two concrete implementations** *(Fixed — 2026-03-02)*
 
 ~~`eagerLineIndex` and `lazyLineIndex` are the only two instances and they are not user-extensible. The interface adds indirection without extensibility value. The two implementation paths could be plain conditional branches in the reducer.~~
 
 `LineIndexStrategy<M>` interface removed from `src/types/store.ts`. `eagerLineIndex` and `lazyLineIndex` strategy objects removed from `src/store/features/reducer.ts`. The 8 dispatch call sites in `applyEdit`, `applyChange`, and `APPLY_REMOTE` now call `liInsert`, `liDelete`, `liInsertLazy`, `liDeleteLazy` directly.
 (`src/types/store.ts`, `src/store/features/reducer.ts`)
 
-**D2: ~~Viewport reconciliation does not track that the viewport window has already been reconciled.~~ (Non-issue)**
+**D2 — Viewport reconciliation does not track that the viewport window has already been reconciled** *(Fixed — 2026-03-02)*
 
 ~~After `setViewport(0, 50)`, the dirty ranges for lines 0–50 are removed. But `lineIndex.rebuildPending` remains `true` (off-screen dirty ranges still exist), and `scheduleReconciliation` is called again. There is no mechanism to skip re-reconciling the viewport on the next background pass.~~
 
 `reconcileRange` removes the reconciled dirty ranges from `state.dirtyRanges`. The subsequent background pass only processes the remaining (off-screen) ranges. Viewport lines are not re-reconciled.
 
-**D3: ~~The reconciliation threshold function `defaultThresholdFn` is not adaptive to document structure.~~ (Fixed 2026-03-02)**
+**D3 — The reconciliation threshold function `defaultThresholdFn` is not adaptive to document structure** *(Fixed — 2026-03-02)*
 
 ~~It scales by `lineCount / log2(lineCount)` — roughly O(n/log n) dirty lines trigger the slow path. The threshold does not account for whether the dirty ranges are contiguous (cheap to reconcile incrementally) or scattered (expensive).~~
 
 With Impl1 making `reconcileRange` O(K+V), the incremental path total across K ≤ 32 ranges is O(K² + totalDirty) ≈ O(1024 + totalDirty). Incremental beats O(n) whenever `totalDirty ≤ n − 1024 ≈ 0.75n`. `defaultThresholdFn` updated to `max(256, floor(lineCount × 0.75))`.
 (`src/store/core/line-index.ts`)
 
----
-
 ## 7. Improvement Points — Types & Interfaces
 
-**T1: `LineIndexNode<M>` propagates the phantom type through the entire tree, making node-level functions verbose. (Acknowledged — not fixing)**
+**T1 — `LineIndexNode<M>` propagates the phantom type through the entire tree, making node-level functions verbose** *(Acknowledged — not fixing)*
 
 All tree operations must carry `<M extends EvaluationMode>`. Since `M` only affects `documentOffset` nullability, keeping nodes unparameterized and parameterizing only `LineIndexState<M>` would simplify type signatures significantly.
 
 Not fixing: removing the phantom from `LineIndexNode` would weaken the type system — `documentOffset` would always be `number | null`, and `getLineRangePrecise` overloads that currently guarantee non-null offsets in eager mode would lose that guarantee.
 
-**T2: ~~`DirtyLineRange.createdAtVersion` should either be used or removed.~~ (Fixed 2026-03-02 — see P3)**
+**T2 — `DirtyLineRange.createdAtVersion` should either be used or removed** *(Fixed — 2026-03-02 — see P3)*
 
 ~~If intended for future use (e.g., per-range reconciliation priority), this should be documented with the intended semantic. If unused, it should be removed to avoid confusion.~~
 
 Field removed. `DirtyLineRange` now carries `isSentinel?: true` instead (see P2).
 
-**T3: ~~`getLineRange` and `getLineRangeChecked` expose the same semantic but with different type contracts.~~ (Fixed 2026-03-02)**
+**T3 — `getLineRange` and `getLineRangeChecked` expose the same semantic but with different type contracts** *(Fixed — 2026-03-02)*
 
 ~~`getLineRange` requires `LineIndexState<'eager'>` at compile time; `getLineRangeChecked` accepts any state and calls `asEagerLineIndex` at runtime. There is no third option for "reconcile on demand if needed," which creates API confusion for consumers.~~
 
@@ -670,73 +835,74 @@ Extended JSDoc on all three functions (`getLineRange`, `getLineRangeChecked`, `g
 - Note: "reconcile on demand" requires calling `store.reconcileNow()` first
 (`src/api/query.ts`)
 
----
-
 ## 8. Improvement Points — Implementations
 
-**Impl1: ~~`reconcileRange` applies `getOffsetDeltaForLine` (O(k)) per line in a loop of `(endLine - startLine)` lines.~~ (Fixed 2026-03-02)**
+**Impl1 — `reconcileRange` applies `getOffsetDeltaForLine` (O(k)) per line in a loop of `(endLine - startLine)` lines** *(Fixed — 2026-03-02)*
 
 ~~For a viewport of V lines with K dirty ranges, this is O(V × K). A single pass over dirty ranges to build a prefix-sum array, then O(1) delta lookup per line, would reduce this to O(K + V).~~
 
 `reconcileRange` now builds sweep-line events from the sorted dirty ranges (O(K)), then sweeps `[clampedStart, clampedEnd]` with a running cumulative delta (O(K + V) total). `getOffsetDeltaForLine` is retained as a public utility but no longer called in the hot path.
 (`src/store/core/line-index.ts`)
 
-**Impl2: ~~`mergeDirtyRanges` sorts on every call (O(k log k)), even when ranges are appended in order.~~ (Fixed 2026-03-02)**
+**Impl2 — `mergeDirtyRanges` sorts on every call (O(k log k)), even when ranges are appended in order** *(Fixed — 2026-03-02)*
 
 ~~Since `createDirtyRange` always uses `Number.MAX_SAFE_INTEGER` as `endLine` and ranges are appended sequentially, ranges are nearly always already sorted by `startLine`. An insertion-order assumption with a fallback sort would be faster in practice.~~
 
 `mergeDirtyRanges` now performs an O(K) scan for existing sort order before sorting. If ranges are already ordered (the common case), the sort is skipped entirely.
 (`src/store/core/line-index.ts`)
 
-**Impl3: `reconcileInPlace` visits all nodes even when they already have correct offsets. (Acknowledged — not fixing)**
+**Impl3 — `reconcileInPlace` visits all nodes even when they already have correct offsets** *(Acknowledged — not fixing)*
 
 The short-circuit `node.documentOffset !== correctOffset` avoids node allocation but not subtree traversal. A subtree-level correctness flag (analogous to `rebuildPending` at the state level) would allow pruning entire subtrees known to be clean.
 
 Not fixing: a subtree-level flag requires coordinated invalidation across every lazy tree mutation (`insertLinesAtPositionLazy`, `rbDeleteLineByNumber`, rotations). With Impl1 done, `reconcileInPlace` is already the last resort and runs infrequently — the complexity cost outweighs the benefit.
 
-**Impl4: ~~`reconcileNow` and the background `scheduleReconciliation` callback both increment `state.version + 1`.~~ (Partially fixed 2026-03-02)**
+**Impl4 — `reconcileNow` and the background `scheduleReconciliation` callback both increment `state.version + 1`** *(Fixed — 2026-03-02)*
 
 ~~Both produce a version bump for what is semantically the same state mutation (reconciling dirty ranges). Callers comparing versions would see unexpected increments. Reconciliation could be treated as version-neutral since it does not change visible content.~~
 
 The background `scheduleReconciliation` callback now passes `state.version` (not `state.version + 1`) to `reconcileFull` and omits the version increment from `setState`. `reconcileNow` continues to increment the version — it is a user-visible synchronous operation that undo/redo depends on.
 (`src/store/features/store.ts`)
 
----
-
 ## 9. Learning Paths
 
 **Path 1 — Phantom type invariants (data model)**
 1. `src/types/state.ts` — `EvaluationMode`, `LineIndexState<M>`, `DirtyLineRange`, `LineIndexNode<M>`
 2. `src/store/core/state.ts` — `asEagerLineIndex`, `withLineIndexState`, `createEmptyLineIndexState`
-3. **Goal:** understand how conditional types on `dirtyRanges` and `rebuildPending` enforce the eager/lazy invariant at compile time
+
+**Goal:** understand how conditional types on `dirtyRanges` and `rebuildPending` enforce the eager/lazy invariant at compile time.
 
 **Path 2 — Lazy mutation tracking**
 1. `src/store/features/reducer.ts` — `applyEdit`, calls to `liInsertLazy` / `liDeleteLazy`
 2. `src/store/core/line-index.ts` — `lineIndexInsertLazy`, `insertLinesAtPositionLazy`, `deleteLineRangeLazy`
 3. `src/store/core/line-index.ts` — `mergeDirtyRanges`, `createDirtyRange`
-4. **Goal:** trace a single `INSERT` action through to dirty range creation
+
+**Goal:** trace a single `INSERT` action through to dirty range creation.
 
 **Path 3 — Reconciliation strategies (core)**
 1. `src/store/core/line-index.ts:1761–1975` — `reconcileRange`, `reconcileFull`, `reconcileInPlace`, `reconcileViewport`
 2. `src/store/features/store.ts:224–325` — `scheduleReconciliation`, `reconcileNow`, `setViewport`
-3. **Goal:** understand the incremental vs. full-walk decision (threshold function) and when each is chosen
+
+**Goal:** understand the incremental vs. full-walk decision (threshold function) and when each is chosen.
 
 **Path 4 — Undo/Redo and the eager boundary**
 1. `src/store/features/reducer.ts:351–500` — `historyUndo`, `historyRedo`, `applyChange`, `applyInverseChange`
 2. `src/store/features/reducer.ts:452–458` — pre-reconciliation call in `applyChange`
-3. **Goal:** understand why undo/redo must force eager state before applying inverse changes
+
+**Goal:** understand why undo/redo must force eager state before applying inverse changes.
 
 **Path 5 — Consumer API and reconciliation surface**
 1. `src/types/store.ts:82–112` — `ReconcilableDocumentStore`
 2. `src/api/query.ts:28–58` — `isReconciledState`, `getLineRange`, `getLineRangeChecked`, `getLineRangePrecise`
-3. **Goal:** understand what guarantees the public API provides and how to correctly select between `getLineRange` (requires eager) vs. `getLineRangePrecise` (works on any mode)
+
+**Goal:** understand what guarantees the public API provides and how to correctly select between `getLineRange` (requires eager) vs. `getLineRangePrecise` (works on any mode).
 
 ---
 
 # Report 4: 2026-03-01 — Transaction and Batch Implementations
 
-**Updated:** 2026-03-02 — 14 issues resolved (P1, P2/D2, P4, P5\*, T1, T3, Impl1, D1, D3, D4, Impl3, Impl5, Impl2, Impl4)
-**Updated:** 2026-03-07 — P6 fixed; T2 fixed (`LoadChunkAction.data` → `ReadonlyUint8Array`)
+**Revised:** 2026-03-02 — 14 issues resolved (P1, P2/D2, P4, P5\*, T1, T3, Impl1, D1, D3, D4, Impl3, Impl5, Impl2, Impl4)
+**Revised:** 2026-03-07 — P6 fixed; T2 fixed (`LoadChunkAction.data` → `ReadonlyUint8Array`)
 **Scope:** Transaction management, batch dispatch, and their integration with the store and event system
 
 ---
@@ -754,9 +920,7 @@ The transaction and batch systems are composed across four distinct layers:
 
 The reducer (`src/store/features/reducer.ts`) treats all three transaction action types as no-ops — they return `state` unchanged. All transaction coordination is entirely in the store layer, not in the reducer.
 
----
-
-## 2. Relations of Implementations — Types & Interfaces
+## 2. Types and Interfaces
 
 ```
 DocumentAction (union)
@@ -792,9 +956,7 @@ TransactionManager {
 
 `DocumentStore.batch` is defined on the base interface accepting `readonly DocumentAction[]`. `ReconcilableDocumentStore` inherits it unchanged and additionally exposes `emergencyReset()`. `DocumentStoreWithEvents` overrides `batch` to emit per-action events with intermediate states.
 
----
-
-## 3. Relations of Implementations — Functions
+## 3. Functions and Call Graphs
 
 **`batch` (base store) call graph:**
 ```
@@ -850,9 +1012,7 @@ dispatch(TRANSACTION_ROLLBACK) → transaction.rollback(); setState(snapshot);
                                   notifyListeners only when isOutermost
 ```
 
----
-
-## 4. Specific Contexts and Usages
+## 4. Contexts and Usages
 
 **Notification batching:** The primary purpose of `batch` / transactions is collapsing N dispatch-notifications into one. Each action still runs through the reducer independently and produces its own history entry.
 
@@ -866,17 +1026,18 @@ dispatch(TRANSACTION_ROLLBACK) → transaction.rollback(); setState(snapshot);
 
 **`pendingActions` accumulation:** `trackAction` accumulates all actions dispatched inside an active transaction into a single flat array (calls at depth 0 are now silently ignored). The array is exposed on `CommitResult.pendingActions` at outermost commit but is **not currently used** by any caller — it is available for external consumers who construct transactions manually and want to replay or audit the action log.
 
----
-
 ## 5. Pitfalls
 
-**~~P1~~ — ~~`pendingActions` on `CommitResult` are accumulated and returned but never consumed internally.~~**
-**Fixed (2026-03-02)** as part of D3. See D3 below.
+**P1 — `pendingActions` on `CommitResult` are accumulated and returned but never consumed internally** *(Fixed — 2026-03-02)*
 
-**~~P2~~ — ~~`createDocumentStoreWithEvents.batch` has no `emergencyReset` fallback when rollback fails.~~**
-**Fixed (2026-03-02).** Events store `batch` now wraps the rollback dispatch in a nested try/catch and calls `baseStore.emergencyReset()` on failure, matching the resilience of the base store. `emergencyReset` is exposed on `ReconcilableDocumentStore` and passed through on the events store return object.
+~~`pendingActions` on `CommitResult` are accumulated and returned but never consumed internally.~~
+Fixed as part of D3. See D3 below.
 
-**P3 — Inner rollback only restores the snapshot passed to the matching `begin`, not the outermost state.**
+**P2 — `createDocumentStoreWithEvents.batch` has no `emergencyReset` fallback when rollback fails** *(Fixed — 2026-03-02)*
+
+Events store `batch` now wraps the rollback dispatch in a nested try/catch and calls `baseStore.emergencyReset()` on failure, matching the resilience of the base store. `emergencyReset` is exposed on `ReconcilableDocumentStore` and passed through on the events store return object.
+
+**P3 — Inner rollback only restores the snapshot passed to the matching `begin`, not the outermost state** *(Acknowledged — not fixing)*
 
 ```ts
 // Outer begin with stateA
@@ -892,72 +1053,78 @@ dispatch(TRANSACTION_COMMIT)   // commits stateA+X, notifies
 
 This is correct semantically but is a common source of confusion: inner rollback does not provide full abort semantics unless the outer transaction also rolls back.
 
-**~~P4~~ — ~~`trackAction` outside a transaction silently accumulates actions in `pending`.~~**
-**Fixed (2026-03-02).** `trackAction` now returns early when `depth === 0`. Calling it outside a transaction is a safe no-op.
+**P4 — `trackAction` outside a transaction silently accumulates actions in `pending`** *(Fixed — 2026-03-02)*
 
-**~~P5~~ — ~~`dispatch(TRANSACTION_ROLLBACK)` unconditionally calls `notifyListeners()`, including for inner rollbacks.~~**
-**Fixed (2026-03-02).** `notifyListeners()` in the rollback path is now guarded by `result.isOutermost`. Inner rollbacks restore the snapshot but do not notify listeners, preserving the notification-suppression contract for the duration of the outer transaction.
+`trackAction` now returns early when `depth === 0`. Calling it outside a transaction is a safe no-op.
+
+**P5 — `dispatch(TRANSACTION_ROLLBACK)` unconditionally calls `notifyListeners()`, including for inner rollbacks** *(Fixed — 2026-03-02)*
+
+`notifyListeners()` in the rollback path is now guarded by `result.isOutermost`. Inner rollbacks restore the snapshot but do not notify listeners, preserving the notification-suppression contract for the duration of the outer transaction.
 
 *Note: the related concern — outermost rollback notifying when state is unchanged — is not addressed. Listeners still cannot distinguish "state changed" from "state was rolled back to what it already was."*
 
-**~~P6~~ — ~~`snapshotStack` in `TransactionManager` stores full `DocumentState` references per nesting level.~~ (Fixed 2026-03-07)**
+**P6 — `snapshotStack` in `TransactionManager` stores full `DocumentState` references per nesting level** *(Fixed — 2026-03-07)*
 
 ~~For deeply nested transactions with large documents, the snapshot stack can hold many references to immutable-but-still-referenced state trees. Structural sharing in the piece table limits memory impact, but the line index and history stacks are duplicated across snapshots per nesting level.~~
 
 `HistoryState.undoStack` and `redoStack` are now `PStack<HistoryEntry>` — a persistent singly-linked stack defined in `src/types/state.ts`. Each push creates a new cons node pointing to the previous tail; all snapshot levels sharing history entries up to their `begin()` point share those nodes automatically. Snapshot overhead for history drops from O(K × H) pointer slots to O(K) cons-node allocations. The piece table and line index already use structural sharing; history is now consistent with that pattern.
 (`src/types/state.ts`, `src/store/features/reducer.ts`, `src/store/features/history.ts`, `src/store/core/state.ts`)
 
----
+## 6. Improvement Points — Design
 
-## 6. Improvement Points — Design Overview
+**D1 — `batch` and manual `TRANSACTION_START/COMMIT/ROLLBACK` dispatch provide two separate APIs for the same mechanism, with different guarantees** *(Fixed — 2026-03-02)*
 
-**~~D1~~ — ~~`batch` and manual `TRANSACTION_START/COMMIT/ROLLBACK` dispatch provide two separate APIs for the same mechanism, with different guarantees.~~**
-**Fixed (2026-03-02).** `withTransaction<T>(store, fn)` is now exported from `src/store/features/store.ts` and `src/api/store.ts`. It wraps the callback in a transaction with the same error-handling resilience as `batch` (rollback → `emergencyReset` fallback) and returns the value produced by the callback. It nests correctly with existing transactions.
+~~`batch` and manual `TRANSACTION_START/COMMIT/ROLLBACK` dispatch provide two separate APIs for the same mechanism, with different guarantees.~~ `withTransaction<T>(store, fn)` is now exported from `src/store/features/store.ts` and `src/api/store.ts`. It wraps the callback in a transaction with the same error-handling resilience as `batch` (rollback → `emergencyReset` fallback) and returns the value produced by the callback. It nests correctly with existing transactions.
 
-**~~D2~~ — ~~The events-aware `batch` deviates from the base `batch` in resilience.~~**
-**Fixed (2026-03-02)** as part of P2. Both `batch` implementations now have equivalent error-handling with `emergencyReset` fallback.
+**D2 — The events-aware `batch` deviates from the base `batch` in resilience** *(Fixed — 2026-03-02)*
 
-**~~D3~~ — ~~`pendingActions` is a `TransactionManager` feature with no current consumer.~~**
-**Fixed (2026-03-02).** `pending` array, `trackAction`, `pendingActions` getter, and `CommitResult.pendingActions` are all removed. The corresponding `transaction.trackAction(action)` call in `store.ts` `dispatch` is also removed. `CommitResult` now carries only `kind` and `isOutermost`. The `DocumentAction` import in `transaction.ts` is removed as it is no longer referenced.
+Fixed as part of P2. Both `batch` implementations now have equivalent error-handling with `emergencyReset` fallback.
 
-**~~D4~~ — ~~Notification suppression during transactions is implicit, not explicit.~~**
-**Fixed (2026-03-02).** The `dispatch` JSDoc now documents the notification contract explicitly: *"During an active transaction notifications are suppressed and delivered as a single call on outermost commit or outermost rollback."* The control-flow invariant is now expressed as a named guarantee rather than an implicit consequence of `transaction.isActive` checks.
+**D3 — `pendingActions` is a `TransactionManager` feature with no current consumer** *(Fixed — 2026-03-02)*
 
----
+`pending` array, `trackAction`, `pendingActions` getter, and `CommitResult.pendingActions` are all removed. The corresponding `transaction.trackAction(action)` call in `store.ts` `dispatch` is also removed. `CommitResult` now carries only `kind` and `isOutermost`. The `DocumentAction` import in `transaction.ts` is removed as it is no longer referenced.
+
+**D4 — Notification suppression during transactions is implicit, not explicit** *(Fixed — 2026-03-02)*
+
+The `dispatch` JSDoc now documents the notification contract explicitly: *"During an active transaction notifications are suppressed and delivered as a single call on outermost commit or outermost rollback."* The control-flow invariant is now expressed as a named guarantee rather than an implicit consequence of `transaction.isActive` checks.
 
 ## 7. Improvement Points — Types & Interfaces
 
-**~~T1~~ — ~~`TransactionResult` carries three fields, but commit and rollback never use all three simultaneously.~~**
-**Fixed (2026-03-02).** `TransactionResult` is now a discriminated union of `CommitResult` (`kind: 'commit'`, `isOutermost`, `pendingActions`) and `RollbackResult` (`kind: 'rollback'`, `isOutermost`, `snapshot`). `commit()` returns `CommitResult`; `rollback()` returns `RollbackResult`. The `kind` field enables exhaustive narrowing at call sites.
+**T1 — `TransactionResult` carries three fields, but commit and rollback never use all three simultaneously** *(Fixed — 2026-03-02)*
 
-**~~T2~~ — ~~`TransactionManager.pendingActions` is a `readonly DocumentAction[]` getter, but its elements are mutable actions.~~**
-**Fixed (2026-03-07).** `pendingActions` itself was removed by D3. The remaining live instance of the same class of issue was `LoadChunkAction.data: Uint8Array` — the field was `readonly` (preventing reference reassignment) but the buffer contents were mutable. `data` is now typed as `ReadonlyUint8Array` (defined in `src/types/branded.ts` as `Readonly<Uint8Array> & { readonly [index: number]: number }`), which blocks both named-method writes (`set`, `fill`, `copyWithin`, …) and indexed assignment (`data[0] = 5`) at the type level. Runtime behaviour is unchanged: all instances are still plain `Uint8Array` so `instanceof Uint8Array` checks and `new Uint8Array(action.data)` in `serializeAction` continue to work. The `loadChunk` action creator parameter type was updated to match. `ReadonlyUint8Array` is exported from `src/types/index.ts` alongside the other branded types.
+`TransactionResult` is now a discriminated union of `CommitResult` (`kind: 'commit'`, `isOutermost`, `pendingActions`) and `RollbackResult` (`kind: 'rollback'`, `isOutermost`, `snapshot`). `commit()` returns `CommitResult`; `rollback()` returns `RollbackResult`. The `kind` field enables exhaustive narrowing at call sites.
 
-**~~T3~~ — ~~`DocumentStore.batch` is typed as accepting `DocumentAction[]` (mutable array) rather than `readonly DocumentAction[]`.~~**
-**Fixed (2026-03-02).** `DocumentStore.batch` and both store implementations now accept `readonly DocumentAction[]`. Callers with a `readonly` array no longer need to cast.
+**T2 — `TransactionManager.pendingActions` is a `readonly DocumentAction[]` getter, but its elements are mutable actions** *(Fixed — 2026-03-07)*
 
----
+`pendingActions` itself was removed by D3. The remaining live instance of the same class of issue was `LoadChunkAction.data: Uint8Array` — the field was `readonly` (preventing reference reassignment) but the buffer contents were mutable. `data` is now typed as `ReadonlyUint8Array` (defined in `src/types/branded.ts` as `Readonly<Uint8Array> & { readonly [index: number]: number }`), which blocks both named-method writes (`set`, `fill`, `copyWithin`, …) and indexed assignment (`data[0] = 5`) at the type level. Runtime behaviour is unchanged: all instances are still plain `Uint8Array` so `instanceof Uint8Array` checks and `new Uint8Array(action.data)` in `serializeAction` continue to work. The `loadChunk` action creator parameter type was updated to match. `ReadonlyUint8Array` is exported from `src/types/index.ts` alongside the other branded types.
+
+**T3 — `DocumentStore.batch` is typed as accepting `DocumentAction[]` (mutable array) rather than `readonly DocumentAction[]`** *(Fixed — 2026-03-02)*
+
+`DocumentStore.batch` and both store implementations now accept `readonly DocumentAction[]`. Callers with a `readonly` array no longer need to cast.
 
 ## 8. Improvement Points — Implementations
 
-**~~Impl1~~ — ~~`createDocumentStore.batch` has a subtle double-scheduling opportunity.~~**
-**Fixed (2026-03-02).** The redundant `scheduleReconciliation` check after the `finally` block has been removed. Reconciliation is scheduled once inside `dispatch(TRANSACTION_COMMIT)` when `rebuildPending` is true; the post-batch repeat was dead code.
+**Impl1 — `createDocumentStore.batch` has a subtle double-scheduling opportunity** *(Fixed — 2026-03-02)*
 
-**~~Impl2~~ — ~~`TRANSACTION_COMMIT` is placed inside the `try` block, so a COMMIT-throw causes the `finally` block to attempt `TRANSACTION_ROLLBACK` on a half-committed transaction.~~**
-**Fixed (2026-03-02).** In all three sites — `createDocumentStore.batch`, `createDocumentStoreWithEvents.batch`, and `withTransaction` — `success = true` is now set immediately before `dispatch({ type: 'TRANSACTION_COMMIT' })`. If `TRANSACTION_COMMIT` throws (e.g. `assertInvariant` detects a `depth`/`snapshotStack` drift), `success` is already `true` so the `finally` block skips the rollback attempt. The error propagates cleanly rather than triggering a no-op rollback on state with `depth` already decremented and the snapshot already popped.
+The redundant `scheduleReconciliation` check after the `finally` block has been removed. Reconciliation is scheduled once inside `dispatch(TRANSACTION_COMMIT)` when `rebuildPending` is true; the post-batch repeat was dead code.
+
+**Impl2 — `TRANSACTION_COMMIT` is placed inside the `try` block, so a COMMIT-throw causes the `finally` block to attempt `TRANSACTION_ROLLBACK` on a half-committed transaction** *(Fixed — 2026-03-02)*
+
+In all three sites — `createDocumentStore.batch`, `createDocumentStoreWithEvents.batch`, and `withTransaction` — `success = true` is now set immediately before `dispatch({ type: 'TRANSACTION_COMMIT' })`. If `TRANSACTION_COMMIT` throws (e.g. `assertInvariant` detects a `depth`/`snapshotStack` drift), `success` is already `true` so the `finally` block skips the rollback attempt. The error propagates cleanly rather than triggering a no-op rollback on state with `depth` already decremented and the snapshot already popped.
 (`src/store/features/store.ts`)
 
-**~~Impl3~~ — ~~No assertion to detect `snapshotStack`/`depth` drift.~~**
-**Fixed (2026-03-02).** `createTransactionManager` now has a private `assertInvariant(op)` helper that throws if `snapshotStack.length !== depth`. It is called at the end of `begin`, `commit`, and `rollback`. Any future bug that causes a begin/commit/rollback imbalance will surface immediately with a descriptive error rather than silently corrupting state.
+**Impl3 — No assertion to detect `snapshotStack`/`depth` drift** *(Fixed — 2026-03-02)*
 
-**~~Impl4~~ — ~~`createDocumentStore.batch` duplicates the `emergencyReset()` logic inline rather than calling the store's own function.~~**
-**Fixed (2026-03-02).** The three-line inline block in `createDocumentStore.batch`'s rollback-failure catch (`transaction.emergencyReset()` + `setState` + `notifyListeners()`) is replaced with a single `emergencyReset()` call. The base store's `batch` now mirrors the events store, which already called `baseStore.emergencyReset()`. Future changes to the emergency recovery path only need to be applied once.
+`createTransactionManager` now has a private `assertInvariant(op)` helper that throws if `snapshotStack.length !== depth`. It is called at the end of `begin`, `commit`, and `rollback`. Any future bug that causes a begin/commit/rollback imbalance will surface immediately with a descriptive error rather than silently corrupting state.
+
+**Impl4 — `createDocumentStore.batch` duplicates the `emergencyReset()` logic inline rather than calling the store's own function** *(Fixed — 2026-03-02)*
+
+The three-line inline block in `createDocumentStore.batch`'s rollback-failure catch (`transaction.emergencyReset()` + `setState` + `notifyListeners()`) is replaced with a single `emergencyReset()` call. The base store's `batch` now mirrors the events store, which already called `baseStore.emergencyReset()`. Future changes to the emergency recovery path only need to be applied once.
 (`src/store/features/store.ts`)
 
-**~~Impl5~~ — ~~No round-trip test for transaction action serialization.~~**
-**Fixed (2026-03-02).** A new dedicated test file `src/store/features/actions.test.ts` covers `serializeAction` / `deserializeAction` for all 12 action types, including all three transaction actions, plus `LOAD_CHUNK` Uint8Array preservation, unicode text, and error cases (unknown type, invalid JSON, missing fields). The tests confirm that transaction actions serialize to plain `{ type }` JSON objects and round-trip without data loss.
+**Impl5 — No round-trip test for transaction action serialization** *(Fixed — 2026-03-02)*
 
----
+A new dedicated test file `src/store/features/actions.test.ts` covers `serializeAction` / `deserializeAction` for all 12 action types, including all three transaction actions, plus `LOAD_CHUNK` Uint8Array preservation, unicode text, and error cases (unknown type, invalid JSON, missing fields). The tests confirm that transaction actions serialize to plain `{ type }` JSON objects and round-trip without data loss.
 
 ## 9. Learning Paths
 
@@ -965,27 +1132,32 @@ This is correct semantically but is a common source of confusion: inner rollback
 1. `src/types/actions.ts:96–119` — `TransactionStartAction`, `TransactionCommitAction`, `TransactionRollbackAction`
 2. `src/store/features/transaction.ts` — `TransactionManager`, `CommitResult`, `RollbackResult`, `createTransactionManager`, depth/snapshot/pending mechanics
 3. `src/store/features/transaction.test.ts` — full test suite covering lifecycle, nesting, pending actions, emergency reset, `kind` discriminant
-4. **Goal:** understand depth tracking, snapshot stack, `isOutermost` flag semantics, and the discriminated result types
+
+**Goal:** understand depth tracking, snapshot stack, `isOutermost` flag semantics, and the discriminated result types.
 
 **Path 2 — Store integration and notification suppression**
 1. `src/store/features/store.ts:120–175` — `dispatch` function (with notification contract JSDoc), transaction intercept branches
 2. `src/store/features/store.ts:178–213` — `batch` in base store (transaction wrapping, rollback, emergency reset)
 3. `src/store/features/store.ts` (`withTransaction`) — high-level transaction helper consolidating the manual dispatch protocol
 4. `src/store/features/store.usecase.test.ts:273–467` — integration tests for transactions, batching, and `withTransaction`
-5. **Goal:** understand how notifications are suppressed during transactions (including inner rollbacks), how `batch` and `withTransaction` differ from manual `dispatch` sequences, and the notification suppression contract
+
+**Goal:** understand how notifications are suppressed during transactions (including inner rollbacks), how `batch` and `withTransaction` differ from manual `dispatch` sequences, and the notification suppression contract.
 
 **Path 3 — Events-aware batch divergence**
 1. `src/store/features/store.ts:367–463` — `createDocumentStoreWithEvents`, enhanced `dispatch`, events-aware `batch`
 2. `src/store/features/events.test.ts:328–355` — batch intermediate-state event test
-3. **Goal:** understand why the events-aware `batch` emits per-action events with intermediate states, and how error handling now matches the base store
+
+**Goal:** understand why the events-aware `batch` emits per-action events with intermediate states, and how error handling now matches the base store.
 
 **Path 4 — Reconciliation interaction with transactions**
 1. `src/store/features/store.ts:131–133` — reconciliation scheduling on outermost commit
 2. `src/store/features/store.usecase.test.ts:352–383` — test: reconciliation scheduled only after outermost commit
-3. **Goal:** understand why dirty line ranges are not reconciled mid-transaction and where scheduling occurs
+
+**Goal:** understand why dirty line ranges are not reconciled mid-transaction and where scheduling occurs.
 
 **Path 5 — Action serialization and type guards**
 1. `src/types/actions.ts:199–236` — `isTextEditAction`, `isHistoryAction`, `isTransactionAction`
 2. `src/types/actions.ts:242–287` — `isDocumentAction` runtime validator
 3. `src/store/features/actions.ts:141–170` — `serializeAction`, `deserializeAction`
-4. **Goal:** understand the full action type system and the validation/serialization boundary for external action sources
+
+**Goal:** understand the full action type system and the validation/serialization boundary for external action sources.
