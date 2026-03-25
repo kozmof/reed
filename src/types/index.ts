@@ -42,6 +42,7 @@ export {
   pstackSize,
   pstackToArray,
   pstackFromArray,
+  pstackTrimToSize,
 } from './state.ts';
 
 // Action types

@@ -1377,6 +1377,12 @@ export function mergeDirtyRanges(
   const sorted = needsSort ? [...ranges].sort((a, b) => a.startLine - b.startLine) : [...ranges];
   const merged: DirtyLineRange[] = [];
   let i = 0;
+  // Loop invariant: `current` is the "in-flight" range — it has NOT yet been
+  // pushed to `merged`. Every range in `merged` is fully resolved and will
+  // never be revisited. `current` is finalized either:
+  //   (a) post-loop via `if (!exhausted) merged.push(current)`, or
+  //   (b) mid-loop in the e1===e2 branch, which sets `exhausted = true` to
+  //       prevent (a) from double-counting it.
   let current = sorted[0];
   let exhausted = false;
 
@@ -1432,7 +1438,10 @@ export function mergeDirtyRanges(
             offsetDelta: current.offsetDelta,
           });
         } else {
-          // e1 === e2: both fully consumed; no tail remains
+          // e1 === e2: both ranges fully consumed by the overlap — no tail remains.
+          // Push `current` into `merged` here (it is now resolved) and advance `i`
+          // to the next input range. If that exhausts the input, set `exhausted` so
+          // the post-loop push is skipped — `current` is already in `merged`.
           merged.push(Object.freeze({
             startLine: next.startLine,
             endLine: current.endLine,
@@ -1449,6 +1458,8 @@ export function mergeDirtyRanges(
       current = next;
     }
   }
+  // Finalize the last in-flight range, unless the e1===e2 branch already pushed
+  // it into `merged` mid-loop (signalled by `exhausted`).
   if (!exhausted) merged.push(current);
 
   // Safety cap: if too many ranges accumulated, collapse to full-document rebuild
@@ -2124,7 +2135,14 @@ export function reconcileFull(
     );
   }
 
-  // Slow path: in-place O(n) walk with structural sharing (no collect-rebuild)
+  // Slow path: triggered either by a sentinel (delta information lost) or when
+  // totalDirty > threshold (non-sentinel ranges covering most of the document).
+  // Both cases are intentional — the O(n) in-place tree walk is cheaper than the
+  // O(K²+totalDirty) incremental path when the dirty region is large.
+  //
+  // IMPORTANT: this path uses reconcileInPlace, which recomputes documentOffset
+  // values from each node's stored lineLength via an in-order traversal. It does
+  // NOT call getText or rebuildLineIndex — no full document decode occurs here.
   const newRoot = reconcileInPlace(state.root, { offset: 0 });
 
   return $proveCtx(

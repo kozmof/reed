@@ -307,6 +307,34 @@ export const pstackToArray = <T>(s: PStack<T>): T[] => {
 export const pstackFromArray = <T>(arr: readonly T[]): PStack<T> =>
   arr.reduce<PStack<T>>((acc, v) => pstackPush(acc, v), null);
 
+/**
+ * Trim a PStack to at most `maxSize` entries, keeping the `maxSize` most-recently
+ * pushed (newest) entries and discarding the rest.
+ *
+ * Cost: O(maxSize) — traverses only the top `maxSize` nodes, never the full stack.
+ * This is strictly better than the O(H) pstackToArray + slice + pstackFromArray
+ * round-trip when maxSize << H (e.g. history limit << total history depth).
+ *
+ * Returns the original stack unchanged (O(1)) when stack.size ≤ maxSize.
+ */
+export const pstackTrimToSize = <T>(stack: PStack<T>, maxSize: number): PStack<T> => {
+  if (stack === null || stack.size <= maxSize) return stack;
+  if (maxSize <= 0) return null;
+  // Collect the top `maxSize` items (newest first)
+  const items: T[] = new Array(maxSize);
+  let cur: PStack<T> | null = stack;
+  for (let i = 0; i < maxSize && cur !== null; i++) {
+    items[i] = cur.top;
+    cur = cur.rest;
+  }
+  // Rebuild cons-list from oldest→newest so top is the newest item
+  let result: PStack<T> = null;
+  for (let i = maxSize - 1; i >= 0; i--) {
+    result = { top: items[i], rest: result, size: maxSize - i };
+  }
+  return result;
+};
+
 // =============================================================================
 // History Types
 // =============================================================================

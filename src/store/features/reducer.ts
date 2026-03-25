@@ -5,7 +5,7 @@
  */
 
 import type { DocumentState, HistoryEntry, HistoryChange, SelectionState, SelectionRange, NonEmptyReadonlyArray } from '../../types/state.ts';
-import { pstackPush, pstackPeek, pstackPop, pstackSize, pstackToArray, pstackFromArray } from '../../types/state.ts';
+import { pstackPush, pstackPeek, pstackPop, pstackTrimToSize } from '../../types/state.ts';
 import type { DocumentAction } from '../../types/actions.ts';
 import type { ByteOffset } from '../../types/branded.ts';
 import type { DeleteBoundaryContext } from '../../types/store.ts';
@@ -304,12 +304,10 @@ function historyPush(
     timestamp: now,
   });
 
-  // Trim undo stack if it exceeds limit
-  let undoStack = pstackPush(history.undoStack, entry);
-  if (pstackSize(undoStack) > history.limit) {
-    const arr = pstackToArray(undoStack);
-    undoStack = pstackFromArray(arr.slice(arr.length - history.limit));
-  }
+  // Trim undo stack if it exceeds limit.
+  // pstackTrimToSize is O(limit) — visits only the top `limit` nodes rather than
+  // the full O(H) array round-trip that pstackToArray+slice+pstackFromArray would require.
+  let undoStack = pstackTrimToSize(pstackPush(history.undoStack, entry), history.limit);
 
   return withState(state, {
     history: Object.freeze({
@@ -534,6 +532,10 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
       forceLineIndexRebuild = true;
       newState = pieceTableDelete(newState, op.position, op.deleteEnd);
     } else {
+      // Lazy line-index update is computed from the current (pre-delete) state because
+      // dirty-range tracking only needs the deleted text's line-break structure, not the
+      // post-delete byte layout. The resulting `delLineIndex` records a dirty range; actual
+      // byte offsets are reconciled later against the updated piece table.
       const delLineIndex = liDeleteLazy(
         newState.lineIndex,
         op.position,
