@@ -4,11 +4,11 @@
  * No side effects - produces new state from old state + action.
  */
 
-import type { DocumentState, HistoryEntry, HistoryChange, SelectionState, SelectionRange, NonEmptyReadonlyArray } from '../../types/state.ts';
+import type { DocumentState, LineIndexState, HistoryEntry, HistoryChange, SelectionState, SelectionRange, NonEmptyReadonlyArray } from '../../types/state.ts';
 import { pstackPush, pstackPeek, pstackPop, pstackTrimToSize } from '../../types/state.ts';
 import type { DocumentAction } from '../../types/actions.ts';
 import type { ByteOffset } from '../../types/branded.ts';
-import type { DeleteBoundaryContext } from '../../types/store.ts';
+import type { DeleteBoundaryContext, ReadTextFn } from '../../types/store.ts';
 import { byteOffset, byteLength } from '../../types/branded.ts';
 import { withState } from '../core/state.ts';
 import {
@@ -109,6 +109,32 @@ function getTextRange(state: DocumentState, start: ByteOffset, end: ByteOffset):
 // Line Index Strategies (Formalized Eager/Lazy Duality)
 // =============================================================================
 
+/**
+ * Normalizes eager and lazy line-index update functions behind a common interface.
+ * Callers (applyEdit, applyChange) select the appropriate strategy at their boundary
+ * rather than scattering ad-hoc `if (eager) liInsert(...) else liInsertLazy(...)` branches.
+ *
+ * The rebuild path (CRLF edge cases → rebuildLineIndexFromPieceTableState) is outside
+ * the strategy — it applies regardless of evaluation mode.
+ */
+interface LineIndexStrategy {
+  insert(lineIndex: LineIndexState, position: ByteOffset, text: string, readText?: ReadTextFn): LineIndexState;
+  delete(lineIndex: LineIndexState, position: ByteOffset, end: ByteOffset, text: string, context?: DeleteBoundaryContext): LineIndexState;
+}
+
+/** Eager strategy: updates byte offsets immediately (used by undo/redo after reconcile). */
+const eagerStrategy: LineIndexStrategy = {
+  insert: (li, pos, text, readText) => liInsert(li, pos, text, readText),
+  delete: (li, pos, end, text, ctx) => liDelete(li, pos, end, text, ctx),
+};
+
+/** Lazy strategy: records dirty ranges for background reconciliation (used by normal edits). */
+function lazyStrategy(version: number): LineIndexStrategy {
+  return {
+    insert: (li, pos, text, readText) => liInsertLazy(li, pos, text, version, readText),
+    delete: (li, pos, end, text, ctx) => liDeleteLazy(li, pos, end, text, version, ctx),
+  };
+}
 
 function getDeleteBoundaryContext(
   state: DocumentState,
@@ -434,7 +460,7 @@ function applyChange(state: DocumentState, change: HistoryChange, version: numbe
     case 'insert': {
       const { state: s } = pieceTableInsert(state, change.position, change.text);
       const readText = (start: ByteOffset, end: ByteOffset) => getText(s.pieceTable, start, end);
-      const newLineIndex = liInsert(reconciledLI, change.position, change.text, readText);
+      const newLineIndex = eagerStrategy.insert(reconciledLI, change.position, change.text, readText);
       return withState(s, { lineIndex: newLineIndex });
     }
     case 'delete': {
@@ -444,7 +470,7 @@ function applyChange(state: DocumentState, change: HistoryChange, version: numbe
       if (shouldRebuildLineIndexForDelete(change.text, deleteContext)) {
         return rebuildLineIndexFromPieceTableState(s);
       }
-      const newLineIndex = liDelete(reconciledLI, change.position, end, change.text, deleteContext);
+      const newLineIndex = eagerStrategy.delete(reconciledLI, change.position, end, change.text, deleteContext);
       return withState(s, { lineIndex: newLineIndex });
     }
     case 'replace': {
@@ -455,9 +481,9 @@ function applyChange(state: DocumentState, change: HistoryChange, version: numbe
       if (shouldRebuildLineIndexForDelete(change.oldText, deleteContext)) {
         return rebuildLineIndexFromPieceTableState(s2);
       }
-      const li1 = liDelete(reconciledLI, change.position, deleteEnd, change.oldText, deleteContext);
+      const li1 = eagerStrategy.delete(reconciledLI, change.position, deleteEnd, change.oldText, deleteContext);
       const readText = (start: ByteOffset, end: ByteOffset) => getText(s2.pieceTable, start, end);
-      const li2 = liInsert(li1, change.position, change.text, readText);
+      const li2 = eagerStrategy.insert(li1, change.position, change.text, readText);
       return withState(s2, { lineIndex: li2 });
     }
     default:
@@ -521,27 +547,33 @@ interface EditOperation {
  */
 function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
   const nextVersion = state.version + 1;
+  const strategy = lazyStrategy(nextVersion);
   let newState: DocumentState = state;
-  let forceLineIndexRebuild = false;
+
+  // Determine upfront whether CRLF semantics require a full line-index rebuild.
+  // Computing this before any mutation avoids the non-local `forceLineIndexRebuild`
+  // flag that previously coupled the delete phase's decision to the insert phase's behavior.
+  const deleteContext = op.deleteEnd !== undefined
+    ? getDeleteBoundaryContext(newState, op.position, op.deleteEnd)
+    : undefined;
+  const needsRebuild = op.deleteEnd !== undefined
+    && shouldRebuildLineIndexForDelete(op.deletedText!, deleteContext);
 
   // Delete phase
   if (op.deleteEnd !== undefined) {
-    const deleteContext = getDeleteBoundaryContext(newState, op.position, op.deleteEnd);
-    const shouldRebuild = shouldRebuildLineIndexForDelete(op.deletedText!, deleteContext);
-    if (shouldRebuild) {
-      forceLineIndexRebuild = true;
+    if (needsRebuild) {
+      // Skip lazy line-index update — a full rebuild will follow after the insert phase.
       newState = pieceTableDelete(newState, op.position, op.deleteEnd);
     } else {
       // Lazy line-index update is computed from the current (pre-delete) state because
       // dirty-range tracking only needs the deleted text's line-break structure, not the
-      // post-delete byte layout. The resulting `delLineIndex` records a dirty range; actual
-      // byte offsets are reconciled later against the updated piece table.
-      const delLineIndex = liDeleteLazy(
+      // post-delete byte layout. The resulting dirty range is reconciled later against
+      // the updated piece table.
+      const delLineIndex = strategy.delete(
         newState.lineIndex,
         op.position,
         op.deleteEnd,
         op.deletedText!,
-        nextVersion,
         deleteContext
       );
       newState = pieceTableDelete(newState, op.position, op.deleteEnd);
@@ -555,14 +587,15 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
     const result = pieceTableInsert(newState, op.position, op.insertText);
     newState = result.state;
     insertedByteLength = result.insertedByteLength;
-    if (!forceLineIndexRebuild) {
+    if (!needsRebuild) {
       const readText = (start: ByteOffset, end: ByteOffset) => getText(newState.pieceTable, start, end);
-      const insLineIndex = liInsertLazy(newState.lineIndex, op.position, op.insertText, nextVersion, readText);
+      const insLineIndex = strategy.insert(newState.lineIndex, op.position, op.insertText, readText);
       newState = withState(newState, { lineIndex: insLineIndex });
     }
   }
 
-  if (forceLineIndexRebuild) {
+  // Rebuild phase: single consolidated decision point, chosen before any mutation above.
+  if (needsRebuild) {
     newState = rebuildLineIndexFromPieceTableState(newState);
   }
 
@@ -583,9 +616,9 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
       type: 'replace' as const,
       position: op.position,
       text: op.insertText,
-      byteLength: insertedByteLength,
+      byteLength: byteLength(insertedByteLength),
       oldText: op.deletedText!,
-      oldByteLength: op.deleteEnd - op.position,
+      oldByteLength: byteLength(op.deleteEnd - op.position),
     });
   } else if (op.deleteEnd !== undefined) {
     historyChange = Object.freeze({

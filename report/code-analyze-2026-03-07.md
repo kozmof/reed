@@ -154,18 +154,23 @@ dispatch(action)
 **5.5 — `LOAD_CHUNK` / `EVICT_CHUNK` are no-ops with a "Phase 3" comment.** These are in the action union, included in `isDocumentAction` validation, and dispatched through the reducer — but silently return `state`. They are easy to miss as stubs during code review.
 
 **5.6 — `createDocumentStoreWithEvents.batch` re-implements the transaction try/finally from `createDocumentStore.batch`.** The logic is duplicated verbatim rather than delegating to the base implementation. If the base `batch` error-handling changes, the events variant may drift.
+> **Fixed (2026-03-26):** Extracted `withTransactionBatch(txDispatch, actionDispatch, emergencyReset, actions)` in `store.ts`. The two-dispatch signature preserves `createDocumentStoreWithEvents`'s need to route transaction control through `baseStore.dispatch` while per-action work goes through the event-emitting `dispatch`. Both `batch` implementations now delegate to it, each reduced to a 2-line body.
 
 ---
 
 ### 6. Improvement Points 1 — Design Overview
 
 **6.1 — `applyEdit` function combines too many responsibilities.** It performs delete, insert, line-index update, history push, dirty-marking, and version increment — all in a single ~80-line function with a `forceLineIndexRebuild` flag that controls branching throughout. The phases are not composable; extracting them into a pipeline (`deletePhase → insertPhase → historyPhase → versionPhase`) would make each testable independently and remove the flag-based branching.
+> **Fixed (2026-03-26):** Eliminated `forceLineIndexRebuild` from `applyEdit` in `reducer.ts`. `deleteContext` and `needsRebuild` are now computed as `const` values before any mutations. Each phase reads `needsRebuild` directly — the non-local flag coupling the delete-phase decision to insert-phase behavior is gone.
 
 **6.2 — Eager vs. lazy duality is partially formalized.** The `EvaluationMode` type parameter captures the distinction at the type level, but the functions that perform eager updates (`liInsert`, `liDelete`) vs. lazy updates (`liInsertLazy`, `liDeleteLazy`) are chosen by the reducer based on context (undo/redo vs. normal edit) with ad-hoc `if`-branches. Formalizing this as a strategy (e.g., an `UpdateStrategy` type with `insert` / `delete` methods) would make the duality structural rather than conditional.
+> **Fixed (2026-03-26):** Introduced `LineIndexStrategy` interface with normalized `insert`/`delete` signatures in `reducer.ts`. `eagerStrategy` wraps `liInsert`/`liDelete`; `lazyStrategy(version)` wraps the lazy variants. `applyChange` (undo/redo) uses `eagerStrategy`; `applyEdit` (normal edits) uses `lazyStrategy`. The CRLF rebuild path (`rebuildLineIndexFromPieceTableState`) remains outside the strategy.
 
 **6.3 — `scheduleReconciliation` does not notify listeners after background reconciliation.** Background reconciliation changes the line index (nulls become real offsets) but does not call `notifyListeners()`. Consumers that rely on `getSnapshot()` for accurate offsets will silently see stale null offsets until the next user action. The `reconcileNow` path correctly notifies, but the idle-callback path does not. If a component caches `getSnapshot()` between events, this can produce invisible inconsistency.
+> **Fixed (2026-03-26):** Added `notifyListeners()` after `setState` in the background reconciliation callback in `store.ts`. The existing `if (newLineIndex !== state.lineIndex)` guard ensures the notification only fires when offsets actually changed.
 
 **6.4 — `emergencyReset` is a catch-all with observable effects (notifyListeners).** It is called inside `finally` blocks of `batch`, and it unconditionally calls `notifyListeners()`. If emergency reset itself is invoked from within a listener callback, this creates a re-entrancy scenario.
+> **Fixed (2026-03-26):** Added a `notifying` boolean re-entrancy guard to `notifyListeners` in `store.ts`. An `emergencyReset` triggered from within a listener callback now safely no-ops on the inner `notifyListeners` call. The `Array.from(listeners)` snapshot for mutation safety is preserved inside the `try` block.
 
 ---
 

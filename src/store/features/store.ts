@@ -31,6 +31,41 @@ interface ReconciliationState {
 }
 
 /**
+ * Shared try/finally logic for batch transaction management.
+ *
+ * `txDispatch` handles TRANSACTION_START / TRANSACTION_COMMIT / TRANSACTION_ROLLBACK
+ * (always the base store's dispatch, which owns the transaction stack).
+ * `actionDispatch` handles individual user actions (may differ — e.g. an event-emitting
+ * wrapper — while still routing transaction control through `txDispatch`).
+ */
+function withTransactionBatch(
+  txDispatch: (action: DocumentAction) => DocumentState,
+  actionDispatch: (action: DocumentAction) => DocumentState,
+  emergencyReset: () => DocumentState | null,
+  actions: readonly DocumentAction[]
+): void {
+  txDispatch({ type: 'TRANSACTION_START' });
+  let success = false;
+  try {
+    for (const action of actions) {
+      actionDispatch(action);
+    }
+    // Set success before COMMIT: if COMMIT itself throws, the finally block must not
+    // attempt ROLLBACK on half-committed state (depth already decremented).
+    success = true;
+    txDispatch({ type: 'TRANSACTION_COMMIT' });
+  } finally {
+    if (!success) {
+      try {
+        txDispatch({ type: 'TRANSACTION_ROLLBACK' });
+      } catch {
+        emergencyReset();
+      }
+    }
+  }
+}
+
+/**
  * Factory function to create a DocumentStore.
  * Encapsulates internal mutable state (listeners, transaction depth).
  *
@@ -46,6 +81,7 @@ export function createDocumentStore(
   // Internal mutable state
   let state = createInitialState(config);
   const listeners = new Set<StoreListener>();
+  let notifying = false; // Re-entrancy guard for notifyListeners (see 6.4)
   const transaction = createTransactionManager();
   const reconciliation: ReconciliationState = {
     idleCallbackId: null,
@@ -64,17 +100,27 @@ export function createDocumentStore(
   /**
    * Notify all listeners of state change.
    * Only called when not in a transaction.
+   *
+   * Re-entrancy guard: if a listener triggers `emergencyReset` (which itself
+   * calls `notifyListeners`), the inner call is a no-op, preventing recursive
+   * notification.
    */
   function notifyListeners(): void {
-    // Snapshot listeners to guarantee stable delivery even if subscribers mutate during notification.
-    const currentListeners = Array.from(listeners);
-    for (const listener of currentListeners) {
-      try {
-        listener();
-      } catch (error) {
-        // Don't let one listener's error affect others
-        console.error('Store listener threw an error:', error);
+    if (notifying) return;
+    notifying = true;
+    try {
+      // Snapshot listeners to guarantee stable delivery even if subscribers mutate during notification.
+      const currentListeners = Array.from(listeners);
+      for (const listener of currentListeners) {
+        try {
+          listener();
+        } catch (error) {
+          // Don't let one listener's error affect others
+          console.error('Store listener threw an error:', error);
+        }
       }
+    } finally {
+      notifying = false;
     }
   }
 
@@ -183,35 +229,7 @@ export function createDocumentStore(
     if (actions.length === 0) {
       return state;
     }
-
-    // Start transaction
-    dispatch({ type: 'TRANSACTION_START' });
-
-    let success = false;
-    try {
-      // Apply all actions
-      for (const action of actions) {
-        dispatch(action);
-      }
-
-      // Mark success before COMMIT: if TRANSACTION_COMMIT itself throws (e.g.
-      // assertInvariant detects a depth/snapshotStack drift), the finally block
-      // must NOT attempt TRANSACTION_ROLLBACK on a half-committed transaction
-      // (depth already decremented, snapshot already popped).  Let the error
-      // propagate cleanly instead.
-      success = true;
-      dispatch({ type: 'TRANSACTION_COMMIT' });
-    } finally {
-      // Ensure transaction state is always cleaned up, even if rollback fails
-      if (!success) {
-        try {
-          dispatch({ type: 'TRANSACTION_ROLLBACK' });
-        } catch {
-          emergencyReset();
-        }
-      }
-    }
-
+    withTransactionBatch(dispatch, dispatch, emergencyReset, actions);
     return state;
   }
 
@@ -266,6 +284,11 @@ export function createDocumentStore(
             // state.version is intentionally unchanged — background reconciliation
             // is invisible to listeners and should not produce a version bump.
           }));
+          // Notify consumers so they can re-read getSnapshot() with accurate offsets.
+          // Previously-null documentOffset values are now resolved; without this call,
+          // consumers relying on getSnapshot() would silently see stale nulls until the
+          // next user action.
+          notifyListeners();
         }
       } finally {
         reconciliation.isReconciling = false;
@@ -451,28 +474,9 @@ export function createDocumentStoreWithEvents(
     if (actions.length === 0) {
       return baseStore.getSnapshot();
     }
-
-    // Use base store's transaction management with our event-emitting dispatch
-    baseStore.dispatch({ type: 'TRANSACTION_START' });
-    let success = false;
-    try {
-      for (const action of actions) {
-        dispatch(action);
-      }
-      // Same rationale as base store batch: set success before COMMIT so a
-      // COMMIT-throw does not trigger a rollback on half-committed state.
-      success = true;
-      baseStore.dispatch({ type: 'TRANSACTION_COMMIT' });
-    } finally {
-      if (!success) {
-        try {
-          baseStore.dispatch({ type: 'TRANSACTION_ROLLBACK' });
-        } catch {
-          baseStore.emergencyReset();
-        }
-      }
-    }
-
+    // Transaction control goes through baseStore.dispatch (owns the transaction stack).
+    // Per-action dispatch goes through the local event-emitting dispatch.
+    withTransactionBatch(baseStore.dispatch, dispatch, baseStore.emergencyReset, actions);
     return baseStore.getSnapshot();
   }
 
