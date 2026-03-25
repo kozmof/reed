@@ -54,7 +54,14 @@ export function getBuffer(
   state: PieceTableState,
   ref: BufferReference
 ): Uint8Array {
-  return ref.bufferType === 'original' ? state.originalBuffer : state.addBuffer.bytes;
+  switch (ref.bufferType) {
+    case 'original': return state.originalBuffer;
+    case 'add':      return state.addBuffer.bytes;
+    default: {
+      const _never: never = ref;
+      throw new Error(`Unknown buffer type: ${JSON.stringify(_never)}`);
+    }
+  }
 }
 
 /**
@@ -65,7 +72,15 @@ export function getBufferSlice(
   state: PieceTableState,
   ref: BufferReference
 ): Uint8Array {
-  const buffer = ref.bufferType === 'original' ? state.originalBuffer : state.addBuffer.bytes;
+  let buffer: Uint8Array;
+  switch (ref.bufferType) {
+    case 'original': buffer = state.originalBuffer; break;
+    case 'add':      buffer = state.addBuffer.bytes; break;
+    default: {
+      const _never: never = ref;
+      throw new Error(`Unknown buffer type: ${JSON.stringify(_never)}`);
+    }
+  }
   return buffer.subarray(ref.start, ref.start + ref.length);
 }
 
@@ -77,7 +92,14 @@ export function getPieceBuffer(
   state: PieceTableState,
   piece: PieceNode
 ): Uint8Array {
-  return piece.bufferType === 'original' ? state.originalBuffer : state.addBuffer.bytes;
+  switch (piece.bufferType) {
+    case 'original': return state.originalBuffer;
+    case 'add':      return state.addBuffer.bytes;
+    default: {
+      const _never: never = piece.bufferType;
+      throw new Error(`Unknown buffer type: ${_never}`);
+    }
+  }
 }
 
 // =============================================================================

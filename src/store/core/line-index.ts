@@ -13,6 +13,7 @@ import type {
   DirtyLineRange,
   EvaluationMode,
 } from '../../types/state.ts';
+import { END_OF_DOCUMENT } from '../../types/state.ts';
 import { byteOffset, byteLength as toByteLengthBrand, type ByteOffset, type ByteLength } from '../../types/branded.ts';
 import type { ReadTextFn, DeleteBoundaryContext } from '../../types/store.ts';
 import {
@@ -1360,7 +1361,7 @@ export function mergeDirtyRanges(
         'O(n log n)',
         [Object.freeze({
           startLine: 0,
-          endLine: Number.MAX_SAFE_INTEGER,
+          endLine: END_OF_DOCUMENT,
           offsetDelta: 0,
           isSentinel: true as const,
         })]
@@ -1458,7 +1459,7 @@ export function mergeDirtyRanges(
         'O(n log n)',
         [Object.freeze({
           startLine: 0,
-          endLine: Number.MAX_SAFE_INTEGER,
+          endLine: END_OF_DOCUMENT,
           offsetDelta: 0,
           isSentinel: true as const,
         })]
@@ -1537,7 +1538,7 @@ function remapDirtyRangesForInsert(
       // Entirely after insertionLine — shift both bounds up
       result.push(Object.freeze({
         startLine: s + insertedCount,
-        endLine: e === Number.MAX_SAFE_INTEGER ? e : e + insertedCount,
+        endLine: e === END_OF_DOCUMENT ? e : e + insertedCount,
         offsetDelta: d,
       }));
     } else {
@@ -1547,7 +1548,7 @@ function remapDirtyRangesForInsert(
       // After part: old insertionLine+1..e → new insertionLine+insertedCount+1..e+insertedCount
       result.push(Object.freeze({
         startLine: insertionLine + 1 + insertedCount,
-        endLine: e === Number.MAX_SAFE_INTEGER ? e : e + insertedCount,
+        endLine: e === END_OF_DOCUMENT ? e : e + insertedCount,
         offsetDelta: d,
       }));
     }
@@ -1584,7 +1585,7 @@ function remapDirtyRangesForDelete(
     if (postStart <= e) {
       result.push(Object.freeze({
         startLine: postStart - deletedCount,
-        endLine: e === Number.MAX_SAFE_INTEGER ? e : e - deletedCount,
+        endLine: e === END_OF_DOCUMENT ? e : e - deletedCount,
         offsetDelta: d,
       }));
     }
@@ -1714,7 +1715,7 @@ function insertLinesAtPositionLazy(
   // Mark all lines after the insertion as dirty (they have stale offsets)
   const newDirtyRange = createDirtyRange(
     location.lineNumber + 1, // First inserted line and all after
-    Number.MAX_SAFE_INTEGER, // To end of document
+    END_OF_DOCUMENT, // To end of document
     byteLength // Offset delta
   );
 
@@ -1827,7 +1828,7 @@ function deleteLineRangeLazy(
   // Mark lines after deletion as dirty
   const newDirtyRange = createDirtyRange(
     startLine + 1,
-    Number.MAX_SAFE_INTEGER,
+    END_OF_DOCUMENT,
     -deleteLength
   );
 

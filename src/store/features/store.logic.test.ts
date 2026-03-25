@@ -966,7 +966,7 @@ describe('Immutability', () => {
     const state = createInitialState();
 
     expect(() => {
-      (state.selection.ranges as { anchor: ByteOffset; head: ByteOffset }[]).push({ anchor: byteOffset(5), head: byteOffset(5) });
+      (state.selection.ranges as unknown as { anchor: ByteOffset; head: ByteOffset }[]).push({ anchor: byteOffset(5), head: byteOffset(5) });
     }).toThrow();
   });
 

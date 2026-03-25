@@ -67,6 +67,8 @@ export interface RBNode<T extends RBNode<T>> {
  * Use zipper pattern or path tracking for traversal.
  */
 export interface PieceNode extends RBNode<PieceNode> {
+  /** Structural discriminant — distinguishes PieceNode from LineIndexNode in generic RB-tree contexts. */
+  readonly _nodeKind: 'piece';
   /** Which buffer this piece references */
   readonly bufferType: BufferType;
   /** Start offset in the buffer */
@@ -108,6 +110,8 @@ export interface PieceTableState {
  * - Default (union): `number | null` for backward compatibility
  */
 export interface LineIndexNode<M extends EvaluationMode = EvaluationMode> extends RBNode<LineIndexNode<M>> {
+  /** Structural discriminant — distinguishes LineIndexNode from PieceNode in generic RB-tree contexts. */
+  readonly _nodeKind: 'lineIndex';
   /** Byte offset in document where this line starts. null when using lazy mode before reconciliation. */
   readonly documentOffset: M extends 'eager' ? number : number | null;
   /** Length of this line including newline character(s) in bytes */
@@ -138,6 +142,14 @@ export interface DirtyLineRange {
    *  when the range count exceeds 32. Distinguishes it from a legitimate net-zero edit. */
   readonly isSentinel?: true;
 }
+
+/**
+ * Sentinel value for DirtyLineRange.endLine meaning "to end of document".
+ * Use this constant instead of Number.MAX_SAFE_INTEGER directly so the intent
+ * is explicit and all sites share a single reference point.
+ */
+export const END_OF_DOCUMENT = Number.MAX_SAFE_INTEGER;
+export type EndOfDocument = typeof END_OF_DOCUMENT;
 
 /** Evaluation mode for the line index: eager has no dirty ranges, lazy may. */
 export type EvaluationMode = 'eager' | 'lazy';
@@ -188,11 +200,17 @@ export interface CharSelectionRange {
 }
 
 /**
+ * Non-empty readonly array — guarantees at least one element.
+ * Used for SelectionState.ranges so that primaryIndex: 0 is always valid.
+ */
+export type NonEmptyReadonlyArray<T> = readonly [T, ...T[]];
+
+/**
  * Immutable selection state supporting multiple cursors.
  */
 export interface SelectionState {
-  /** Array of selection ranges (supports multiple cursors) */
-  readonly ranges: readonly SelectionRange[];
+  /** Array of selection ranges (supports multiple cursors). Always non-empty. */
+  readonly ranges: NonEmptyReadonlyArray<SelectionRange>;
   /** Index of the primary selection in ranges array */
   readonly primaryIndex: number;
 }
@@ -240,6 +258,8 @@ export interface HistoryReplaceChange {
   readonly byteLength: number;
   /** The original text that was replaced */
   readonly oldText: string;
+  /** Pre-computed UTF-8 byte length of `oldText` */
+  readonly oldByteLength: number;
 }
 
 /**

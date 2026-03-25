@@ -65,6 +65,7 @@ export function createPieceNode(
   const rightAddLength = right?.subtreeAddLength ?? 0;
 
   return Object.freeze({
+    _nodeKind: 'piece' as const,
     color,
     left,
     right,
@@ -131,6 +132,7 @@ export function createLineIndexNode(
   const rightCharLength = right?.subtreeCharLength ?? 0;
 
   return Object.freeze({
+    _nodeKind: 'lineIndex' as const,
     color,
     left,
     right,
@@ -246,7 +248,7 @@ function buildLineIndexTree(
  */
 export function createInitialSelectionState(): SelectionState {
   return Object.freeze({
-    ranges: Object.freeze([Object.freeze({ anchor: byteOffset(0), head: byteOffset(0) })]),
+    ranges: Object.freeze([Object.freeze({ anchor: byteOffset(0), head: byteOffset(0) })] as const),
     primaryIndex: 0,
   });
 }

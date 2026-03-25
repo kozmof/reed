@@ -16,8 +16,10 @@ export type {
   LineIndexState,
   EvaluationMode,
   DirtyLineRange,
+  EndOfDocument,
   SelectionRange,
   CharSelectionRange,
+  NonEmptyReadonlyArray,
   SelectionState,
   HistoryInsertChange,
   HistoryDeleteChange,
@@ -32,6 +34,7 @@ export type {
 } from './state.ts';
 
 export {
+  END_OF_DOCUMENT,
   pstackEmpty,
   pstackPush,
   pstackPeek,

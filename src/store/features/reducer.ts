@@ -4,7 +4,7 @@
  * No side effects - produces new state from old state + action.
  */
 
-import type { DocumentState, HistoryEntry, HistoryChange, SelectionState, SelectionRange } from '../../types/state.ts';
+import type { DocumentState, HistoryEntry, HistoryChange, SelectionState, SelectionRange, NonEmptyReadonlyArray } from '../../types/state.ts';
 import { pstackPush, pstackPeek, pstackPop, pstackSize, pstackToArray, pstackFromArray } from '../../types/state.ts';
 import type { DocumentAction } from '../../types/actions.ts';
 import type { ByteOffset } from '../../types/branded.ts';
@@ -24,7 +24,6 @@ import {
   reconcileFull,
   rebuildLineIndex,
 } from '../core/line-index.ts';
-import { textEncoder } from '../core/encoding.ts';
 
 // =============================================================================
 // Position Validation
@@ -185,7 +184,7 @@ function computeSelectionAfterChange(
   }
 
   return Object.freeze({
-    ranges: Object.freeze([Object.freeze({ anchor: byteOffset(newPosition), head: byteOffset(newPosition) })]),
+    ranges: Object.freeze([Object.freeze({ anchor: byteOffset(newPosition), head: byteOffset(newPosition) })] as const),
     primaryIndex: 0,
   });
 }
@@ -414,8 +413,9 @@ function invertChange(change: HistoryChange): HistoryChange {
         type: 'replace' as const,
         position: change.position,
         text: change.oldText,
-        byteLength: textEncoder.encode(change.oldText).length,
+        byteLength: change.oldByteLength,
         oldText: change.text,
+        oldByteLength: change.byteLength,
       });
   }
 }
@@ -450,7 +450,7 @@ function applyChange(state: DocumentState, change: HistoryChange, version: numbe
       return withState(s, { lineIndex: newLineIndex });
     }
     case 'replace': {
-      const deleteEnd = byteOffset(change.position + textEncoder.encode(change.oldText).length);
+      const deleteEnd = byteOffset(change.position + change.oldByteLength);
       const deleteContext = getDeleteBoundaryContext(state, change.position, deleteEnd);
       const s = pieceTableDelete(state, change.position, deleteEnd);
       const { state: s2 } = pieceTableInsert(s, change.position, change.text);
@@ -488,7 +488,7 @@ function setSelection(
 ): DocumentState {
   return withState(state, {
     selection: Object.freeze({
-      ranges: Object.freeze(ranges.map(r => Object.freeze({ ...r }))),
+      ranges: Object.freeze(ranges.map(r => Object.freeze({ ...r }))) as NonEmptyReadonlyArray<SelectionRange>,
       primaryIndex: 0,
     }),
   });
@@ -568,7 +568,7 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
   if (op.selection) {
     newState = withState(newState, {
       selection: Object.freeze({
-        ranges: Object.freeze(op.selection.map(r => Object.freeze({ ...r }))),
+        ranges: Object.freeze(op.selection.map(r => Object.freeze({ ...r }))) as NonEmptyReadonlyArray<SelectionRange>,
         primaryIndex: 0,
       }),
     });
@@ -583,6 +583,7 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
       text: op.insertText,
       byteLength: insertedByteLength,
       oldText: op.deletedText!,
+      oldByteLength: op.deleteEnd - op.position,
     });
   } else if (op.deleteEnd !== undefined) {
     historyChange = Object.freeze({
