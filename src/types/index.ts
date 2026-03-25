@@ -62,10 +62,12 @@ export type {
   EvictChunkAction,
   DocumentAction,
   DocumentActionType,
+  ContentChangeAction,
   ActionValidationResult,
 } from './actions.ts';
 
 export {
+  DocumentActionTypes,
   isTextEditAction,
   isHistoryAction,
   isTransactionAction,

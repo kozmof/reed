@@ -93,25 +93,31 @@ Not fixing: removing the phantom from `LineIndexNode` would weaken the type syst
 
 ---
 
-### #010 — Remote change `length` field not branded as byte length
+### #010 — Remote change `length` field not branded as byte length *(fixed 2026-03-25)*
 
 `APPLY_REMOTE` action carries a `length` field typed as plain `number`. Separating it into a branded `ByteLength` would reduce accidental unit misuse at call sites that operate in char offsets.
+
+**Fix:** `RemoteChange.length` changed from `number` to `ByteLength` in `src/types/actions.ts`. Arithmetic call sites in `reducer.ts` and `events.ts` required no change — both pass through `byteOffset(change.start + change.length)` where the `+` widens to `number` before `byteOffset()` re-brands it. Three test sites (`events.test.ts`, `store.logic.test.ts` ×2, `store.usecase.test.ts`) updated to use `byteLength(n)`.
 
 **Source:** Report 1, §7 T2
 
 ---
 
-### #011 — Event payload types remain generic `DocumentAction`
+### #011 — Event payload types remain generic `DocumentAction` *(fixed 2026-03-25)*
 
 Remote content changes are now treated as first-class in dispatch and event behavior, but typed event handler payloads remain generic `DocumentAction` rather than narrowed per-event types.
+
+**Fix:** Added `ContentChangeAction = InsertAction | DeleteAction | ReplaceAction | ApplyRemoteAction` to `src/types/actions.ts` and exported from `src/types/index.ts`. `ContentChangeEvent.action` and `createContentChangeEvent`'s parameter narrowed to `ContentChangeAction`. No cast needed in `store.ts` — the existing `isTextEditAction(action) || action.type === 'APPLY_REMOTE'` guard already narrows `action` to exactly `ContentChangeAction` before the `emit` call.
 
 **Source:** Report 1, §7 T3
 
 ---
 
-### #012 — Action schema-centric validation not enforced
+### #012 — Action schema-centric validation not enforced *(fixed 2026-03-25)*
 
 The `DocumentAction` union definition, the `isDocumentAction` type guard, and the `validateAction` logic can diverge. A schema-centric approach (e.g. a single source of truth that generates guards and validators) would reduce this class of drift.
+
+**Fix:** Added `src/types/str-enum.ts` with a `strEnum` utility. `DocumentActionTypes = strEnum([...13 type strings...])` is now the single source of truth; `DocumentActionType` is derived as `keyof typeof DocumentActionTypes`. Both `isDocumentAction` and `validateAction` use `action.type in DocumentActionTypes` for membership, then cast to `DocumentActionType` and switch on it. The `default` branch in each switch uses an IIFE `((_: never) => ...)(type)` — if a new key is added to `strEnum([...])` but its `case` is omitted, TypeScript errors at the `never` argument. Additionally filled the concrete validation gap: `validateAction`'s `APPLY_REMOTE` case now validates each `RemoteChange` element's `type`, `start`, `text` (insert), and `length` (delete); `isDocumentAction`'s `APPLY_REMOTE` case brought to parity.
 
 **Source:** Report 1, §7 T4
 

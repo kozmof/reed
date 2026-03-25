@@ -5,7 +5,8 @@
  */
 
 import type { SelectionRange } from './state.ts';
-import type { ByteOffset, ReadonlyUint8Array } from './branded.ts';
+import type { ByteOffset, ByteLength, ReadonlyUint8Array } from './branded.ts';
+import { strEnum } from './str-enum.ts';
 
 // =============================================================================
 // Text Editing Actions
@@ -147,7 +148,7 @@ export interface RemoteChange {
   readonly type: 'insert' | 'delete';
   readonly start: ByteOffset;
   readonly text?: string;
-  readonly length?: number;
+  readonly length?: ByteLength;
 }
 
 /**
@@ -207,9 +208,42 @@ export type DocumentAction =
   | EvictChunkAction;
 
 /**
- * Extract the action type string from an action.
+ * Single source of truth for all valid action type strings.
+ * `DocumentActionType` is derived from this object's keys.
+ * Adding a key here automatically expands the type; both `isDocumentAction`
+ * and `validateAction` switch on `DocumentActionType`, so TypeScript's
+ * exhaustiveness check (never-typed default) will error at those sites if a
+ * new key is added here but its case is not yet handled.
  */
-export type DocumentActionType = DocumentAction['type'];
+export const DocumentActionTypes = strEnum([
+  'INSERT',
+  'DELETE',
+  'REPLACE',
+  'SET_SELECTION',
+  'UNDO',
+  'REDO',
+  'HISTORY_CLEAR',
+  'TRANSACTION_START',
+  'TRANSACTION_COMMIT',
+  'TRANSACTION_ROLLBACK',
+  'APPLY_REMOTE',
+  'LOAD_CHUNK',
+  'EVICT_CHUNK',
+]);
+
+/** Union of all valid action type strings, derived from DocumentActionTypes. */
+export type DocumentActionType = keyof typeof DocumentActionTypes;
+
+/**
+ * The subset of actions that can produce a content-change event.
+ * ContentChangeEvent.action is narrowed to this type so listeners
+ * never receive a non-content action in that payload.
+ */
+export type ContentChangeAction =
+  | InsertAction
+  | DeleteAction
+  | ReplaceAction
+  | ApplyRemoteAction;
 
 // =============================================================================
 // Action Type Guards
@@ -264,7 +298,13 @@ export function isDocumentAction(value: unknown): value is DocumentAction {
 
   const action = value as { type?: unknown };
 
-  switch (action.type) {
+  if (typeof action.type !== 'string' || !(action.type in DocumentActionTypes)) {
+    return false;
+  }
+
+  const type = action.type as DocumentActionType;
+
+  switch (type) {
     case 'INSERT':
       return (
         typeof (action as InsertAction).start === 'number' &&
@@ -290,8 +330,16 @@ export function isDocumentAction(value: unknown): value is DocumentAction {
     case 'TRANSACTION_COMMIT':
     case 'TRANSACTION_ROLLBACK':
       return true;
-    case 'APPLY_REMOTE':
-      return Array.isArray((action as ApplyRemoteAction).changes);
+    case 'APPLY_REMOTE': {
+      const remote = action as ApplyRemoteAction;
+      if (!Array.isArray(remote.changes)) return false;
+      return remote.changes.every(
+        c => (c.type === 'insert' || c.type === 'delete') &&
+             typeof c.start === 'number' &&
+             (c.type !== 'insert' || typeof c.text === 'string') &&
+             (c.type !== 'delete' || typeof c.length === 'number')
+      );
+    }
     case 'LOAD_CHUNK':
       return (
         typeof (action as LoadChunkAction).chunkIndex === 'number' &&
@@ -300,7 +348,7 @@ export function isDocumentAction(value: unknown): value is DocumentAction {
     case 'EVICT_CHUNK':
       return typeof (action as EvictChunkAction).chunkIndex === 'number';
     default:
-      return false;
+      return ((_: never) => false)(type);
   }
 }
 
@@ -353,8 +401,15 @@ export function validateAction(
     return { valid: false, errors };
   }
 
+  if (!(action.type in DocumentActionTypes)) {
+    errors.push(`Unknown action type: "${action.type}"`);
+    return { valid: false, errors };
+  }
+
+  const type = action.type as DocumentActionType;
+
   // Validate action structure
-  switch (action.type) {
+  switch (type) {
     case 'INSERT': {
       const insertAction = action as Partial<InsertAction>;
       if (typeof insertAction.start !== 'number') {
@@ -470,6 +525,22 @@ export function validateAction(
       const remoteAction = action as Partial<ApplyRemoteAction>;
       if (!Array.isArray(remoteAction.changes)) {
         errors.push('APPLY_REMOTE action requires an array "changes" property');
+      } else {
+        for (let i = 0; i < remoteAction.changes.length; i++) {
+          const c = remoteAction.changes[i] as Partial<RemoteChange>;
+          if (c.type !== 'insert' && c.type !== 'delete') {
+            errors.push(`APPLY_REMOTE changes[${i}].type must be 'insert' or 'delete'`);
+          }
+          if (typeof c.start !== 'number') {
+            errors.push(`APPLY_REMOTE changes[${i}].start must be a number`);
+          }
+          if (c.type === 'insert' && typeof c.text !== 'string') {
+            errors.push(`APPLY_REMOTE changes[${i}].text must be a string for insert changes`);
+          }
+          if (c.type === 'delete' && typeof c.length !== 'number') {
+            errors.push(`APPLY_REMOTE changes[${i}].length must be a number for delete changes`);
+          }
+        }
       }
       break;
     }
@@ -494,7 +565,7 @@ export function validateAction(
     }
 
     default:
-      errors.push(`Unknown action type: "${action.type}"`);
+      ((_: never) => {})(type);
   }
 
   return { valid: errors.length === 0, errors };

@@ -4,7 +4,7 @@
  */
 
 import type { DocumentState } from '../../types/state.ts';
-import type { DocumentAction } from '../../types/actions.ts';
+import type { ContentChangeAction, DocumentAction } from '../../types/actions.ts';
 import { textEncoder } from '../core/encoding.ts';
 
 // =============================================================================
@@ -25,7 +25,7 @@ export interface DocumentEvent {
 export interface ContentChangeEvent extends DocumentEvent {
   readonly type: 'content-change';
   /** The action that caused the change */
-  readonly action: DocumentAction;
+  readonly action: ContentChangeAction;
   /** Document state before the change */
   readonly prevState: DocumentState;
   /** Document state after the change */
@@ -233,7 +233,7 @@ export function createEventEmitter(): DocumentEventEmitter {
  * Create a content change event.
  */
 export function createContentChangeEvent(
-  action: DocumentAction,
+  action: ContentChangeAction,
   prevState: DocumentState,
   nextState: DocumentState,
   affectedRange: readonly [number, number]

@@ -15,7 +15,7 @@ import {
 import { createInitialState } from './../core/state.ts';
 import { DocumentActions } from './actions.ts';
 import { createDocumentStoreWithEvents } from './store.ts';
-import { byteOffset } from '../../types/branded.ts';
+import { byteOffset, byteLength } from '../../types/branded.ts';
 
 describe('Event Emitter', () => {
   describe('addEventListener', () => {
@@ -324,7 +324,7 @@ describe('getAffectedRange', () => {
   it('should calculate merged range for APPLY_REMOTE changes', () => {
     const action = DocumentActions.applyRemote([
       { type: 'insert', start: byteOffset(2), text: 'XY' },
-      { type: 'delete', start: byteOffset(10), length: 4 },
+      { type: 'delete', start: byteOffset(10), length: byteLength(4) },
     ]);
     const range = getAffectedRange(action);
 

@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { pstackSize } from '../../types/state.ts';
 import { createDocumentStore, withTransaction } from './store.ts';
 import { DocumentActions } from './actions.ts';
-import { byteOffset } from '../../types/branded.ts';
+import { byteOffset, byteLength } from '../../types/branded.ts';
 import { rebuildLineIndex, getLineStartOffset, getCharStartOffset } from '../core/line-index.ts';
 import { getText } from '../core/piece-table.ts';
 
@@ -911,7 +911,7 @@ describe('Editor Use Cases', () => {
           store.dispatch(DocumentActions.applyRemote(
             changes.map(change => change.type === 'insert'
               ? { type: 'insert' as const, start: byteOffset(change.start), text: change.text }
-              : { type: 'delete' as const, start: byteOffset(change.start), length: change.length })
+              : { type: 'delete' as const, start: byteOffset(change.start), length: byteLength(change.length) })
           ));
 
           if (randomInt(rng, 0, 2) === 0) {

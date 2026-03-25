@@ -576,7 +576,7 @@ describe('Document Reducer', () => {
       const newState = documentReducer(
         state,
         DocumentActions.applyRemote([
-          { type: 'delete', start: byteOffset(5), length: 6 },
+          { type: 'delete', start: byteOffset(5), length: byteLength(6) },
         ])
       );
 
@@ -613,7 +613,7 @@ describe('Document Reducer', () => {
         state,
         DocumentActions.applyRemote([
           { type: 'insert', start: byteOffset(5), text: '' },
-          { type: 'delete', start: byteOffset(0), length: 0 },
+          { type: 'delete', start: byteOffset(0), length: byteLength(0) },
         ])
       );
 
