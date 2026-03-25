@@ -147,9 +147,9 @@ dispatch(action)
 
 **5.4 — `historyPush` trims the undo stack by converting `PStack → array → PStack`.** When `pstackSize > history.limit`, it calls `pstackToArray` (O(H)) then `pstackFromArray` (O(H)). This is intentional but breaks the O(1) benefit of PStack for that specific call. It only fires at the limit boundary, but is worth noting.
 
-**5.4 — `LOAD_CHUNK` / `EVICT_CHUNK` are no-ops with a "Phase 3" comment.** These are in the action union, included in `isDocumentAction` validation, and dispatched through the reducer — but silently return `state`. They are easy to miss as stubs during code review.
+**5.5 — `LOAD_CHUNK` / `EVICT_CHUNK` are no-ops with a "Phase 3" comment.** These are in the action union, included in `isDocumentAction` validation, and dispatched through the reducer — but silently return `state`. They are easy to miss as stubs during code review.
 
-**5.5 — `createDocumentStoreWithEvents.batch` re-implements the transaction try/finally from `createDocumentStore.batch`.** The logic is duplicated verbatim rather than delegating to the base implementation. If the base `batch` error-handling changes, the events variant may drift.
+**5.6 — `createDocumentStoreWithEvents.batch` re-implements the transaction try/finally from `createDocumentStore.batch`.** The logic is duplicated verbatim rather than delegating to the base implementation. If the base `batch` error-handling changes, the events variant may drift.
 
 ---
 
