@@ -140,12 +140,16 @@ dispatch(action)
 ### 5. Pitfalls
 
 **5.1 — `mergeDirtyRanges` decomposition accumulates output into `merged[]` then resolves `current` at the end.** The loop is non-trivial: `current` is the "in-flight" range, and `merged` accumulates fully resolved ranges. A future reader unfamiliar with this invariant may confuse `current` with an already-flushed range and introduce double-counting.
+> **Fixed (2026-03-25):** Added three clarifying comments to `line-index.ts`: (1) before the loop documenting the `current`/`merged` invariant and the two finalization paths, (2) inside the `e1===e2` branch explaining why `exhausted = true` prevents the post-loop push, (3) at the post-loop `if (!exhausted) merged.push(current)` explaining the guard.
 
 **5.2 — `applyEdit` order of operations: delete phase writes `lineIndex` before piece-table delete.** In `applyEdit`, `liDeleteLazy` is called on `newState.lineIndex` but `pieceTableDelete` is called on `newState` (which still has the old piece table at that point). The resulting line index references the old structure. This is intentional — lazy dirty-range tracking doesn't need the new piece table yet — but the temporal mismatch is easy to misread.
+> **Fixed (2026-03-25):** Added a comment before the `liDeleteLazy` call in `reducer.ts` explaining that the lazy update intentionally runs pre-delete: dirty-range tracking only needs the line-break structure of the deleted text, not the post-delete byte layout.
 
 **5.3 — `reconcileFull` slow path invokes `rebuildLineIndex` which calls `getText` over the entire document.** The `getText` call decodes the full document to a string and re-encodes to scan for newlines. For a megabyte+ document this is O(n) per reconcile. The caller checks for the sentinel, but there is no guard against a legitimate, very large set of non-sentinel dirty ranges triggering the slow path accidentally.
+> **Fixed (2026-03-25):** Added a comment above the slow-path block clarifying: (a) both sentinel and large `totalDirty > threshold` cases intentionally reach this path; (b) the slow path uses `reconcileInPlace` (O(n) in-order tree walk from stored `lineLength` values), which does **not** call `getText` or `rebuildLineIndex` — the `rebuildLineIndex` description in the original pitfall reflects a prior implementation.
 
 **5.4 — `historyPush` trims the undo stack by converting `PStack → array → PStack`.** When `pstackSize > history.limit`, it calls `pstackToArray` (O(H)) then `pstackFromArray` (O(H)). This is intentional but breaks the O(1) benefit of PStack for that specific call. It only fires at the limit boundary, but is worth noting.
+> **Fixed (2026-03-25):** Added `pstackTrimToSize<T>(stack, maxSize)` to `src/types/state.ts` (exported via `src/types/index.ts`). It traverses only the top `maxSize` nodes — O(limit) rather than O(H). `historyPush` in `reducer.ts` now calls `pstackTrimToSize(pstackPush(...), history.limit)` directly, eliminating the `pstackToArray`/`pstackFromArray` round-trip and the separate `pstackSize` check.
 
 **5.5 — `LOAD_CHUNK` / `EVICT_CHUNK` are no-ops with a "Phase 3" comment.** These are in the action union, included in `isDocumentAction` validation, and dispatched through the reducer — but silently return `state`. They are easy to miss as stubs during code review.
 
