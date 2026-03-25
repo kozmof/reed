@@ -177,28 +177,38 @@ dispatch(action)
 ### 7. Improvement Points 2 — Types and Interfaces
 
 **7.1 — `LineIndexNode<M>` uses a conditional type on `documentOffset` but the constraint is not enforced at mutation sites.** `withLineIndexNode` accepts `LineIndexNodeUpdates` which includes `documentOffset: number | null`. The `M` parameter is not threaded through `LineIndexNodeUpdates`, so it is possible to set `documentOffset = null` on an eager node without a type error.
+> **Fixed (2026-03-26):** Parameterized `LineIndexNodeUpdates<M>` and `withLineIndexNode<M extends EvaluationMode = EvaluationMode>` in `store/core/state.ts`. When callers use a concrete mode (`LineIndexState<'eager'>`), the type system now rejects `documentOffset = null`. Internal rb-tree callers use the default union mode and are unprotected by design — the JSDoc documents this boundary.
 
 **7.2 — `LineIndexState<M>` constrains `dirtyRanges` and `rebuildPending` conditionally, but `withLineIndexState<M>` accepts `Partial<LineIndexState<M>>`.** Writing `{ rebuildPending: true }` into an eager `LineIndexState<'eager'>` would be a type error — but the `Partial<>` wrapper means TypeScript may not always catch narrowing violations when `M` is inferred as the union `EvaluationMode`.
+> **Fixed (2026-03-26):** Added a JSDoc note to `withLineIndexState` in `store/core/state.ts` explaining the narrowing risk and directing callers to type `state` with a concrete mode for full protection.
 
 **7.3 — `ReadTextFn` and `DeleteBoundaryContext` are declared in `types/store.ts`.** These are operational callback types, not store interface types. Placing them in `store.ts` (which otherwise defines `DocumentStore`, `ReconcilableDocumentStore`, etc.) is semantically mismatched. They are internal helpers for `line-index.ts` and could live in `types/state.ts` or a dedicated `types/line-index.ts`.
+> **Fixed (2026-03-26):** Moved both types to `types/state.ts` (adjacent to `LineIndexState`). Updated imports in `store/core/line-index.ts` and `store/features/reducer.ts`. Added both to the public surface of `types/index.ts`. Left a redirect comment in `types/store.ts`.
 
 **7.4 — `RemoteChange` uses optional `text?: string` and `length?: number` instead of a discriminated union.** `change.type === 'insert'` requires `text` and `change.type === 'delete'` requires `length`, but the type allows either field to be absent on either variant. The reducer handles this with runtime `if (change.text)` guards. A proper discriminated union would eliminate those guards.
+> **Fixed (2026-03-26):** Changed `RemoteChange` in `types/actions.ts` to a proper discriminated union (`type: 'insert'` variant with required `text: string`; `type: 'delete'` variant with required `length: ByteLength`). Removed the `&& typeof change.length === 'number'` guard in `reducer.ts` APPLY_REMOTE case; kept `&& change.text.length > 0` and `&& change.length > 0` guards for no-op skipping.
 
 **7.5 — `PStack<T>` is a type alias (not an opaque/branded type), so callers can accidentally destructure or mutate `{ top, rest, size }` directly.** The helpers `pstackPush/Pop/Peek/Size` are the intended API, but nothing prevents bypassing them. An opaque brand would close this.
+> **Fixed (2026-03-26):** Added `declare const _pstackBrand: unique symbol` (unexported) in `types/state.ts`. The `PStack<T>` cons-cell type now includes `[_pstackBrand]: true`, making external construction a type error. `pstackPush` and the `pstackTrimToSize` internal cons-cell construction cast via `as unknown as PStack<T>`.
 
 ---
 
 ### 8. Improvement Points 3 — Implementations
 
 **8.1 — `getAffectedRange` in `events.ts` calls `textEncoder.encode(action.text).length` to compute affected range end.** This allocates a `Uint8Array` purely to measure byte length. The reducer already computes `insertedByteLength` — if that value were surfaced (e.g., on the new state's version diff) the allocation could be avoided.
+> **Fixed (2026-03-26):** Added a private `utf8ByteLength(str)` helper in `events.ts` that counts UTF-8 bytes via charCode arithmetic (no allocation). Replaced all 3 `textEncoder.encode(text).length` calls. Removed the `textEncoder` import from `events.ts`.
 
 **8.2 — `historyPush` trims by array round-trip.** As noted in pitfalls: when the limit is hit, `pstackToArray` + `slice` + `pstackFromArray` runs in O(H). The trim could be bounded by keeping a secondary counter and trimming incrementally (drop the oldest on every push once at limit), keeping each push O(1).
+> **Already addressed (2026-03-07):** `pstackTrimToSize` traverses only the top `limit` nodes — O(limit) rather than O(H). Since `limit` is a fixed constant (default 1000), this is effectively O(1) for document-scale workloads. A fully amortized O(1) solution would require a persistent deque, which is a more invasive data structure change.
 
 **8.3 — `buildLineIndexTree` in `state.ts` creates nodes with color `'black'` throughout.** The recursively-built tree is not a proper red-black tree — all nodes are black. This satisfies the black-height invariant only if the tree is perfectly balanced (which the median-split approach approximately achieves for initial content). For follow-on insert operations the fixup rebalancer must handle arbitrary topologies. A comment explaining why this is safe would help readers who know RB invariants.
+> **Fixed (2026-03-26):** Added a JSDoc comment to `buildLineIndexTree` in `store/core/state.ts` explaining that all-black is correct for a balanced median-split tree and that `fixInsertWithPath` handles arbitrary topologies for follow-on operations.
 
 **8.4 — `countDeletedLineBreaks` reconstructs a virtual "before/after" string with string concatenation.** The function computes `countNewlines(before) - countNewlines(after)` by creating `${prevChar}${deletedText}${nextChar}` strings. For the common case (`prevChar`/`nextChar` are undefined), this is equivalent to `countNewlines(deletedText)`, but the function still takes the slower path if only one boundary is defined. The early-exit at line 100-101 only triggers when both are undefined.
+> **Not simplified:** The boundary context is load-bearing even in non-rebuild paths. When `lineIndexDelete`/`lineIndexDeleteLazy` is called directly (e.g., from undo/redo or tests) with CRLF boundary characters, the string concatenation correctly computes net line break counts (e.g., deleting `'\r'` when `nextChar='\n'` yields 0 net line breaks, not 1). The fast path (both boundaries undefined) already avoids the allocation for the common case.
 
 **8.5 — `reconcileRange` export is in the `store/index.ts` and `api/store.ts` public surfaces.** This is a fairly low-level operation that requires callers to understand dirty-range semantics (version parameter, line bounds). Exposing it in the public API without guard documentation increases the risk of misuse compared to the higher-level `reconcileNow` / `setViewport` entry points.
+> **Fixed (2026-03-26):** Added `@internal` JSDoc with guard documentation to `reconcileRange` in `store/core/line-index.ts`. Added inline comments at the export sites in `store/index.ts` and `api/store.ts` directing callers to prefer `reconcileNow()` / `setViewport()`.
 
 ---
 

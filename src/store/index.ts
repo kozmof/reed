@@ -70,7 +70,9 @@ export {
   mergeDirtyRanges,
   isLineDirty,
   getOffsetDeltaForLine,
-  // Reconciliation
+  // Reconciliation — prefer reconcileNow() / setViewport() over reconcileRange() directly.
+  // reconcileRange is a low-level primitive that requires callers to understand dirty-range
+  // semantics (version parameter, line bounds). See its JSDoc for details.
   reconcileRange,
   reconcileFull,
   reconcileViewport,

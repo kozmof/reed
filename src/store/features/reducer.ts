@@ -8,7 +8,7 @@ import type { DocumentState, LineIndexState, HistoryEntry, HistoryChange, Select
 import { pstackPush, pstackPeek, pstackPop, pstackTrimToSize } from '../../types/state.ts';
 import type { DocumentAction } from '../../types/actions.ts';
 import type { ByteOffset } from '../../types/branded.ts';
-import type { DeleteBoundaryContext, ReadTextFn } from '../../types/store.ts';
+import type { DeleteBoundaryContext, ReadTextFn } from '../../types/state.ts';
 import { byteOffset, byteLength } from '../../types/branded.ts';
 import { withState } from '../core/state.ts';
 import {
@@ -730,13 +730,13 @@ export function documentReducer(
       let newState = state;
       let didApplyChange = false;
       for (const change of action.changes) {
-        if (change.type === 'insert' && change.text) {
+        if (change.type === 'insert' && change.text.length > 0) {
           didApplyChange = true;
           newState = pieceTableInsert(newState, change.start, change.text).state;
           const readText = (start: ByteOffset, end: ByteOffset) => getText(newState.pieceTable, start, end);
           const li = liInsertLazy(newState.lineIndex, change.start, change.text, nextVersion, readText);
           newState = withState(newState, { lineIndex: li });
-        } else if (change.type === 'delete' && typeof change.length === 'number' && change.length > 0) {
+        } else if (change.type === 'delete' && change.length > 0) {
           didApplyChange = true;
           // Capture deleted text before deleting for line index update
           const endPosition = byteOffset(change.start + change.length);

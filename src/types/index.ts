@@ -15,6 +15,8 @@ export type {
   LineIndexNode,
   LineIndexState,
   EvaluationMode,
+  ReadTextFn,
+  DeleteBoundaryContext,
   DirtyLineRange,
   EndOfDocument,
   SelectionRange,

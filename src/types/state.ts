@@ -155,6 +155,24 @@ export type EndOfDocument = typeof END_OF_DOCUMENT;
 export type EvaluationMode = 'eager' | 'lazy';
 
 /**
+ * Callback to read text from the piece table.
+ * Used by line index operations to compute char lengths during line splits.
+ * Declared here (rather than types/store.ts) because it is an operational
+ * parameter of line-index functions, not a store interface type.
+ */
+export type ReadTextFn = (start: ByteOffset, end: ByteOffset) => string;
+
+/**
+ * Optional context around a delete range for accurate mixed line-ending handling.
+ * Needed for partial CRLF edits (deleting only '\r' or only '\n').
+ * Declared here alongside LineIndexState because it is consumed by line-index operations.
+ */
+export interface DeleteBoundaryContext {
+  prevChar?: string;
+  nextChar?: string;
+}
+
+/**
  * Immutable line index state, parameterized by evaluation mode.
  * When `M` is `'eager'`, dirty ranges are guaranteed empty and rebuild is not pending.
  * When `M` is `'lazy'`, dirty ranges may exist and rebuild may be pending.
@@ -289,11 +307,18 @@ export interface HistoryEntry {
 /**
  * Persistent singly-linked stack with O(1) push/pop/peek and automatic
  * structural sharing across snapshots. Empty stack is `null`.
+ *
+ * `_pstackBrand` is intentionally not exported. External code cannot construct
+ * a `PStackCons<T>` value without going through `pstackPush`, preventing
+ * accidental bypass of the helper API.
  */
-export type PStack<T> = null | { readonly top: T; readonly rest: PStack<T>; readonly size: number };
+declare const _pstackBrand: unique symbol;
+type PStackCons<T> = { readonly top: T; readonly rest: PStack<T>; readonly size: number; readonly [_pstackBrand]: true };
+export type PStack<T> = null | PStackCons<T>;
 
 export const pstackEmpty = <T>(): PStack<T> => null;
-export const pstackPush = <T>(s: PStack<T>, v: T): PStack<T> => ({ top: v, rest: s, size: (s?.size ?? 0) + 1 });
+export const pstackPush = <T>(s: PStack<T>, v: T): PStack<T> =>
+  ({ top: v, rest: s, size: (s?.size ?? 0) + 1 }) as unknown as PStack<T>;
 export const pstackPeek = <T>(s: PStack<T>): T | undefined => s?.top;
 export const pstackPop = <T>(s: NonNullable<PStack<T>>): [T, PStack<T>] => [s.top, s.rest];
 export const pstackSize = <T>(s: PStack<T>): number => s?.size ?? 0;
@@ -330,7 +355,7 @@ export const pstackTrimToSize = <T>(stack: PStack<T>, maxSize: number): PStack<T
   // Rebuild cons-list from oldest→newest so top is the newest item
   let result: PStack<T> = null;
   for (let i = maxSize - 1; i >= 0; i--) {
-    result = { top: items[i], rest: result, size: maxSize - i };
+    result = { top: items[i], rest: result, size: maxSize - i } as unknown as PStack<T>;
   }
   return result;
 };

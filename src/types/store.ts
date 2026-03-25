@@ -6,7 +6,6 @@
 
 import type { DocumentState, LineIndexState, EvaluationMode } from './state.ts';
 import type { DocumentAction } from './actions.ts';
-import type { ByteOffset } from './branded.ts';
 import type {
   DocumentEventEmitter,
   DocumentEventMap,
@@ -192,28 +191,6 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
   readonly events: DocumentEventEmitter;
 }
 
-/**
- * Strategy interface for line index updates.
- * Separates structural tree updates from offset computation policy.
- *
- * - Eager: `computeOffset` returns real byte offsets (used for undo/redo)
- * - Lazy: `computeOffset` returns null/pending (used for normal editing)
- *
- * The `insert` and `delete` methods operate on `LineIndexState` directly,
- * making the structural update explicit. The reducer wraps the result
- * back into `DocumentState`.
- */
-/**
- * Callback to read text from the piece table.
- * Used by line index operations to compute char lengths during line splits.
- */
-export type ReadTextFn = (start: ByteOffset, end: ByteOffset) => string;
-/**
- * Optional context around a delete range for accurate mixed line-ending handling.
- * Needed for partial CRLF edits (deleting only '\r' or only '\n').
- */
-export interface DeleteBoundaryContext {
-  prevChar?: string;
-  nextChar?: string;
-}
+// ReadTextFn and DeleteBoundaryContext have moved to types/state.ts —
+// they are operational parameters of line-index functions, not store interface types.
 

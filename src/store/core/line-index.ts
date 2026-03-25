@@ -15,7 +15,7 @@ import type {
 } from '../../types/state.ts';
 import { END_OF_DOCUMENT } from '../../types/state.ts';
 import { byteOffset, byteLength as toByteLengthBrand, type ByteOffset, type ByteLength } from '../../types/branded.ts';
-import type { ReadTextFn, DeleteBoundaryContext } from '../../types/store.ts';
+import type { ReadTextFn, DeleteBoundaryContext } from '../../types/state.ts';
 import {
   $prove,
   $proveCtx,
@@ -93,6 +93,12 @@ function countNewlines(text: string): number {
 /**
  * Count how many logical line breaks are actually removed by a delete.
  * Uses optional one-char boundary context to correctly handle partial CRLF deletes.
+ *
+ * The context is needed when `lineIndexDelete`/`lineIndexDeleteLazy` is called
+ * directly (e.g. in tests or undo/redo) with boundary characters that span a CRLF.
+ * For example, deleting '\r' when nextChar='\n' removes 0 net line breaks (the
+ * CRLF becomes a lone LF, which is still 1 line break). The before/after string
+ * approach handles all such boundary effects correctly without special-casing.
  */
 function countDeletedLineBreaks(
   deletedText: string,
@@ -1911,6 +1917,13 @@ export function getLineRangePrecise(
 /**
  * Reconcile a specific range of lines.
  * Updates offsets for lines in [startLine, endLine].
+ *
+ * @internal Low-level operation — callers must understand dirty-range semantics:
+ * `version` must match the state version, and line bounds must be within
+ * `[0, state.lineCount - 1]`. Misuse can leave the line index in a partially
+ * reconciled state. Prefer the higher-level entry points:
+ * - `reconcileNow()` — immediate full reconciliation (store method)
+ * - `setViewport(startLine, endLine)` — priority reconciliation for visible lines
  */
 export function reconcileRange(
   state: LineIndexState,

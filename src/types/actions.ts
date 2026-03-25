@@ -143,13 +143,11 @@ export interface TransactionRollbackAction {
 
 /**
  * Remote change from collaboration (e.g., from Yjs).
+ * Discriminated union on `type` — `text` is required for inserts, `length` for deletes.
  */
-export interface RemoteChange {
-  readonly type: 'insert' | 'delete';
-  readonly start: ByteOffset;
-  readonly text?: string;
-  readonly length?: ByteLength;
-}
+export type RemoteChange =
+  | { readonly type: 'insert'; readonly start: ByteOffset; readonly text: string }
+  | { readonly type: 'delete'; readonly start: ByteOffset; readonly length: ByteLength };
 
 /**
  * Apply remote changes from collaboration.

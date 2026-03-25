@@ -222,6 +222,15 @@ export function createLineIndexState(content: string): LineIndexState {
 /**
  * Build a balanced Red-Black tree from sorted line data.
  * Uses iterative approach with explicit parent tracking.
+ *
+ * All nodes are colored `'black'`. This is safe because the median-split recursion
+ * produces a perfectly balanced (or near-perfectly balanced) tree, which satisfies
+ * the RB black-height invariant without requiring any red nodes. Callers should not
+ * interpret the all-black initial state as a violation — it is a valid RB tree for
+ * any balanced topology.
+ *
+ * Follow-on insert/delete operations use the standard `fixInsertWithPath` rebalancer,
+ * which handles arbitrary topologies and introduces red nodes as needed.
  */
 function buildLineIndexTree(
   lines: { offset: number; length: number; charLength: number }[],
@@ -314,6 +323,13 @@ export function withState(
  * Helper to create modified line index state with structural sharing.
  * Centralizes LineIndexState construction to ensure consistency.
  * Preserves the evaluation mode parameter for type safety.
+ *
+ * **Narrowing caveat:** When `M` is inferred as the union `EvaluationMode` (e.g., because
+ * the `state` argument is typed as plain `LineIndexState` without a concrete mode), the
+ * `changes` parameter accepts `Partial<LineIndexState<EvaluationMode>>`, which allows
+ * `rebuildPending: boolean` even on a nominally eager state. To get compile-time protection
+ * against mode violations, ensure `state` is typed with a concrete mode:
+ * `LineIndexState<'eager'>` or `LineIndexState<'lazy'>`.
  */
 export function withLineIndexState<M extends EvaluationMode = EvaluationMode>(
   state: LineIndexState<M>,
@@ -370,19 +386,30 @@ export function withPieceNode(
 }
 
 /**
- * Settable fields on a LineIndexNode.
- * subtreeLineCount and subtreeByteLength are always recomputed from children and lineLength,
- * so they cannot be set directly.
+ * Settable fields on a LineIndexNode, parameterized by evaluation mode.
+ *
+ * When `M` is a concrete `'eager'` or `'lazy'`, the `documentOffset` field is
+ * constrained accordingly (eager requires `number`, lazy allows `number | null`).
+ * Internal rb-tree/line-index callers use the default union mode (`M = EvaluationMode`)
+ * and receive no additional constraint — the protection applies only when the caller
+ * explicitly uses a concrete mode.
+ *
+ * subtreeLineCount, subtreeByteLength, and subtreeCharLength are always recomputed
+ * from children and lineLength, so they cannot be set directly.
  */
-export type LineIndexNodeUpdates = Partial<Pick<LineIndexNode, 'color' | 'left' | 'right' | 'documentOffset' | 'lineLength' | 'charLength'>>;
+export type LineIndexNodeUpdates<M extends EvaluationMode = EvaluationMode> = Partial<Pick<LineIndexNode<M>, 'color' | 'left' | 'right' | 'documentOffset' | 'lineLength' | 'charLength'>>;
 
 /**
  * Helper to create modified line index node with structural sharing.
+ *
+ * When `M` is a concrete mode (`'eager'` or `'lazy'`), the `changes.documentOffset`
+ * field is type-checked against that mode. Callers using the default union mode are
+ * unprotected by design — the internal rb-tree operations work on unparameterized nodes.
  */
-export function withLineIndexNode(
-  node: LineIndexNode,
-  changes: LineIndexNodeUpdates
-): LineIndexNode {
+export function withLineIndexNode<M extends EvaluationMode = EvaluationMode>(
+  node: LineIndexNode<M>,
+  changes: LineIndexNodeUpdates<M>
+): LineIndexNode<M> {
   const newNode = { ...node, ...changes };
 
   // Recalculate subtree metadata if children or per-node lengths changed
@@ -399,5 +426,5 @@ export function withLineIndexNode(
     newNode.subtreeCharLength = newNode.charLength + leftCharLength + rightCharLength;
   }
 
-  return Object.freeze(newNode);
+  return Object.freeze(newNode) as LineIndexNode<M>;
 }

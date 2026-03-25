@@ -5,7 +5,22 @@
 
 import type { DocumentState } from '../../types/state.ts';
 import type { ContentChangeAction, DocumentAction } from '../../types/actions.ts';
-import { textEncoder } from '../core/encoding.ts';
+
+/**
+ * Count UTF-8 byte length of a JavaScript string without allocating a Uint8Array.
+ * Avoids the `textEncoder.encode(str).length` pattern which allocates per call.
+ */
+function utf8ByteLength(str: string): number {
+  let len = 0;
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    if (c < 0x80) len += 1;
+    else if (c < 0x800) len += 2;
+    else if (c >= 0xD800 && c <= 0xDBFF) { len += 4; i++; } // surrogate pair → 4 bytes
+    else len += 3;
+  }
+  return len;
+}
 
 // =============================================================================
 // Event Types
@@ -312,11 +327,11 @@ export function createDirtyChangeEvent(
 export function getAffectedRange(action: DocumentAction): readonly [number, number] {
   switch (action.type) {
     case 'INSERT':
-      return [action.start, action.start + textEncoder.encode(action.text).length];
+      return [action.start, action.start + utf8ByteLength(action.text)];
     case 'DELETE':
       return [action.start, action.end];
     case 'REPLACE': {
-      const insertLength = textEncoder.encode(action.text).length;
+      const insertLength = utf8ByteLength(action.text);
       return [action.start, action.start + insertLength];
     }
     case 'APPLY_REMOTE': {
@@ -325,7 +340,7 @@ export function getAffectedRange(action: DocumentAction): readonly [number, numb
 
       for (const change of action.changes) {
         if (change.type === 'insert' && change.text) {
-          const insertLength = textEncoder.encode(change.text).length;
+          const insertLength = utf8ByteLength(change.text);
           if (insertLength > 0) {
             minStart = Math.min(minStart, change.start);
             maxEnd = Math.max(maxEnd, change.start + insertLength);
