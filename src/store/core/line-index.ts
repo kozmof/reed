@@ -32,7 +32,7 @@ import {
   type NLogNCost,
 } from '../../types/cost.ts';
 import { asEagerLineIndex, createLineIndexNode, withLineIndexNode, withLineIndexState } from './state.ts';
-import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
+import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry, type RootToLeafInsertPath } from './rb-tree.ts';
 
 // Type-safe wrapper for withLineIndexNode to use with generic R-B tree functions
 import { textEncoder } from './encoding.ts';
@@ -470,7 +470,7 @@ function bstInsertLine(
   root: LineIndexNode,
   lineNumber: number,
   newNode: LineIndexNode
-): InsertionPathEntry<LineIndexNode>[] {
+): RootToLeafInsertPath<LineIndexNode> {
   const insertPath: InsertionPathEntry<LineIndexNode>[] = [];
 
   function insert(node: LineIndexNode, lineNum: number): LineIndexNode {
@@ -504,7 +504,7 @@ function bstInsertLine(
 
   insert(root, lineNumber);
   insertPath.reverse(); // root-to-leaf-parent order
-  return insertPath;
+  return insertPath as RootToLeafInsertPath<LineIndexNode>;
 }
 
 // =============================================================================
@@ -1707,7 +1707,7 @@ function insertLinesAtPositionLazy(
   text: string,
   newlinePositions: number[],
   byteLength: number,
-  currentVersion: number,
+  _currentVersion: number,
   readText?: ReadTextFn
 ): LineIndexState {
   // Compute charsBefore using readText if available

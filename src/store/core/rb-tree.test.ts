@@ -11,6 +11,7 @@ import {
   rotateLeft,
   rotateRight,
   type InsertionPathEntry,
+  type RootToLeafInsertPath,
   type WithNodeFn,
 } from './rb-tree.ts';
 
@@ -89,7 +90,7 @@ function assertRBTree(root: TestNode): void {
   assertSizes(root);
 }
 
-function buildInsertPath(root: TestNode, key: number): InsertionPathEntry<TestNode>[] {
+function buildInsertPath(root: TestNode, key: number): RootToLeafInsertPath<TestNode> {
   const insertPath: InsertionPathEntry<TestNode>[] = [];
   const newNode = createNode(key, 'red');
 
@@ -109,7 +110,7 @@ function buildInsertPath(root: TestNode, key: number): InsertionPathEntry<TestNo
 
   insert(root);
   insertPath.reverse();
-  return insertPath;
+  return insertPath as RootToLeafInsertPath<TestNode>;
 }
 
 function insertWithPath(root: TestNode | null, key: number): TestNode {
@@ -368,12 +369,12 @@ describe('RB Tree Utilities', () => {
       const parent = createNode(20, 'red', grandparent, createNode(30, 'black'));
       const root = createNode(40, 'black', parent, createNode(60, 'black'));
 
-      const path: InsertionPathEntry<TestNode>[] = [
+      const path = [
         { node: root, direction: 'left' },
         { node: parent, direction: 'left' },
         { node: grandparent, direction: 'left' },
         { node: leafParent, direction: 'left' },
-      ];
+      ] as RootToLeafInsertPath<TestNode>;
 
       const fixed = fixInsertWithPath(path, withTestNode);
 
@@ -397,11 +398,11 @@ describe('RB Tree Utilities', () => {
         createNode(15, 'black')
       );
 
-      const path: InsertionPathEntry<TestNode>[] = [
+      const path = [
         { node: root, direction: 'left' },
         { node: root.left as TestNode, direction: 'left' },
         { node: root.left!.left as TestNode, direction: 'left' },
-      ];
+      ] as RootToLeafInsertPath<TestNode>;
 
       const fixed = fixInsertWithPath(path, withTestNode);
 
@@ -419,7 +420,7 @@ describe('RB Tree Utilities', () => {
         createNode(15, 'red')
       );
 
-      const fixed = fixInsertWithPath([{ node: root, direction: 'left' }], withTestNode);
+      const fixed = fixInsertWithPath([{ node: root, direction: 'left' }] as RootToLeafInsertPath<TestNode>, withTestNode);
 
       expect(fixed.color).toBe('black');
       expect(fixed.left?.color).toBe('black');

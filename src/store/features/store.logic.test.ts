@@ -974,7 +974,7 @@ describe('Immutability', () => {
     const state = createInitialState();
 
     expect(() => {
-      (state.history.undoStack as unknown[]).push({});
+      (state.history.undoStack as unknown as unknown[]).push({});
     }).toThrow();
   });
 });
