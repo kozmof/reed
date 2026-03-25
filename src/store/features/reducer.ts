@@ -599,7 +599,7 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
       type: 'insert' as const,
       position: op.position,
       text: op.insertText,
-      byteLength: insertedByteLength,
+      byteLength: byteLength(insertedByteLength),
     });
   }
   newState = historyPush(newState, historyChange, op.timestamp ?? Date.now());
