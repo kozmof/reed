@@ -313,9 +313,6 @@ export function splitPiece(
   piece: PieceNode,
   offsetInPiece: number
 ): [PieceNode, PieceNode | null] {
-  if (piece.left !== null && piece.right !== null) {
-    throw new Error('splitPiece: target must be a near-leaf node (at most one child)');
-  }
   if (offsetInPiece <= 0) {
     return [piece, null];
   }
@@ -1249,6 +1246,11 @@ export interface DocumentChunk {
  * @param options - Optional streaming configuration
  * @yields DocumentChunk objects
  *
+ * @remarks
+ * `collectPieces` (O(n) allocation) runs eagerly at call time — before the
+ * first `next()` call on the returned generator. Callers that hold the
+ * generator and iterate later will not trigger deferred allocation.
+ *
  * @example
  * ```typescript
  * for (const chunk of getValueStream(state, { chunkSize: 1024 })) {
@@ -1257,7 +1259,7 @@ export interface DocumentChunk {
  * }
  * ```
  */
-export function* getValueStream(
+export function getValueStream(
   state: PieceTableState,
   options: StreamOptions = {}
 ): Generator<DocumentChunk, void, undefined> {
@@ -1267,11 +1269,24 @@ export function* getValueStream(
     end = state.totalLength
   } = options;
 
-  if (state.root === null || start >= end || start < 0) {
+  // Collect pieces eagerly here (O(n)) — before the generator is iterated.
+  const pieces = state.root === null || start >= end || start < 0
+    ? null
+    : collectPieces(state.root);
+
+  return streamChunks(state, pieces, chunkSize, start, end);
+}
+
+function* streamChunks(
+  state: PieceTableState,
+  pieces: readonly PieceNode[] | null,
+  chunkSize: number,
+  start: number,
+  end: number
+): Generator<DocumentChunk, void, undefined> {
+  if (pieces === null) {
     return;
   }
-
-  const pieces = collectPieces(state.root);
 
   // Track position across pieces
   let documentPosition = 0;

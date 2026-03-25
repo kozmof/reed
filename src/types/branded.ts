@@ -113,41 +113,56 @@ export type ColumnNumber = Branded<number, 'ColumnNumber'>;
 
 /**
  * Create a ByteOffset from a number.
- * Use this for explicit conversions from raw numbers.
+ * Throws RangeError for negative, non-integer, NaN, or infinite values.
  */
 export function byteOffset(value: number): ByteOffset {
+  if (!isValidOffset(value)) {
+    throw new RangeError(`byteOffset: invalid value ${value} (must be a non-negative integer)`);
+  }
   return value as ByteOffset;
 }
 
 /**
  * Create a CharOffset from a number.
- * Use this for explicit conversions from raw numbers.
+ * Throws RangeError for negative, non-integer, NaN, or infinite values.
  */
 export function charOffset(value: number): CharOffset {
+  if (!isValidOffset(value)) {
+    throw new RangeError(`charOffset: invalid value ${value} (must be a non-negative integer)`);
+  }
   return value as CharOffset;
 }
 
 /**
  * Create a ByteLength from a number.
- * Use this for explicit conversions from raw numbers.
+ * Throws RangeError for negative, non-integer, NaN, or infinite values.
  */
 export function byteLength(value: number): ByteLength {
+  if (!isValidOffset(value)) {
+    throw new RangeError(`byteLength: invalid value ${value} (must be a non-negative integer)`);
+  }
   return value as ByteLength;
 }
 
 /**
  * Create a LineNumber from a number.
- * Use this for explicit conversions from raw numbers.
+ * Throws RangeError for negative, non-integer, NaN, or infinite values.
  */
 export function lineNumber(value: number): LineNumber {
+  if (!isValidLineNumber(value)) {
+    throw new RangeError(`lineNumber: invalid value ${value} (must be a non-negative integer)`);
+  }
   return value as LineNumber;
 }
 
 /**
  * Create a ColumnNumber from a number.
- * Use this for explicit conversions from raw numbers.
+ * Throws RangeError for negative, non-integer, NaN, or infinite values.
  */
 export function columnNumber(value: number): ColumnNumber {
+  if (!isValidLineNumber(value)) {
+    throw new RangeError(`columnNumber: invalid value ${value} (must be a non-negative integer)`);
+  }
   return value as ColumnNumber;
 }
 

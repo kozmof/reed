@@ -187,33 +187,41 @@ Not fixing: coordinating invalidation across every lazy tree mutation (`insertLi
 
 ## Implementations
 
-### #019 — Cost labels are phantom — no runtime enforcement
+### #019 — Cost labels are phantom — no runtime enforcement *(fixed 2026-03-25)*
 
 `$lift('O(1)', value)` and `$prove` accept any value without measuring cost. Any contributor can annotate an O(n) operation as `O(1)` and the type system will not object. The cost algebra is documentation, not a contract.
+
+**Fix:** Added an explicit module-level `@remarks` block to `src/types/cost.ts` stating that cost labels are documentation annotations, not runtime or compile-time contracts. Added matching `@remarks` to `$prove`, `$proveCtx`, and `$lift` clarifying that the `max`/`_level` parameters are consumed only by the type system and do not constrain or measure actual runtime performance. The false promise is now an honest disclaimer; contributors reading the API surface will encounter the caveat at every boundary function.
 
 **Source:** Report 2, §5 P3
 
 ---
 
-### #020 — Branded type constructors accept invalid values
+### #020 — Branded type constructors accept invalid values *(fixed 2026-03-25)*
 
 `byteOffset(-1)`, `byteOffset(NaN)`, `byteOffset(Infinity)` all compile and produce valid-looking `ByteOffset` values. `isValidOffset()` exists but is not called by any constructor. The branded types promise nominal safety that the constructors do not provide.
+
+**Fix:** Added `RangeError` guards to all five constructors in `src/types/branded.ts`: `byteOffset`, `charOffset`, `byteLength` call `isValidOffset` (non-negative integer check); `lineNumber` and `columnNumber` call `isValidLineNumber` (same check). All throw `RangeError` with a descriptive message if given a negative, non-integer, NaN, or infinite value. Two tests that used `byteOffset(-1)` / `charOffset(-5)` to test downstream graceful handling were updated: the `piece-table.test.ts` "return null for negative position" test was changed to `toThrow(RangeError)`, the `byteOffset(-1)` case in the `getText` invalid-range test was removed (that scenario is now rejected at the constructor), and the `charOffset(-5)` assertion in the clamp test was removed (a negative `CharOffset` is no longer constructable).
 
 **Source:** Report 2, §5 P4
 
 ---
 
-### #021 — `getValueStream()` defers O(n) allocation to first iteration, invisibly
+### #021 — `getValueStream()` defers O(n) allocation to first iteration, invisibly *(fixed 2026-03-25)*
 
 `collectPieces()` is called inside the generator body, so the O(n) allocation happens during the first `next()` call, not at generator creation time. The function signature gives no indication of when this work occurs. Callers that hold the generator and iterate later trigger allocation at an unpredictable point in the call stack.
+
+**Fix:** `getValueStream` converted from a `function*` to a regular function. It now calls `collectPieces(state.root)` (and evaluates the guard conditions) eagerly before returning a generator. The actual yield logic is moved to a private `streamChunks` inner generator that closes over the already-collected pieces array. Callers see the same `Generator<DocumentChunk, void, undefined>` return type; allocation now occurs at `getValueStream()` call time. A `@remarks` annotation documents when the O(n) collection happens.
 
 **Source:** Report 2, §5 P8 + §8 Impl5 (same issue)
 
 ---
 
-### #022 — `TransactionManager.rollback()` does not guard against unmatched calls
+### #022 — `TransactionManager.rollback()` does not guard against unmatched calls *(fixed 2026-03-25)*
 
 `rollback()` pops from `snapshotStack` and decrements `depth` without verifying that a corresponding `begin()` was called. An extra `rollback()` produces `depth = -1`; subsequent dispatches may notify listeners prematurely or skip notifications. `assertInvariant` (added by Report 4 Impl3) will throw after the fact, but does not prevent the decrement.
+
+**Fix:** The silent early-return in `rollback()` (which returned `snapshot: null` when `depth === 0`) was changed to `throw new Error('TransactionManager: rollback() called with no active transaction (depth is already 0)')`. A `@throws` annotation was added to the `TransactionManager` interface JSDoc. Two tests in `transaction.test.ts` that previously asserted the no-op behavior were updated to `expect(() => tm.rollback()).toThrow('no active transaction')`.
 
 **Source:** Report 2, §8 Impl3
 

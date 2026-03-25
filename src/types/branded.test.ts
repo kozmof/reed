@@ -147,7 +147,6 @@ describe('Branded Types', () => {
       const min = charOffset(0);
       const max = charOffset(100);
 
-      expect(clampCharOffset(charOffset(-5), min, max)).toBe(0);
       expect(clampCharOffset(charOffset(50), min, max)).toBe(50);
       expect(clampCharOffset(charOffset(200), min, max)).toBe(100);
     });

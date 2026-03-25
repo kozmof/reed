@@ -69,12 +69,9 @@ describe('TransactionManager', () => {
       expect(tm.isActive).toBe(false);
     });
 
-    it('rollback() when depth is 0 should be a no-op', () => {
+    it('rollback() when depth is 0 should throw', () => {
       const tm = createTransactionManager();
-      const result = tm.rollback();
-      expect(result.kind).toBe('rollback');
-      expect(result.isOutermost).toBe(false);
-      expect(result.snapshot).toBeNull();
+      expect(() => tm.rollback()).toThrow('no active transaction');
       expect(tm.depth).toBe(0);
     });
   });
@@ -195,13 +192,11 @@ describe('TransactionManager', () => {
       expect(tm.depth).toBe(0);
     });
 
-    it('double rollback at depth 0 should be safe', () => {
+    it('double rollback (unmatched second call) should throw', () => {
       const tm = createTransactionManager();
       tm.begin(makeState());
       tm.rollback();
-      const result = tm.rollback();
-      expect(result.isOutermost).toBe(false);
-      expect(result.snapshot).toBeNull();
+      expect(() => tm.rollback()).toThrow('no active transaction');
       expect(tm.depth).toBe(0);
     });
 

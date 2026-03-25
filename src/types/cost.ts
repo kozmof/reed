@@ -9,6 +9,15 @@
  * 4. Keep internal arithmetic/data as plain types and apply branding only
  *    at explicit boundaries (or via `CostFn` wrappers).
  * 5. Avoid direct cast helpers in store/application code.
+ *
+ * @remarks
+ * **Cost labels are documentation annotations, not runtime contracts.**
+ * The type-level algebra (`$prove`, `$proveCtx`, `$lift`) checks that label
+ * relationships are internally consistent (e.g. O(n) is not declared inside
+ * an O(1) boundary), but it does NOT measure actual execution cost, count
+ * operations, or profile performance. Any contributor can annotate an O(n)
+ * loop as O(1) and the type system will not object. Use a benchmark harness
+ * to validate cost claims against real data.
  */
 
 // =============================================================================
@@ -189,6 +198,11 @@ export function $declare(
 
 /**
  * Compile-time checked boundary from a checked plan.
+ *
+ * @remarks
+ * The `max` label is not enforced at runtime. This function verifies only that
+ * the composed plan's type-level cost is ≤ `max` at compile time. Actual
+ * runtime performance is unchecked — see module-level note.
  */
 export function $prove<L extends CostInputLabel, C extends Cost, T>(
   max: L,
@@ -203,6 +217,9 @@ export function $prove(
 
 /**
  * Compile-time checked boundary from a precomputed context.
+ *
+ * @remarks
+ * Like `$prove`, the label is not enforced at runtime — see module-level note.
  */
 export function $proveCtx<L extends CostInputLabel, C extends Cost, T>(
   max: L,
@@ -315,6 +332,11 @@ export const $from = <L extends CostLevel, T>(
  * Lift a plain value into a context at a declared upper bound.
  * Use `O(1)` when seeding a new plan.
  * Useful in checked plans where branch costs must align.
+ *
+ * @remarks
+ * The `_level` parameter is unused at runtime — it is consumed only by the
+ * type system. Passing `'O(1)'` does not verify or constrain runtime cost.
+ * See module-level note.
  */
 export function $lift<L extends CostInputLabel, T>(
   _level: L,

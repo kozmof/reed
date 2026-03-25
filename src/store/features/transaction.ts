@@ -43,7 +43,10 @@ export interface TransactionManager {
   /** Commit the current transaction level. */
   commit(): CommitResult;
 
-  /** Rollback the current transaction level. Returns the snapshot to restore. */
+  /**
+   * Rollback the current transaction level. Returns the snapshot to restore.
+   * @throws {Error} if called when no transaction is active (depth is 0).
+   */
   rollback(): RollbackResult;
 
   /** Current nesting depth (0 = not in transaction). */
@@ -97,7 +100,7 @@ export function createTransactionManager(): TransactionManager {
 
   function rollback(): RollbackResult {
     if (depth <= 0) {
-      return { kind: 'rollback', isOutermost: false, snapshot: null };
+      throw new Error('TransactionManager: rollback() called with no active transaction (depth is already 0)');
     }
 
     const snapshot = snapshotStack.pop() ?? null;

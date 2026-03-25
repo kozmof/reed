@@ -72,7 +72,6 @@ describe('Piece Table Operations', () => {
     it('should return empty for invalid range', () => {
       const state = createPieceTableState('Hello');
       expect(getText(state, byteOffset(5), byteOffset(3))).toBe('');
-      expect(getText(state, byteOffset(-1), byteOffset(3))).toBe('');
     });
   });
 
@@ -367,10 +366,9 @@ describe('Piece Table Operations', () => {
       expect(location).toBeNull();
     });
 
-    it('should return null for negative position', () => {
+    it('should throw for negative position', () => {
       const state = createPieceTableState('Hello');
-      const location = findPieceAtPosition(state.root, byteOffset(-1));
-      expect(location).toBeNull();
+      expect(() => findPieceAtPosition(state.root, byteOffset(-1))).toThrow(RangeError);
     });
   });
 
