@@ -255,11 +255,11 @@ export interface HistoryReplaceChange {
   /** Text that was inserted */
   readonly text: string;
   /** Pre-computed UTF-8 byte length of `text` */
-  readonly byteLength: number;
+  readonly byteLength: ByteLength;
   /** The original text that was replaced */
   readonly oldText: string;
   /** Pre-computed UTF-8 byte length of `oldText` */
-  readonly oldByteLength: number;
+  readonly oldByteLength: ByteLength;
 }
 
 /**
