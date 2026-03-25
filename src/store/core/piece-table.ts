@@ -27,7 +27,7 @@ import {
   type LinearCost,
 } from '../../types/cost.ts';
 import { createPieceNode, withPieceNode } from './state.ts';
-import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry } from './rb-tree.ts';
+import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry, type RootToLeafInsertPath } from './rb-tree.ts';
 import { textEncoder, textDecoder } from './encoding.ts';
 import { GrowableBuffer } from './growable-buffer.ts';
 
@@ -260,7 +260,7 @@ function bstInsert(
   root: PieceNode,
   position: number,
   newNode: PieceNode
-): InsertionPathEntry<PieceNode>[] {
+): RootToLeafInsertPath<PieceNode> {
   const insertPath: InsertionPathEntry<PieceNode>[] = [];
 
   function insert(node: PieceNode, offset: number): PieceNode {
@@ -285,13 +285,14 @@ function bstInsert(
         result = withPieceNode(node, { right: insert(node.right, newOffset) });
       }
     }
-    insertPath.push({ node: result, direction });
+    insertPath.push({ node: result, direction }); // leaf-to-root order as recursion unwinds
     return result;
   }
 
   insert(root, 0);
-  insertPath.reverse(); // root-to-leaf-parent order
-  return insertPath;
+  // Reverse to root-to-leaf order, as required by fixInsertWithPath (index 0 = root).
+  insertPath.reverse();
+  return insertPath as RootToLeafInsertPath<PieceNode>;
 }
 
 // =============================================================================
@@ -301,11 +302,20 @@ function bstInsert(
 /**
  * Split a piece into two pieces at the given offset within the piece.
  * Returns [leftPiece, rightPiece] or [piece, null] if at boundary.
+ *
+ * **Pre-condition**: `piece` must be a near-leaf node — at most one of
+ * `piece.left` / `piece.right` may be non-null. The left half of the split
+ * inherits `piece.left` and the right half inherits `piece.right`. If both
+ * children were populated the right subtree would be detached from the tree
+ * when `insertWithSplit` replaces the original node with the left half.
  */
 export function splitPiece(
   piece: PieceNode,
   offsetInPiece: number
 ): [PieceNode, PieceNode | null] {
+  if (piece.left !== null && piece.right !== null) {
+    throw new Error('splitPiece: target must be a near-leaf node (at most one child)');
+  }
   if (offsetInPiece <= 0) {
     return [piece, null];
   }
@@ -528,6 +538,11 @@ export function pieceTableDelete(
 
 /**
  * Delete a range from the tree by rebuilding without the deleted portion.
+ *
+ * Boundary convention (used consistently throughout this function):
+ *   All ranges are half-open: [start, end).
+ *   Non-overlap:  rangeEnd <= deleteStart || rangeStart >= deleteEnd
+ *   Overlap:      rangeStart < deleteEnd  && deleteStart < rangeEnd
  */
 function deleteRange(
   node: PieceNode | null,
@@ -537,7 +552,7 @@ function deleteRange(
 ): PieceNode | null {
   if (node === null) return null;
 
-  // Early return: entire subtree is outside delete range
+  // Early return: entire subtree [offset, subtreeEnd) does not overlap [deleteStart, deleteEnd)
   const subtreeEnd = offset + node.subtreeLength;
   if (subtreeEnd <= deleteStart || offset >= deleteEnd) {
     return node;
@@ -547,16 +562,17 @@ function deleteRange(
   const pieceStart = offset + leftLength;
   const pieceEnd = pieceStart + node.length;
 
-  // Only recurse into children whose ranges overlap the delete range
-  const newLeft = (node.left !== null && deleteStart < pieceStart && deleteEnd > offset)
+  // Recurse into left child only if its range [offset, pieceStart) overlaps [deleteStart, deleteEnd)
+  const newLeft = (node.left !== null && offset < deleteEnd && deleteStart < pieceStart)
     ? deleteRange(node.left, offset, deleteStart, deleteEnd)
     : node.left;
 
-  const newRight = (node.right !== null && deleteStart < subtreeEnd && deleteEnd > pieceEnd)
+  // Recurse into right child only if its range [pieceEnd, subtreeEnd) overlaps [deleteStart, deleteEnd)
+  const newRight = (node.right !== null && pieceEnd < deleteEnd && deleteStart < subtreeEnd)
     ? deleteRange(node.right, pieceEnd, deleteStart, deleteEnd)
     : node.right;
 
-  // Check if this piece overlaps with delete range
+  // Check if this piece [pieceStart, pieceEnd) overlaps [deleteStart, deleteEnd)
   if (pieceEnd <= deleteStart || pieceStart >= deleteEnd) {
     // No overlap - keep this piece but update children
     if (newLeft !== node.left || newRight !== node.right) {

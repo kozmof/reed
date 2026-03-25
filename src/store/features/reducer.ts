@@ -9,7 +9,7 @@ import { pstackPush, pstackPeek, pstackPop, pstackSize, pstackToArray, pstackFro
 import type { DocumentAction } from '../../types/actions.ts';
 import type { ByteOffset } from '../../types/branded.ts';
 import type { DeleteBoundaryContext } from '../../types/store.ts';
-import { byteOffset } from '../../types/branded.ts';
+import { byteOffset, byteLength } from '../../types/branded.ts';
 import { withState } from '../core/state.ts';
 import {
   pieceTableInsert as ptInsert,
@@ -238,7 +238,7 @@ function coalesceChanges(
         type: 'insert',
         position: existing.position,
         text: existing.text + incoming.text,
-        byteLength: existing.byteLength + incoming.byteLength,
+        byteLength: byteLength(existing.byteLength + incoming.byteLength),
       });
     case 'delete': {
       if (incoming.position + incoming.byteLength === existing.position) {
@@ -247,7 +247,7 @@ function coalesceChanges(
           type: 'delete',
           position: incoming.position,
           text: incoming.text + existing.text,
-          byteLength: existing.byteLength + incoming.byteLength,
+          byteLength: byteLength(existing.byteLength + incoming.byteLength),
         });
       }
       // Forward delete: append text, keep position
@@ -255,7 +255,7 @@ function coalesceChanges(
         type: 'delete',
         position: existing.position,
         text: existing.text + incoming.text,
-        byteLength: existing.byteLength + incoming.byteLength,
+        byteLength: byteLength(existing.byteLength + incoming.byteLength),
       });
     }
     default:
@@ -590,7 +590,7 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
       type: 'delete' as const,
       position: op.position,
       text: op.deletedText!,
-      byteLength: op.deleteEnd - op.position,
+      byteLength: byteLength(op.deleteEnd - op.position),
     });
   } else {
     historyChange = Object.freeze({

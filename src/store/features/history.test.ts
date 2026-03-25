@@ -16,7 +16,7 @@ import { documentReducer } from './reducer.ts';
 import { DocumentActions } from './actions.ts';
 import type { HistoryState } from '../../types/state.ts';
 import { pstackFromArray } from '../../types/state.ts';
-import { byteOffset } from '../../types/branded.ts';
+import { byteOffset, byteLength } from '../../types/branded.ts';
 
 // =============================================================================
 // canUndo Tests
@@ -45,7 +45,7 @@ describe('canUndo', () => {
     const historyState: HistoryState = {
       undoStack: pstackFromArray([
         {
-          changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: 1 }],
+          changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: byteLength(1)}],
           selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
           selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
           timestamp: Date.now(),
@@ -103,7 +103,7 @@ describe('canRedo', () => {
       undoStack: null,
       redoStack: pstackFromArray([
         {
-          changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: 1 }],
+          changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: byteLength(1)}],
           selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
           selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
           timestamp: Date.now(),
@@ -152,13 +152,13 @@ describe('getUndoCount', () => {
     const historyState: HistoryState = {
       undoStack: pstackFromArray([
         {
-          changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: 1 }],
+          changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: byteLength(1)}],
           selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
           selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
           timestamp: Date.now(),
         },
         {
-          changes: [{ type: 'insert', position: byteOffset(1), text: 'b', byteLength: 1 }],
+          changes: [{ type: 'insert', position: byteOffset(1), text: 'b', byteLength: byteLength(1)}],
           selectionBefore: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
           selectionAfter: { ranges: [{ anchor: byteOffset(2), head: byteOffset(2) }], primaryIndex: 0 },
           timestamp: Date.now(),
@@ -212,7 +212,7 @@ describe('getRedoCount', () => {
       undoStack: null,
       redoStack: pstackFromArray([
         {
-          changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: 1 }],
+          changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: byteLength(1)}],
           selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
           selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
           timestamp: Date.now(),
@@ -269,7 +269,7 @@ describe('isHistoryEmpty', () => {
     const nonEmptyHistory: HistoryState = {
       undoStack: pstackFromArray([
         {
-          changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: 1 }],
+          changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: byteLength(1)}],
           selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
           selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
           timestamp: Date.now(),

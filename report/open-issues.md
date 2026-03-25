@@ -125,33 +125,41 @@ The `DocumentAction` union definition, the `isDocumentAction` type guard, and th
 
 ## Algorithms
 
-### #013 — `bstInsert()` path ordering contract is implicit
+### #013 — `bstInsert()` path ordering contract is implicit *(fixed 2026-03-25)*
 
 `bstInsert()` builds a path in leaf-to-root order, then `.reverse()` is called before balancing. This ordering dependency is not expressed in any type, comment, or assertion. Changing traversal order in `bstInsert()` silently breaks balancing.
+
+**Fix:** Added `RootToLeafInsertPath<N extends RBNode<N>>` branded type to `rb-tree.ts` — an intersection of `InsertionPathEntry<N>[]` with `{ readonly _pathOrder: 'root-to-leaf' }`. `fixInsertWithPath` now requires this branded type. In `piece-table.ts`, `bstInsert` return type changed to `RootToLeafInsertPath<PieceNode>`; the existing `insertPath.reverse()` call is followed by `return insertPath as RootToLeafInsertPath<PieceNode>` — the cast is the explicit acknowledgment that `.reverse()` has run. Passing an unreversed path to `fixInsertWithPath` is now a compile error.
 
 **Source:** Report 2, §5 P5
 
 ---
 
-### #014 — `splitPiece()` assumes the split target is a leaf
+### #014 — `splitPiece()` assumes the split target is a leaf *(fixed 2026-03-25)*
 
 When splitting, the left piece inherits `piece.left` and the right piece inherits `piece.right`. If the piece being split is an interior node, its original children are relocated without re-linking. The invariant "only split near-leaf nodes" is undocumented and unenforced.
+
+**Fix:** Added a JSDoc `@pre` comment to `splitPiece` stating the near-leaf precondition. Added a runtime guard at the top of the function: `if (piece.left !== null && piece.right !== null) throw new Error('splitPiece: target must be a near-leaf node (at most one child)')`. This fails loudly at the point of violation rather than silently producing a structurally corrupt tree.
 
 **Source:** Report 2, §8 Impl1
 
 ---
 
-### #015 — `deleteRange()` has three inconsistent boundary check styles
+### #015 — `deleteRange()` has three inconsistent boundary check styles *(fixed 2026-03-25)*
 
 The early-exit check, the left-child recurse guard, and the right-child recurse guard use different orderings of `deleteStart`, `deleteEnd`, `pieceStart`, `pieceEnd`, and `subtreeEnd`. Whether boundaries are inclusive or exclusive varies with no unifying convention.
+
+**Fix:** Added a header comment to `deleteRange` establishing the canonical half-open interval convention: `[a, aEnd)` overlaps `[b, bEnd)` iff `a < bEnd && b < aEnd`. All four boundary checks were audited and rewritten in a uniform form using this convention: left-guard `offset < deleteEnd && deleteStart < pieceStart`, right-guard `pieceEnd < deleteEnd && deleteStart < subtreeEnd`. The early-exit and piece-skip checks were already canonical and left unchanged.
 
 **Source:** Report 2, §8 Impl2
 
 ---
 
-### #016 — History coalescing uses byte boundaries; char-offset callers may see drift
+### #016 — History coalescing uses byte boundaries; char-offset callers may see drift *(fixed 2026-03-25)*
 
-The contiguity check `newChange.position === last.position + last.byteLength` compares byte offsets against a byte length derived from `textEncoder.encode()`. If an editor layer uses character (UTF-16) positions, adjacent edits may fail to coalesce, or non-adjacent edits may coalesce incorrectly.
+The contiguity check `newChange.position === last.position + last.byteLength` compares byte offsets against a byte length derived from `textEncoder.encode()`. If an editor layer uses character (UTF-16) positions, adjacent edits may fail to coalesce, or non-adjacent edits may coalesce incorrectly. Additionally, `HistoryInsertChange.byteLength` and `HistoryDeleteChange.byteLength` were unbranded `number`, allowing silent unit confusion.
+
+**Fix:** `HistoryInsertChange.byteLength` and `HistoryDeleteChange.byteLength` changed from `number` to `ByteLength` in `src/types/state.ts`. In `reducer.ts`, all construction sites now call `byteLength()` to brand the value: `byteLength(insertedByteLength)` for inserts, `byteLength(op.deleteEnd - op.position)` for deletes; `coalesceChanges` wraps the summed byte lengths with `byteLength()`. Six `byteLength: 1` literals in `history.test.ts` updated to `byteLength: byteLength(1)`.
 
 **Source:** Report 2, §5 P7
 

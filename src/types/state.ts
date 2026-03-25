@@ -229,7 +229,7 @@ export interface HistoryInsertChange {
   /** Text that was inserted */
   readonly text: string;
   /** Pre-computed UTF-8 byte length of `text` */
-  readonly byteLength: number;
+  readonly byteLength: ByteLength;
 }
 
 /**
@@ -242,7 +242,7 @@ export interface HistoryDeleteChange {
   /** Text that was deleted */
   readonly text: string;
   /** Pre-computed UTF-8 byte length of `text` */
-  readonly byteLength: number;
+  readonly byteLength: ByteLength;
 }
 
 /**

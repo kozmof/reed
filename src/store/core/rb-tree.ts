@@ -219,6 +219,18 @@ export interface InsertionPathEntry<N extends RBNode<N>> {
 }
 
 /**
+ * An insertion path ordered root-first (index 0 = root, last index = leaf-parent).
+ * This is the ordering required by fixInsertWithPath.
+ *
+ * bstInsert builds the path leaf-to-root as the recursion unwinds, then calls
+ * .reverse() to produce this ordering. The brand makes that contract visible
+ * at the type level: passing an unreversed (leaf-to-root) array to
+ * fixInsertWithPath is a compile error.
+ */
+export type RootToLeafInsertPath<N extends RBNode<N>> =
+  InsertionPathEntry<N>[] & { readonly _pathOrder: 'root-to-leaf' };
+
+/**
  * Fix a red-red violation at a node during insertion.
  * Unlike fixRedViolations (which only rotates), this also handles
  * the color-flip case when both children are red (uncle-red case).
@@ -268,7 +280,7 @@ function fixInsertViolation<N extends RBNode<N>>(
  * @returns The balanced root node.
  */
 export function fixInsertWithPath<N extends RBNode<N>>(
-  insertPath: InsertionPathEntry<N>[],
+  insertPath: RootToLeafInsertPath<N>,
   withNode: WithNodeFn<N>
 ): N {
   for (let i = insertPath.length - 1; i >= 0; i--) {
