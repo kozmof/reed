@@ -11,6 +11,7 @@ import type {
   LineIndexNode,
   LineIndexState,
   DirtyLineRange,
+  DirtyLineRangeEntry,
   EvaluationMode,
 } from '../../types/state.ts';
 import { END_OF_DOCUMENT } from '../../types/state.ts';
@@ -1359,28 +1360,24 @@ export function mergeDirtyRanges(
   if (ranges.length <= 1) return $proveCtx('O(n log n)', $lift('O(n log n)', [...ranges]));
 
   // If any range is a sentinel (full-rebuild marker), the merged result must also be a sentinel.
-  // Sentinel flag must never be lost during decomposition.
-  if (ranges.some(r => r.isSentinel === true)) {
+  // With a discriminated union, no spread accident can silently drop or create a sentinel.
+  if (ranges.some(r => r.kind === 'sentinel')) {
     return $proveCtx(
       'O(n log n)',
       $lift<'O(n log n)', readonly DirtyLineRange[]>(
         'O(n log n)',
-        [Object.freeze({
-          startLine: 0,
-          endLine: END_OF_DOCUMENT,
-          offsetDelta: 0,
-          isSentinel: true as const,
-        })]
+        [Object.freeze({ kind: 'sentinel' as const })]
       )
     );
   }
 
-  // Sort by startLine — skip sort if already in order (common case: appended sequentially)
+  // Sort by startLine — skip sort if already in order (common case: appended sequentially).
+  // Safe to narrow: the sentinel early-exit above guarantees all remaining ranges are 'range'.
   let needsSort = false;
   for (let j = 1; j < ranges.length; j++) {
-    if (ranges[j].startLine < ranges[j - 1].startLine) { needsSort = true; break; }
+    if ((ranges[j] as DirtyLineRangeEntry).startLine < (ranges[j - 1] as DirtyLineRangeEntry).startLine) { needsSort = true; break; }
   }
-  const sorted = needsSort ? [...ranges].sort((a, b) => a.startLine - b.startLine) : [...ranges];
+  const sorted = (needsSort ? [...ranges].sort((a, b) => (a as DirtyLineRangeEntry).startLine - (b as DirtyLineRangeEntry).startLine) : [...ranges]) as DirtyLineRangeEntry[];
   const merged: DirtyLineRange[] = [];
   let i = 0;
   // Loop invariant: `current` is the "in-flight" range — it has NOT yet been
@@ -1399,6 +1396,7 @@ export function mergeDirtyRanges(
       if (next.offsetDelta === current.offsetDelta && next.startLine > current.endLine) {
         // Adjacent (non-overlapping) same delta — extend current to cover both
         current = Object.freeze({
+          kind: 'range' as const,
           startLine: current.startLine,
           endLine: Math.max(current.endLine, next.endLine),
           offsetDelta: current.offsetDelta,
@@ -1406,6 +1404,7 @@ export function mergeDirtyRanges(
       } else if (next.startLine === current.startLine) {
         // Same start, different delta — sum deltas (equivalent to applying both)
         current = Object.freeze({
+          kind: 'range' as const,
           startLine: current.startLine,
           endLine: Math.max(current.endLine, next.endLine),
           offsetDelta: current.offsetDelta + next.offsetDelta,
@@ -1414,6 +1413,7 @@ export function mergeDirtyRanges(
         // True overlap: s1 < s2 <= e1, different deltas.
         // Decompose into: [s1, s2-1, d1], [s2, min(e1,e2), d1+d2], tail.
         merged.push(Object.freeze({
+          kind: 'range' as const,
           startLine: current.startLine,
           endLine: next.startLine - 1,
           offsetDelta: current.offsetDelta,
@@ -1422,11 +1422,13 @@ export function mergeDirtyRanges(
         if (current.endLine < next.endLine) {
           // current ends first — overlap ends at current.endLine
           merged.push(Object.freeze({
+            kind: 'range' as const,
             startLine: next.startLine,
             endLine: current.endLine,
             offsetDelta: combinedDelta,
           }));
           current = Object.freeze({
+            kind: 'range' as const,
             startLine: current.endLine + 1,
             endLine: next.endLine,
             offsetDelta: next.offsetDelta,
@@ -1434,11 +1436,13 @@ export function mergeDirtyRanges(
         } else if (current.endLine > next.endLine) {
           // next ends first — overlap ends at next.endLine
           merged.push(Object.freeze({
+            kind: 'range' as const,
             startLine: next.startLine,
             endLine: next.endLine,
             offsetDelta: combinedDelta,
           }));
           current = Object.freeze({
+            kind: 'range' as const,
             startLine: next.endLine + 1,
             endLine: current.endLine,
             offsetDelta: current.offsetDelta,
@@ -1449,6 +1453,7 @@ export function mergeDirtyRanges(
           // to the next input range. If that exhausts the input, set `exhausted` so
           // the post-loop push is skipped — `current` is already in `merged`.
           merged.push(Object.freeze({
+            kind: 'range' as const,
             startLine: next.startLine,
             endLine: current.endLine,
             offsetDelta: combinedDelta,
@@ -1474,12 +1479,7 @@ export function mergeDirtyRanges(
       'O(n log n)',
       $lift<'O(n log n)', readonly DirtyLineRange[]>(
         'O(n log n)',
-        [Object.freeze({
-          startLine: 0,
-          endLine: END_OF_DOCUMENT,
-          offsetDelta: 0,
-          isSentinel: true as const,
-        })]
+        [Object.freeze({ kind: 'sentinel' as const })]
       )
     );
   }
@@ -1498,7 +1498,7 @@ export function isLineDirty(
   lineNumber: number
 ): LinearCost<boolean> {
   return $proveCtx('O(n)', $lift('O(n)', dirtyRanges.some(
-    r => lineNumber >= r.startLine && lineNumber <= r.endLine
+    r => r.kind === 'sentinel' || (lineNumber >= r.startLine && lineNumber <= r.endLine)
   )));
 }
 
@@ -1511,6 +1511,7 @@ export function getOffsetDeltaForLine(
 ): LinearCost<number> {
   let delta = 0;
   for (const range of dirtyRanges) {
+    if (range.kind === 'sentinel') continue; // Sentinel has no delta info; handled by reconcileFull slow path
     if (lineNumber >= range.startLine && lineNumber <= range.endLine) {
       delta += range.offsetDelta;
     }
@@ -1525,8 +1526,9 @@ function createDirtyRange(
   startLine: number,
   endLine: number,
   offsetDelta: number
-): DirtyLineRange {
+): DirtyLineRangeEntry {
   return Object.freeze({
+    kind: 'range' as const,
     startLine,
     endLine,
     offsetDelta,
@@ -1546,7 +1548,7 @@ function remapDirtyRangesForInsert(
   if (ranges.length === 0 || insertedCount === 0) return ranges;
   const result: DirtyLineRange[] = [];
   for (const range of ranges) {
-    if (range.isSentinel) { result.push(range); continue; }
+    if (range.kind === 'sentinel') { result.push(range); continue; }
     const { startLine: s, endLine: e, offsetDelta: d } = range;
     if (e < insertionLine + 1) {
       // Entirely at or before insertionLine — indices unchanged
@@ -1554,6 +1556,7 @@ function remapDirtyRangesForInsert(
     } else if (s > insertionLine) {
       // Entirely after insertionLine — shift both bounds up
       result.push(Object.freeze({
+        kind: 'range' as const,
         startLine: s + insertedCount,
         endLine: e === END_OF_DOCUMENT ? e : e + insertedCount,
         offsetDelta: d,
@@ -1561,9 +1564,10 @@ function remapDirtyRangesForInsert(
     } else {
       // Spans the insertion: s <= insertionLine < insertionLine+1 <= e
       // Before part: s..insertionLine — indices unchanged
-      result.push(Object.freeze({ startLine: s, endLine: insertionLine, offsetDelta: d }));
+      result.push(Object.freeze({ kind: 'range' as const, startLine: s, endLine: insertionLine, offsetDelta: d }));
       // After part: old insertionLine+1..e → new insertionLine+insertedCount+1..e+insertedCount
       result.push(Object.freeze({
+        kind: 'range' as const,
         startLine: insertionLine + 1 + insertedCount,
         endLine: e === END_OF_DOCUMENT ? e : e + insertedCount,
         offsetDelta: d,
@@ -1587,11 +1591,12 @@ function remapDirtyRangesForDelete(
   if (ranges.length === 0 || deletedCount <= 0) return ranges;
   const result: DirtyLineRange[] = [];
   for (const range of ranges) {
-    if (range.isSentinel) { result.push(range); continue; }
+    if (range.kind === 'sentinel') { result.push(range); continue; }
     const { startLine: s, endLine: e, offsetDelta: d } = range;
     // Before zone: keep s..min(e, deleteZoneStart-1) unchanged
     if (s < deleteZoneStart) {
       result.push(Object.freeze({
+        kind: 'range' as const,
         startLine: s,
         endLine: Math.min(e, deleteZoneStart - 1),
         offsetDelta: d,
@@ -1601,6 +1606,7 @@ function remapDirtyRangesForDelete(
     const postStart = Math.max(s, deleteZoneEnd + 1);
     if (postStart <= e) {
       result.push(Object.freeze({
+        kind: 'range' as const,
         startLine: postStart - deletedCount,
         endLine: e === END_OF_DOCUMENT ? e : e - deletedCount,
         offsetDelta: d,
@@ -1941,6 +1947,7 @@ export function reconcileRange(
   // a -delta event at its effective end+1 within [clampedStart, clampedEnd].
   const events: Array<{ line: number; delta: number }> = [];
   for (const range of state.dirtyRanges) {
+    if (range.kind === 'sentinel') continue; // Sentinel triggers slow path in reconcileFull; skip here
     const effectiveStart = Math.max(range.startLine, clampedStart);
     const effectiveEnd = Math.min(range.endLine, clampedEnd);
     if (effectiveStart > effectiveEnd) continue;
@@ -1967,6 +1974,9 @@ export function reconcileRange(
   // Keep only the parts of dirty ranges that are outside [clampedStart, clampedEnd].
   const remaining: DirtyLineRange[] = [];
   for (const range of state.dirtyRanges) {
+    // Sentinels survive: they signal a full rebuild is needed for the whole document.
+    if (range.kind === 'sentinel') { remaining.push(range); continue; }
+
     const rangeEnd = Math.min(range.endLine, state.lineCount - 1);
     if (range.startLine > rangeEnd) continue;
 
@@ -2042,6 +2052,7 @@ function computeTotalDirtyLines(
 ): number {
   let total = 0;
   for (const range of dirtyRanges) {
+    if (range.kind === 'sentinel') continue; // Sentinel triggers the slow path via hasCollapsedCapSentinel
     const end = Math.min(range.endLine, lineCount - 1);
     total += Math.max(0, end - range.startLine + 1);
   }
@@ -2131,7 +2142,7 @@ export function reconcileFull(
   const totalDirty = computeTotalDirtyLines(state.dirtyRanges, state.lineCount);
   const thresholdFn = config?.thresholdFn ?? defaultThresholdFn;
   const threshold = thresholdFn(state.lineCount);
-  const hasCollapsedCapSentinel = state.dirtyRanges.some(range => range.isSentinel === true);
+  const hasCollapsedCapSentinel = state.dirtyRanges.some(range => range.kind === 'sentinel');
 
   // mergeDirtyRanges may collapse many heterogeneous ranges into a single
   // full-document sentinel with offsetDelta=0. Delta detail is lost there,
@@ -2139,6 +2150,7 @@ export function reconcileFull(
   if (!hasCollapsedCapSentinel && totalDirty <= threshold) {
     let current: LineIndexState = state;
     for (const range of state.dirtyRanges) {
+      if (range.kind === 'sentinel') continue; // Guarded by hasCollapsedCapSentinel above; defensive
       const endLine = Math.min(range.endLine, current.lineCount - 1);
       current = reconcileRange(current, range.startLine, endLine, version);
     }
@@ -2186,10 +2198,11 @@ export function reconcileViewport(
   const clampedEnd = Math.min(normalizedEnd, state.lineCount - 1);
   if (clampedStart > clampedEnd) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
 
-  // Check if any viewport lines are dirty
+  // Check if any viewport lines are dirty.
+  // A sentinel means the entire document is dirty — viewport is always dirty.
   const viewportDirty = state.dirtyRanges.some(range => {
-    const rangeEnd = range.endLine;
-    return range.startLine <= clampedEnd && rangeEnd >= clampedStart;
+    if (range.kind === 'sentinel') return true;
+    return range.startLine <= clampedEnd && range.endLine >= clampedStart;
   });
 
   if (!viewportDirty) return $proveCtx('O(n log n)', $lift('O(n log n)', state));

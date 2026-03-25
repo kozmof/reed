@@ -17,7 +17,7 @@ import type {
 } from '../../types/state.ts';
 import { byteOffset, byteLength } from '../../types/branded.ts';
 import type { ByteOffset, ByteLength } from '../../types/branded.ts';
-import { textEncoder, textDecoder } from './encoding.ts';
+import { textEncoder } from './encoding.ts';
 import { GrowableBuffer } from './growable-buffer.ts';
 
 /**
@@ -156,54 +156,64 @@ export function createLineIndexState(content: string): LineIndexState {
 
   // Encode to UTF-8 bytes and scan for line breaks.
   // Line lengths and offsets must be in bytes, not UTF-16 code units.
+  //
+  // charLength is derived directly from the original JS string via a parallel
+  // char-position cursor, avoiding O(L) textDecoder.decode calls.
+  // The cursor tracks UTF-16 code units consumed: BMP chars advance by 1,
+  // surrogate pairs (code points > U+FFFF) advance by 2.
   const bytes = textEncoder.encode(content);
   const lineStarts: { offset: number; length: number; charLength: number }[] = [];
   let lineStart = 0;
+  let lineCharStart = 0; // UTF-16 code unit index of the current line's start in `content`
+  let charI = 0;         // UTF-16 code unit index, stays in sync with byte index i
 
-  for (let i = 0; i < bytes.length; i++) {
-    if (bytes[i] === 0x0A) { // '\n'
-      const byteLen = i - lineStart + 1;
-      const charLen = textDecoder.decode(bytes.subarray(lineStart, i + 1)).length;
+  for (let i = 0; i < bytes.length; ) {
+    // Advance charI by one code point, tracking the UTF-8 byte width.
+    const cp = content.codePointAt(charI)!;
+    const charStep = cp > 0xFFFF ? 2 : 1;   // surrogate pair = 2 UTF-16 units
+    const byteStep = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+
+    i += byteStep;
+    charI += charStep;
+
+    if (bytes[i - byteStep] === 0x0A) { // '\n' — single byte in UTF-8
       lineStarts.push({
         offset: lineStart,
-        length: byteLen,
-        charLength: charLen,
+        length: i - lineStart,
+        charLength: charI - lineCharStart,
       });
-      lineStart = i + 1;
-    } else if (bytes[i] === 0x0D) { // '\r'
-      // Handle CRLF
-      if (i + 1 < bytes.length && bytes[i + 1] === 0x0A) {
-        const byteLen = i - lineStart + 2;
-        const charLen = textDecoder.decode(bytes.subarray(lineStart, i + 2)).length;
+      lineStart = i;
+      lineCharStart = charI;
+    } else if (bytes[i - byteStep] === 0x0D) { // '\r' — single byte in UTF-8
+      // Handle CRLF: peek ahead
+      if (i < bytes.length && bytes[i] === 0x0A) {
+        // Advance past the '\n'
+        i++;
+        charI++;
         lineStarts.push({
           offset: lineStart,
-          length: byteLen,
-          charLength: charLen,
+          length: i - lineStart,
+          charLength: charI - lineCharStart,
         });
-        i++; // Skip \n
-        lineStart = i + 1;
       } else {
         // CR only
-        const byteLen = i - lineStart + 1;
-        const charLen = textDecoder.decode(bytes.subarray(lineStart, i + 1)).length;
         lineStarts.push({
           offset: lineStart,
-          length: byteLen,
-          charLength: charLen,
+          length: i - lineStart,
+          charLength: charI - lineCharStart,
         });
-        lineStart = i + 1;
       }
+      lineStart = i;
+      lineCharStart = charI;
     }
   }
 
   // Add last line (may not end with newline)
   if (lineStart <= bytes.length) {
-    const byteLen = bytes.length - lineStart;
-    const charLen = textDecoder.decode(bytes.subarray(lineStart, bytes.length)).length;
     lineStarts.push({
       offset: lineStart,
-      length: byteLen,
-      charLength: charLen,
+      length: bytes.length - lineStart,
+      charLength: content.length - lineCharStart,
     });
   }
 

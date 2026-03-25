@@ -109,7 +109,10 @@ export function createDocumentStore(
     if (notifying) return;
     notifying = true;
     try {
-      // Snapshot listeners to guarantee stable delivery even if subscribers mutate during notification.
+      // Snapshot listeners before iterating: guarantees delivery to all listeners
+      // that were registered at notification start, even if one unsubscribes mid-notify.
+      // The `notifying` guard (above) handles the orthogonal re-entrancy concern
+      // (e.g. emergencyReset called from within a listener callback).
       const currentListeners = Array.from(listeners);
       for (const listener of currentListeners) {
         try {
@@ -310,13 +313,7 @@ export function createDocumentStore(
    * Force immediate reconciliation (blocking).
    * Use sparingly - prefer scheduleReconciliation().
    */
-  function reconcileNow(): DocumentState<'eager'>;
-  function reconcileNow(snapshot: DocumentState): DocumentState<'eager'> | null;
-  function reconcileNow(snapshot?: DocumentState): DocumentState<'eager'> | null {
-    if (snapshot !== undefined && !isCurrentSnapshot(snapshot)) {
-      return null;
-    }
-
+  function reconcileNow(): DocumentState<'eager'> {
     // Cancel any pending idle callback
     if (reconciliation.idleCallbackId !== null) {
       if (typeof cancelIdleCallback !== 'undefined') {
@@ -341,6 +338,16 @@ export function createDocumentStore(
       }));
     }
     return state as DocumentState<'eager'>;
+  }
+
+  /**
+   * Snapshot-gated synchronous reconciliation.
+   * Returns null when `snapshot` is stale (a newer dispatch has occurred),
+   * preventing a reconciled state from being applied to an out-of-date view.
+   */
+  function reconcileIfCurrent(snapshot: DocumentState): DocumentState<'eager'> | null {
+    if (!isCurrentSnapshot(snapshot)) return null;
+    return reconcileNow();
   }
 
   /**
@@ -369,6 +376,7 @@ export function createDocumentStore(
     batch,
     scheduleReconciliation,
     reconcileNow,
+    reconcileIfCurrent,
     setViewport,
     emergencyReset,
   };
@@ -488,6 +496,7 @@ export function createDocumentStoreWithEvents(
     isCurrentSnapshot: baseStore.isCurrentSnapshot,
     scheduleReconciliation: baseStore.scheduleReconciliation,
     reconcileNow: baseStore.reconcileNow,
+    reconcileIfCurrent: baseStore.reconcileIfCurrent,
     setViewport: baseStore.setViewport,
     emergencyReset: baseStore.emergencyReset,
 

@@ -4,7 +4,7 @@
  * Redux, Zustand, Vue, Svelte, and vanilla JavaScript.
  */
 
-import type { DocumentState, LineIndexState, EvaluationMode } from './state.ts';
+import type { DocumentState } from './state.ts';
 import type { DocumentAction } from './actions.ts';
 import type {
   DocumentEventEmitter,
@@ -101,11 +101,12 @@ export interface ReconcilableDocumentStore extends DocumentStore {
   reconcileNow(): DocumentState<'eager'>;
 
   /**
-   * Snapshot-gated reconciliation.
-   * Returns null when `snapshot` is stale, preventing mode transitions
-   * from being applied to an out-of-date view.
+   * Snapshot-gated synchronous reconciliation.
+   * Returns null when `snapshot` is stale (i.e., a newer dispatch has occurred),
+   * preventing a reconciled mode transition from being applied to an out-of-date view.
+   * Use this when reconciling from an async context where the snapshot may have aged.
    */
-  reconcileNow(snapshot: DocumentState): DocumentState<'eager'> | null;
+  reconcileIfCurrent(snapshot: DocumentState): DocumentState<'eager'> | null;
 
   /**
    * Set viewport bounds and ensure those lines have accurate offsets.

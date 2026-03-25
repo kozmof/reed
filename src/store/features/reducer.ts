@@ -24,6 +24,7 @@ import {
   reconcileFull,
   rebuildLineIndex,
 } from '../core/line-index.ts';
+import { asEagerLineIndex } from '../core/state.ts';
 
 // =============================================================================
 // Position Validation
@@ -364,10 +365,16 @@ function historyUndo(state: DocumentState, version: number): DocumentState {
     }),
   });
 
+  // Reconcile once before the loop — subsequent applyChange calls keep the index eager.
+  const reconciledLI = reconcileFull(newState.lineIndex, version);
+  if (reconciledLI !== newState.lineIndex) {
+    newState = withState(newState, { lineIndex: reconciledLI });
+  }
+
   // Apply inverse of each change (in reverse order) with eager line index updates
   for (let i = entry.changes.length - 1; i >= 0; i--) {
     const change = entry.changes[i];
-    newState = applyInverseChange(newState, change, version);
+    newState = applyInverseChange(newState, change);
   }
 
   // Restore selection
@@ -398,9 +405,15 @@ function historyRedo(state: DocumentState, version: number): DocumentState {
     }),
   });
 
+  // Reconcile once before the loop — subsequent applyChange calls keep the index eager.
+  const reconciledLI = reconcileFull(newState.lineIndex, version);
+  if (reconciledLI !== newState.lineIndex) {
+    newState = withState(newState, { lineIndex: reconciledLI });
+  }
+
   // Apply each change with eager line index updates
   for (const change of entry.changes) {
-    newState = applyChange(newState, change, version);
+    newState = applyChange(newState, change);
   }
 
   // Restore selection
@@ -446,21 +459,18 @@ function invertChange(change: HistoryChange): HistoryChange {
 
 /**
  * Apply a single change (for redo).
- * Uses eager line index strategy for immediate accuracy after redo.
+ * Precondition: state.lineIndex is already eager (reconciled by the caller).
+ * Uses eager line index strategy for immediate offset accuracy.
  */
-function applyChange(state: DocumentState, change: HistoryChange, version: number): DocumentState {
-  // Undo/redo requires eager line index state for correct offset computation.
-  // Reconcile first if the state has dirty ranges from lazy editing.
-  const reconciledLI = reconcileFull(state.lineIndex, version);
-  if (reconciledLI !== state.lineIndex) {
-    state = withState(state, { lineIndex: reconciledLI });
-  }
+function applyChange(state: DocumentState, change: HistoryChange): DocumentState {
+  // O(1) assertion that the precondition holds — callers must reconcile before the loop.
+  const li = asEagerLineIndex(state.lineIndex);
 
   switch (change.type) {
     case 'insert': {
       const { state: s } = pieceTableInsert(state, change.position, change.text);
       const readText = (start: ByteOffset, end: ByteOffset) => getText(s.pieceTable, start, end);
-      const newLineIndex = eagerStrategy.insert(reconciledLI, change.position, change.text, readText);
+      const newLineIndex = eagerStrategy.insert(li, change.position, change.text, readText);
       return withState(s, { lineIndex: newLineIndex });
     }
     case 'delete': {
@@ -470,7 +480,7 @@ function applyChange(state: DocumentState, change: HistoryChange, version: numbe
       if (shouldRebuildLineIndexForDelete(change.text, deleteContext)) {
         return rebuildLineIndexFromPieceTableState(s);
       }
-      const newLineIndex = eagerStrategy.delete(reconciledLI, change.position, end, change.text, deleteContext);
+      const newLineIndex = eagerStrategy.delete(li, change.position, end, change.text, deleteContext);
       return withState(s, { lineIndex: newLineIndex });
     }
     case 'replace': {
@@ -481,7 +491,7 @@ function applyChange(state: DocumentState, change: HistoryChange, version: numbe
       if (shouldRebuildLineIndexForDelete(change.oldText, deleteContext)) {
         return rebuildLineIndexFromPieceTableState(s2);
       }
-      const li1 = eagerStrategy.delete(reconciledLI, change.position, deleteEnd, change.oldText, deleteContext);
+      const li1 = eagerStrategy.delete(li, change.position, deleteEnd, change.oldText, deleteContext);
       const readText = (start: ByteOffset, end: ByteOffset) => getText(s2.pieceTable, start, end);
       const li2 = eagerStrategy.insert(li1, change.position, change.text, readText);
       return withState(s2, { lineIndex: li2 });
@@ -495,8 +505,8 @@ function applyChange(state: DocumentState, change: HistoryChange, version: numbe
  * Apply inverse of a change (for undo).
  * Delegates to applyChange(invertChange(change)) — the structural dual.
  */
-function applyInverseChange(state: DocumentState, change: HistoryChange, version: number): DocumentState {
-  return applyChange(state, invertChange(change), version);
+function applyInverseChange(state: DocumentState, change: HistoryChange): DocumentState {
+  return applyChange(state, invertChange(change));
 }
 
 // =============================================================================
@@ -523,19 +533,36 @@ function setSelection(
 // =============================================================================
 
 /**
- * Describes an edit operation: an optional delete followed by an optional insert.
- * INSERT = { position, insertText }
- * DELETE = { position, deleteEnd, deletedText }
- * REPLACE = { position, deleteEnd, deletedText, insertText }
+ * Describes an edit operation as a proper discriminated union.
+ * The `kind` field makes the variant unambiguous and eliminates all
+ * `op.deleteEnd !== undefined` guards that previously coupled delete-phase
+ * decisions to insert-phase behavior.
  */
-interface EditOperation {
-  position: ByteOffset;
-  deleteEnd?: ByteOffset;
-  deletedText?: string;
-  insertText: string;
-  timestamp?: number;
-  selection?: readonly SelectionRange[];
-}
+type EditOperation =
+  | {
+      readonly kind: 'insert';
+      readonly position: ByteOffset;
+      readonly insertText: string;
+      readonly timestamp?: number;
+      readonly selection?: readonly SelectionRange[];
+    }
+  | {
+      readonly kind: 'delete';
+      readonly position: ByteOffset;
+      readonly deleteEnd: ByteOffset;
+      readonly deletedText: string;
+      readonly timestamp?: number;
+      readonly selection?: readonly SelectionRange[];
+    }
+  | {
+      readonly kind: 'replace';
+      readonly position: ByteOffset;
+      readonly deleteEnd: ByteOffset;
+      readonly deletedText: string;
+      readonly insertText: string;
+      readonly timestamp?: number;
+      readonly selection?: readonly SelectionRange[];
+    };
 
 /**
  * Apply a text edit through the unified pipeline:
@@ -551,16 +578,17 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
   let newState: DocumentState = state;
 
   // Determine upfront whether CRLF semantics require a full line-index rebuild.
-  // Computing this before any mutation avoids the non-local `forceLineIndexRebuild`
-  // flag that previously coupled the delete phase's decision to the insert phase's behavior.
-  const deleteContext = op.deleteEnd !== undefined
+  // Using op.kind narrowing rather than op.deleteEnd !== undefined guards means
+  // the delete-phase decision is structurally visible rather than inferred from
+  // an optional field, and TypeScript enforces which fields are present in each branch.
+  const deleteContext = op.kind !== 'insert'
     ? getDeleteBoundaryContext(newState, op.position, op.deleteEnd)
     : undefined;
-  const needsRebuild = op.deleteEnd !== undefined
-    && shouldRebuildLineIndexForDelete(op.deletedText!, deleteContext);
+  const needsRebuild = op.kind !== 'insert'
+    && shouldRebuildLineIndexForDelete(op.deletedText, deleteContext);
 
   // Delete phase
-  if (op.deleteEnd !== undefined) {
+  if (op.kind !== 'insert') {
     if (needsRebuild) {
       // Skip lazy line-index update — a full rebuild will follow after the insert phase.
       newState = pieceTableDelete(newState, op.position, op.deleteEnd);
@@ -573,7 +601,7 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
         newState.lineIndex,
         op.position,
         op.deleteEnd,
-        op.deletedText!,
+        op.deletedText,
         deleteContext
       );
       newState = pieceTableDelete(newState, op.position, op.deleteEnd);
@@ -583,14 +611,16 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
 
   // Insert phase
   let insertedByteLength = 0;
-  if (op.insertText.length > 0) {
-    const result = pieceTableInsert(newState, op.position, op.insertText);
-    newState = result.state;
-    insertedByteLength = result.insertedByteLength;
-    if (!needsRebuild) {
-      const readText = (start: ByteOffset, end: ByteOffset) => getText(newState.pieceTable, start, end);
-      const insLineIndex = strategy.insert(newState.lineIndex, op.position, op.insertText, readText);
-      newState = withState(newState, { lineIndex: insLineIndex });
+  if (op.kind !== 'delete') {
+    if (op.insertText.length > 0) {
+      const result = pieceTableInsert(newState, op.position, op.insertText);
+      newState = result.state;
+      insertedByteLength = result.insertedByteLength;
+      if (!needsRebuild) {
+        const readText = (start: ByteOffset, end: ByteOffset) => getText(newState.pieceTable, start, end);
+        const insLineIndex = strategy.insert(newState.lineIndex, op.position, op.insertText, readText);
+        newState = withState(newState, { lineIndex: insLineIndex });
+      }
     }
   }
 
@@ -609,31 +639,35 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
     });
   }
 
-  // Build and push history change
+  // Build and push history change — switch on kind for exhaustive narrowing
   let historyChange: HistoryChange;
-  if (op.deleteEnd !== undefined && op.insertText.length > 0) {
-    historyChange = Object.freeze({
-      type: 'replace' as const,
-      position: op.position,
-      text: op.insertText,
-      byteLength: byteLength(insertedByteLength),
-      oldText: op.deletedText!,
-      oldByteLength: byteLength(op.deleteEnd - op.position),
-    });
-  } else if (op.deleteEnd !== undefined) {
-    historyChange = Object.freeze({
-      type: 'delete' as const,
-      position: op.position,
-      text: op.deletedText!,
-      byteLength: byteLength(op.deleteEnd - op.position),
-    });
-  } else {
-    historyChange = Object.freeze({
-      type: 'insert' as const,
-      position: op.position,
-      text: op.insertText,
-      byteLength: byteLength(insertedByteLength),
-    });
+  switch (op.kind) {
+    case 'replace':
+      historyChange = Object.freeze({
+        type: 'replace' as const,
+        position: op.position,
+        text: op.insertText,
+        byteLength: byteLength(insertedByteLength),
+        oldText: op.deletedText,
+        oldByteLength: byteLength(op.deleteEnd - op.position),
+      });
+      break;
+    case 'delete':
+      historyChange = Object.freeze({
+        type: 'delete' as const,
+        position: op.position,
+        text: op.deletedText,
+        byteLength: byteLength(op.deleteEnd - op.position),
+      });
+      break;
+    case 'insert':
+      historyChange = Object.freeze({
+        type: 'insert' as const,
+        position: op.position,
+        text: op.insertText,
+        byteLength: byteLength(insertedByteLength),
+      });
+      break;
   }
   newState = historyPush(newState, historyChange, op.timestamp ?? Date.now());
 
@@ -663,7 +697,7 @@ export function documentReducer(
     case 'INSERT': {
       const position = validatePosition(action.start, state.pieceTable.totalLength);
       if (action.text.length === 0) return state;
-      return applyEdit(state, { position, insertText: action.text, timestamp: action.timestamp, selection: action.selection });
+      return applyEdit(state, { kind: 'insert', position, insertText: action.text, timestamp: action.timestamp, selection: action.selection });
     }
 
     case 'DELETE': {
@@ -671,14 +705,14 @@ export function documentReducer(
       if (!valid) return state;
       if (end - start <= 0) return state;
       const deletedText = getTextRange(state, start, end);
-      return applyEdit(state, { position: start, deleteEnd: end, deletedText, insertText: '', timestamp: action.timestamp, selection: action.selection });
+      return applyEdit(state, { kind: 'delete', position: start, deleteEnd: end, deletedText, timestamp: action.timestamp, selection: action.selection });
     }
 
     case 'REPLACE': {
       const { start, end, valid } = validateRange(action.start, action.end, state.pieceTable.totalLength);
       if (!valid) return state;
       const oldText = getTextRange(state, start, end);
-      return applyEdit(state, { position: start, deleteEnd: end, deletedText: oldText, insertText: action.text, timestamp: action.timestamp, selection: action.selection });
+      return applyEdit(state, { kind: 'replace', position: start, deleteEnd: end, deletedText: oldText, insertText: action.text, timestamp: action.timestamp, selection: action.selection });
     }
 
     case 'SET_SELECTION': {

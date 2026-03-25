@@ -459,10 +459,10 @@ describe('Reconciliation version tracking (P6 fix)', () => {
 
     const partiallyReconciled = reconcileRange(dirty, 100, 120, 2);
     const hasLineOneStillDirty = partiallyReconciled.dirtyRanges.some(
-      range => range.startLine <= 1 && range.endLine >= 1
+      range => range.kind !== 'sentinel' && range.startLine <= 1 && range.endLine >= 1
     );
     const hasViewportLineStillDirty = partiallyReconciled.dirtyRanges.some(
-      range => range.startLine <= 110 && range.endLine >= 110
+      range => range.kind !== 'sentinel' && range.startLine <= 110 && range.endLine >= 110
     );
     expect(hasLineOneStillDirty).toBe(true);
     expect(hasViewportLineStillDirty).toBe(false);
@@ -492,8 +492,8 @@ describe('mergeDirtyRanges improvements', () => {
   it('should decompose overlapping ranges with different startLine and delta (next contained in current)', () => {
     // current=[0,10,d1=5], next=[4,7,d2=-3]  → [0,3,5], [4,7,2], [8,10,5]
     const ranges = [
-      Object.freeze({ startLine: 0, endLine: 10, offsetDelta: 5 }),
-      Object.freeze({ startLine: 4, endLine: 7, offsetDelta: -3 }),
+      Object.freeze({ kind: 'range' as const, startLine: 0, endLine: 10, offsetDelta: 5 }),
+      Object.freeze({ kind: 'range' as const, startLine: 4, endLine: 7, offsetDelta: -3 }),
     ];
     const merged = mergeDirtyRanges(ranges);
     expect(merged).toHaveLength(3);
@@ -505,8 +505,8 @@ describe('mergeDirtyRanges improvements', () => {
   it('should decompose overlapping ranges with different startLine and delta (current ends first)', () => {
     // current=[0,6,d1=4], next=[3,10,d2=-2]  → [0,2,4], [3,6,2], [7,10,-2]
     const ranges = [
-      Object.freeze({ startLine: 0, endLine: 6, offsetDelta: 4 }),
-      Object.freeze({ startLine: 3, endLine: 10, offsetDelta: -2 }),
+      Object.freeze({ kind: 'range' as const, startLine: 0, endLine: 6, offsetDelta: 4 }),
+      Object.freeze({ kind: 'range' as const, startLine: 3, endLine: 10, offsetDelta: -2 }),
     ];
     const merged = mergeDirtyRanges(ranges);
     expect(merged).toHaveLength(3);
@@ -518,8 +518,8 @@ describe('mergeDirtyRanges improvements', () => {
   it('should decompose overlapping ranges with different startLine and delta (same end)', () => {
     // current=[0,8,d1=3], next=[5,8,d2=-1]  → [0,4,3], [5,8,2]
     const ranges = [
-      Object.freeze({ startLine: 0, endLine: 8, offsetDelta: 3 }),
-      Object.freeze({ startLine: 5, endLine: 8, offsetDelta: -1 }),
+      Object.freeze({ kind: 'range' as const, startLine: 0, endLine: 8, offsetDelta: 3 }),
+      Object.freeze({ kind: 'range' as const, startLine: 5, endLine: 8, offsetDelta: -1 }),
     ];
     const merged = mergeDirtyRanges(ranges);
     expect(merged).toHaveLength(2);
@@ -529,44 +529,47 @@ describe('mergeDirtyRanges improvements', () => {
 
   it('should merge same-start ranges with different deltas by summing', () => {
     const ranges = [
-      Object.freeze({ startLine: 5, endLine: 10 , offsetDelta: 3 }),
-      Object.freeze({ startLine: 5, endLine: 12 , offsetDelta: -2 }),
+      Object.freeze({ kind: 'range' as const, startLine: 5, endLine: 10 , offsetDelta: 3 }),
+      Object.freeze({ kind: 'range' as const, startLine: 5, endLine: 12 , offsetDelta: -2 }),
     ];
 
     const merged = mergeDirtyRanges(ranges);
     expect(merged).toHaveLength(1);
-    expect(merged[0].startLine).toBe(5);
-    expect(merged[0].endLine).toBe(12);
-    expect(merged[0].offsetDelta).toBe(1); // 3 + (-2)
+    expect(merged[0].kind).toBe('range');
+    const m0 = merged[0] as import('../../types/state.ts').DirtyLineRangeEntry;
+    expect(m0.startLine).toBe(5);
+    expect(m0.endLine).toBe(12);
+    expect(m0.offsetDelta).toBe(1); // 3 + (-2)
   });
 
-  it('should collapse to single range when exceeding 32 ranges', () => {
+  it('should collapse to single sentinel when exceeding 32 ranges', () => {
     const ranges = [];
     for (let i = 0; i < 40; i++) {
       ranges.push(Object.freeze({
+        kind: 'range' as const,
         startLine: i * 10,
-        endLine: (i * 10 + 5) ,
+        endLine: (i * 10 + 5),
         offsetDelta: i % 2 === 0 ? 1 : -1,
       }));
     }
 
     const merged = mergeDirtyRanges(ranges);
     expect(merged).toHaveLength(1);
-    expect(merged[0].startLine).toBe(0);
-    expect(merged[0].endLine).toBe(Number.MAX_SAFE_INTEGER);
-    expect(merged[0].offsetDelta).toBe(0);
+    expect(merged[0].kind).toBe('sentinel');
   });
 
   it('should still merge adjacent same-delta ranges normally', () => {
     const ranges = [
-      Object.freeze({ startLine: 0, endLine: 5 , offsetDelta: 2 }),
-      Object.freeze({ startLine: 6, endLine: 10 , offsetDelta: 2 }),
+      Object.freeze({ kind: 'range' as const, startLine: 0, endLine: 5 , offsetDelta: 2 }),
+      Object.freeze({ kind: 'range' as const, startLine: 6, endLine: 10 , offsetDelta: 2 }),
     ];
 
     const merged = mergeDirtyRanges(ranges);
     expect(merged).toHaveLength(1);
-    expect(merged[0].startLine).toBe(0);
-    expect(merged[0].endLine).toBe(10);
+    expect(merged[0].kind).toBe('range');
+    const m0 = merged[0] as import('../../types/state.ts').DirtyLineRangeEntry;
+    expect(m0.startLine).toBe(0);
+    expect(m0.endLine).toBe(10);
   });
 
   it('reconcileFull should fully rebuild when range-cap collapse loses delta detail', () => {
@@ -577,6 +580,7 @@ describe('mergeDirtyRanges improvements', () => {
     const manyRanges = [];
     for (let i = 0; i < 40; i++) {
       manyRanges.push(Object.freeze({
+        kind: 'range' as const,
         startLine: i * 2,
         endLine: i * 2,
         offsetDelta: i % 2 === 0 ? 1 : -1,
@@ -584,9 +588,7 @@ describe('mergeDirtyRanges improvements', () => {
     }
     const collapsed = mergeDirtyRanges(manyRanges);
     expect(collapsed).toHaveLength(1);
-    expect(collapsed[0].startLine).toBe(0);
-    expect(collapsed[0].endLine).toBe(Number.MAX_SAFE_INTEGER);
-    expect(collapsed[0].offsetDelta).toBe(0);
+    expect(collapsed[0].kind).toBe('sentinel');
 
     const forcedDirty = withLineIndexState(dirty, {
       dirtyRanges: Object.freeze(collapsed),
@@ -724,7 +726,7 @@ describe('dirty range remapping — sequential edits', () => {
     // First lazy insert at line 300 → dirty range [301, MAX, ...]
     const off1 = getLineStartOffset(base.root, 300);
     const s1 = lineIndexInsertLazy(base, byteOffset(off1), 'NEW\n', 1);
-    expect(s1.dirtyRanges.some(r => r.startLine <= 301 && r.endLine >= 301)).toBe(true);
+    expect(s1.dirtyRanges.some(r => r.kind !== 'sentinel' && r.startLine <= 301 && r.endLine >= 301)).toBe(true);
 
     // Second lazy insert at line 50 (well before the existing dirty range)
     const off2 = getLineStartOffset(s1.root, 50);
@@ -888,12 +890,12 @@ describe('dirty range remapping — sequential edits', () => {
     const off1 = getLineStartOffset(base.root, 300);
     const s1 = lineIndexInsertLazy(base, byteOffset(off1), 'A\n', 1);
     // Every lazy insert creates a [startLine, MAX_SAFE_INTEGER, ...] dirty range
-    expect(s1.dirtyRanges.some(r => r.endLine === Number.MAX_SAFE_INTEGER)).toBe(true);
+    expect(s1.dirtyRanges.some(r => r.kind !== 'sentinel' && r.endLine === Number.MAX_SAFE_INTEGER)).toBe(true);
 
     // Insert before the dirty range — endLine must remain MAX_SAFE_INTEGER
     const off2 = getLineStartOffset(s1.root, 50);
     const s2 = lineIndexInsertLazy(s1, byteOffset(off2), 'B\n', 2);
-    expect(s2.dirtyRanges.some(r => r.endLine === Number.MAX_SAFE_INTEGER)).toBe(true);
+    expect(s2.dirtyRanges.some(r => r.kind !== 'sentinel' && r.endLine === Number.MAX_SAFE_INTEGER)).toBe(true);
 
     const eager = reconcileFull(s2, 3);
     expect(() => assertEagerOffsets(eager)).not.toThrow();
@@ -903,13 +905,13 @@ describe('dirty range remapping — sequential edits', () => {
     const base = makeDoc(LARGE);
     const off1 = getLineStartOffset(base.root, 300);
     const s1 = lineIndexInsertLazy(base, byteOffset(off1), 'A\n', 1);
-    expect(s1.dirtyRanges.some(r => r.endLine === Number.MAX_SAFE_INTEGER)).toBe(true);
+    expect(s1.dirtyRanges.some(r => r.kind !== 'sentinel' && r.endLine === Number.MAX_SAFE_INTEGER)).toBe(true);
 
     // Delete before the dirty range — endLine must remain MAX_SAFE_INTEGER
     const delStart = getLineStartOffset(s1.root, 50);
     const delEnd   = getLineStartOffset(s1.root, 51);
     const s2 = lineIndexDeleteLazy(s1, byteOffset(delStart), byteOffset(delEnd), 'x\n', 2);
-    expect(s2.dirtyRanges.some(r => r.endLine === Number.MAX_SAFE_INTEGER)).toBe(true);
+    expect(s2.dirtyRanges.some(r => r.kind !== 'sentinel' && r.endLine === Number.MAX_SAFE_INTEGER)).toBe(true);
 
     const eager = reconcileFull(s2, 3);
     expect(() => assertEagerOffsets(eager)).not.toThrow();
@@ -923,11 +925,11 @@ describe('dirty range remapping — sequential edits', () => {
   it('sentinel dirty range is preserved as-is through an insert remap', () => {
     const base = makeDoc(10); // small doc OK; reconcileFull detects sentinel → slow path
     const manyRanges = Array.from({ length: 40 }, (_, i) =>
-      Object.freeze({ startLine: i * 2, endLine: i * 2, offsetDelta: i % 2 === 0 ? 1 : -1 })
+      Object.freeze({ kind: 'range' as const, startLine: i * 2, endLine: i * 2, offsetDelta: i % 2 === 0 ? 1 : -1 })
     );
     const collapsed = mergeDirtyRanges(manyRanges);
     expect(collapsed).toHaveLength(1);
-    expect(collapsed[0].isSentinel).toBe(true);
+    expect(collapsed[0].kind).toBe('sentinel');
 
     const sentinelState = withLineIndexState(base, {
       dirtyRanges: Object.freeze(collapsed),
@@ -938,7 +940,7 @@ describe('dirty range remapping — sequential edits', () => {
     const after = lineIndexInsertLazy(sentinelState, byteOffset(off), 'X\n', 1);
 
     // After Fix 2: mergeDirtyRanges detects sentinel input → result is a sentinel
-    expect(after.dirtyRanges.some(r => r.isSentinel === true)).toBe(true);
+    expect(after.dirtyRanges.some(r => r.kind === 'sentinel')).toBe(true);
 
     // reconcileFull detects sentinel → slow path → correct offsets
     const eager = reconcileFull(after, 2);
@@ -948,7 +950,7 @@ describe('dirty range remapping — sequential edits', () => {
   it('sentinel dirty range is preserved as-is through a delete remap', () => {
     const base = makeDoc(10);
     const manyRanges = Array.from({ length: 40 }, (_, i) =>
-      Object.freeze({ startLine: i * 2, endLine: i * 2, offsetDelta: i % 2 === 0 ? 1 : -1 })
+      Object.freeze({ kind: 'range' as const, startLine: i * 2, endLine: i * 2, offsetDelta: i % 2 === 0 ? 1 : -1 })
     );
     const collapsed = mergeDirtyRanges(manyRanges);
     const sentinelState = withLineIndexState(base, {
@@ -961,7 +963,7 @@ describe('dirty range remapping — sequential edits', () => {
     const after = lineIndexDeleteLazy(sentinelState, byteOffset(delStart), byteOffset(delEnd), 'x\n', 1);
 
     // Sentinel must survive the delete remap + merge
-    expect(after.dirtyRanges.some(r => r.isSentinel === true)).toBe(true);
+    expect(after.dirtyRanges.some(r => r.kind === 'sentinel')).toBe(true);
 
     const eager = reconcileFull(after, 2);
     expect(() => assertEagerOffsets(eager)).not.toThrow();

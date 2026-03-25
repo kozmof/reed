@@ -128,20 +128,40 @@ export interface LineIndexNode<M extends EvaluationMode = EvaluationMode> extend
 }
 
 /**
- * Represents a range of lines with stale offset data.
+ * A concrete range of lines with stale offset data.
  * Used for lazy line index maintenance to defer expensive O(n) offset recalculations.
  */
-export interface DirtyLineRange {
+export interface DirtyLineRangeEntry {
+  readonly kind: 'range';
   /** First line affected (inclusive, 0-indexed) */
   readonly startLine: number;
   /** Last line affected (inclusive). Use Number.MAX_SAFE_INTEGER for "to end of document" */
   readonly endLine: number;
   /** Byte delta to apply to lines in this range */
   readonly offsetDelta: number;
-  /** True only on the synthetic full-document sentinel produced by mergeDirtyRanges
-   *  when the range count exceeds 32. Distinguishes it from a legitimate net-zero edit. */
-  readonly isSentinel?: true;
 }
+
+/**
+ * Sentinel value produced by mergeDirtyRanges when range count exceeds 32.
+ * Signals that delta information was lost and a full O(n) rebuild is required.
+ * Structurally distinct from any legitimate range — no spreading accident can
+ * silently drop or create a sentinel.
+ */
+export interface DirtyLineRangeSentinel {
+  readonly kind: 'sentinel';
+}
+
+/**
+ * Discriminated union for dirty line ranges.
+ * Use `range.kind` to distinguish between a concrete range and the full-rebuild sentinel.
+ *
+ * @example
+ * ```ts
+ * if (range.kind === 'sentinel') { triggerFullRebuild(); }
+ * else { applyDelta(range.startLine, range.endLine, range.offsetDelta); }
+ * ```
+ */
+export type DirtyLineRange = DirtyLineRangeEntry | DirtyLineRangeSentinel;
 
 /**
  * Sentinel value for DirtyLineRange.endLine meaning "to end of document".

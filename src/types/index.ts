@@ -18,6 +18,8 @@ export type {
   ReadTextFn,
   DeleteBoundaryContext,
   DirtyLineRange,
+  DirtyLineRangeEntry,
+  DirtyLineRangeSentinel,
   EndOfDocument,
   SelectionRange,
   CharSelectionRange,

@@ -1048,7 +1048,7 @@ describe('Editor Use Cases', () => {
       store.dispatch(DocumentActions.insert(byteOffset(0), 'A\nB'));
       expect(store.getSnapshot().lineIndex.rebuildPending).toBe(true);
 
-      expect(store.reconcileNow(stale)).toBeNull();
+      expect(store.reconcileIfCurrent(stale)).toBeNull();
     });
 
     it('should reconcile when the provided snapshot is current', () => {
@@ -1056,7 +1056,7 @@ describe('Editor Use Cases', () => {
       store.dispatch(DocumentActions.insert(byteOffset(0), 'A\nB'));
 
       const current = store.getSnapshot();
-      const reconciled = store.reconcileNow(current);
+      const reconciled = store.reconcileIfCurrent(current);
 
       expect(reconciled).not.toBeNull();
       expect(reconciled!.lineIndex.rebuildPending).toBe(false);

@@ -241,6 +241,7 @@ type DirtyLineRange =
 ```
 
 This eliminates the optional-flag ambiguity and makes exhaustiveness checking possible at usage sites.
+> **Fixed (2026-03-26):** Replaced `isSentinel?: true` with a proper discriminated union in `types/state.ts`: `DirtyLineRangeEntry { kind: 'range'; startLine; endLine; offsetDelta }` and `DirtyLineRangeSentinel { kind: 'sentinel' }`. All construction sites, narrowing guards, and tests updated. Both sub-types exported from `types/index.ts`.
 
 **PStack — size field lives on the node, not the stack**
 
@@ -262,6 +263,7 @@ interface EditOperation {
 ```
 
 The three variants (insert, delete, replace) are encoded by the presence/absence of `deleteEnd`. A discriminated union would express the semantics explicitly and eliminate the need for `op.deleteEnd !== undefined` guards at three points in `applyEdit`.
+> **Fixed (2026-03-26):** Replaced the optional-field `EditOperation` interface with a local discriminated union in `reducer.ts` (`kind: 'insert' | 'delete' | 'replace'`). All three `op.deleteEnd !== undefined` guards replaced with `op.kind !== 'insert'` / `switch (op.kind)`. Call sites updated with explicit `kind` field.
 
 ---
 
@@ -279,6 +281,7 @@ reconcileNow(snapshot: DocumentState): DocumentState<'eager'> | null;
 ```
 
 The two overloads encode different semantics: unconditional vs. snapshot-gated. The snapshot parameter could be a named option (`reconcileNow({ ifCurrentSnapshot?: DocumentState })`) to avoid overload ambiguity, or the gated form could be a separate method (`reconcileIfCurrent`).
+> **Fixed (2026-03-26):** Removed the overloaded form. `reconcileNow(): DocumentState<'eager'>` is the unconditional path; `reconcileIfCurrent(snapshot: DocumentState): DocumentState<'eager'> | null` is the new snapshot-gated method. Both added to `ReconcilableDocumentStore` in `types/store.ts`, implemented in `store/features/store.ts`, and passed through `createDocumentStoreWithEvents`. Unused `LineIndexState`/`EvaluationMode` imports removed from `types/store.ts`.
 
 **`QueryApi` (interfaces.ts) and `query` (query.ts) use `satisfies QueryApi`**
 
@@ -312,6 +315,7 @@ const reconciledLI = reconcileFull(state.lineIndex, version);
 ```
 
 This is called once per `change` in the entry's `changes` array. For multi-change history entries, this means `reconcileFull` is invoked for every change even though after the first call the index is already eager. The result of the first call should be threaded through subsequent calls in the loop.
+> **Fixed (2026-03-26):** Moved the `reconcileFull` call out of `applyChange` (which now asserts `asEagerLineIndex` as a precondition) and into `historyUndo`/`historyRedo`, each calling it once before the loop. `applyChange`/`applyInverseChange` now receive an already-eager line index and never re-reconcile mid-loop.
 
 ---
 
@@ -362,6 +366,7 @@ finally { notifying = false; }
 ```
 
 This avoids the allocation for the common case and still handles subscription mutations (by not acting on mid-iteration additions).
+> **Partially fixed (2026-03-26):** Added a `notifying` boolean re-entrancy guard (see 6.4). The `Array.from(listeners)` snapshot is kept alongside it — the two concerns are orthogonal: `notifying` blocks recursive entry, `Array.from` ensures listeners removed mid-notify are still called for the current cycle (tested by `should deliver to listeners registered at dispatch start even if removed mid-notify`). Removing `Array.from` in favour of direct Set iteration would require a different contract for mid-notify unsubscription.
 
 **`validateAction` in `actions.ts` and `isDocumentAction` duplicate the `switch(action.type)` structure**
 
@@ -370,19 +375,24 @@ Both functions enumerate all action types. `isDocumentAction` is a fast-path gua
 **`createLineIndexState` decodes UTF-8 substrings with `textDecoder.decode(bytes.subarray(...))` in a loop**
 
 For each line in the initial content, a `textDecoder.decode` call is made to compute `charLength`. For a document with N lines this is O(N) decode calls. Since the input is a JavaScript string, `charLength` could be computed directly on the string segments using string slicing (which already knows code-unit positions) instead of re-decoding from bytes.
+> **Fixed (2026-03-26):** Rewrote `createLineIndexState` in `store/core/state.ts` to use a parallel `charI` cursor alongside the byte scan. The cursor advances by 1 or 2 code units per code point (surrogate-pair detection via `cp > 0xFFFF`) in lockstep with the byte scan (1–4 byte steps per code point). `charLength` per line is `charI - lineCharStart` — no `textDecoder.decode` calls and no allocations. Removed the `textDecoder` import from `state.ts`.
 
 ---
 
 ## Summary Table
 
-| Area | Reliability | Key Gap |
-|------|-------------|---------|
-| Type-level cost algebra | High | `$declare` escape hatch is unchecked by design; misuse undetectable |
-| Lazy/eager duality | High | Mode constraint leaks at `withLineIndexNode` mutation site |
-| Piece table ops | High | No issues found |
-| `mergeDirtyRanges` | Medium | Sentinel encoding fragile; `exhausted` flag breaks invariant clarity |
-| `applyEdit` pipeline | Medium | `forceLineIndexRebuild` flag, non-composable phases |
-| Transaction management | High | `emergencyReset` unconditional listener notify could re-enter |
-| History (PStack) | High | Trim O(H) round-trip at limit boundary |
-| Event system | Medium | `batch` duplication; background reconcile skips `notifyListeners` |
-| Public API (query) | High | `lineIndex` sub-namespace outside `QueryApi` contract |
+| Area | Reliability | Key Gap | Status |
+|------|-------------|---------|--------|
+| Type-level cost algebra | High | `$declare` escape hatch is unchecked by design; misuse undetectable | Open |
+| Lazy/eager duality | High | Mode constraint leaks at `withLineIndexNode` mutation site | Fixed (7.1) |
+| Piece table ops | High | No issues found | — |
+| `mergeDirtyRanges` | High | Sentinel encoding fragile; `exhausted` flag breaks invariant clarity | Fixed (DirtyLineRange union) |
+| `applyEdit` pipeline | High | `forceLineIndexRebuild` flag, non-composable phases; `EditOperation` optional fields | Fixed (6.1, 6.2, Part 2) |
+| Undo/redo reconciliation | High | `reconcileFull` called once per change instead of once per entry | Fixed (Part 2) |
+| `reconcileNow` overload | High | Unconditional and snapshot-gated paths shared one name | Fixed (Part 2) |
+| Transaction management | High | `emergencyReset` unconditional listener notify could re-enter | Fixed (6.4) |
+| History (PStack) | High | Trim O(H) round-trip at limit boundary | Fixed (5.4) |
+| Event system | High | `batch` duplication; background reconcile skips `notifyListeners` | Fixed (5.6, 6.3) |
+| `notifyListeners` | High | Re-entrancy + mid-notify removal (orthogonal concerns) | Fixed (6.4, partial) |
+| `createLineIndexState` perf | High | O(N) `textDecoder.decode` calls for initial char-length scan | Fixed (Part 2) |
+| Public API (query) | High | `lineIndex` sub-namespace outside `QueryApi` contract | Open |
