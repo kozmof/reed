@@ -33,41 +33,51 @@ No benchmark harness for large-document edits, mixed line endings, or reconcilia
 
 ## Types & Interfaces
 
-### #004 — `SelectionState.primaryIndex` unconstrained
+### #004 — `SelectionState.primaryIndex` unconstrained *(fixed 2026-03-25)*
 
 `primaryIndex: number` can exceed `ranges.length` with no type or runtime protection. `ranges[primaryIndex]` fails silently. Ideally constrained to a non-empty array with a focus indicator that guarantees validity at the type level.
+
+**Fix:** Added `NonEmptyReadonlyArray<T> = readonly [T, ...T[]]` type alias. `SelectionState.ranges` changed from `readonly SelectionRange[]` to `NonEmptyReadonlyArray<SelectionRange>`. TypeScript now rejects empty-array construction at compile time. Full `primaryIndex < ranges.length` enforcement remains impossible at the type level; the empty-array footgun is eliminated.
 
 **Source:** Report 2, §5 P2 + §7 T1 (same issue)
 
 ---
 
-### #005 — `HistoryReplaceChange` asymmetric byte length tracking
+### #005 — `HistoryReplaceChange` asymmetric byte length tracking *(fixed 2026-03-25)*
 
 `HistoryInsertChange` and `HistoryDeleteChange` precompute `byteLength`. `HistoryReplaceChange` carries `oldText` but its byte length must be recomputed at undo time. Undo logic for `replace` cannot follow the same pattern as `insert`/`delete`.
+
+**Fix:** Added `oldByteLength: number` to `HistoryReplaceChange`. Populated at record-creation time in `applyEdit` (`op.deleteEnd - op.position`). `invertChange` now uses `change.oldByteLength` directly. `applyChange` uses it for `deleteEnd` instead of re-encoding `oldText`. The `textEncoder` import in `reducer.ts` was subsequently removed as unused.
 
 **Source:** Report 2, §7 T2
 
 ---
 
-### #006 — `DirtyLineRange.endLine` sentinel not type-enforced
+### #006 — `DirtyLineRange.endLine` sentinel not type-enforced *(fixed 2026-03-25)*
 
 `endLine: number` uses `Number.MAX_SAFE_INTEGER` to represent "rest of document." Any integer passes the type check; the sentinel is indistinguishable from a real line number. A type alias `type EndOfDocument = typeof Number.MAX_SAFE_INTEGER` or a tagged union would express the intent.
+
+**Fix:** Added `END_OF_DOCUMENT = Number.MAX_SAFE_INTEGER` constant and `EndOfDocument` type alias to `src/types/state.ts`, exported from `src/types/index.ts`. All six `endLine`-sentinel usages in `line-index.ts` replaced with `END_OF_DOCUMENT`. The sentinel is now a single named reference; textual search finds every site. (A full tagged-union approach was not taken as it would have required pervasive call-site changes for no additional runtime safety.)
 
 **Source:** Report 2, §5 P6 + §7 T3 (same issue)
 
 ---
 
-### #007 — `RBNode<T extends RBNode<T>>` over-permissive generic bound
+### #007 — `RBNode<T extends RBNode<T>>` over-permissive generic bound *(fixed 2026-03-25)*
 
 The F-bounded polymorphism is too loose: `PieceNode.left` could be assigned a `LineIndexNode` without a compile-time error in certain indirect generic contexts. Generic tree operations assume same-type children but cannot enforce it.
+
+**Fix:** Added `readonly _nodeKind: 'piece'` to `PieceNode` and `readonly _nodeKind: 'lineIndex'` to `LineIndexNode<M>`. Both factory functions (`createPieceNode`, `createLineIndexNode`) populate the field. The literal types make the two node kinds structurally distinct in all contexts, including indirect generic ones, without threading a second type parameter through `RBNode<T>` or `rb-tree.ts`.
 
 **Source:** Report 2, §7 T4
 
 ---
 
-### #008 — `BufferType` is not sealed against extension
+### #008 — `BufferType` is not sealed against extension *(fixed 2026-03-25)*
 
 `BufferReference` is a discriminated union, but `getPieceBuffer()` uses an `if/else` rather than an exhaustive `switch`. Adding a third buffer type would not cause a type error; the new case would silently fall through to `addBuffer`.
+
+**Fix:** `getBuffer`, `getBufferSlice`, and `getPieceBuffer` in `piece-table.ts` all converted to exhaustive `switch` statements. The `default` branch assigns the narrowed value to a `never`-typed variable, causing a compile error if a new `BufferType` variant is ever added without handling it.
 
 **Source:** Report 2, §7 T5
 
