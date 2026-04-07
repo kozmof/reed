@@ -16,7 +16,7 @@ import type {
 } from '../../types/state.ts';
 import { END_OF_DOCUMENT } from '../../types/state.ts';
 import { byteOffset, byteLength as toByteLengthBrand, type ByteOffset, type ByteLength } from '../../types/branded.ts';
-import type { ReadTextFn, DeleteBoundaryContext } from '../../types/state.ts';
+import type { ReadTextFn, DeleteBoundaryContext } from '../../types/operations.ts';
 import {
   $prove,
   $proveCtx,
@@ -149,6 +149,9 @@ function getInsertBoundaryContext(
 
   const pos = position;
 
+  // Reading pos-1 is safe here: only '\r' (0x0D, single-byte ASCII) is ever
+  // checked against prevChar, and ASCII bytes never appear as UTF-8 continuation
+  // bytes, so pos-1 is always a valid character boundary for our purposes.
   const prevChar = pos > 0
     ? readText(byteOffset(pos - 1), position)
     : '';
@@ -178,7 +181,7 @@ function rebuildFromReadText(
   readText: ReadTextFn,
   reconciledVersion: number
 ): LineIndexState {
-  const content = readText(byteOffset(0), byteOffset(Number.MAX_SAFE_INTEGER));
+  const content = readText(byteOffset(0), byteOffset(END_OF_DOCUMENT));
   const rebuilt = buildLineIndexFromText(content, 0);
   return withLineIndexState(state, {
     root: rebuilt.root,

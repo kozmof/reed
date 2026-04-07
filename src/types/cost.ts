@@ -295,7 +295,13 @@ export function $quadCostFn<Args extends readonly unknown[], R>(
 
 /**
  * Context value carrying only a compile-time cost.
- * `_cost` is phantom; no runtime overhead is introduced.
+ *
+ * @remarks
+ * `_cost` is a **phantom field** — it exists in the TypeScript type but is never
+ * initialized or read at runtime. All constructors (`$lift`, `$andThen`, `$map`,
+ * etc.) create objects with only `{ value }` and cast to `Ctx<C, T>`. This is
+ * intentional and safe as long as no code accesses `_cost` directly. The phantom
+ * field enables the type-level cost algebra without any runtime overhead.
  */
 export type Ctx<C extends Cost, T> = { readonly _cost: C; readonly value: T };
 

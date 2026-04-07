@@ -8,7 +8,7 @@ import type { DocumentState, LineIndexState, HistoryEntry, HistoryChange, Select
 import { pstackPush, pstackPeek, pstackPop, pstackTrimToSize } from '../../types/state.ts';
 import type { DocumentAction } from '../../types/actions.ts';
 import type { ByteOffset } from '../../types/branded.ts';
-import type { DeleteBoundaryContext, ReadTextFn } from '../../types/state.ts';
+import type { DeleteBoundaryContext, ReadTextFn } from '../../types/operations.ts';
 import { byteOffset, byteLength } from '../../types/branded.ts';
 import { withState } from '../core/state.ts';
 import {
@@ -52,9 +52,14 @@ function validateRange(
   end: number,
   totalLength: number
 ): { start: ByteOffset; end: ByteOffset; valid: boolean } {
-  // Inverted range is invalid (should be no-op)
+  // Inverted range is invalid (should be no-op). Clamp anyway so callers that
+  // accidentally use start/end without checking valid still get in-bounds values.
   if (start > end) {
-    return { start: byteOffset(start), end: byteOffset(end), valid: false };
+    return {
+      start: validatePosition(start, totalLength),
+      end: validatePosition(end, totalLength),
+      valid: false,
+    };
   }
 
   const validStart = validatePosition(start, totalLength);
@@ -286,7 +291,9 @@ function coalesceChanges(
       });
     }
     default:
-      return incoming;
+      // canCoalesce() only returns true for 'insert' and 'delete' changes, so
+      // 'replace' (the only remaining variant) should never reach here.
+      throw new Error(`coalesceChanges called with uncoalesceable change type: ${(incoming as HistoryChange).type}`);
   }
 }
 

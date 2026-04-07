@@ -203,42 +203,58 @@ return $proveCtx('O(log n)', $lift('O(log n)', { ... }));
 ```
 This is purely cosmetic plumbing with no runtime effect. It is easy to annotate an O(n) function as `O(log n)` since there is no enforcement — the noise ratio is high relative to signal.
 
-### P2 — `rebuildFromReadText` uses `Number.MAX_SAFE_INTEGER` as end offset
+### P2 — `rebuildFromReadText` uses `Number.MAX_SAFE_INTEGER` as end offset ✅ Fixed
 
 ```ts
+// Before
 const content = readText(byteOffset(0), byteOffset(Number.MAX_SAFE_INTEGER));
+// After
+const content = readText(byteOffset(0), byteOffset(END_OF_DOCUMENT));
 ```
-Works because `getText` internally clamps to `totalLength`, but any future `readText` implementation that does not clamp would read garbage. Using the actual document length is safer.
+Replaced the raw `Number.MAX_SAFE_INTEGER` literal with the named `END_OF_DOCUMENT` constant already defined in `types/state.ts`. Makes intent explicit and consistent with every other "to end of document" usage in the codebase.
 
-### P3 — `getInsertBoundaryContext` reads one byte before position
+### P3 — `getInsertBoundaryContext` reads one byte before position ✅ Fixed
 
 ```ts
 const prevChar = pos > 0
   ? readText(byteOffset(pos - 1), position)
   : '';
 ```
-Assumes `pos - 1` is a valid character boundary. For multi-byte UTF-8 sequences this is theoretically incorrect, though practically safe since only `\r` (0x0D, single byte) is checked.
+Assumes `pos - 1` is a valid character boundary. For multi-byte UTF-8 sequences this is theoretically incorrect, though practically safe since only `\r` (0x0D, single byte) is checked. Added a comment at the call site (`line-index.ts`) documenting the invariant explicitly so future readers do not need to rediscover it.
 
-### P4 — `validateRange` returns unclamped values on invalid range
+### P4 — `validateRange` returns unclamped values on invalid range ✅ Fixed
 
 ```ts
+// Before
 if (start > end) {
   return { start: byteOffset(start), end: byteOffset(end), valid: false };
 }
+// After
+if (start > end) {
+  return {
+    start: validatePosition(start, totalLength),
+    end: validatePosition(end, totalLength),
+    valid: false,
+  };
+}
 ```
-The caller checks `valid` and skips the operation. But if any caller used `start`/`end` from an invalid range while ignoring `valid`, they would receive out-of-bounds offsets. A defensive design would clamp unconditionally.
+Both `start` and `end` are now clamped through `validatePosition` even when the range is invalid, so callers that accidentally use the values without checking `valid` still receive in-bounds offsets.
 
-### P5 — `coalesceChanges` default arm is unreachable dead code
+### P5 — `coalesceChanges` default arm is unreachable dead code ✅ Fixed
 
 ```ts
+// Before
 default:
   return incoming;  // 'replace' changes are not coalesced
+// After
+default:
+  throw new Error(`coalesceChanges called with uncoalesceable change type: ${(incoming as HistoryChange).type}`);
 ```
-`canCoalesce` guards against mismatched types before this is ever reached. No bug, but dead code.
+Changed to a `throw`. The invariant (`canCoalesce` never passes a `replace` change here) is now enforced at runtime rather than silently returning a potentially wrong result if it is ever violated.
 
-### P6 — `Ctx<C, T>` phantom `_cost` field is a structural lie
+### P6 — `Ctx<C, T>` phantom `_cost` field is a structural lie ✅ Fixed
 
-`Ctx<C, T>` declares `readonly _cost: C` in the type, but runtime objects are created with only `{ value }`. TypeScript does not enforce that declared properties exist at runtime for plain object casts. Currently safe since `_cost` is never accessed, but should be documented explicitly.
+Added a `@remarks` block to the `Ctx<C, T>` type in `types/cost.ts` explicitly documenting that `_cost` is phantom — never initialized or read at runtime — and why that is intentional and safe. The type declaration is unchanged.
 
 ---
 
@@ -270,12 +286,19 @@ The `lineEnding` metadata records the document's intended line ending, but `line
 
 ## 7. Improvement Points: Types and Interfaces
 
-### T1 — `LineIndexState<M>` conditional types do not propagate in practice
+### T1 — `LineIndexState<M>` conditional types do not propagate in practice ✅ Fixed
 
 ```ts
 readonly dirtyRanges: M extends 'eager' ? readonly [] : readonly DirtyLineRange[];
 ```
-Most functions accept the union default `LineIndexState` (no `M` parameter), losing the eager constraint. Named aliases `EagerLineIndexState` and `LazyLineIndexState` with explicit conversion functions would make mode changes visible at call sites.
+Most functions accept the union default `LineIndexState` (no `M` parameter), losing the eager constraint. Added named aliases to `types/state.ts` and exported them from `types/index.ts`:
+
+```ts
+export type EagerLineIndexState = LineIndexState<'eager'>;
+export type LazyLineIndexState  = LineIndexState<'lazy'>;
+```
+
+Call sites can now use these names to make mode transitions visible and get precise narrowing without writing out the conditional type inline.
 
 ### T2 — `HistoryChange.byteLength` invariant is unprotected
 
@@ -289,16 +312,25 @@ interface HistoryInsertChange {
 
 **Alternative:** Compute `byteLength` lazily on demand, or validate on construction via a factory function.
 
-### T3 — `ReadTextFn` and `DeleteBoundaryContext` are operational parameters, not state shapes
+### T3 — `ReadTextFn` and `DeleteBoundaryContext` are operational parameters, not state shapes ✅ Fixed
 
-These types live in `types/state.ts` alongside `PieceTableState` and `HistoryState`, blurring the purpose of that file. They should move to a `types/operations.ts` or be co-located with the functions that consume them.
+Moved both types out of `types/state.ts` into a new `types/operations.ts`:
 
-### T4 — `NonEmptyReadonlyArray<T>` is a general utility defined in one specific location
-
-```ts
-export type NonEmptyReadonlyArray<T> = readonly [T, ...T[]];
 ```
-Currently only used in `SelectionState.ranges`. Could be extracted to `types/utils.ts` for broader reuse.
+src/types/operations.ts   ← ReadTextFn, DeleteBoundaryContext (new file)
+```
+
+`types/state.ts` re-exports them for backwards compatibility. `store/core/line-index.ts` and `store/features/reducer.ts` import directly from `types/operations.ts`. `types/index.ts` re-exports from the new file.
+
+### T4 — `NonEmptyReadonlyArray<T>` is a general utility defined in one specific location ✅ Fixed
+
+Moved to a new `types/utils.ts`:
+
+```
+src/types/utils.ts   ← NonEmptyReadonlyArray<T> (new file)
+```
+
+`types/state.ts` re-exports it for backwards compatibility. `types/index.ts` re-exports from the new file.
 
 ---
 
@@ -318,18 +350,19 @@ for (let i = 0; i < text.length; i++) {
 ```
 Note: computing `byteLength` still requires a UTF-8 encode, but it can be separated from the newline scan.
 
-### Impl2 — `pstackToArray` does two passes (push + reverse)
+### Impl2 — `pstackToArray` does two passes (push + reverse) ✅ Fixed
 
 ```ts
+// Before: two passes
 arr.push(cur.top);  // fill newest-first
 arr.reverse();      // then flip
-```
-Pre-allocating with `new Array(size)` and filling in reverse index order eliminates the reverse pass:
-```ts
+
+// After: single pass
 const arr = new Array<T>(s?.size ?? 0);
 let i = arr.length - 1;
 while (cur !== null) { arr[i--] = cur.top; cur = cur.rest; }
 ```
+Pre-allocates using the `size` field already stored on each `PStackCons` node and fills from the end in one pass, eliminating the O(n) reversal.
 
 ### Impl3 — `withTransactionBatch` success-flag ordering is subtle
 
@@ -399,8 +432,22 @@ These are the most complex functions in the codebase. Extracting them into `stor
 | Category | Finding |
 |---|---|
 | **Strengths** | Immutable persistent structures; `PStack<T>` with brand-protected construction; `DirtyLineRange` discriminated union; `LineIndexStrategy` abstraction; cost algebra as living documentation |
-| **Top design concern** | Undo/redo forces O(n) reconciliation per operation |
-| **Top type concern** | `HistoryChange.byteLength` invariant unprotected at construction |
-| **Top impl concern** | `Uint8Array` allocation in `findNewlineBytePositions` on every insert |
-| **Largest file** | `src/store/core/line-index.ts` (2251 lines) — candidate for extraction |
+| **Top design concern** | Undo/redo forces O(n) reconciliation per operation (I1, open) |
+| **Top type concern** | `HistoryChange.byteLength` invariant unprotected at construction (T2, open) |
+| **Top impl concern** | `Uint8Array` allocation in `findNewlineBytePositions` on every insert (Impl1, open) |
+| **Largest file** | `src/store/core/line-index.ts` (2251 lines) — candidate for extraction (Impl4, open) |
 | **Most complex function** | `mergeDirtyRanges` — correct but requires careful invariant maintenance |
+
+### Fixed (2026-04-07)
+
+| ID | Summary |
+|---|---|
+| P2 | `rebuildFromReadText`: use `END_OF_DOCUMENT` constant instead of raw `Number.MAX_SAFE_INTEGER` |
+| P3 | `getInsertBoundaryContext`: document why `pos - 1` byte read is safe for ASCII-only check |
+| P4 | `validateRange`: clamp start/end through `validatePosition` even when returning `valid: false` |
+| P5 | `coalesceChanges`: replace silent dead `default: return incoming` with a `throw` |
+| P6 | `Ctx<C, T>`: add `@remarks` documenting `_cost` as intentional phantom field |
+| T1 | Add `EagerLineIndexState` and `LazyLineIndexState` named aliases; export from `types/index.ts` |
+| T3 | Move `ReadTextFn` and `DeleteBoundaryContext` to new `types/operations.ts` |
+| T4 | Move `NonEmptyReadonlyArray<T>` to new `types/utils.ts` |
+| Impl2 | `pstackToArray`: pre-allocate and fill in one pass, eliminating the `arr.reverse()` |

@@ -14,16 +14,15 @@ export type {
   PieceTableState,
   LineIndexNode,
   LineIndexState,
+  EagerLineIndexState,
+  LazyLineIndexState,
   EvaluationMode,
-  ReadTextFn,
-  DeleteBoundaryContext,
   DirtyLineRange,
   DirtyLineRangeEntry,
   DirtyLineRangeSentinel,
   EndOfDocument,
   SelectionRange,
   CharSelectionRange,
-  NonEmptyReadonlyArray,
   SelectionState,
   HistoryInsertChange,
   HistoryDeleteChange,
@@ -36,6 +35,9 @@ export type {
   DocumentState,
   DocumentStoreConfig,
 } from './state.ts';
+
+export type { NonEmptyReadonlyArray } from './utils.ts';
+export type { ReadTextFn, DeleteBoundaryContext } from './operations.ts';
 
 export {
   END_OF_DOCUMENT,

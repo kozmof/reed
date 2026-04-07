@@ -5,6 +5,11 @@
 
 import type { ByteOffset, ByteLength, CharOffset } from './branded.ts';
 import type { GrowableBuffer } from '../store/core/growable-buffer.ts';
+import type { NonEmptyReadonlyArray } from './utils.ts';
+import type { ReadTextFn, DeleteBoundaryContext } from './operations.ts';
+
+export type { NonEmptyReadonlyArray } from './utils.ts';
+export type { ReadTextFn, DeleteBoundaryContext } from './operations.ts';
 
 // =============================================================================
 // Piece Table Types
@@ -175,24 +180,6 @@ export type EndOfDocument = typeof END_OF_DOCUMENT;
 export type EvaluationMode = 'eager' | 'lazy';
 
 /**
- * Callback to read text from the piece table.
- * Used by line index operations to compute char lengths during line splits.
- * Declared here (rather than types/store.ts) because it is an operational
- * parameter of line-index functions, not a store interface type.
- */
-export type ReadTextFn = (start: ByteOffset, end: ByteOffset) => string;
-
-/**
- * Optional context around a delete range for accurate mixed line-ending handling.
- * Needed for partial CRLF edits (deleting only '\r' or only '\n').
- * Declared here alongside LineIndexState because it is consumed by line-index operations.
- */
-export interface DeleteBoundaryContext {
-  prevChar?: string;
-  nextChar?: string;
-}
-
-/**
  * Immutable line index state, parameterized by evaluation mode.
  * When `M` is `'eager'`, dirty ranges are guaranteed empty and rebuild is not pending.
  * When `M` is `'lazy'`, dirty ranges may exist and rebuild may be pending.
@@ -210,6 +197,18 @@ export interface LineIndexState<M extends EvaluationMode = EvaluationMode> {
   /** Whether a background rebuild is pending */
   readonly rebuildPending: M extends 'eager' ? false : boolean;
 }
+
+/**
+ * Fully-resolved line index state: no dirty ranges, no pending rebuild.
+ * Use this instead of `LineIndexState<'eager'>` to make mode changes visible at call sites.
+ */
+export type EagerLineIndexState = LineIndexState<'eager'>;
+
+/**
+ * Lazily-maintained line index state: may have dirty ranges and a pending rebuild.
+ * Use this instead of `LineIndexState<'lazy'>` to make mode changes visible at call sites.
+ */
+export type LazyLineIndexState = LineIndexState<'lazy'>;
 
 // =============================================================================
 // Selection Types
@@ -236,12 +235,6 @@ export interface CharSelectionRange {
   readonly anchor: CharOffset;
   readonly head: CharOffset;
 }
-
-/**
- * Non-empty readonly array — guarantees at least one element.
- * Used for SelectionState.ranges so that primaryIndex: 0 is always valid.
- */
-export type NonEmptyReadonlyArray<T> = readonly [T, ...T[]];
 
 /**
  * Immutable selection state supporting multiple cursors.
@@ -343,10 +336,10 @@ export const pstackPeek = <T>(s: PStack<T>): T | undefined => s?.top;
 export const pstackPop = <T>(s: NonNullable<PStack<T>>): [T, PStack<T>] => [s.top, s.rest];
 export const pstackSize = <T>(s: PStack<T>): number => s?.size ?? 0;
 export const pstackToArray = <T>(s: PStack<T>): T[] => {
-  const arr: T[] = [];
+  const arr = new Array<T>(s?.size ?? 0);
+  let i = arr.length - 1;
   let cur = s;
-  while (cur !== null) { arr.push(cur.top); cur = cur.rest; }
-  arr.reverse();
+  while (cur !== null) { arr[i--] = cur.top; cur = cur.rest; }
   return arr;
 };
 export const pstackFromArray = <T>(arr: readonly T[]): PStack<T> =>
