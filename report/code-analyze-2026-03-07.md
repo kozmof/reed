@@ -220,7 +220,7 @@ dispatch(action)
 | Follow an edit end-to-end | `store/features/reducer.ts` `applyEdit` → `piece-table.ts` `pieceTableInsert` → `line-index.ts` `lineIndexInsertLazy` |
 | Understand lazy reconciliation | `types/state.ts` `DirtyLineRange` + `line-index.ts` `mergeDirtyRanges` + `reconcileFull` |
 | Understand undo/redo | `reducer.ts` `historyUndo` / `historyRedo` + `invertChange` + `applyChange` |
-| Understand cost branding | `types/cost.ts` `$prove` / `$declare` / `$pipe` / `Ctx<C, T>` |
+| Understand cost branding | `types/cost-doc.ts` `$prove` / `$declare` / `$pipe` / `Ctx<C, T>` |
 | Understand the store contract | `types/store.ts` `DocumentStore` → `ReconcilableDocumentStore` → `DocumentStoreWithEvents` |
 | Understand the public API | `api/query.ts` `query.*` satisfying `QueryApi` |
 

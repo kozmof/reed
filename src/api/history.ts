@@ -2,7 +2,7 @@
  * History namespace — undo/redo state queries.
  */
 
-import { $constCostFn } from '../types/cost.ts';
+import { $constCostFn } from '../types/cost-doc.ts';
 import {
   canUndo,
   canRedo,

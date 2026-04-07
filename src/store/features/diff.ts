@@ -21,7 +21,7 @@ import {
   $map,
   type LinearCost,
   type QuadCost,
-} from '../../types/cost.ts';
+} from '../../types/cost-doc.ts';
 
 // =============================================================================
 // Types

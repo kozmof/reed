@@ -77,7 +77,7 @@ PStack<T> = null | { top: T, rest: PStack<T>, size: number, [_pstackBrand]: true
 ```
 The brand is a non-exported `unique symbol`, preventing external construction. The only constructors are the exported helpers (`pstackPush`, etc.).
 
-### Cost Algebra (`types/cost.ts`)
+### Cost Algebra (`types/cost-doc.ts`)
 ```
 Cost = { p: Nat, l: Nat }  (O(n^p * log^l n))
 Costed<Level, T> = T & { [costLevel]: LevelsUpTo<Level> }
@@ -254,7 +254,7 @@ Changed to a `throw`. The invariant (`canCoalesce` never passes a `replace` chan
 
 ### P6 — `Ctx<C, T>` phantom `_cost` field is a structural lie ✅ Fixed
 
-Added a `@remarks` block to the `Ctx<C, T>` type in `types/cost.ts` explicitly documenting that `_cost` is phantom — never initialized or read at runtime — and why that is intentional and safe. The type declaration is unchanged.
+Added a `@remarks` block to the `Ctx<C, T>` type in `types/cost-doc.ts` explicitly documenting that `_cost` is phantom — never initialized or read at runtime — and why that is intentional and safe. The type declaration is unchanged.
 
 ---
 
@@ -421,7 +421,7 @@ These are the most complex functions in the codebase. Extracting them into `stor
 ### Path 6: Understanding the cost algebra
 **Goal:** Understand what `$prove`, `$lift`, `$andThen` mean and why they exist.
 
-1. `src/types/cost.ts` — Full read. Start from `Cost`, `CostLabel`, `Costed<L,T>`, then the combinators.
+1. `src/types/cost-doc.ts` — Full read. Start from `Cost`, `CostLabel`, `Costed<L,T>`, then the combinators.
 2. `src/store/core/line-index.ts` lines 216–260 — `$proveCtx` and `$lift` in `findLineAtPosition`. Typical usage pattern.
 3. Key insight: these are **documentation annotations, not runtime contracts**. The combinators check internal consistency of claimed costs at the type level but cannot detect false claims.
 

@@ -8,7 +8,7 @@
  *   export const query = { ... } satisfies QueryApi;
  */
 
-import type { ConstCost, LogCost, LinearCost } from '../types/cost.ts';
+import type { ConstCost, LogCost, LinearCost } from '../types/cost-doc.ts';
 import type { DocumentState, HistoryState, LineIndexState, LineIndexNode, PieceTableState, PieceNode } from '../types/state.ts';
 import type { ByteOffset, ByteLength } from '../types/branded.ts';
 import type { LineLocation } from '../store/core/line-index.ts';

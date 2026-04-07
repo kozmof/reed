@@ -126,7 +126,7 @@ export type {
   LinearCost,
   NLogNCost,
   QuadCost,
-} from './cost.ts';
+} from './cost-doc.ts';
 
 export {
   byteOffset,
@@ -173,4 +173,4 @@ export {
   $linearScan,
   $forEachN,
   $mapN,
-} from './cost.ts';
+} from './cost-doc.ts';

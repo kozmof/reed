@@ -3,7 +3,7 @@
  * All operations return new tree structures with structural sharing.
  *
  * Cost typing policy: use explicit boundaries (`$declare`, `$prove`, `$proveCtx`)
- * for compute regions (see `src/types/cost.ts`).
+ * for compute regions (see `src/types/cost-doc.ts`).
  */
 
 import type {
@@ -25,7 +25,7 @@ import {
   type ConstCost,
   type LogCost,
   type LinearCost,
-} from '../../types/cost.ts';
+} from '../../types/cost-doc.ts';
 import { createPieceNode, withPieceNode } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry, type RootToLeafInsertPath } from './rb-tree.ts';
 import { textEncoder, textDecoder } from './encoding.ts';

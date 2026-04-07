@@ -179,7 +179,7 @@ Undo is `applyChange(invertChange(change))` — symmetry by construction, no dup
 
 ## XII. Cost Algebra — Phantom Branding with Type-Level Arithmetic
 
-`src/types/cost.ts` (478 lines) uses pure phantom types — zero runtime cost:
+`src/types/cost-doc.ts` (478 lines) uses pure phantom types — zero runtime cost:
 
 **`Cost = { p: Nat, l: Nat }`** — represents O(n^p log^l n). `Nat` saturates at 3 for tractability.
 

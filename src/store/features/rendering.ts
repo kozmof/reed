@@ -18,7 +18,7 @@ import {
   type ConstCost,
   type CostFn,
   type LinearCost,
-} from '../../types/cost.ts';
+} from '../../types/cost-doc.ts';
 import { findLineAtPosition, getCharStartOffset, findLineAtCharPosition, getLineRangePrecise, getLineCountFromIndex } from '../core/line-index.ts';
 import { getText, charToByteOffset } from '../core/piece-table.ts';
 import { textEncoder } from '../core/encoding.ts';

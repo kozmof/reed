@@ -21,4 +21,4 @@ export { rendering } from './rendering.ts';
 export { history } from './history.ts';
 export { diff } from './diff.ts';
 export { position } from './position.ts';
-export { cost } from './cost.ts';
+export { cost } from './cost-doc.ts';

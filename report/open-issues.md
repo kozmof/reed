@@ -191,7 +191,7 @@ Not fixing: coordinating invalidation across every lazy tree mutation (`insertLi
 
 `$lift('O(1)', value)` and `$prove` accept any value without measuring cost. Any contributor can annotate an O(n) operation as `O(1)` and the type system will not object. The cost algebra is documentation, not a contract.
 
-**Fix:** Added an explicit module-level `@remarks` block to `src/types/cost.ts` stating that cost labels are documentation annotations, not runtime or compile-time contracts. Added matching `@remarks` to `$prove`, `$proveCtx`, and `$lift` clarifying that the `max`/`_level` parameters are consumed only by the type system and do not constrain or measure actual runtime performance. The false promise is now an honest disclaimer; contributors reading the API surface will encounter the caveat at every boundary function.
+**Fix:** Added an explicit module-level `@remarks` block to `src/types/cost-doc.ts` stating that cost labels are documentation annotations, not runtime or compile-time contracts. Added matching `@remarks` to `$prove`, `$proveCtx`, and `$lift` clarifying that the `max`/`_level` parameters are consumed only by the type system and do not constrain or measure actual runtime performance. The false promise is now an honest disclaimer; contributors reading the API surface will encounter the caveat at every boundary function.
 
 **Source:** Report 2, §5 P3
 

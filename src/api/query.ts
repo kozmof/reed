@@ -6,7 +6,7 @@
 
 import type { DocumentState } from '../types/state.ts';
 import type { ByteOffset } from '../types/branded.ts';
-import { $constCostFn } from '../types/cost.ts';
+import { $constCostFn } from '../types/cost-doc.ts';
 import {
   getText,
   getLength,

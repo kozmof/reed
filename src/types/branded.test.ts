@@ -46,7 +46,7 @@ import {
   type CostFn,
   type LogCost,
   type LinearCost,
-} from './cost.ts';
+} from './cost-doc.ts';
 
 describe('Branded Types', () => {
   describe('constructor functions', () => {

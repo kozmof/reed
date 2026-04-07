@@ -4,7 +4,7 @@
  * Use `query.*` for efficient lookups when possible.
  */
 
-import { $linearCostFn } from '../types/cost.ts';
+import { $linearCostFn } from '../types/cost-doc.ts';
 import {
   getValue,
   getValueStream,
