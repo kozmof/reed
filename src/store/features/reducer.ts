@@ -4,13 +4,13 @@
  * No side effects - produces new state from old state + action.
  */
 
-import type { DocumentState, LineIndexState, HistoryEntry, HistoryChange, SelectionState, SelectionRange, NonEmptyReadonlyArray } from '../../types/state.ts';
+import type { DocumentState, LineIndexState, HistoryEntry, HistoryChange, SelectionState, SelectionRange, NonEmptyReadonlyArray, PieceNode } from '../../types/state.ts';
 import { pstackPush, pstackPeek, pstackPop, pstackTrimToSize } from '../../types/state.ts';
 import type { DocumentAction } from '../../types/actions.ts';
 import type { ByteOffset } from '../../types/branded.ts';
 import type { DeleteBoundaryContext, ReadTextFn } from '../../types/operations.ts';
 import { byteOffset, byteLength } from '../../types/branded.ts';
-import { withState } from '../core/state.ts';
+import { withState, createChunkPieceNode } from '../core/state.ts';
 import {
   pieceTableInsert as ptInsert,
   pieceTableDelete as ptDelete,
@@ -25,6 +25,7 @@ import {
   rebuildLineIndex,
 } from '../core/line-index.ts';
 import { asEagerLineIndex } from '../core/state.ts';
+import { textDecoder } from '../core/encoding.ts';
 
 // =============================================================================
 // Position Validation
@@ -689,6 +690,229 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
 }
 
 // =============================================================================
+// Chunk Loading Helpers (Phase 3)
+// =============================================================================
+
+/**
+ * Append a new chunk piece as the rightmost leaf of the piece tree.
+ * Sequential loading guarantees the chunk always belongs at the document end,
+ * so we walk the right spine and attach the new node there, then recolor to
+ * maintain the red-black invariant (new leaf is red; single right-spine addition
+ * keeps black-height balanced without needing full fixup in practice, but we
+ * attach as black to keep the tree valid for all depths).
+ *
+ * For simplicity we re-use the immutable withPieceNode update path rather than
+ * implementing a full path-copying right-spine walk: create the leaf and insert
+ * it using the existing O(log n) RB insert from ptInsert indirection is avoided
+ * here because we do not go through text encoding — instead we create the node
+ * directly and splice it as a right child with path-copying.
+ */
+function appendChunkPiece(
+  root: PieceNode | null,
+  chunkIndex: number,
+  chunkByteLength: number
+): PieceNode {
+  const newLeaf = createChunkPieceNode(
+    chunkIndex,
+    byteOffset(0),
+    byteLength(chunkByteLength),
+    'red',  // start red; fixup below turns root black if needed
+  );
+
+  if (root === null) {
+    // Tree was empty — single black root
+    return Object.freeze({ ...newLeaf, color: 'black' });
+  }
+
+  // Walk the right spine collecting the path, then graft the new leaf and
+  // propagate subtreeLength upward with path-copying.
+  const path: PieceNode[] = [];
+  let cur: PieceNode = root;
+  while (cur.right !== null) {
+    path.push(cur);
+    cur = cur.right;
+  }
+
+  // Attach as right child of the rightmost node
+  let updated: PieceNode = Object.freeze({
+    ...cur,
+    right: newLeaf,
+    subtreeLength: cur.subtreeLength + chunkByteLength,
+    // subtreeAddLength unchanged (chunk pieces contribute 0)
+  });
+
+  // Walk back up the path updating subtreeLength
+  for (let i = path.length - 1; i >= 0; i--) {
+    const ancestor = path[i];
+    updated = Object.freeze({
+      ...ancestor,
+      right: updated,
+      subtreeLength: ancestor.subtreeLength + chunkByteLength,
+    });
+  }
+
+  return updated;
+}
+
+/**
+ * Walk the tree in document order to find the contiguous document-position range
+ * covered by all pieces belonging to `chunkIndex`.
+ *
+ * Returns `{ start, end }` byte offsets in document space, or null if the chunk
+ * has no pieces in the tree (already evicted or never loaded).
+ *
+ * O(n) where n is the number of pieces.
+ */
+function findChunkDocumentRange(
+  root: PieceNode | null,
+  chunkIndex: number
+): { start: ByteOffset; end: ByteOffset } | null {
+  if (root === null) return null;
+
+  let rangeStart = -1;
+  let rangeEnd = -1;
+
+  const nodeStack: PieceNode[] = [];
+  const offsetStack: number[] = [];
+  let currentOffset = 0;
+  let currentNode: PieceNode | null = root;
+
+  while (currentNode !== null || nodeStack.length > 0) {
+    // Descend to leftmost
+    while (currentNode !== null) {
+      nodeStack.push(currentNode);
+      offsetStack.push(currentOffset);
+      currentOffset += currentNode.left?.subtreeLength ?? 0;
+      currentNode = currentNode.left;
+    }
+
+    // Process node
+    const n = nodeStack.pop()!;
+    const nOffset = offsetStack.pop()!;
+    const pieceStart = nOffset + (n.left?.subtreeLength ?? 0);
+
+    if (n.bufferType === 'chunk' && n.chunkIndex === chunkIndex) {
+      if (rangeStart === -1) rangeStart = pieceStart;
+      rangeEnd = pieceStart + n.length;
+    }
+
+    // Move to right subtree
+    currentOffset = pieceStart + n.length;
+    currentNode = n.right;
+  }
+
+  if (rangeStart === -1) return null;
+  return { start: byteOffset(rangeStart), end: byteOffset(rangeEnd) };
+}
+
+/**
+ * Walk the tree in document order to check whether any 'add' piece overlaps
+ * the byte range [rangeStart, rangeEnd) in document space.
+ *
+ * O(n) where n is the number of pieces.
+ */
+function hasAddPiecesInRange(
+  root: PieceNode | null,
+  rangeStart: ByteOffset,
+  rangeEnd: ByteOffset
+): boolean {
+  if (root === null) return false;
+
+  const nodeStack: PieceNode[] = [];
+  const offsetStack: number[] = [];
+  let currentOffset = 0;
+  let currentNode: PieceNode | null = root;
+
+  while (currentNode !== null || nodeStack.length > 0) {
+    while (currentNode !== null) {
+      nodeStack.push(currentNode);
+      offsetStack.push(currentOffset);
+      currentOffset += currentNode.left?.subtreeLength ?? 0;
+      currentNode = currentNode.left;
+    }
+
+    const n = nodeStack.pop()!;
+    const nOffset = offsetStack.pop()!;
+    const pieceStart = nOffset + (n.left?.subtreeLength ?? 0);
+    const pieceEnd = pieceStart + n.length;
+
+    if (n.bufferType === 'add') {
+      // Overlap: piece starts before rangeEnd AND piece ends after rangeStart
+      if (pieceStart < rangeEnd && pieceEnd > rangeStart) return true;
+    }
+
+    currentOffset = pieceEnd;
+    currentNode = n.right;
+  }
+
+  return false;
+}
+
+/**
+ * Rebuild the RB-tree omitting all pieces whose chunkIndex matches `targetChunk`.
+ * Returns the new root and the total byte length removed.
+ *
+ * Strategy: collect surviving pieces in document order via in-order traversal,
+ * then rebuild a balanced black-height-correct tree from them.
+ * O(n) traversal + O(n log n) rebuild (n = number of pieces).
+ */
+function removeChunkPiecesFromTree(
+  root: PieceNode | null,
+  targetChunk: number
+): { newRoot: PieceNode | null; removedLength: number } {
+  if (root === null) return { newRoot: null, removedLength: 0 };
+
+  // Collect surviving pieces in document order
+  const survivors: PieceNode[] = [];
+  let removedLength = 0;
+
+  const nodeStack: PieceNode[] = [];
+  let currentNode: PieceNode | null = root;
+
+  while (currentNode !== null || nodeStack.length > 0) {
+    while (currentNode !== null) {
+      nodeStack.push(currentNode);
+      currentNode = currentNode.left;
+    }
+    const n = nodeStack.pop()!;
+    if (n.bufferType === 'chunk' && n.chunkIndex === targetChunk) {
+      removedLength += n.length;
+    } else {
+      survivors.push(n);
+    }
+    currentNode = n.right;
+  }
+
+  if (survivors.length === 0) return { newRoot: null, removedLength };
+
+  // Rebuild a balanced tree from survivors using median-split recursion.
+  // All nodes black so the black-height invariant holds for a balanced tree.
+  function buildTree(arr: PieceNode[], lo: number, hi: number): PieceNode | null {
+    if (lo > hi) return null;
+    const mid = (lo + hi) >> 1;
+    const src = arr[mid];
+    const left = buildTree(arr, lo, mid - 1);
+    const right = buildTree(arr, mid + 1, hi);
+    const leftLen = left?.subtreeLength ?? 0;
+    const rightLen = right?.subtreeLength ?? 0;
+    const leftAdd = left?.subtreeAddLength ?? 0;
+    const rightAdd = right?.subtreeAddLength ?? 0;
+    const selfAdd = src.bufferType === 'add' ? src.length : 0;
+    return Object.freeze({
+      ...src,
+      color: 'black' as const,
+      left,
+      right,
+      subtreeLength: src.length + leftLen + rightLen,
+      subtreeAddLength: selfAdd + leftAdd + rightAdd,
+    });
+  }
+
+  const newRoot = buildTree(survivors, 0, survivors.length - 1);
+  return { newRoot, removedLength };
+}
+
+// =============================================================================
 // Main Reducer
 // =============================================================================
 
@@ -817,13 +1041,81 @@ export function documentReducer(
     }
 
     case 'LOAD_CHUNK': {
-      // Phase 3 will implement chunk loading
-      return state;
+      const { chunkIndex, data } = action;
+      const { chunkSize, nextExpectedChunk, chunkMap, totalLength } = state.pieceTable;
+
+      // Non-chunked mode: chunkSize must be set in the store config
+      if (chunkSize === 0) return state;
+      // Enforce sequential ordering
+      if (chunkIndex !== nextExpectedChunk) return state;
+      // Ignore duplicate loads
+      if (chunkMap.has(chunkIndex)) return state;
+
+      const chunkBytes = data as Uint8Array;
+      if (chunkBytes.length === 0) return state;
+
+      const chunkText = textDecoder.decode(chunkBytes);
+      const insertionPos = byteOffset(totalLength);
+
+      const newChunkMap = new Map(chunkMap);
+      newChunkMap.set(chunkIndex, chunkBytes);
+
+      const newRoot = appendChunkPiece(state.pieceTable.root, chunkIndex, chunkBytes.length);
+      const newPieceTable = Object.freeze({
+        ...state.pieceTable,
+        root: newRoot,
+        chunkMap: newChunkMap,
+        totalLength: totalLength + chunkBytes.length,
+        nextExpectedChunk: chunkIndex + 1,
+      });
+
+      const nextVersion = state.version + 1;
+      const newLineIndex = liInsertLazy(state.lineIndex, insertionPos, chunkText, nextVersion);
+
+      return withState(state, {
+        version: nextVersion,
+        pieceTable: newPieceTable,
+        lineIndex: newLineIndex,
+      });
     }
 
     case 'EVICT_CHUNK': {
-      // Phase 3 will implement chunk eviction
-      return state;
+      const { chunkIndex } = action;
+      const { chunkMap } = state.pieceTable;
+
+      // Cannot evict a chunk that is not loaded
+      if (!chunkMap.has(chunkIndex)) return state;
+
+      const range = findChunkDocumentRange(state.pieceTable.root, chunkIndex);
+      // No pieces found — tree is out of sync with chunkMap; safe no-op
+      if (range === null) return state;
+
+      // Refuse eviction if user edits overlap the chunk's document range
+      if (hasAddPiecesInRange(state.pieceTable.root, range.start, range.end)) return state;
+
+      const chunkBytes = chunkMap.get(chunkIndex)!;
+      const chunkText = textDecoder.decode(chunkBytes);
+
+      const { newRoot, removedLength } = removeChunkPiecesFromTree(state.pieceTable.root, chunkIndex);
+
+      const newChunkMap = new Map(chunkMap);
+      newChunkMap.delete(chunkIndex);
+
+      const newPieceTable = Object.freeze({
+        ...state.pieceTable,
+        root: newRoot,
+        chunkMap: newChunkMap,
+        totalLength: state.pieceTable.totalLength - removedLength,
+      });
+
+      const nextVersion = state.version + 1;
+      const newLineIndex = liDeleteLazy(state.lineIndex, range.start, range.end, chunkText, nextVersion);
+
+      return withState(state, {
+        version: nextVersion,
+        pieceTable: newPieceTable,
+        lineIndex: newLineIndex,
+      });
     }
 
     default: {

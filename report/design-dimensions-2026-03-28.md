@@ -243,7 +243,28 @@ No property-based testing (no fast-check / QuickCheck). All edge cases are hand-
 
 ---
 
-## XVII. Design Momentum Summary
+## XVII. Chunk Loading — Third Buffer Type (Phase 3, 2026-04-11)
+
+`src/store/features/reducer.ts`, `src/store/core/piece-table.ts`, `src/types/state.ts`:
+
+**The problem:** For large files, loading all content into `originalBuffer` at startup is impractical. `LOAD_CHUNK` / `EVICT_CHUNK` were designed to allow streaming: the host loads only the visible viewport's worth of bytes, then evicts them as the user scrolls away.
+
+**Buffer model extension:** `BufferType` extended from `'original' | 'add'` to `'original' | 'add' | 'chunk'`. A third `ChunkBufferRef` variant joins the `BufferReference` discriminated union. Each `'chunk'` piece carries a `chunkIndex: number` identifying its entry in `PieceTableState.chunkMap: ReadonlyMap<number, Uint8Array>`. `start` remains the offset *within the chunk*, preserving the existing buffer-access contract in `getBufferSlice`. Non-chunk pieces carry `chunkIndex: -1`.
+
+**Sequential loading constraint:** `PieceTableState.nextExpectedChunk` enforces that chunks arrive in file order (0, 1, 2, …). This eliminates the "gap problem": if chunks could arrive out of order, the piece table would have holes where document positions are undefined. With sequential ordering, each `LOAD_CHUNK` always appends to the tail of the tree — O(right-spine depth) with no structural ambiguity.
+
+**Eviction safety:** `EVICT_CHUNK` performs an O(n) scan to find the chunk's document range and check for overlapping `'add'` pieces (user edits). If any overlap is found, eviction is refused — the host must save or discard edits before evicting. If no overlap, the chunk's pieces are removed by collecting survivors in-order and rebuilding a balanced black tree.
+
+**Line index:** Both operations update the line index lazily (`liInsertLazy` / `liDeleteLazy`). The background reconciliation path resolves offsets as usual.
+
+**Phase 4 open items:**
+- Out-of-order (random-access) chunk loading — requires 'unloaded' placeholder pieces or gap tracking.
+- Pre-populating the line index from chunk metadata for immediate line-count queries on unloaded content.
+- Configurable `totalFileSize` in `DocumentStoreConfig` to allow known-size documents before loading.
+
+---
+
+## XVIII. Design Momentum Summary
 
 | Decision | Enables | Constrains |
 |----------|---------|-----------|
@@ -259,10 +280,11 @@ No property-based testing (no fast-check / QuickCheck). All edge cases are hand-
 | Cost-annotated types | Explicit complexity at API boundaries | Not runtime-enforced; relies on code review |
 | Event wrapper pattern | Zero-overhead core store | Separate dispatch codepath to maintain |
 | `emergencyReset` returns outermost snapshot | Consistent recovery on double-fault | Partial innermost state is discarded |
+| Sequential chunk loading (Phase 3) | Simple, gap-free document | Cannot pre-populate line index for unloaded chunks |
 
 ---
 
-## XVIII. Surprising Design Choices
+## XIX. Surprising Design Choices
 
 | Choice | Why Surprising | Design Reason |
 |--------|---------------|---------------|

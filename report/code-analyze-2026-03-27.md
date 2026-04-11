@@ -451,3 +451,9 @@ These are the most complex functions in the codebase. Extracting them into `stor
 | T3 | Move `ReadTextFn` and `DeleteBoundaryContext` to new `types/operations.ts` |
 | T4 | Move `NonEmptyReadonlyArray<T>` to new `types/utils.ts` |
 | Impl2 | `pstackToArray`: pre-allocate and fill in one pass, eliminating the `arr.reverse()` |
+
+### Fixed (2026-04-11)
+
+| ID | Summary |
+|---|---|
+| — | Phase 3 chunk loading: `LOAD_CHUNK` / `EVICT_CHUNK` reducer cases implemented. `BufferType` extended to `'original' \| 'add' \| 'chunk'`. `PieceNode` gains `chunkIndex`. `PieceTableState` gains `chunkMap`, `chunkSize`, `nextExpectedChunk`. `ChunkBufferRef` added to `BufferReference`. Buffer access, `splitPiece`, `deleteRange` all handle `'chunk'`. Sequential loading enforced; eviction blocked on user-edit overlap. 17 tests added. (Addresses open-issues #001, code-analyze-2026-03-07 §5.5.) |

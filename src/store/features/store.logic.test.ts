@@ -1019,3 +1019,150 @@ describe('Store getSnapshot Identity', () => {
     expect(store.getServerSnapshot!()).toBe(store.getSnapshot());
   });
 });
+
+// =============================================================================
+// Chunk Loading Tests (Phase 3)
+// =============================================================================
+
+import { textEncoder } from '../core/encoding.ts';
+import { getText } from '../core/piece-table.ts';
+import { reconcileFull } from '../core/line-index.ts';
+
+describe('LOAD_CHUNK', () => {
+  it('is a no-op when chunkSize is 0 (non-chunked mode)', () => {
+    const state = createInitialState({ content: 'hello' }); // no chunkSize → 0
+    const next = documentReducer(state, DocumentActions.loadChunk(0, textEncoder.encode('world')));
+    expect(next).toBe(state);
+  });
+
+  it('is a no-op when chunkIndex does not match nextExpectedChunk', () => {
+    const state = createInitialState({ chunkSize: 64 });
+    // nextExpectedChunk is 0, so loading chunk 1 should be rejected
+    const next = documentReducer(state, DocumentActions.loadChunk(1, textEncoder.encode('hello')));
+    expect(next).toBe(state);
+  });
+
+  it('is a no-op for a duplicate load of the same chunk', () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, textEncoder.encode('hello')));
+    // Loading chunk 0 again should be rejected
+    const state2 = documentReducer(state1, DocumentActions.loadChunk(0, textEncoder.encode('hello')));
+    expect(state2).toBe(state1);
+  });
+
+  it('is a no-op when data is empty', () => {
+    const state = createInitialState({ chunkSize: 64 });
+    const next = documentReducer(state, DocumentActions.loadChunk(0, new Uint8Array(0)));
+    expect(next).toBe(state);
+  });
+
+  it('increases totalLength by the chunk byte length', () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const bytes = textEncoder.encode('Hello\nWorld\n');
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
+    expect(state1.pieceTable.totalLength).toBe(bytes.length);
+  });
+
+  it('makes chunk content readable via getText', () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const content = 'Hello\nWorld\n';
+    const bytes = textEncoder.encode(content);
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
+    const read = getText(state1.pieceTable, byteOffset(0), byteOffset(bytes.length));
+    expect(read).toBe(content);
+  });
+
+  it('advances nextExpectedChunk after a successful load', () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, textEncoder.encode('chunk0')));
+    expect(state1.pieceTable.nextExpectedChunk).toBe(1);
+  });
+
+  it('loads two sequential chunks and concatenates their content', () => {
+    const state0 = createInitialState({ chunkSize: 8 });
+    const bytes0 = textEncoder.encode('Hello\n');
+    const bytes1 = textEncoder.encode('World\n');
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes0));
+    const state2 = documentReducer(state1, DocumentActions.loadChunk(1, bytes1));
+
+    expect(state2.pieceTable.totalLength).toBe(bytes0.length + bytes1.length);
+    const read = getText(state2.pieceTable, byteOffset(0), byteOffset(state2.pieceTable.totalLength));
+    expect(read).toBe('Hello\nWorld\n');
+  });
+
+  it('updates the line index with the new chunk lines', () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const bytes = textEncoder.encode('line1\nline2\nline3\n');
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
+    // After reconciliation, line count should include the new lines (4: 3 + trailing empty)
+    const eager = reconcileFull(state1.lineIndex, state1.version);
+    expect(eager.lineCount).toBeGreaterThanOrEqual(3);
+  });
+
+  it('bumps the version on a successful load', () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, textEncoder.encode('data')));
+    expect(state1.version).toBe(state0.version + 1);
+  });
+});
+
+describe('EVICT_CHUNK', () => {
+  it('is a no-op when the chunk is not loaded', () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const next = documentReducer(state0, DocumentActions.evictChunk(0));
+    expect(next).toBe(state0);
+  });
+
+  it('decreases totalLength after eviction', () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const bytes = textEncoder.encode('Hello World');
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
+    const state2 = documentReducer(state1, DocumentActions.evictChunk(0));
+    expect(state2.pieceTable.totalLength).toBe(0);
+  });
+
+  it('removes chunk from chunkMap after eviction', () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const bytes = textEncoder.encode('Hello World');
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
+    const state2 = documentReducer(state1, DocumentActions.evictChunk(0));
+    expect(state2.pieceTable.chunkMap.has(0)).toBe(false);
+  });
+
+  it('makes evicted content unreadable (tree empty after clean eviction)', () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const bytes = textEncoder.encode('Hello World');
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
+    const state2 = documentReducer(state1, DocumentActions.evictChunk(0));
+    expect(state2.pieceTable.root).toBeNull();
+  });
+
+  it('is blocked when user edits exist in the chunk range', () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const bytes = textEncoder.encode('Hello World');
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
+    // Insert a user edit within the loaded chunk
+    const state2 = documentReducer(state1, DocumentActions.insert(byteOffset(0), 'EDIT'));
+    // Eviction should be blocked
+    const state3 = documentReducer(state2, DocumentActions.evictChunk(0));
+    expect(state3).toBe(state2);
+  });
+
+  it('bumps the version on a successful eviction', () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const bytes = textEncoder.encode('data');
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
+    const state2 = documentReducer(state1, DocumentActions.evictChunk(0));
+    expect(state2.version).toBe(state1.version + 1);
+  });
+
+  it('evicting chunk 0 then loading chunk 0 again is blocked (nextExpectedChunk advanced)', () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const bytes = textEncoder.encode('data');
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
+    const state2 = documentReducer(state1, DocumentActions.evictChunk(0));
+    // nextExpectedChunk is 1 — chunk 0 is now "in the past"
+    const state3 = documentReducer(state2, DocumentActions.loadChunk(0, bytes));
+    expect(state3).toBe(state2);
+  });
+});

@@ -2,7 +2,7 @@
 
 Source reports: `report/app/IME_ISSUES.md`, `report/app/UNDO_CURSOR_SYNC.md`
 
-**Status: Implemented** — all four improvements landed, 576/576 tests passing.
+**Status: Implemented** — all four improvements landed, 576/576 tests passing at time of writing (593/593 after Phase 3 chunk loading added 17 tests).
 
 ---
 

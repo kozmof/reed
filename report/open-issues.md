@@ -7,9 +7,11 @@ Items marked *(acknowledged — not fixing)* have a documented rationale for def
 
 ## Architecture / Design
 
-### #001 — Chunk loading handlers are stubs
+### #001 — Chunk loading handlers are stubs *(fixed 2026-04-11)*
 
-The `LOAD_CHUNK` / `EVICT_CHUNK` action handlers are not implemented. The `DocumentState` already holds `metadata` fields for these, creating a false impression of readiness.
+The `LOAD_CHUNK` / `EVICT_CHUNK` action handlers were not implemented.
+
+**Fix:** Implemented Phase 3 chunk loading. `BufferType` extended to `'original' | 'add' | 'chunk'`. `PieceNode` gains `chunkIndex: number` (-1 for non-chunk pieces). `PieceTableState` gains `chunkMap: ReadonlyMap<number, Uint8Array>`, `chunkSize: number`, and `nextExpectedChunk: number`. `ChunkBufferRef` added to the `BufferReference` union. `createChunkPieceNode` factory added in `store/core/state.ts`. Buffer-access helpers (`getBuffer`, `getBufferSlice`, `getPieceBuffer`, `splitPiece`, `deleteRange`) all handle the `'chunk'` case. The `LOAD_CHUNK` reducer case enforces sequential ordering (`chunkIndex === nextExpectedChunk`), appends a chunk piece at the tree tail, and updates the line index lazily. The `EVICT_CHUNK` reducer case blocks eviction when user edits overlap the chunk range, removes chunk pieces via an in-order rebuild, and updates the line index lazily. 17 new tests in `store.logic.test.ts`. Chunked mode enabled by passing `chunkSize` to `createDocumentStore` with no initial content.
 
 **Source:** Report 2, §6 D3
 

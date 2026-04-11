@@ -151,7 +151,8 @@ dispatch(action)
 **5.4 — `historyPush` trims the undo stack by converting `PStack → array → PStack`.** When `pstackSize > history.limit`, it calls `pstackToArray` (O(H)) then `pstackFromArray` (O(H)). This is intentional but breaks the O(1) benefit of PStack for that specific call. It only fires at the limit boundary, but is worth noting.
 > **Fixed (2026-03-25):** Added `pstackTrimToSize<T>(stack, maxSize)` to `src/types/state.ts` (exported via `src/types/index.ts`). It traverses only the top `maxSize` nodes — O(limit) rather than O(H). `historyPush` in `reducer.ts` now calls `pstackTrimToSize(pstackPush(...), history.limit)` directly, eliminating the `pstackToArray`/`pstackFromArray` round-trip and the separate `pstackSize` check.
 
-**5.5 — `LOAD_CHUNK` / `EVICT_CHUNK` are no-ops with a "Phase 3" comment.** These are in the action union, included in `isDocumentAction` validation, and dispatched through the reducer — but silently return `state`. They are easy to miss as stubs during code review.
+**5.5 — `LOAD_CHUNK` / `EVICT_CHUNK` are no-ops with a "Phase 3" comment.**
+> **Fixed (2026-04-11):** Implemented Phase 3 chunk loading. `BufferType` extended to `'original' | 'add' | 'chunk'`. `PieceNode` gains `chunkIndex: number`. `PieceTableState` gains `chunkMap`, `chunkSize`, and `nextExpectedChunk`. `ChunkBufferRef` added to `BufferReference`. All buffer-access helpers and split/delete paths handle `'chunk'`. `LOAD_CHUNK` enforces sequential ordering and appends lazily to line index. `EVICT_CHUNK` blocks on user-edit overlap, rebuilds tree without evicted pieces, and updates line index lazily. 17 tests added in `store.logic.test.ts`.
 
 **5.6 — `createDocumentStoreWithEvents.batch` re-implements the transaction try/finally from `createDocumentStore.batch`.** The logic is duplicated verbatim rather than delegating to the base implementation. If the base `batch` error-handling changes, the events variant may drift.
 > **Fixed (2026-03-26):** Extracted `withTransactionBatch(txDispatch, actionDispatch, emergencyReset, actions)` in `store.ts`. The two-dispatch signature preserves `createDocumentStoreWithEvents`'s need to route transaction control through `baseStore.dispatch` while per-action work goes through the event-emitting `dispatch`. Both `batch` implementations now delegate to it, each reduced to a 2-line body.
@@ -395,4 +396,5 @@ For each line in the initial content, a `textDecoder.decode` call is made to com
 | Event system | High | `batch` duplication; background reconcile skips `notifyListeners` | Fixed (5.6, 6.3) |
 | `notifyListeners` | High | Re-entrancy + mid-notify removal (orthogonal concerns) | Fixed (6.4, partial) |
 | `createLineIndexState` perf | High | O(N) `textDecoder.decode` calls for initial char-length scan | Fixed (Part 2) |
+| Chunk loading (`LOAD_CHUNK` / `EVICT_CHUNK`) | High | No-op stubs; Phase 3 never implemented | Fixed (5.5, 2026-04-11) |
 | Public API (query) | High | `lineIndex` sub-namespace outside `QueryApi` contract | Open |

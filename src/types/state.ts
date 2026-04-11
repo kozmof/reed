@@ -6,8 +6,6 @@
 import type { ByteOffset, ByteLength, CharOffset } from './branded.ts';
 import type { GrowableBuffer } from '../store/core/growable-buffer.ts';
 import type { NonEmptyReadonlyArray } from './utils.ts';
-import type { ReadTextFn, DeleteBoundaryContext } from './operations.ts';
-
 export type { NonEmptyReadonlyArray } from './utils.ts';
 export type { ReadTextFn, DeleteBoundaryContext } from './operations.ts';
 
@@ -17,8 +15,11 @@ export type { ReadTextFn, DeleteBoundaryContext } from './operations.ts';
 
 /**
  * Buffer type indicator for piece table operations.
+ * - 'original': the initial immutable buffer loaded from content string
+ * - 'add': the append-only buffer for user edits
+ * - 'chunk': a lazily-loaded chunk buffer for large-file streaming (Phase 3+)
  */
-export type BufferType = 'original' | 'add';
+export type BufferType = 'original' | 'add' | 'chunk';
 
 /**
  * Reference to a location in the original (immutable) buffer.
@@ -41,10 +42,22 @@ export interface AddBufferRef {
 }
 
 /**
+ * Reference to a location inside a loaded chunk buffer.
+ * `chunkIndex` identifies which entry in `PieceTableState.chunkMap` to use.
+ * `start` is the byte offset *within* that chunk (not an absolute file offset).
+ */
+export interface ChunkBufferRef {
+  readonly bufferType: 'chunk';
+  readonly chunkIndex: number;
+  readonly start: ByteOffset;
+  readonly length: ByteLength;
+}
+
+/**
  * Discriminated union for type-safe buffer references.
  * Use `bufferType` field to distinguish between buffer types.
  */
-export type BufferReference = OriginalBufferRef | AddBufferRef;
+export type BufferReference = OriginalBufferRef | AddBufferRef | ChunkBufferRef;
 
 /**
  * Red-Black tree node color.
@@ -76,7 +89,12 @@ export interface PieceNode extends RBNode<PieceNode> {
   readonly _nodeKind: 'piece';
   /** Which buffer this piece references */
   readonly bufferType: BufferType;
-  /** Start offset in the buffer */
+  /**
+   * For 'chunk' pieces: the index into `PieceTableState.chunkMap`.
+   * For 'original' and 'add' pieces: always -1.
+   */
+  readonly chunkIndex: number;
+  /** Start offset in the buffer (for 'chunk': offset within the chunk, not absolute file offset) */
   readonly start: ByteOffset;
   /** Length of this piece */
   readonly length: ByteLength;
@@ -99,6 +117,22 @@ export interface PieceTableState {
   readonly addBuffer: GrowableBuffer;
   /** Total document length (cached for O(1) access) */
   readonly totalLength: number;
+  /**
+   * Loaded chunk buffers keyed by chunk index.
+   * Empty map when not in chunked mode (chunkSize === 0).
+   */
+  readonly chunkMap: ReadonlyMap<number, Uint8Array>;
+  /**
+   * Number of bytes per chunk for large-file streaming.
+   * 0 means the document is not in chunked mode.
+   */
+  readonly chunkSize: number;
+  /**
+   * The chunk index that must be loaded next (enforces sequential ordering).
+   * Chunks must arrive as 0, 1, 2, … in order.
+   * Irrelevant when chunkSize === 0.
+   */
+  readonly nextExpectedChunk: number;
 }
 
 // =============================================================================

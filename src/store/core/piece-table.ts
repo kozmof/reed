@@ -9,7 +9,6 @@
 import type {
   PieceNode,
   PieceTableState,
-  BufferType,
   BufferReference,
 } from '../../types/state.ts';
 import { byteOffset, byteLength, type ByteOffset, type ByteLength } from '../../types/branded.ts';
@@ -26,7 +25,7 @@ import {
   type LogCost,
   type LinearCost,
 } from '../../types/cost-doc.ts';
-import { createPieceNode, withPieceNode } from './state.ts';
+import { createPieceNode, createChunkPieceNode, withPieceNode } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry, type RootToLeafInsertPath } from './rb-tree.ts';
 import { textEncoder, textDecoder } from './encoding.ts';
 import { GrowableBuffer } from './growable-buffer.ts';
@@ -43,12 +42,18 @@ const withPiece: WithNodeFn<PieceNode> = withPieceNode;
  * Provides a type-safe way to reference buffer locations.
  */
 export function getPieceBufferRef(piece: PieceNode): BufferReference {
+  if (piece.bufferType === 'chunk') {
+    return { bufferType: 'chunk', chunkIndex: piece.chunkIndex, start: piece.start, length: piece.length };
+  }
   return { bufferType: piece.bufferType, start: piece.start, length: piece.length };
 }
 
 /**
  * Get the raw buffer (Uint8Array) for a buffer reference.
  * Use this when you need direct buffer access.
+ * For 'chunk' references the returned buffer starts at offset 0 of the chunk —
+ * callers must use `ref.start` as the offset into the returned slice, not 0.
+ * Prefer getBufferSlice when you only need the bytes covered by the reference.
  */
 export function getBuffer(
   state: PieceTableState,
@@ -57,6 +62,11 @@ export function getBuffer(
   switch (ref.bufferType) {
     case 'original': return state.originalBuffer;
     case 'add':      return state.addBuffer.bytes;
+    case 'chunk': {
+      const chunk = state.chunkMap.get(ref.chunkIndex);
+      if (chunk === undefined) throw new Error(`Chunk ${ref.chunkIndex} is not loaded`);
+      return chunk;
+    }
     default: {
       const _never: never = ref;
       throw new Error(`Unknown buffer type: ${JSON.stringify(_never)}`);
@@ -72,21 +82,28 @@ export function getBufferSlice(
   state: PieceTableState,
   ref: BufferReference
 ): Uint8Array {
-  let buffer: Uint8Array;
   switch (ref.bufferType) {
-    case 'original': buffer = state.originalBuffer; break;
-    case 'add':      buffer = state.addBuffer.bytes; break;
+    case 'original':
+      return state.originalBuffer.subarray(ref.start, ref.start + ref.length);
+    case 'add':
+      return state.addBuffer.bytes.subarray(ref.start, ref.start + ref.length);
+    case 'chunk': {
+      const chunk = state.chunkMap.get(ref.chunkIndex);
+      if (chunk === undefined) throw new Error(`Chunk ${ref.chunkIndex} is not loaded`);
+      return chunk.subarray(ref.start, ref.start + ref.length);
+    }
     default: {
       const _never: never = ref;
       throw new Error(`Unknown buffer type: ${JSON.stringify(_never)}`);
     }
   }
-  return buffer.subarray(ref.start, ref.start + ref.length);
 }
 
 /**
  * Get the buffer for a piece node directly.
  * Convenience function that combines getPieceBufferRef and getBuffer.
+ * For 'chunk' pieces the returned buffer is the full chunk — use piece.start as the offset.
+ * Prefer getBufferSlice when you need only the bytes covered by the piece.
  */
 export function getPieceBuffer(
   state: PieceTableState,
@@ -95,6 +112,11 @@ export function getPieceBuffer(
   switch (piece.bufferType) {
     case 'original': return state.originalBuffer;
     case 'add':      return state.addBuffer.bytes;
+    case 'chunk': {
+      const chunk = state.chunkMap.get(piece.chunkIndex);
+      if (chunk === undefined) throw new Error(`Chunk ${piece.chunkIndex} is not loaded`);
+      return chunk;
+    }
     default: {
       const _never: never = piece.bufferType;
       throw new Error(`Unknown buffer type: ${_never}`);
@@ -232,7 +254,7 @@ export function collectPieces(root: PieceNode | null): LinearCost<readonly Piece
 export function rbInsertPiece(
   root: PieceNode | null,
   position: number,
-  bufferType: BufferType,
+  bufferType: 'original' | 'add',
   start: ByteOffset,
   length: ByteLength
 ): LogCost<PieceNode> {
@@ -320,23 +342,44 @@ export function splitPiece(
     return [piece, null];
   }
 
-  const leftPiece = createPieceNode(
-    piece.bufferType,
-    piece.start,
-    byteLength(offsetInPiece),
-    piece.color,
-    piece.left,
-    null
-  );
+  let leftPiece: PieceNode;
+  let rightPiece: PieceNode;
 
-  const rightPiece = createPieceNode(
-    piece.bufferType,
-    byteOffset(piece.start + offsetInPiece),
-    byteLength(piece.length - offsetInPiece),
-    'red', // New nodes start red
-    null,
-    piece.right
-  );
+  if (piece.bufferType === 'chunk') {
+    leftPiece = createChunkPieceNode(
+      piece.chunkIndex,
+      piece.start,
+      byteLength(offsetInPiece),
+      piece.color,
+      piece.left,
+      null
+    );
+    rightPiece = createChunkPieceNode(
+      piece.chunkIndex,
+      byteOffset(piece.start + offsetInPiece),
+      byteLength(piece.length - offsetInPiece),
+      'red',
+      null,
+      piece.right
+    );
+  } else {
+    leftPiece = createPieceNode(
+      piece.bufferType,
+      piece.start,
+      byteLength(offsetInPiece),
+      piece.color,
+      piece.left,
+      null
+    );
+    rightPiece = createPieceNode(
+      piece.bufferType,
+      byteOffset(piece.start + offsetInPiece),
+      byteLength(piece.length - offsetInPiece),
+      'red',
+      null,
+      piece.right
+    );
+  }
 
   return [leftPiece, rightPiece];
 }
@@ -377,8 +420,8 @@ export function pieceTableInsert(
     const newRoot = createPieceNode('add', byteOffset(newAddStart), byteLength(textBytes.length), 'black');
     return $proveCtx('O(n)', $lift('O(n)', {
       state: Object.freeze({
+        ...state,
         root: newRoot,
-        originalBuffer: state.originalBuffer,
         addBuffer,
         totalLength: textBytes.length,
       }),
@@ -429,8 +472,8 @@ export function pieceTableInsert(
     }),
     $map((newRoot) => ({
       state: Object.freeze({
+        ...state,
         root: newRoot,
-        originalBuffer: state.originalBuffer,
         addBuffer,
         totalLength: state.totalLength + textBytes.length,
       }),
@@ -440,11 +483,26 @@ export function pieceTableInsert(
 }
 
 /**
+ * Insert a pre-existing piece node into the tree at the given document position.
+ * Unlike rbInsertPiece, this preserves all piece properties (including chunkIndex).
+ */
+function rbReInsertPiece(
+  root: PieceNode,
+  position: number,
+  piece: PieceNode
+): LogCost<PieceNode> {
+  // Start as red, will be fixed by fixup
+  const insertNode = withPieceNode(piece, { color: 'red', left: null, right: null });
+  const insertPath = bstInsert(root, position, insertNode);
+  return $proveCtx('O(log n)', $lift('O(log n)', fixInsertWithPath(insertPath, withPiece)));
+}
+
+/**
  * Insert a new piece by splitting an existing piece.
  */
 function insertWithSplit(
   location: PieceLocation,
-  bufferType: BufferType,
+  bufferType: 'original' | 'add',
   start: ByteOffset,
   length: ByteLength
 ): PieceNode {
@@ -466,10 +524,11 @@ function insertWithSplit(
   const insertPos = location.pieceStartOffset + leftPart.length;
   let newRoot = rbInsertPiece(replaceResult, insertPos, bufferType, start, length);
 
-  // Insert the right part after the new piece
+  // Insert the right part after the new piece, preserving its full identity
+  // (including chunkIndex for 'chunk' pieces — rbInsertPiece cannot be used here).
   if (rightPart !== null) {
     const rightPos = insertPos + length;
-    newRoot = rbInsertPiece(newRoot, rightPos, rightPart.bufferType, rightPart.start, rightPart.length);
+    newRoot = rbReInsertPiece(newRoot, rightPos, rightPart);
   }
 
   return newRoot;
@@ -526,9 +585,8 @@ export function pieceTableDelete(
   const newRoot = deleteRange(state.root, 0, start, end);
 
   return $proveCtx('O(n)', $lift('O(n)', Object.freeze({
+    ...state,
     root: newRoot,
-    originalBuffer: state.originalBuffer,
-    addBuffer: state.addBuffer,
     totalLength: state.totalLength - deleteLength,
   })));
 }
@@ -589,23 +647,44 @@ function deleteRange(
 
   if (keepBefore > 0 && keepAfter > 0) {
     // Delete is in the middle - split into two pieces
-    const leftPiece = createPieceNode(
-      node.bufferType,
-      node.start,
-      byteLength(keepBefore),
-      node.color,
-      newLeft,
-      null
-    );
+    let leftPiece: PieceNode;
+    let rightPiece: PieceNode;
 
-    const rightPiece = createPieceNode(
-      node.bufferType,
-      byteOffset(node.start + node.length - keepAfter),
-      byteLength(keepAfter),
-      'red',
-      null,
-      newRight
-    );
+    if (node.bufferType === 'chunk') {
+      leftPiece = createChunkPieceNode(
+        node.chunkIndex,
+        node.start,
+        byteLength(keepBefore),
+        node.color,
+        newLeft,
+        null
+      );
+      rightPiece = createChunkPieceNode(
+        node.chunkIndex,
+        byteOffset(node.start + node.length - keepAfter),
+        byteLength(keepAfter),
+        'red',
+        null,
+        newRight
+      );
+    } else {
+      leftPiece = createPieceNode(
+        node.bufferType,
+        node.start,
+        byteLength(keepBefore),
+        node.color,
+        newLeft,
+        null
+      );
+      rightPiece = createPieceNode(
+        node.bufferType,
+        byteOffset(node.start + node.length - keepAfter),
+        byteLength(keepAfter),
+        'red',
+        null,
+        newRight
+      );
+    }
 
     // Combine the two pieces
     return withPieceNode(leftPiece, {
@@ -1062,10 +1141,8 @@ export function compactAddBuffer(
       if (stats.addBufferUsed === 0) {
         // No add buffer content - reset to empty
         return $lift('O(n)', Object.freeze({
-          root: state.root,
-          originalBuffer: state.originalBuffer,
+          ...state,
           addBuffer: GrowableBuffer.empty(1024),
-          totalLength: state.totalLength,
         }));
       }
 
@@ -1096,10 +1173,9 @@ export function compactAddBuffer(
           const newRoot = rebuildTreeWithNewOffsets(state.root, offsetMap);
 
           return Object.freeze({
+            ...state,
             root: newRoot,
-            originalBuffer: state.originalBuffer,
             addBuffer: new GrowableBuffer(newBuffer, writeOffset),
-            totalLength: state.totalLength,
           });
         }),
       );

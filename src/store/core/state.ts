@@ -34,21 +34,26 @@ const DEFAULT_CONFIG: Required<DocumentStoreConfig> = {
 
 /**
  * Create an empty piece table state.
+ * @param chunkSize - Bytes per chunk for large-file streaming. 0 = non-chunked (default).
  */
-export function createEmptyPieceTableState(): PieceTableState {
+export function createEmptyPieceTableState(chunkSize: number = 0): PieceTableState {
   return Object.freeze({
     root: null,
     originalBuffer: new Uint8Array(0),
     addBuffer: GrowableBuffer.empty(),
     totalLength: 0,
+    chunkMap: new Map<number, Uint8Array>(),
+    chunkSize,
+    nextExpectedChunk: 0,
   });
 }
 
 /**
- * Create a piece node. Used internally by piece table operations.
+ * Create a piece node for 'original' or 'add' buffers. Used internally by piece table operations.
  *
  * All node creation (insert, split, compaction) flows through this function,
  * ensuring subtreeAddLength is always computed correctly from the start.
+ * For 'chunk' pieces use createChunkPieceNode instead.
  */
 export function createPieceNode(
   bufferType: 'original' | 'add',
@@ -70,6 +75,7 @@ export function createPieceNode(
     left,
     right,
     bufferType,
+    chunkIndex: -1,
     start,
     length,
     subtreeLength: length + leftLength + rightLength,
@@ -78,7 +84,42 @@ export function createPieceNode(
 }
 
 /**
+ * Create a chunk piece node that references a loaded chunk buffer.
+ *
+ * @param chunkIndex - Index into PieceTableState.chunkMap
+ * @param offsetInChunk - Byte offset *within* the chunk (not an absolute file offset)
+ * @param length - Number of bytes this piece covers
+ */
+export function createChunkPieceNode(
+  chunkIndex: number,
+  offsetInChunk: ByteOffset,
+  length: ByteLength,
+  color: 'red' | 'black' = 'black',
+  left: PieceNode | null = null,
+  right: PieceNode | null = null
+): PieceNode {
+  const leftLength = left?.subtreeLength ?? 0;
+  const rightLength = right?.subtreeLength ?? 0;
+  const leftAddLength = left?.subtreeAddLength ?? 0;
+  const rightAddLength = right?.subtreeAddLength ?? 0;
+
+  return Object.freeze({
+    _nodeKind: 'piece' as const,
+    color,
+    left,
+    right,
+    bufferType: 'chunk' as const,
+    chunkIndex,
+    start: offsetInChunk,
+    length,
+    subtreeLength: length + leftLength + rightLength,
+    subtreeAddLength: leftAddLength + rightAddLength, // chunk bytes don't count as "add" bytes
+  });
+}
+
+/**
  * Create a piece table state from initial content.
+ * Chunked mode is not applicable here — initial content is loaded eagerly.
  */
 export function createPieceTableState(content: string): PieceTableState {
   if (content.length === 0) {
@@ -96,6 +137,9 @@ export function createPieceTableState(content: string): PieceTableState {
     originalBuffer,
     addBuffer: GrowableBuffer.empty(1024),
     totalLength: originalBuffer.length,
+    chunkMap: new Map<number, Uint8Array>(),
+    chunkSize: 0,
+    nextExpectedChunk: 0,
   });
 }
 
@@ -301,6 +345,10 @@ export function createInitialMetadata(
 
 /**
  * Create initial document state from configuration.
+ *
+ * When `content` is empty and `chunkSize` is configured, the piece table is
+ * initialized in chunked mode: `chunkSize` is set and `chunkMap` starts empty.
+ * The caller then populates the document by dispatching `LOAD_CHUNK` actions.
  */
 export function createInitialState(
   config: Partial<DocumentStoreConfig> = {}
@@ -308,9 +356,18 @@ export function createInitialState(
   const mergedConfig = { ...DEFAULT_CONFIG, ...config };
   const content = mergedConfig.content;
 
+  // Use chunked mode when content is empty and a chunkSize is explicitly provided.
+  // Non-zero DEFAULT_CONFIG.chunkSize alone does not enable chunked mode — the
+  // caller must explicitly pass chunkSize to opt in.
+  const chunkSize = (content.length === 0 && config.chunkSize !== undefined)
+    ? mergedConfig.chunkSize
+    : 0;
+
   return Object.freeze({
     version: 0,
-    pieceTable: createPieceTableState(content),
+    pieceTable: content.length > 0
+      ? createPieceTableState(content)
+      : createEmptyPieceTableState(chunkSize),
     lineIndex: createLineIndexState(content),
     selection: createInitialSelectionState(),
     history: createInitialHistoryState(mergedConfig.historyLimit, mergedConfig.undoGroupTimeout),
@@ -365,7 +422,7 @@ export function asEagerLineIndex(state: LineIndexState): LineIndexState<'eager'>
  * subtreeLength and subtreeAddLength are always recomputed from children and length,
  * so they cannot be set directly.
  */
-export type PieceNodeUpdates = Partial<Pick<PieceNode, 'color' | 'left' | 'right' | 'bufferType' | 'start' | 'length'>>;
+export type PieceNodeUpdates = Partial<Pick<PieceNode, 'color' | 'left' | 'right' | 'bufferType' | 'chunkIndex' | 'start' | 'length'>>;
 
 /**
  * Helper to create modified piece node with structural sharing.
