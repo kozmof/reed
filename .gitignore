@@ -27,3 +27,4 @@ tmp/
 .devcontainer
 .npm-cache
 
+.claude
