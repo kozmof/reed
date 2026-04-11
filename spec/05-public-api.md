@@ -125,6 +125,4 @@ Important behavior:
 
 - Real chunk loading/eviction runtime behavior
 - Collaboration transport/provider integration
-- Plugin host/runtime
-- DOM `EditorView` runtime
 - Framework adapters

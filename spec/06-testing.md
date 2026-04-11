@@ -43,8 +43,6 @@ Implemented coverage is strongest in:
 Current gaps relative to roadmap/spec ambitions:
 - no real chunk loading/eviction runtime tests (`LOAD_CHUNK`/`EVICT_CHUNK` are stubs)
 - no CRDT/provider/network collaboration integration tests
-- no plugin runtime tests (plugin runtime not implemented)
-- no DOM/editor-component integration tests
 - performance tests report timings but do not enforce hard budget thresholds
 
 ## 5. Guidance for Spec-Driven Testing
@@ -52,4 +50,4 @@ Current gaps relative to roadmap/spec ambitions:
 When adding new capabilities, keep tests in three layers:
 1. Pure function/reducer tests for determinism.
 2. Store workflow tests for batching, rollback, snapshot gating, and event semantics.
-3. Integration tests only after runtime layers (view/plugin/collab transport) exist.
+3. Integration tests only after runtime layers (collab transport) exist.

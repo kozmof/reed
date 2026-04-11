@@ -75,19 +75,14 @@ Missing:
 ## 3. Not Implemented
 
 - framework adapters (React/Vue/Svelte/Redux/Zustand)
-- DOM `EditorView` runtime
-- plugin host/runtime
-- markdown preview plugin implementation
 
 ## 4. Current Known Gaps
 
 No currently confirmed core reducer/store correctness blockers from earlier spec revisions.
 
-Primary remaining gaps are unimplemented runtime layers (chunk runtime, collaboration transport, plugin host, DOM/editor runtime).
+Primary remaining gaps are unimplemented runtime layers (chunk runtime, collaboration transport).
 
 ## 5. Near-Term Priorities
 
 1. Decide and implement real chunk loading strategy (or remove chunk actions from public contract).
 2. Add collaboration transport/provider + synchronization recovery tests.
-3. Define plugin host boundary model and lifecycle hooks.
-4. Add view-layer/runtime integration once core/runtime contracts are finalized.

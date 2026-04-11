@@ -34,7 +34,6 @@
 The following error domains are not implemented because the related runtime layers do not yet exist:
 - file I/O errors (open/save/permissions)
 - network/provider/collaboration transport errors
-- plugin sandboxing/fault isolation
 - chunk-cache eviction policies under memory pressure
 
 ## 3. Current Caveats
@@ -47,4 +46,4 @@ The following error domains are not implemented because the related runtime laye
 As runtime layers are added, keep the same strategy:
 - fail-soft at boundary points,
 - keep reducer/store deterministic,
-- isolate observer/plugin/transport faults from core state transitions.
+- isolate observer/transport faults from core state transitions.

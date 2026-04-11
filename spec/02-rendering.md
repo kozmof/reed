@@ -3,7 +3,6 @@
 ## 1. Scope of Current Rendering Layer
 
 Current rendering code is a **pure selector/utilities layer** in `src/store/features/rendering.ts`, surfaced via `rendering.*`.
-It does not include a DOM `EditorView` component.
 
 Implemented utilities:
 - `getVisibleLineRange(scroll, totalLines, overscan?)`

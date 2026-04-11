@@ -93,7 +93,6 @@ Implemented:
 Not implemented in current codebase:
 - File I/O layer
 - Real chunk loader/eviction runtime
-- Plugin runtime
 - Framework adapters (React/Vue/Svelte/Redux/Zustand)
 - CRDT transport/provider bridge
 
@@ -101,4 +100,4 @@ Not implemented in current codebase:
 
 Previously tracked core consistency gaps (`getLineRangePrecise` lazy offset issue, missing `batch()` reconciliation scheduling, missing remote content-change emission) are fixed in current code.
 
-Remaining gaps are roadmap/runtime scope gaps (chunk runtime, collaboration transport, plugin/view/adapters), not core reducer/store correctness blockers.
+Remaining gaps are roadmap/runtime scope gaps (chunk runtime, collaboration transport, framework adapters), not core reducer/store correctness blockers.
