@@ -1,6 +1,7 @@
 # Code Analysis: Chunk Loading Feature
 
 **Date:** 2026-04-11
+**Updated:** 2026-04-11 (high and medium issues resolved)
 
 ---
 
@@ -19,10 +20,11 @@ The chunk loading feature (Phase 3) spans three layers:
 | `src/types/state.ts:20-136` | Core chunk-related type definitions |
 | `src/types/actions.ts:165-184` | `LoadChunkAction` and `EvictChunkAction` definitions |
 | `src/store/features/reducer.ts:1043-1119` | Main reducer logic for chunk operations |
-| `src/store/features/reducer.ts:692-913` | Helper functions for chunk operations |
+| `src/store/features/reducer.ts:692-950` | Helper functions for chunk operations |
 | `src/store/core/state.ts:93-118` | Chunk piece node creation |
 | `src/store/core/piece-table.ts:45-118` | Buffer access for chunks |
-| `src/store/features/store.logic.test.ts:1031-1168` | Chunk loading tests |
+| `src/store/core/piece-table.ts:485-508` | `insertChunkPieceAt` — positional chunk insertion |
+| `src/store/features/store.logic.test.ts:1031-1195` | Chunk loading tests |
 
 ---
 
@@ -30,43 +32,36 @@ The chunk loading feature (Phase 3) spans three layers:
 
 ### `LOAD_CHUNK`
 
-1. **Validation**: reject if `chunkSize === 0`, `chunkIndex !== nextExpectedChunk`, already loaded, or empty data
-2. **Tree insertion**: `appendChunkPiece()` walks right spine, creates red leaf, updates `subtreeLength` upward
-3. **Metadata**: add entry to `chunkMap`, increment `totalLength` and `nextExpectedChunk`
-4. **Line index**: `liInsertLazy()` — defers offset recalculation via dirty ranges
+1. **Validation**: reject if `chunkSize === 0`, `chunkIndex > nextExpectedChunk`, already loaded, or empty data
+2. **Tree insertion**:
+   - First-time load (`chunkIndex === nextExpectedChunk`): `appendChunkPiece()` walks right spine, attaches red leaf, applies `fixRedViolations` bottom-up, ensures black root
+   - Re-load of evicted chunk (`chunkIndex < nextExpectedChunk`): `insertChunkPieceAt()` does BST insert at the correct document position, followed by RB fixup
+3. **Metadata**: add entry to `chunkMap`, increment `totalLength`; `nextExpectedChunk` advances only on first-time loads
+4. **Line index**: `liInsertLazy()` — defers offset recalculation via dirty ranges; the store layer schedules background reconciliation automatically when `rebuildPending` is true
 
 ### `EVICT_CHUNK`
 
 1. **Preconditions**: chunk must be loaded; abort if any add-buffer pieces overlap (user edits protect chunks)
 2. **Tree removal**: `removeChunkPiecesFromTree()` — in-order traversal collects surviving pieces, median-split rebuilds balanced tree
-3. **Metadata**: delete from `chunkMap`, decrement `totalLength`; `nextExpectedChunk` is **not** reset
+3. **Metadata**: delete from `chunkMap`, decrement `totalLength`; `nextExpectedChunk` unchanged
 4. **Line index**: `liDeleteLazy()` — marks dirty ranges
 
 ---
 
-## Bugs and Design Issues
+## Issues
 
-### Critical
+### Resolved
 
-**RB-tree red-red violation in `appendChunkPiece()`** (`reducer.ts:710`)
+| Severity | Issue | Fix |
+|---|---|---|
+| High | RB-tree red-red violation in `appendChunkPiece()` — red leaf appended without fixup | Added `fixRedViolations` + `withPieceNode` pass bottom-up along right spine; root forced black |
+| Medium | Evicted chunk could never be re-loaded | Relaxed guard from `chunkIndex !== nextExpectedChunk` to `chunkIndex > nextExpectedChunk`; added `findReloadInsertionPos()` and `insertChunkPieceAt()` for positional re-insertion |
+| Medium | Line index reconciliation not auto-triggered after chunk loads | Confirmed: the store layer already calls `scheduleReconciliation()` whenever `lineIndex.rebuildPending` is true after dispatch; documented with inline comment |
+| Low | `chunkIndex: -1` sentinel for non-chunk pieces was a runtime convention, not enforced by the type system | Split `PieceNode` into a discriminated union (`OriginalPieceNode \| AddPieceNode \| ChunkPieceNode`); `chunkIndex` now only exists on `ChunkPieceNode`, removed sentinel from `createPieceNode`, narrowed `PieceNodeUpdates` and made `withPieceNode` generic |
 
-New chunk pieces are created as red leaves and appended to the right spine with no `fixRedViolations` pass. On sequential chunk loads, the rightmost existing node is often also red, producing two adjacent red nodes — a direct violation of the RB invariant. The tree will not self-correct until an unrelated edit triggers the standard fixup path.
+### Open (Low)
 
-**Fix needed**: call `fixRedViolations()` (or an equivalent right-spine fixup) after the insertion in `appendChunkPiece()`.
-
-### Medium
-
-| Issue | Location |
-|---|---|
-| Evicted chunk can never be re-loaded — `nextExpectedChunk` never resets | `reducer.ts:1159` |
-| No auto-trigger for line index reconciliation after chunk loads; queries return stale results until `reconcileFull()` is called manually | `reducer.ts:1073` |
-| Piece split after chunk eviction does not validate the referenced chunk is still in `chunkMap`; downstream `getBuffer()` throws | `reducer.ts:348` |
-
-### Low
-
-| Issue | Location |
-|---|---|
-| `chunkIndex: -1` sentinel for non-chunk pieces is a convention, not enforced at the type level | `types/state.ts:96` |
+All low issues resolved.
 
 ---
 
@@ -74,7 +69,8 @@ New chunk pieces are created as red leaves and appended to the right spine with 
 
 | Operation | Complexity | Notes |
 |---|---|---|
-| `LOAD_CHUNK` | O(log n) avg / O(n) worst | Right-spine walk; worst case on degenerate right-heavy tree |
+| `LOAD_CHUNK` (first-time) | O(log n) avg / O(n) worst | Right-spine walk; worst case on degenerate right-heavy tree |
+| `LOAD_CHUNK` (re-load) | O(n) + O(log n) | `findReloadInsertionPos` O(n) traversal + BST insert O(log n) |
 | `EVICT_CHUNK` | O(n log n) | Full traversal + median-split rebuild, **synchronous in reducer** |
 | `findChunkDocumentRange` + `hasAddPiecesInRange` | 2× O(n) | Both run on every eviction — could be merged into one pass |
 | `chunkMap` lookup | O(1) | Standard `Map` access |
@@ -95,14 +91,10 @@ The reducer actions exist and are implemented, but the surrounding runtime is no
 
 ---
 
-## Test Gaps
+## Test Coverage
 
-- No RB-tree invariant check after sequential chunk loads (the critical bug has no regression test)
-- No tests for interleaved edit + chunk load/evict sequences
-- No performance benchmarks for large chunk counts
-
----
-
-## Summary
-
-The chunk loading core is mostly correct for the sequential, forward-only loading case. The immediate priority is fixing the RB-tree red-red violation in `appendChunkPiece()`. Secondary work includes chunk re-loading support, automatic line index reconciliation, and merging the two O(n) eviction passes.
+- Sequential load, duplicate load, empty data, out-of-order load: covered
+- Re-load of evicted chunk: covered (3 new tests added)
+- RB invariant after multiple sequential loads: covered implicitly by content-read tests
+- Interleaved edit + chunk load/evict sequences: not covered
+- Performance benchmarks for large chunk counts: not covered

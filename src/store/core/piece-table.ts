@@ -483,6 +483,29 @@ export function pieceTableInsert(
 }
 
 /**
+ * Insert a chunk piece at the given document byte position.
+ * Used for re-loading an evicted chunk at its original document position.
+ * Performs BST insertion + RB fixup, O(log n).
+ */
+export function insertChunkPieceAt(
+  root: PieceNode | null,
+  position: number,
+  chunkIndex: number,
+  chunkByteLength: number,
+): PieceNode {
+  const newLeaf = createChunkPieceNode(
+    chunkIndex,
+    byteOffset(0),
+    byteLength(chunkByteLength),
+    'red',
+  );
+  if (root === null) {
+    return withPieceNode(newLeaf, { color: 'black' });
+  }
+  return rbReInsertPiece(root, position, newLeaf);
+}
+
+/**
  * Insert a pre-existing piece node into the tree at the given document position.
  * Unlike rbInsertPiece, this preserves all piece properties (including chunkIndex).
  */

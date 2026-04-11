@@ -1156,13 +1156,37 @@ describe('EVICT_CHUNK', () => {
     expect(state2.version).toBe(state1.version + 1);
   });
 
-  it('evicting chunk 0 then loading chunk 0 again is blocked (nextExpectedChunk advanced)', () => {
+  it('evicting chunk 0 then loading chunk 0 again is allowed (re-load of evicted chunk)', () => {
     const state0 = createInitialState({ chunkSize: 64 });
     const bytes = textEncoder.encode('data');
     const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
     const state2 = documentReducer(state1, DocumentActions.evictChunk(0));
-    // nextExpectedChunk is 1 — chunk 0 is now "in the past"
+    // Re-loading a previously evicted chunk is now supported.
     const state3 = documentReducer(state2, DocumentActions.loadChunk(0, bytes));
-    expect(state3).toBe(state2);
+    expect(state3).not.toBe(state2);
+    expect(state3.pieceTable.chunkMap.has(0)).toBe(true);
+    expect(state3.pieceTable.totalLength).toBe(bytes.length);
+  });
+
+  it('loading a never-loaded future chunk is still blocked', () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const bytes = textEncoder.encode('data');
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
+    // chunk 2 was never loaded (nextExpectedChunk is 1), so it must be rejected
+    const state2 = documentReducer(state1, DocumentActions.loadChunk(2, bytes));
+    expect(state2).toBe(state1);
+  });
+
+  it('re-loaded chunk content appears at the correct document position', () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const bytes0 = textEncoder.encode('AAA');
+    const bytes1 = textEncoder.encode('BBB');
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes0));
+    const state2 = documentReducer(state1, DocumentActions.loadChunk(1, bytes1));
+    const state3 = documentReducer(state2, DocumentActions.evictChunk(0));
+    const state4 = documentReducer(state3, DocumentActions.loadChunk(0, bytes0));
+    // After re-loading chunk 0, the document should read 'AAABBB' in full.
+    const text = getText(state4.pieceTable, byteOffset(0), byteOffset(state4.pieceTable.totalLength));
+    expect(text).toBe('AAABBB');
   });
 });

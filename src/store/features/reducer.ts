@@ -10,11 +10,13 @@ import type { DocumentAction } from '../../types/actions.ts';
 import type { ByteOffset } from '../../types/branded.ts';
 import type { DeleteBoundaryContext, ReadTextFn } from '../../types/operations.ts';
 import { byteOffset, byteLength } from '../../types/branded.ts';
-import { withState, createChunkPieceNode } from '../core/state.ts';
+import { withState, createChunkPieceNode, withPieceNode } from '../core/state.ts';
+import { fixRedViolations } from '../core/rb-tree.ts';
 import {
   pieceTableInsert as ptInsert,
   pieceTableDelete as ptDelete,
   getText,
+  insertChunkPieceAt,
 } from '../core/piece-table.ts';
 import {
   lineIndexInsert as liInsert,
@@ -696,16 +698,8 @@ function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
 /**
  * Append a new chunk piece as the rightmost leaf of the piece tree.
  * Sequential loading guarantees the chunk always belongs at the document end,
- * so we walk the right spine and attach the new node there, then recolor to
- * maintain the red-black invariant (new leaf is red; single right-spine addition
- * keeps black-height balanced without needing full fixup in practice, but we
- * attach as black to keep the tree valid for all depths).
- *
- * For simplicity we re-use the immutable withPieceNode update path rather than
- * implementing a full path-copying right-spine walk: create the leaf and insert
- * it using the existing O(log n) RB insert from ptInsert indirection is avoided
- * here because we do not go through text encoding — instead we create the node
- * directly and splice it as a right child with path-copying.
+ * so we walk the right spine, graft the new red leaf, then fix any red-red
+ * violations bottom-up and ensure the root is black.
  */
 function appendChunkPiece(
   root: PieceNode | null,
@@ -716,16 +710,14 @@ function appendChunkPiece(
     chunkIndex,
     byteOffset(0),
     byteLength(chunkByteLength),
-    'red',  // start red; fixup below turns root black if needed
+    'red',
   );
 
   if (root === null) {
-    // Tree was empty — single black root
-    return Object.freeze({ ...newLeaf, color: 'black' });
+    return withPieceNode(newLeaf, { color: 'black' });
   }
 
-  // Walk the right spine collecting the path, then graft the new leaf and
-  // propagate subtreeLength upward with path-copying.
+  // Walk the right spine collecting ancestors (root → rightmost parent).
   const path: PieceNode[] = [];
   let cur: PieceNode = root;
   while (cur.right !== null) {
@@ -733,25 +725,59 @@ function appendChunkPiece(
     cur = cur.right;
   }
 
-  // Attach as right child of the rightmost node
-  let updated: PieceNode = Object.freeze({
-    ...cur,
-    right: newLeaf,
-    subtreeLength: cur.subtreeLength + chunkByteLength,
-    // subtreeAddLength unchanged (chunk pieces contribute 0)
-  });
+  // Attach leaf to the rightmost node, then fix any red-red violation at that level.
+  let updated: PieceNode = fixRedViolations(
+    withPieceNode(cur, { right: newLeaf }),
+    withPieceNode,
+  );
 
-  // Walk back up the path updating subtreeLength
+  // Walk back up, applying fixup at each ancestor level.
   for (let i = path.length - 1; i >= 0; i--) {
-    const ancestor = path[i];
-    updated = Object.freeze({
-      ...ancestor,
-      right: updated,
-      subtreeLength: ancestor.subtreeLength + chunkByteLength,
-    });
+    updated = fixRedViolations(
+      withPieceNode(path[i], { right: updated }),
+      withPieceNode,
+    );
   }
 
-  return updated;
+  // Ensure the root is always black.
+  return updated.color === 'black' ? updated : withPieceNode(updated, { color: 'black' });
+}
+
+/**
+ * Find the document byte offset at which a re-loaded chunk should be inserted.
+ * Returns the start position of the first piece whose chunkIndex > targetChunkIndex,
+ * or the current total document length if no such piece exists (append).
+ *
+ * O(n) traversal — only used for re-loading evicted chunks, which is rare.
+ */
+function findReloadInsertionPos(root: PieceNode | null, targetChunkIndex: number): number {
+  if (root === null) return 0;
+
+  const nodeStack: PieceNode[] = [];
+  const offsetStack: number[] = [];
+  let currentOffset = 0;
+  let currentNode: PieceNode | null = root;
+
+  while (currentNode !== null || nodeStack.length > 0) {
+    while (currentNode !== null) {
+      nodeStack.push(currentNode);
+      offsetStack.push(currentOffset);
+      currentOffset += currentNode.left?.subtreeLength ?? 0;
+      currentNode = currentNode.left;
+    }
+    const n = nodeStack.pop()!;
+    const nOffset = offsetStack.pop()!;
+    const pieceStart = nOffset + (n.left?.subtreeLength ?? 0);
+
+    if (n.bufferType === 'chunk' && n.chunkIndex > targetChunkIndex) {
+      return pieceStart;
+    }
+
+    currentOffset = pieceStart + n.length;
+    currentNode = n.right;
+  }
+
+  return root.subtreeLength; // append at end
 }
 
 /**
@@ -1046,30 +1072,41 @@ export function documentReducer(
 
       // Non-chunked mode: chunkSize must be set in the store config
       if (chunkSize === 0) return state;
-      // Enforce sequential ordering
-      if (chunkIndex !== nextExpectedChunk) return state;
-      // Ignore duplicate loads
+      // Reject chunks beyond the next expected sequential index (never-loaded future chunk).
+      if (chunkIndex > nextExpectedChunk) return state;
+      // Reject sequential gap: chunk is below nextExpectedChunk but still present in the map
+      // (duplicate load of a chunk that was never evicted).
       if (chunkMap.has(chunkIndex)) return state;
 
       const chunkBytes = data as Uint8Array;
       if (chunkBytes.length === 0) return state;
 
       const chunkText = textDecoder.decode(chunkBytes);
-      const insertionPos = byteOffset(totalLength);
+
+      // Determine insertion position and whether this is a first-time or re-load.
+      const isFirstLoad = chunkIndex === nextExpectedChunk;
+      const insertionPos = isFirstLoad
+        ? byteOffset(totalLength)  // append at end for sequential first-time load
+        : byteOffset(findReloadInsertionPos(state.pieceTable.root, chunkIndex)); // re-load: find position before higher chunks
 
       const newChunkMap = new Map(chunkMap);
       newChunkMap.set(chunkIndex, chunkBytes);
 
-      const newRoot = appendChunkPiece(state.pieceTable.root, chunkIndex, chunkBytes.length);
+      const newRoot = isFirstLoad
+        ? appendChunkPiece(state.pieceTable.root, chunkIndex, chunkBytes.length)
+        : insertChunkPieceAt(state.pieceTable.root, insertionPos, chunkIndex, chunkBytes.length);
+
       const newPieceTable = Object.freeze({
         ...state.pieceTable,
         root: newRoot,
         chunkMap: newChunkMap,
         totalLength: totalLength + chunkBytes.length,
-        nextExpectedChunk: chunkIndex + 1,
+        // Only advance the sequential pointer on a first-time load.
+        nextExpectedChunk: isFirstLoad ? chunkIndex + 1 : nextExpectedChunk,
       });
 
       const nextVersion = state.version + 1;
+      // The store schedules background reconciliation when lineIndex.rebuildPending is true.
       const newLineIndex = liInsertLazy(state.lineIndex, insertionPos, chunkText, nextVersion);
 
       return withState(state, {

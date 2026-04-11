@@ -75,7 +75,6 @@ export function createPieceNode(
     left,
     right,
     bufferType,
-    chunkIndex: -1,
     start,
     length,
     subtreeLength: length + leftLength + rightLength,
@@ -419,22 +418,24 @@ export function asEagerLineIndex(state: LineIndexState): LineIndexState<'eager'>
 
 /**
  * Settable fields on a PieceNode.
- * subtreeLength and subtreeAddLength are always recomputed from children and length,
- * so they cannot be set directly.
+ * `bufferType` and `chunkIndex` are excluded: `bufferType` is the discriminant
+ * and must never change, and `chunkIndex` only exists on ChunkPieceNode.
+ * subtreeLength and subtreeAddLength are recomputed automatically.
  */
-export type PieceNodeUpdates = Partial<Pick<PieceNode, 'color' | 'left' | 'right' | 'bufferType' | 'chunkIndex' | 'start' | 'length'>>;
+export type PieceNodeUpdates = Partial<Pick<PieceNode, 'color' | 'left' | 'right' | 'start' | 'length'>>;
 
 /**
  * Helper to create modified piece node with structural sharing.
+ * Generic over the concrete variant so the discriminant type is preserved.
  *
  * All tree mutations (insert, delete, rotations) flow through this function,
  * so subtreeAddLength is automatically maintained without changes to
  * rbInsertPiece, deleteRange, rotateLeft/rotateRight, or fixup logic.
  */
-export function withPieceNode(
-  node: PieceNode,
+export function withPieceNode<T extends PieceNode>(
+  node: T,
   changes: PieceNodeUpdates
-): PieceNode {
+): T {
   const newNode = { ...node, ...changes };
 
   // Recalculate subtree aggregates if children or length changed
@@ -449,7 +450,7 @@ export function withPieceNode(
     newNode.subtreeAddLength = selfAddLength + leftAddLength + rightAddLength;
   }
 
-  return Object.freeze(newNode);
+  return Object.freeze(newNode) as T;
 }
 
 /**

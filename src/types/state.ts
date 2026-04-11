@@ -78,22 +78,12 @@ export interface RBNode<T extends RBNode<T>> {
 }
 
 /**
- * Immutable piece node in the Red-Black tree.
- * Stores no line-related metadata - all line information is in LineIndexState.
- *
- * Note: Parent references are removed for immutability.
- * Use zipper pattern or path tracking for traversal.
+ * Fields shared by all piece node variants.
+ * Not exported — use the `PieceNode` union type externally.
  */
-export interface PieceNode extends RBNode<PieceNode> {
+interface PieceNodeBase extends RBNode<PieceNode> {
   /** Structural discriminant — distinguishes PieceNode from LineIndexNode in generic RB-tree contexts. */
   readonly _nodeKind: 'piece';
-  /** Which buffer this piece references */
-  readonly bufferType: BufferType;
-  /**
-   * For 'chunk' pieces: the index into `PieceTableState.chunkMap`.
-   * For 'original' and 'add' pieces: always -1.
-   */
-  readonly chunkIndex: number;
   /** Start offset in the buffer (for 'chunk': offset within the chunk, not absolute file offset) */
   readonly start: ByteOffset;
   /** Length of this piece */
@@ -103,6 +93,33 @@ export interface PieceNode extends RBNode<PieceNode> {
   /** Total add-buffer bytes in this subtree (for O(1) buffer stats) */
   readonly subtreeAddLength: number;
 }
+
+/** Piece node backed by the immutable original buffer. */
+export interface OriginalPieceNode extends PieceNodeBase {
+  readonly bufferType: 'original';
+}
+
+/** Piece node backed by the append-only add buffer. */
+export interface AddPieceNode extends PieceNodeBase {
+  readonly bufferType: 'add';
+}
+
+/** Piece node backed by a loaded chunk buffer. */
+export interface ChunkPieceNode extends PieceNodeBase {
+  readonly bufferType: 'chunk';
+  /** Index into `PieceTableState.chunkMap`. Always >= 0. */
+  readonly chunkIndex: number;
+}
+
+/**
+ * Immutable piece node in the Red-Black tree.
+ * Discriminated union — narrow with `bufferType` to access variant-specific fields.
+ * Only `ChunkPieceNode` carries `chunkIndex`; the other variants do not have that field.
+ *
+ * Note: Parent references are removed for immutability.
+ * Use zipper pattern or path tracking for traversal.
+ */
+export type PieceNode = OriginalPieceNode | AddPieceNode | ChunkPieceNode;
 
 /**
  * Immutable piece table state using persistent data structures.
