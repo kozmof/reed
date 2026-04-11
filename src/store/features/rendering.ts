@@ -3,7 +3,7 @@
  * Provides efficient computation of visible lines and viewport management.
  */
 
-import type { DocumentState, SelectionRange, CharSelectionRange } from '../../types/state.ts';
+import type { DocumentState, SelectionRange, CharSelectionRange, LineIndexNode } from '../../types/state.ts';
 import { byteOffset, charOffset, addByteOffset, type ByteOffset } from '../../types/branded.ts';
 import {
   $prove,
@@ -19,7 +19,7 @@ import {
   type CostFn,
   type LinearCost,
 } from '../../types/cost-doc.ts';
-import { findLineAtPosition, getCharStartOffset, findLineAtCharPosition, getLineRangePrecise, getLineCountFromIndex } from '../core/line-index.ts';
+import { findLineAtPosition, getCharStartOffset, findLineAtCharPosition, getLineRangePrecise, getLineCountFromIndex, findLineByNumber } from '../core/line-index.ts';
 import { getText, charToByteOffset } from '../core/piece-table.ts';
 import { textEncoder } from '../core/encoding.ts';
 
@@ -280,6 +280,28 @@ export function estimateLineHeight(
 }
 
 /**
+ * In-order traversal collecting charLength from every line index node.
+ * O(n) single pass — avoids repeated O(log n) findLineByNumber calls and
+ * O(line_length) getText calls that would accumulate to O(n log n + doc_bytes).
+ */
+function collectLineCharLengths(root: LineIndexNode | null, out: number[]): void {
+  if (root === null) return;
+  collectLineCharLengths(root.left as LineIndexNode | null, out);
+  out.push(root.charLength);
+  collectLineCharLengths(root.right as LineIndexNode | null, out);
+}
+
+/**
+ * Compute wrapped line height from a char length, factoring out the newline char.
+ * Shared by the exact and sampling paths of estimateTotalHeight.
+ */
+function wrappedHeight(charLen: number, charsPerLine: number, baseLineHeight: number): number {
+  const contentLen = Math.max(0, charLen - 1); // strip the trailing newline
+  const wrappedLines = charsPerLine > 0 ? (Math.ceil(contentLen / charsPerLine) || 1) : 1;
+  return wrappedLines * baseLineHeight;
+}
+
+/**
  * Calculate total document height for scroll container sizing.
  */
 export function estimateTotalHeight(
@@ -293,30 +315,30 @@ export function estimateTotalHeight(
     return $proveCtx('O(n)', $lift('O(1)', totalLines * config.baseLineHeight));
   }
 
-  // Variable height mode: we need to estimate
-  // For large documents, sample lines to estimate average wrapped height
   const SAMPLE_SIZE = 100;
+  const charsPerLine = Math.floor(config.viewportWidth / config.charWidth);
 
   if (totalLines <= SAMPLE_SIZE) {
-    // Small document: calculate exactly
+    // Small document: single O(n) in-order traversal over the line index tree.
+    // Uses charLength directly — no getText calls needed for height estimation.
+    const charLengths: number[] = [];
+    collectLineCharLengths(state.lineIndex.root as LineIndexNode | null, charLengths);
     let totalHeight = 0;
-    for (let i = 0; i < totalLines; i++) {
-      const line = getVisibleLine(state, i);
-      if (line) {
-        totalHeight += $from(estimateLineHeight(line, config)).value;
-      }
+    for (const charLen of charLengths) {
+      totalHeight += wrappedHeight(charLen, charsPerLine, config.baseLineHeight);
     }
     return $proveCtx('O(n)', $lift('O(n)', totalHeight));
   }
 
-  // Large document: sample and extrapolate
+  // Large document: sample SAMPLE_SIZE evenly-spaced lines using O(log n) tree lookups.
+  // Uses charLength from the line index node — no getText calls needed.
   let sampleHeight = 0;
   const step = Math.floor(totalLines / SAMPLE_SIZE);
 
   for (let i = 0; i < totalLines; i += step) {
-    const line = getVisibleLine(state, i);
-    if (line) {
-      sampleHeight += $from(estimateLineHeight(line, config)).value;
+    const nodeResult = findLineByNumber(state.lineIndex.root, i);
+    if (nodeResult !== null) {
+      sampleHeight += wrappedHeight($from(nodeResult).charLength, charsPerLine, config.baseLineHeight);
     }
   }
 

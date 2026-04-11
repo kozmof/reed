@@ -255,7 +255,7 @@ function backtrack(
     if (i > 0) {
       if (x === prevX) {
         // Insert
-        edits.unshift({
+        edits.push({
           type: 'insert',
           text: newText[y - 1],
           oldPos: oldOffset + x,
@@ -264,7 +264,7 @@ function backtrack(
         y--;
       } else {
         // Delete
-        edits.unshift({
+        edits.push({
           type: 'delete',
           text: oldText[x - 1],
           oldPos: oldOffset + x - 1,
@@ -275,7 +275,8 @@ function backtrack(
     }
   }
 
-  // Consolidate consecutive edits of the same type
+  // Backtracking walks root→leaf, so edits are in reverse document order — reverse before consolidating.
+  edits.reverse();
   return consolidateEdits(edits);
 }
 
@@ -313,7 +314,7 @@ function simpleDiff(
 
   while (i > 0 || j > 0) {
     if (i > 0 && j > 0 && oldText[i - 1] === newText[j - 1]) {
-      edits.unshift({
+      edits.push({
         type: 'equal',
         text: oldText[i - 1],
         oldPos: oldOffset + i - 1,
@@ -322,7 +323,7 @@ function simpleDiff(
       i--;
       j--;
     } else if (j > 0 && (i === 0 || dp[i * cols + (j - 1)] >= dp[(i - 1) * cols + j])) {
-      edits.unshift({
+      edits.push({
         type: 'insert',
         text: newText[j - 1],
         oldPos: oldOffset + i,
@@ -330,7 +331,7 @@ function simpleDiff(
       });
       j--;
     } else {
-      edits.unshift({
+      edits.push({
         type: 'delete',
         text: oldText[i - 1],
         oldPos: oldOffset + i - 1,
@@ -340,6 +341,8 @@ function simpleDiff(
     }
   }
 
+  // Backtracking walks from end→start, so edits are in reverse document order — reverse before consolidating.
+  edits.reverse();
   return consolidateEdits(edits);
 }
 
@@ -421,14 +424,17 @@ export function computeSetValueActions(
     }
   }
 
+  // Build the char-to-byte offset map once (O(n)) to avoid repeated encode() allocations.
+  const charToByteMap = buildCharToByteMap(oldContent);
+
   // Process operations, adjusting positions as we go
   // We need to track both string offset and byte offset
   let stringOffset = 0;
   let byteOffsetDelta = 0;
 
   for (const op of ops) {
-    // Convert string position to byte position
-    const bytePos = stringIndexToByteIndex(oldContent, op.position) + byteOffsetDelta;
+    // Convert string position to byte position using the pre-built map (O(1))
+    const bytePos = charToByteMap[op.position] + byteOffsetDelta;
 
     if (op.type === 'delete') {
       const deleteByteLen = textEncoder.encode(op.text).length;
@@ -449,11 +455,48 @@ export function computeSetValueActions(
 }
 
 /**
- * Convert a string index to a byte index.
- * This is needed because the piece table works with bytes, not characters.
+ * Convert a single string index to a byte index.
+ * Used by computeSetValueActionsOptimized which calls it at most twice per invocation.
  */
 function stringIndexToByteIndex(str: string, index: number): number {
   return textEncoder.encode(str.slice(0, index)).length;
+}
+
+/**
+ * Build a cumulative char-to-byte offset map in a single O(n) pass.
+ * map[i] equals the UTF-8 byte length of str.slice(0, i), matching what
+ * repeated textEncoder.encode(str.slice(0, i)).length calls would return.
+ *
+ * Surrogate-pair handling:
+ *   - str.slice(0, highIndex+1) contains a lone high surrogate → U+FFFD → 3 bytes
+ *   - str.slice(0, highIndex+2) contains the full pair → 4 bytes total (+1 over lone high)
+ */
+function buildCharToByteMap(str: string): number[] {
+  const map = new Array<number>(str.length + 1);
+  map[0] = 0;
+  let bytes = 0;
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    if (c < 0x80) {
+      bytes += 1;
+    } else if (c < 0x800) {
+      bytes += 2;
+    } else if (c >= 0xD800 && c <= 0xDBFF) {
+      // High surrogate: lone slice encodes as U+FFFD (3 bytes)
+      bytes += 3;
+      map[i + 1] = bytes;
+      const lo = i + 1 < str.length ? str.charCodeAt(i + 1) : 0;
+      if (lo >= 0xDC00 && lo <= 0xDFFF) {
+        // Full pair adds 1 byte over the lone-high-surrogate count (3 + 1 = 4 total)
+        bytes += 1;
+        i++;
+      }
+    } else {
+      bytes += 3;
+    }
+    map[i + 1] = bytes;
+  }
+  return map;
 }
 
 /**

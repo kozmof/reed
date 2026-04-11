@@ -200,26 +200,17 @@ This breaks branded-type consistency at the event boundary. Callers receiving `C
 
 ## 8. Improvement Points — Implementations
 
-**I11. Replace `edits.unshift()` in diff backtracking with `push` + `reverse`.**
+**~~I11. Replace `edits.unshift()` in diff backtracking with `push` + `reverse`.~~ ✓ Fixed 2026-04-11**
 
-```ts
-// Current (O(n) per unshift):
-edits.unshift({ type: 'insert', text: ..., ... });
+`backtrack` and `simpleDiff` in `src/store/features/diff.ts` now use `edits.push(...)` and call `edits.reverse()` once before `consolidateEdits()`. Backtracking from O(d²) to O(d).
 
-// Better (O(1) per push, one O(n) reverse at the end):
-edits.push({ type: 'insert', text: ..., ... });
-// after loop:
-edits.reverse();
-```
+**~~I12. Cache char-to-byte offset map in `computeSetValueActions`.~~ ✓ Fixed 2026-04-11**
 
-Reduces backtracking from O(d²) to O(d) time.
+Added `buildCharToByteMap(str): number[]` (single O(n) pass) in `src/store/features/diff.ts`. `computeSetValueActions` builds the map once before the ops loop and does O(1) lookups instead of calling `textEncoder.encode(str.slice(0, i))` per edit. `stringIndexToByteIndex` is retained as a thin helper for `computeSetValueActionsOptimized`, which calls it at most twice per invocation.
 
-**I12. Cache char-to-byte offset map in `computeSetValueActions`.**
+**~~I13. `estimateTotalHeight` with soft wrap calls `getVisibleLine` per line.~~ ✓ Fixed 2026-04-11**
 
-Build a single O(n) pass over `oldContent` to produce a `charToByte: number[]` map, then look up byte positions in O(1) per edit rather than calling `textEncoder.encode(str.slice(0, i))` repeatedly.
-
-**I13. `estimateTotalHeight` with soft wrap calls `getVisibleLine` per line.**
-For a document with 100 lines and soft wrap, this is 100 × (O(log n) + O(line_length)) operations. Batching line reads into a single `scan.getValueStream` traversal would be more cache-friendly.
+Added `collectLineCharLengths` (O(n) in-order tree traversal) and `wrappedHeight` helpers in `src/store/features/rendering.ts`. Small-doc path (≤100 lines) now does a single tree traversal using `node.charLength`, eliminating O(n log n + n × line_length) `getVisibleLine` calls. Sampling path uses `findLineByNumber` + `charLength` (O(log n) per sample, no `getText` calls).
 
 **I14. `scheduleReconciliation` 200ms `setTimeout` fallback in Node.js.**
 For test environments and SSR, the 200ms timer can accumulate and affect teardown timing. A `reconcileMode: 'idle' | 'sync' | 'none'` option in `DocumentStoreConfig` would give consumers control without patching the global.
