@@ -1,23 +1,13 @@
 # Open Issues and Improvements
 
-Extracted from `code-analyze.md` on 2026-03-25.
+Updated 2026-04-11. Resolved issues removed; new issues from all reports added.
 Items marked *(acknowledged — not fixing)* have a documented rationale for deferral and are included for completeness.
 
 ---
 
 ## Architecture / Design
 
-### #001 — Chunk loading handlers are stubs *(fixed 2026-04-11)*
-
-The `LOAD_CHUNK` / `EVICT_CHUNK` action handlers were not implemented.
-
-**Fix:** Implemented Phase 3 chunk loading. `BufferType` extended to `'original' | 'add' | 'chunk'`. `PieceNode` gains `chunkIndex: number` (-1 for non-chunk pieces). `PieceTableState` gains `chunkMap: ReadonlyMap<number, Uint8Array>`, `chunkSize: number`, and `nextExpectedChunk: number`. `ChunkBufferRef` added to the `BufferReference` union. `createChunkPieceNode` factory added in `store/core/state.ts`. Buffer-access helpers (`getBuffer`, `getBufferSlice`, `getPieceBuffer`, `splitPiece`, `deleteRange`) all handle the `'chunk'` case. The `LOAD_CHUNK` reducer case enforces sequential ordering (`chunkIndex === nextExpectedChunk`), appends a chunk piece at the tree tail, and updates the line index lazily. The `EVICT_CHUNK` reducer case blocks eviction when user edits overlap the chunk range, removes chunk pieces via an in-order rebuild, and updates the line index lazily. 17 new tests in `store.logic.test.ts`. Chunked mode enabled by passing `chunkSize` to `createDocumentStore` with no initial content.
-
-**Source:** Report 2, §6 D3
-
----
-
-### #002 — No invariant document for core structures
+### #001 — No invariant document for core structures
 
 No concise invariant reference exists for piece table subtree fields, line index mode guarantees, or reconciliation invariants. Invariant drift risk grows as the codebase evolves.
 
@@ -25,211 +15,201 @@ No concise invariant reference exists for piece table subtree fields, line index
 
 ---
 
-### #003 — No benchmark harness
+### #002 — No benchmark harness
 
-No benchmark harness for large-document edits, mixed line endings, or reconciliation thresholds. Performance confidence rests entirely on functional tests.
+No benchmark harness for large-document edits, mixed line endings, or reconciliation thresholds. Performance confidence rests entirely on functional tests. The cost algebra annotations (`$prove`, `$lift`, etc.) are documentation only — no runtime or automated benchmark catches a false claim.
 
-**Source:** Report 1, §8 Impl3
+**Source:** Report 1, §8 Impl3; Report 4 (full), §6 I4
+
+---
+
+### #003 — `reconcileNow` bumps `state.version`; background reconciliation does not
+
+`reconcileNow()` increments `state.version`; background reconciliation and `getEagerSnapshot()` leave it unchanged. Two consumers can observe equal document content but different version numbers depending on which reconciliation path ran. Any consumer diffing `state.version` will see spurious bumps from `reconcileNow`. The background path's "version-neutral" rationale is stronger (resolving offsets is content-neutral), so `reconcileNow` should stop bumping version; callers that need to re-render should compare line index state, not version.
+
+**Source:** Report 4 (full), §5 P1, §6 I1
+
+---
+
+### #004 — Eager reconciliation before every undo/redo is O(n)
+
+`historyUndo` and `historyRedo` call `reconcileFull` once before applying changes. For large files this is a performance cliff for rapid undo sequences. An incremental approach — resolving only the specific byte offsets needed for each change (O(k) where k = changed lines) — would avoid the full rebuild.
+
+**Source:** Report 3, §6 I1
+
+---
+
+### #005 — Background reconciliation has no back-pressure
+
+`scheduleReconciliation` relies on `reconcileIfCurrent` to detect staleness, but if edits arrive faster than reconciliation runs, the dirty range array grows until the sentinel kicks in at 32 entries. There is no explicit throttling or priority mechanism. Exposing a `reconcilePriority` signal or making the sentinel threshold configurable would give consumers control.
+
+**Source:** Report 3, §6 I2
+
+---
+
+### #006 — `reducer.ts` and `store.ts` are large monoliths
+
+`reducer.ts` (1168 lines) handles position validation, piece-table ops, line-index strategy dispatch, CRLF edge case detection, history coalescing, undo, redo, transaction reduction, selection computation, remote change application, and chunk loading — mostly independent concerns. Extracting `applyEdit`, `historyPush`, `applyHistoryUndo`, and `applyHistoryRedo` as pure functions into separate files would keep `reducer.ts` as an orchestrator only.
+
+**Source:** Report 3, §6 I3
+
+---
+
+### #007 — `line-index.ts` is a 2000+ line monolith
+
+`reconcileViewport`, `reconcileRange`, and `mergeDirtyRanges` are the most algorithmically complex functions in the codebase and are embedded in a 2254-line file. Extracting them into `store/core/reconcile.ts` would improve navigability and allow independent testing.
+
+**Source:** Report 3, §8 Impl4
+
+---
+
+### #008 — Chunk eviction semantics are undocumented
+
+`EVICT_CHUNK` is implemented, but what happens when caller code tries to access text from an evicted chunk is not documented at the public API layer. `getBuffer` throws `'Chunk N is not loaded'` at runtime. Using chunk mode without understanding this can produce opaque errors. The eviction contract (which operations are safe after eviction, and what the caller must do before evicting modified chunks) should be captured in JSDoc on `EvictChunkAction` and `EVICT_CHUNK`.
+
+**Source:** Report 4 (full), §6 I5
+
+---
+
+### #009 — Phase 4: chunk loading infrastructure incomplete
+
+The reducer actions for chunk loading are implemented, but the surrounding runtime is not yet built:
+
+- **Out-of-order (random-access) loading not supported.** `nextExpectedChunk` enforces sequential arrival (0, 1, 2, …). Supporting random-access requires 'unloaded' placeholder pieces or gap tracking in the piece table.
+- **No line-index pre-population from chunk metadata.** Immediate line-count queries on unloaded content are not possible without loading.
+- **No configurable `totalFileSize`.** `DocumentStoreConfig` has no field for declaring the known total file size before loading begins.
+- **No async chunk fetch subsystem, LRU/eviction policy manager, or background file parsing workers.**
+
+**Source:** Report 4 (chunk), §5 Missing Infrastructure; design-dimensions §XVII Phase 4 open items
 
 ---
 
 ## Types & Interfaces
 
-### #004 — `SelectionState.primaryIndex` unconstrained *(fixed 2026-03-25)*
-
-`primaryIndex: number` can exceed `ranges.length` with no type or runtime protection. `ranges[primaryIndex]` fails silently. Ideally constrained to a non-empty array with a focus indicator that guarantees validity at the type level.
-
-**Fix:** Added `NonEmptyReadonlyArray<T> = readonly [T, ...T[]]` type alias. `SelectionState.ranges` changed from `readonly SelectionRange[]` to `NonEmptyReadonlyArray<SelectionRange>`. TypeScript now rejects empty-array construction at compile time. Full `primaryIndex < ranges.length` enforcement remains impossible at the type level; the empty-array footgun is eliminated.
-
-**Source:** Report 2, §5 P2 + §7 T1 (same issue)
-
----
-
-### #005 — `HistoryReplaceChange` asymmetric byte length tracking *(fixed 2026-03-25)*
-
-`HistoryInsertChange` and `HistoryDeleteChange` precompute `byteLength`. `HistoryReplaceChange` carries `oldText` but its byte length must be recomputed at undo time. Undo logic for `replace` cannot follow the same pattern as `insert`/`delete`.
-
-**Fix:** Added `oldByteLength: number` to `HistoryReplaceChange`. Populated at record-creation time in `applyEdit` (`op.deleteEnd - op.position`). `invertChange` now uses `change.oldByteLength` directly. `applyChange` uses it for `deleteEnd` instead of re-encoding `oldText`. The `textEncoder` import in `reducer.ts` was subsequently removed as unused.
-
-**Source:** Report 2, §7 T2
-
----
-
-### #006 — `DirtyLineRange.endLine` sentinel not type-enforced *(fixed 2026-03-25)*
-
-`endLine: number` uses `Number.MAX_SAFE_INTEGER` to represent "rest of document." Any integer passes the type check; the sentinel is indistinguishable from a real line number. A type alias `type EndOfDocument = typeof Number.MAX_SAFE_INTEGER` or a tagged union would express the intent.
-
-**Fix:** Added `END_OF_DOCUMENT = Number.MAX_SAFE_INTEGER` constant and `EndOfDocument` type alias to `src/types/state.ts`, exported from `src/types/index.ts`. All six `endLine`-sentinel usages in `line-index.ts` replaced with `END_OF_DOCUMENT`. The sentinel is now a single named reference; textual search finds every site. (A full tagged-union approach was not taken as it would have required pervasive call-site changes for no additional runtime safety.)
-
-**Source:** Report 2, §5 P6 + §7 T3 (same issue)
-
----
-
-### #007 — `RBNode<T extends RBNode<T>>` over-permissive generic bound *(fixed 2026-03-25)*
-
-The F-bounded polymorphism is too loose: `PieceNode.left` could be assigned a `LineIndexNode` without a compile-time error in certain indirect generic contexts. Generic tree operations assume same-type children but cannot enforce it.
-
-**Fix:** Added `readonly _nodeKind: 'piece'` to `PieceNode` and `readonly _nodeKind: 'lineIndex'` to `LineIndexNode<M>`. Both factory functions (`createPieceNode`, `createLineIndexNode`) populate the field. The literal types make the two node kinds structurally distinct in all contexts, including indirect generic ones, without threading a second type parameter through `RBNode<T>` or `rb-tree.ts`.
-
-**Source:** Report 2, §7 T4
-
----
-
-### #008 — `BufferType` is not sealed against extension *(fixed 2026-03-25)*
-
-`BufferReference` is a discriminated union, but `getPieceBuffer()` uses an `if/else` rather than an exhaustive `switch`. Adding a third buffer type would not cause a type error; the new case would silently fall through to `addBuffer`.
-
-**Fix:** `getBuffer`, `getBufferSlice`, and `getPieceBuffer` in `piece-table.ts` all converted to exhaustive `switch` statements. The `default` branch assigns the narrowed value to a `never`-typed variable, causing a compile error if a new `BufferType` variant is ever added without handling it.
-
-**Source:** Report 2, §7 T5
-
----
-
-### #009 — `LineIndexNode<M>` phantom type verbosity *(acknowledged — not fixing)*
+### #010 — `LineIndexNode<M>` phantom type verbosity *(acknowledged — not fixing)*
 
 All tree operations must carry `<M extends EvaluationMode>`. Since `M` only affects `documentOffset` nullability, parameterizing only `LineIndexState<M>` (not individual nodes) would simplify type signatures.
 
 Not fixing: removing the phantom from `LineIndexNode` would weaken the type system — `documentOffset` would always be `number | null`, and `getLineRangePrecise` overloads that currently guarantee non-null offsets in eager mode would lose that guarantee.
 
-**Source:** Report 3, §7 T1
+**Source:** Report 2, §7 T1
 
 ---
 
-### #010 — Remote change `length` field not branded as byte length *(fixed 2026-03-25)*
+### #011 — `HistoryChange.byteLength` invariant unprotected at construction
 
-`APPLY_REMOTE` action carries a `length` field typed as plain `number`. Separating it into a branded `ByteLength` would reduce accidental unit misuse at call sites that operate in char offsets.
+`HistoryInsertChange` and `HistoryDeleteChange` carry both `text: string` and `byteLength: ByteLength`. These must satisfy `byteLength === utf8ByteLength(text)`. If a future construction site diverges (e.g. by passing the wrong `byteLength` value), undo/redo byte offsets will be silently wrong. A factory function that derives `byteLength` from `text` (or validates consistency) would enforce the invariant at the type level.
 
-**Fix:** `RemoteChange.length` changed from `number` to `ByteLength` in `src/types/actions.ts`. Arithmetic call sites in `reducer.ts` and `events.ts` required no change — both pass through `byteOffset(change.start + change.length)` where the `+` widens to `number` before `byteOffset()` re-brands it. Three test sites (`events.test.ts`, `store.logic.test.ts` ×2, `store.usecase.test.ts`) updated to use `byteLength(n)`.
-
-**Source:** Report 1, §7 T2
+**Source:** Report 3, §7 T2
 
 ---
 
-### #011 — Event payload types remain generic `DocumentAction` *(fixed 2026-03-25)*
+### #012 — `DocumentStoreConfig.lineEnding` not enforced on insert
 
-Remote content changes are now treated as first-class in dispatch and event behavior, but typed event handler payloads remain generic `DocumentAction` rather than narrowed per-event types.
+The `lineEnding` metadata field records the document's intended line ending, but the insert path applies no normalization. Text with mismatched line endings can be inserted without any warning or coercion. A normalization layer (or at least a validation warning) in the insert path would prevent silent line-ending drift.
 
-**Fix:** Added `ContentChangeAction = InsertAction | DeleteAction | ReplaceAction | ApplyRemoteAction` to `src/types/actions.ts` and exported from `src/types/index.ts`. `ContentChangeEvent.action` and `createContentChangeEvent`'s parameter narrowed to `ContentChangeAction`. No cast needed in `store.ts` — the existing `isTextEditAction(action) || action.type === 'APPLY_REMOTE'` guard already narrows `action` to exactly `ContentChangeAction` before the `emit` call.
-
-**Source:** Report 1, §7 T3
-
----
-
-### #012 — Action schema-centric validation not enforced *(fixed 2026-03-25)*
-
-The `DocumentAction` union definition, the `isDocumentAction` type guard, and the `validateAction` logic can diverge. A schema-centric approach (e.g. a single source of truth that generates guards and validators) would reduce this class of drift.
-
-**Fix:** Added `src/types/str-enum.ts` with a `strEnum` utility. `DocumentActionTypes = strEnum([...13 type strings...])` is now the single source of truth; `DocumentActionType` is derived as `keyof typeof DocumentActionTypes`. Both `isDocumentAction` and `validateAction` use `action.type in DocumentActionTypes` for membership, then cast to `DocumentActionType` and switch on it. The `default` branch in each switch uses an IIFE `((_: never) => ...)(type)` — if a new key is added to `strEnum([...])` but its `case` is omitted, TypeScript errors at the `never` argument. Additionally filled the concrete validation gap: `validateAction`'s `APPLY_REMOTE` case now validates each `RemoteChange` element's `type`, `start`, `text` (insert), and `length` (delete); `isDocumentAction`'s `APPLY_REMOTE` case brought to parity.
-
-**Source:** Report 1, §7 T4
+**Source:** Report 3, §6 I4
 
 ---
 
 ## Algorithms
 
-### #013 — `bstInsert()` path ordering contract is implicit *(fixed 2026-03-25)*
-
-`bstInsert()` builds a path in leaf-to-root order, then `.reverse()` is called before balancing. This ordering dependency is not expressed in any type, comment, or assertion. Changing traversal order in `bstInsert()` silently breaks balancing.
-
-**Fix:** Added `RootToLeafInsertPath<N extends RBNode<N>>` branded type to `rb-tree.ts` — an intersection of `InsertionPathEntry<N>[]` with `{ readonly _pathOrder: 'root-to-leaf' }`. `fixInsertWithPath` now requires this branded type. In `piece-table.ts`, `bstInsert` return type changed to `RootToLeafInsertPath<PieceNode>`; the existing `insertPath.reverse()` call is followed by `return insertPath as RootToLeafInsertPath<PieceNode>` — the cast is the explicit acknowledgment that `.reverse()` has run. Passing an unreversed path to `fixInsertWithPath` is now a compile error.
-
-**Source:** Report 2, §5 P5
-
----
-
-### #014 — `splitPiece()` assumes the split target is a leaf *(fixed 2026-03-25)*
-
-When splitting, the left piece inherits `piece.left` and the right piece inherits `piece.right`. If the piece being split is an interior node, its original children are relocated without re-linking. The invariant "only split near-leaf nodes" is undocumented and unenforced.
-
-**Fix:** Added a JSDoc `@pre` comment to `splitPiece` stating the near-leaf precondition. Added a runtime guard at the top of the function: `if (piece.left !== null && piece.right !== null) throw new Error('splitPiece: target must be a near-leaf node (at most one child)')`. This fails loudly at the point of violation rather than silently producing a structurally corrupt tree.
-
-**Source:** Report 2, §8 Impl1
-
----
-
-### #015 — `deleteRange()` has three inconsistent boundary check styles *(fixed 2026-03-25)*
-
-The early-exit check, the left-child recurse guard, and the right-child recurse guard use different orderings of `deleteStart`, `deleteEnd`, `pieceStart`, `pieceEnd`, and `subtreeEnd`. Whether boundaries are inclusive or exclusive varies with no unifying convention.
-
-**Fix:** Added a header comment to `deleteRange` establishing the canonical half-open interval convention: `[a, aEnd)` overlaps `[b, bEnd)` iff `a < bEnd && b < aEnd`. All four boundary checks were audited and rewritten in a uniform form using this convention: left-guard `offset < deleteEnd && deleteStart < pieceStart`, right-guard `pieceEnd < deleteEnd && deleteStart < subtreeEnd`. The early-exit and piece-skip checks were already canonical and left unchanged.
-
-**Source:** Report 2, §8 Impl2
-
----
-
-### #016 — History coalescing uses byte boundaries; char-offset callers may see drift *(fixed 2026-03-25)*
-
-The contiguity check `newChange.position === last.position + last.byteLength` compares byte offsets against a byte length derived from `textEncoder.encode()`. If an editor layer uses character (UTF-16) positions, adjacent edits may fail to coalesce, or non-adjacent edits may coalesce incorrectly. Additionally, `HistoryInsertChange.byteLength` and `HistoryDeleteChange.byteLength` were unbranded `number`, allowing silent unit confusion.
-
-**Fix:** `HistoryInsertChange.byteLength` and `HistoryDeleteChange.byteLength` changed from `number` to `ByteLength` in `src/types/state.ts`. In `reducer.ts`, all construction sites now call `byteLength()` to brand the value: `byteLength(insertedByteLength)` for inserts, `byteLength(op.deleteEnd - op.position)` for deletes; `coalesceChanges` wraps the summed byte lengths with `byteLength()`. Six `byteLength: 1` literals in `history.test.ts` updated to `byteLength: byteLength(1)`.
-
-**Source:** Report 2, §5 P7
-
----
-
-### #017 — `deleteLineRangeLazy` calls O(n) tree rebuild even in lazy mode *(acknowledged — not fixing)*
+### #013 — `deleteLineRangeLazy` calls O(n) tree rebuild even in lazy mode *(acknowledged — not fixing)*
 
 For multi-line deletions, `rebuildWithDeletedRange` is called even in lazy mode because the resulting tree shape changes. Lazy delete with newlines has the same O(n) cost as eager delete, negating the lazy optimization for this case.
 
 Not fixing: the Red-Black tree must be rebalanced after removing each line node (O(log n) per deleted line). "Lazy" defers only offset recalculation, not structural rebalancing. The current approach is correct.
 
-**Source:** Report 3, §5 P5 (`src/store/core/line-index.ts`)
+**Source:** Report 2, §5 P5 (`src/store/core/line-index.ts`)
 
 ---
 
-### #018 — `reconcileInPlace` visits all nodes even when offsets are already correct *(acknowledged — not fixing)*
+### #014 — `reconcileInPlace` visits all nodes even when offsets are already correct *(acknowledged — not fixing)*
 
 The short-circuit `node.documentOffset !== correctOffset` avoids node allocation but not subtree traversal. A subtree-level correctness flag (analogous to `rebuildPending` at the state level) would allow pruning entire subtrees known to be clean.
 
 Not fixing: coordinating invalidation across every lazy tree mutation (`insertLinesAtPositionLazy`, `rbDeleteLineByNumber`, rotations) carries high complexity. With `reconcileRange` now O(K+V), `reconcileInPlace` is already the last resort and runs infrequently.
 
-**Source:** Report 3, §8 Impl3 (`src/store/core/line-index.ts`)
+**Source:** Report 2, §8 Impl3 (`src/store/core/line-index.ts`)
 
 ---
 
 ## Implementations
 
-### #019 — Cost labels are phantom — no runtime enforcement *(fixed 2026-03-25)*
+### #015 — `findNewlineBytePositions` allocates `Uint8Array` on every call (hot path)
 
-`$lift('O(1)', value)` and `$prove` accept any value without measuring cost. Any contributor can annotate an O(n) operation as `O(1)` and the type system will not object. The cost algebra is documentation, not a contract.
+```ts
+const bytes = textEncoder.encode(text);  // allocation on every insert
+```
 
-**Fix:** Added an explicit module-level `@remarks` block to `src/types/cost-doc.ts` stating that cost labels are documentation annotations, not runtime or compile-time contracts. Added matching `@remarks` to `$prove`, `$proveCtx`, and `$lift` clarifying that the `max`/`_level` parameters are consumed only by the type system and do not constrain or measure actual runtime performance. The false promise is now an honest disclaimer; contributors reading the API surface will encounter the caveat at every boundary function.
+`\r` (0x0D) and `\n` (0x0A) are single-byte ASCII and never appear in UTF-8 continuation bytes, so positions can be found via a direct `charCodeAt` scan, avoiding the allocation entirely. Computing `byteLength` still requires a UTF-8 encode but can be separated from the newline scan (or computed from `text.length` + surrogate-pair count for ASCII-heavy documents).
 
-**Source:** Report 2, §5 P3
-
----
-
-### #020 — Branded type constructors accept invalid values *(fixed 2026-03-25)*
-
-`byteOffset(-1)`, `byteOffset(NaN)`, `byteOffset(Infinity)` all compile and produce valid-looking `ByteOffset` values. `isValidOffset()` exists but is not called by any constructor. The branded types promise nominal safety that the constructors do not provide.
-
-**Fix:** Added `RangeError` guards to all five constructors in `src/types/branded.ts`: `byteOffset`, `charOffset`, `byteLength` call `isValidOffset` (non-negative integer check); `lineNumber` and `columnNumber` call `isValidLineNumber` (same check). All throw `RangeError` with a descriptive message if given a negative, non-integer, NaN, or infinite value. Two tests that used `byteOffset(-1)` / `charOffset(-5)` to test downstream graceful handling were updated: the `piece-table.test.ts` "return null for negative position" test was changed to `toThrow(RangeError)`, the `byteOffset(-1)` case in the `getText` invalid-range test was removed (that scenario is now rejected at the constructor), and the `charOffset(-5)` assertion in the clamp test was removed (a negative `CharOffset` is no longer constructable).
-
-**Source:** Report 2, §5 P4
+**Source:** Report 3, §8 Impl1 (`src/store/core/line-index.ts:56`)
 
 ---
 
-### #021 — `getValueStream()` defers O(n) allocation to first iteration, invisibly *(fixed 2026-03-25)*
+### #016 — `fixInsert` is O(n) and still exported
 
-`collectPieces()` is called inside the generator body, so the O(n) allocation happens during the first `next()` call, not at generator creation time. The function signature gives no indication of when this work occurs. Callers that hold the generator and iterate later trigger allocation at an unpredictable point in the call stack.
+`rb-tree.ts` exports both `fixInsert` (O(n), full-tree traversal) and `fixInsertWithPath` (O(log n), path-only). Any caller that imports `fixInsert` silently gets O(n) per insert, making inserts into large documents O(n log n) total. `fixInsert` should be deprecated (or its export removed) with callers migrated to `fixInsertWithPath`.
 
-**Fix:** `getValueStream` converted from a `function*` to a regular function. It now calls `collectPieces(state.root)` (and evaluates the guard conditions) eagerly before returning a generator. The actual yield logic is moved to a private `streamChunks` inner generator that closes over the already-collected pieces array. Callers see the same `Generator<DocumentChunk, void, undefined>` return type; allocation now occurs at `getValueStream()` call time. A `@remarks` annotation documents when the O(n) collection happens.
-
-**Source:** Report 2, §5 P8 + §8 Impl5 (same issue)
+**Source:** Report 4 (full), §5 P2 (`src/store/core/rb-tree.ts:201`)
 
 ---
 
-### #022 — `TransactionManager.rollback()` does not guard against unmatched calls *(fixed 2026-03-25)*
+### #017 — `getAffectedRange` for `APPLY_REMOTE` spans the full change extent
 
-`rollback()` pops from `snapshotStack` and decrements `depth` without verifying that a corresponding `begin()` was called. An extra `rollback()` produces `depth = -1`; subsequent dispatches may notify listeners prematurely or skip notifications. `assertInvariant` (added by Report 4 Impl3) will throw after the fact, but does not prevent the decrement.
+If remote changes are non-contiguous (e.g. insert at byte 0 and insert at byte 10000), `getAffectedRange` reports `[0, 10000+]` — a single range covering the full extent. This makes the `content-change` event imprecise for consumers trying targeted re-renders. Emitting per-change ranges, or a list of disjoint ranges, would allow consumers to skip unaffected regions.
 
-**Fix:** The silent early-return in `rollback()` (which returned `snapshot: null` when `depth === 0`) was changed to `throw new Error('TransactionManager: rollback() called with no active transaction (depth is already 0)')`. A `@throws` annotation was added to the `TransactionManager` interface JSDoc. Two tests in `transaction.test.ts` that previously asserted the no-op behavior were updated to `expect(() => tm.rollback()).toThrow('no active transaction')`.
-
-**Source:** Report 2, §8 Impl3
+**Source:** Report 4 (full), §5 P5 (`src/store/features/events.ts`)
 
 ---
 
-### #023 — Inner rollback restores only the matching snapshot, not outermost state *(acknowledged — not fixing)*
+### #018 — `notifyListeners` allocates `Array.from(listeners)` on every notification
+
+```ts
+const currentListeners = Array.from(listeners);
+```
+
+This is O(L) per notification and allocates a new array on every state change. For high-frequency dispatch (key-per-character edits) this creates GC pressure. The snapshot is needed to handle mid-notify unsubscription; the `notifying` re-entrancy guard handles recursive calls separately. A copy-on-write listeners set (duplicated only when a subscription change occurs mid-notify) would eliminate the per-notification allocation for the common case.
+
+**Source:** Report 4 (full), §5 P6; Report 1, §8 Impl (partial fix 2026-03-26) (`src/store/features/store.ts:116`)
+
+---
+
+### #019 — `scheduleReconciliation` 200ms `setTimeout` fallback accumulates in Node.js
+
+For test environments and SSR, the 200ms timer can fire after the test has asserted, causing unexpected async activity and affecting teardown timing. A `reconcileMode: 'idle' | 'sync' | 'none'` option in `DocumentStoreConfig` would give consumers control without patching the global.
+
+**Source:** Report 4 (full), §8 I14 (`src/store/features/store.ts`)
+
+---
+
+### #020 — `GrowableBuffer` shared-mutation contract needs a dev-mode assertion
+
+The class JSDoc describes the invariant (old snapshots are safe only if access stays within their own `length` field), but there is no runtime check to catch misuse in development. A debug-mode bounds check in `subarray()` would catch callers reading `buffer.bytes.length` instead of `buffer.length`:
+
+```ts
+// Development only:
+if (start >= this.length || end > this.length) {
+  throw new Error('GrowableBuffer: out-of-bounds read');
+}
+```
+
+**Source:** Report 4 (full), §8 I15 (`src/store/core/growable-buffer.ts`)
+
+---
+
+### #021 — `$declare` escape hatch is unchecked *(acknowledged — by design)*
+
+`$declare` allows any value to be annotated with an arbitrary cost level without compile-time or runtime verification. Unlike `$prove`, which validates that the inner annotation does not exceed the declared maximum, `$declare` is a pure assertion with no backing check. A contributor can annotate an O(n) function as O(1) using `$declare` and the type system will not object.
+
+By design: `$declare` exists for contexts where cost is provable by reasoning but not expressible through the `$pipe`/`$andThen` combinator algebra. The explicit disclaimer in `cost-doc.ts` makes this trade-off visible.
+
+**Source:** Report 1, summary table (`src/types/cost-doc.ts`)
+
+---
+
+### #022 — Inner rollback restores only the matching snapshot, not outermost state *(acknowledged — not fixing)*
 
 ```ts
 dispatch(TRANSACTION_START)    // begin(stateA), depth=1
