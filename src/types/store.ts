@@ -10,17 +10,16 @@ import type {
   DocumentEventEmitter,
   DocumentEventMap,
   EventHandler,
+  Unsubscribe,
 } from '../store/features/events.ts';
+
+// Re-export so the public API surface (types/index.ts) can import from one place.
+export type { Unsubscribe };
 
 /**
  * Listener function type for store subscriptions.
  */
 export type StoreListener = () => void;
-
-/**
- * Unsubscribe function returned by subscribe.
- */
-export type Unsubscribe = () => void;
 
 /**
  * Core framework-agnostic store interface.
@@ -115,6 +114,16 @@ export interface ReconcilableDocumentStore extends DocumentStore {
    * @param endLine - Last visible line (0-indexed)
    */
   setViewport(startLine: number, endLine: number): void;
+
+  /**
+   * Get the current state, reconciling dirty line-index ranges immediately if needed.
+   * Returns DocumentState<'eager'> — all line offsets are guaranteed accurate.
+   * Unlike reconcileNow(), this does not bump the version number, since resolving
+   * offsets does not change visible content.
+   * Prefer this over getSnapshot() when APIs that require DocumentState<'eager'>
+   * (e.g. query.getLineRange) are needed without an explicit reconciliation call.
+   */
+  getEagerSnapshot(): DocumentState<'eager'>;
 
   /**
    * Emergency reset when a rollback dispatch itself throws.

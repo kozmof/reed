@@ -530,6 +530,10 @@ function setSelection(
   state: DocumentState,
   ranges: readonly SelectionRange[]
 ): DocumentState {
+  if (ranges.length === 0) {
+    console.warn('SET_SELECTION: ranges must be non-empty; action ignored');
+    return state;
+  }
   return withState(state, {
     selection: Object.freeze({
       ranges: Object.freeze(ranges.map(r => Object.freeze({ ...r }))) as NonEmptyReadonlyArray<SelectionRange>,

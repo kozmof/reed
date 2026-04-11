@@ -181,20 +181,25 @@ There is no benchmark harness. Given the cost annotations appear on hot-path fun
 
 ## 7. Improvement Points — Types and Interfaces
 
-**I6. `DocumentStore.getSnapshot()` returns unparameterized `DocumentState`.**
-The lazy/eager distinction is erased at the store boundary. Callers wanting accurate line offsets must call `reconcileNow()` (returns `DocumentState<'eager'>`) or use `getLineRangePrecise`. An alternative: expose `getEagerSnapshot(): DocumentState<'eager'>` that reconciles on demand.
+**~~I6. `DocumentStore.getSnapshot()` returns unparameterized `DocumentState`.~~ ✓ Fixed 2026-04-11**
 
-**I7. `PStack` uses `as unknown as PStack<T>` casts internally.**
-The private brand symbol requires this cast in `pstackPush` and `pstackTrimToSize`. A class with a private constructor would eliminate the casts while preserving the same API surface.
+Added `getEagerSnapshot(): DocumentState<'eager'>` to `ReconcilableDocumentStore` (`src/types/store.ts`) and implemented it in `createDocumentStore` (`src/store/features/store.ts`). Unlike `reconcileNow()`, it does not bump the version number — resolving dirty offsets is content-neutral. Passed through unchanged in `createDocumentStoreWithEvents`.
 
-**I8. `getAffectedRange` returns `readonly [number, number]` (raw numbers, not `ByteOffset`).**
-This breaks branded-type consistency at the event boundary. Callers receiving `ContentChangeEvent.affectedRange` get unbranded numbers that could be misused as char offsets.
+**~~I7. `PStack` uses `as unknown as PStack<T>` casts internally.~~ ✓ Fixed 2026-04-11**
 
-**I9. `Unsubscribe` type is declared in two places.**
-`types/store.ts` and `store/features/events.ts` each declare `type Unsubscribe = () => void`. One should re-export from the other to prevent silent divergence.
+Replaced the `declare const _pstackBrand: unique symbol` + branded-type approach with an unexported `class PStackCons<T>` in `src/types/state.ts`. The class carries `private declare readonly _brand: never` (zero runtime overhead) to block plain-object structural assignability. All internal helpers now use `new PStackCons(...)` directly — no casts remain in `pstackPush` or `pstackTrimToSize`.
 
-**I10. `NonEmptyReadonlyArray` is a type alias, not a runtime guarantee.**
-`SelectionState.ranges` is typed as `NonEmptyReadonlyArray<SelectionRange>`, but the reducer could push an empty array. A runtime assertion in `SET_SELECTION` handling would make the invariant load-bearing.
+**~~I8. `getAffectedRange` returns `readonly [number, number]` (raw numbers, not `ByteOffset`).~~ ✓ Fixed 2026-04-11**
+
+`getAffectedRange` in `src/store/features/events.ts` now returns `readonly [ByteOffset, ByteOffset]`. `ContentChangeEvent.affectedRange` and `createContentChangeEvent`'s parameter updated to match. All return sites now wrap computed offsets with `byteOffset(...)`.
+
+**~~I9. `Unsubscribe` type is declared in two places.~~ ✓ Fixed 2026-04-11**
+
+`src/types/store.ts` no longer declares `Unsubscribe`; it imports it from `src/store/features/events.ts` (the canonical site) and re-exports it, so `types/index.ts` consumers are unaffected.
+
+**~~I10. `NonEmptyReadonlyArray` is a type alias, not a runtime guarantee.~~ ✓ Fixed 2026-04-11**
+
+Added a guard at the top of `setSelection` in `src/store/features/reducer.ts`: if `ranges.length === 0`, a `console.warn` is emitted and the action is treated as a no-op (current state returned unchanged), consistent with the reducer's existing fail-soft style.
 
 ---
 

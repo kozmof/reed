@@ -369,20 +369,33 @@ export interface HistoryEntry {
 // =============================================================================
 
 /**
+ * Internal cons-cell for the persistent stack.
+ * Not exported — only module-internal code can call `new PStackCons(...)`,
+ * eliminating `as unknown as PStack<T>` casts in push/trim helpers.
+ * The `private declare _brand` field (zero runtime overhead) prevents plain
+ * object literals from being structurally assignable to `PStack<T>`.
+ */
+class PStackCons<T> {
+  private declare readonly _brand: never;
+  constructor(
+    readonly top: T,
+    readonly rest: PStack<T>,
+    readonly size: number,
+  ) {}
+}
+
+/**
  * Persistent singly-linked stack with O(1) push/pop/peek and automatic
  * structural sharing across snapshots. Empty stack is `null`.
  *
- * `_pstackBrand` is intentionally not exported. External code cannot construct
- * a `PStackCons<T>` value without going through `pstackPush`, preventing
- * accidental bypass of the helper API.
+ * External code cannot construct a `PStackCons<T>` value directly (class is
+ * unexported), preventing accidental bypass of the helper API.
  */
-declare const _pstackBrand: unique symbol;
-type PStackCons<T> = { readonly top: T; readonly rest: PStack<T>; readonly size: number; readonly [_pstackBrand]: true };
 export type PStack<T> = null | PStackCons<T>;
 
 export const pstackEmpty = <T>(): PStack<T> => null;
 export const pstackPush = <T>(s: PStack<T>, v: T): PStack<T> =>
-  ({ top: v, rest: s, size: (s?.size ?? 0) + 1 }) as unknown as PStack<T>;
+  new PStackCons(v, s, (s?.size ?? 0) + 1);
 export const pstackPeek = <T>(s: PStack<T>): T | undefined => s?.top;
 export const pstackPop = <T>(s: NonNullable<PStack<T>>): [T, PStack<T>] => [s.top, s.rest];
 export const pstackSize = <T>(s: PStack<T>): number => s?.size ?? 0;
@@ -419,7 +432,7 @@ export const pstackTrimToSize = <T>(stack: PStack<T>, maxSize: number): PStack<T
   // Rebuild cons-list from oldest→newest so top is the newest item
   let result: PStack<T> = null;
   for (let i = maxSize - 1; i >= 0; i--) {
-    result = { top: items[i], rest: result, size: maxSize - i } as unknown as PStack<T>;
+    result = new PStackCons(items[i], result, maxSize - i);
   }
   return result;
 };

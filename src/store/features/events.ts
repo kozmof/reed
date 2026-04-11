@@ -5,6 +5,7 @@
 
 import type { DocumentState } from '../../types/state.ts';
 import type { ContentChangeAction, DocumentAction } from '../../types/actions.ts';
+import { byteOffset, type ByteOffset } from '../../types/branded.ts';
 
 /**
  * Count UTF-8 byte length of a JavaScript string without allocating a Uint8Array.
@@ -46,7 +47,7 @@ export interface ContentChangeEvent extends DocumentEvent {
   /** Document state after the change */
   readonly nextState: DocumentState;
   /** Byte range affected [start, end) */
-  readonly affectedRange: readonly [number, number];
+  readonly affectedRange: readonly [ByteOffset, ByteOffset];
 }
 
 /**
@@ -251,7 +252,7 @@ export function createContentChangeEvent(
   action: ContentChangeAction,
   prevState: DocumentState,
   nextState: DocumentState,
-  affectedRange: readonly [number, number]
+  affectedRange: readonly [ByteOffset, ByteOffset]
 ): ContentChangeEvent {
   return Object.freeze({
     type: 'content-change' as const,
@@ -324,15 +325,15 @@ export function createDirtyChangeEvent(
 /**
  * Determine the affected byte range for a document action.
  */
-export function getAffectedRange(action: DocumentAction): readonly [number, number] {
+export function getAffectedRange(action: DocumentAction): readonly [ByteOffset, ByteOffset] {
   switch (action.type) {
     case 'INSERT':
-      return [action.start, action.start + utf8ByteLength(action.text)];
+      return [action.start, byteOffset(action.start + utf8ByteLength(action.text))];
     case 'DELETE':
       return [action.start, action.end];
     case 'REPLACE': {
       const insertLength = utf8ByteLength(action.text);
-      return [action.start, action.start + insertLength];
+      return [action.start, byteOffset(action.start + insertLength)];
     }
     case 'APPLY_REMOTE': {
       let minStart = Number.POSITIVE_INFINITY;
@@ -354,9 +355,11 @@ export function getAffectedRange(action: DocumentAction): readonly [number, numb
         }
       }
 
-      return minStart === Number.POSITIVE_INFINITY ? [0, 0] : [minStart, maxEnd];
+      return minStart === Number.POSITIVE_INFINITY
+        ? [byteOffset(0), byteOffset(0)]
+        : [byteOffset(minStart), byteOffset(maxEnd)];
     }
     default:
-      return [0, 0];
+      return [byteOffset(0), byteOffset(0)];
   }
 }
