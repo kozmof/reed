@@ -1035,11 +1035,16 @@ describe('LOAD_CHUNK', () => {
     expect(next).toBe(state);
   });
 
-  it('is a no-op when chunkIndex does not match nextExpectedChunk', () => {
+  it('accepts out-of-order chunk loads (random-access support)', () => {
     const state = createInitialState({ chunkSize: 64 });
-    // nextExpectedChunk is 0, so loading chunk 1 should be rejected
-    const next = documentReducer(state, DocumentActions.loadChunk(1, textEncoder.encode('hello')));
-    expect(next).toBe(state);
+    // Out-of-order first load: chunk 1 before chunk 0 — must be accepted.
+    const bytes = textEncoder.encode('hello');
+    const next = documentReducer(state, DocumentActions.loadChunk(1, bytes));
+    expect(next).not.toBe(state);
+    expect(next.pieceTable.chunkMap.has(1)).toBe(true);
+    expect(next.pieceTable.totalLength).toBe(bytes.length);
+    // nextExpectedChunk advances to max(0, 1+1) = 2
+    expect(next.pieceTable.nextExpectedChunk).toBe(2);
   });
 
   it('is a no-op for a duplicate load of the same chunk', () => {
@@ -1168,13 +1173,19 @@ describe('EVICT_CHUNK', () => {
     expect(state3.pieceTable.totalLength).toBe(bytes.length);
   });
 
-  it('loading a never-loaded future chunk is still blocked', () => {
-    const state0 = createInitialState({ chunkSize: 64 });
-    const bytes = textEncoder.encode('data');
-    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
-    // chunk 2 was never loaded (nextExpectedChunk is 1), so it must be rejected
-    const state2 = documentReducer(state1, DocumentActions.loadChunk(2, bytes));
-    expect(state2).toBe(state1);
+  it('accepts gap-then-fill out-of-order loading (chunk 0, chunk 2, then chunk 1)', () => {
+    const state0 = createInitialState({ chunkSize: 8 });
+    const b0 = textEncoder.encode('aaaa');
+    const b1 = textEncoder.encode('bbbb');
+    const b2 = textEncoder.encode('cccc');
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, b0));
+    const state2 = documentReducer(state1, DocumentActions.loadChunk(2, b2));
+    const state3 = documentReducer(state2, DocumentActions.loadChunk(1, b1));
+    // All three chunks must be in memory and total length must be sum of all three.
+    expect(state3.pieceTable.chunkMap.has(0)).toBe(true);
+    expect(state3.pieceTable.chunkMap.has(1)).toBe(true);
+    expect(state3.pieceTable.chunkMap.has(2)).toBe(true);
+    expect(state3.pieceTable.totalLength).toBe(b0.length + b1.length + b2.length);
   });
 
   it('re-loaded chunk content appears at the correct document position', () => {

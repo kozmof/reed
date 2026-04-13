@@ -34,6 +34,7 @@ export type {
   DocumentMetadata,
   DocumentState,
   DocumentStoreConfig,
+  ChunkMetadata,
 } from './state.ts';
 
 export type { NonEmptyReadonlyArray } from './utils.ts';
@@ -67,6 +68,7 @@ export type {
   ApplyRemoteAction,
   LoadChunkAction,
   EvictChunkAction,
+  DeclareChunkMetadataAction,
   DocumentAction,
   DocumentActionType,
   ContentChangeAction,

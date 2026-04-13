@@ -21,6 +21,27 @@ export type { ReadTextFn, DeleteBoundaryContext } from './operations.ts';
  */
 export type BufferType = 'original' | 'add' | 'chunk';
 
+// =============================================================================
+// Chunk Metadata Types
+// =============================================================================
+
+/**
+ * Pre-declared metadata about a chunk before its content is loaded.
+ * Dispatch DECLARE_CHUNK_METADATA to register this information so the line
+ * index can answer line-count queries for unloaded ranges.
+ */
+export interface ChunkMetadata {
+  /** Index of the chunk this metadata describes. */
+  readonly chunkIndex: number;
+  /** Total byte length of this chunk (may be less than chunkSize for the final chunk). */
+  readonly byteLength: number;
+  /**
+   * Number of complete newline-terminated lines in this chunk.
+   * Used to pre-populate the line count for unloaded ranges.
+   */
+  readonly lineCount: number;
+}
+
 /**
  * Reference to a location in the original (immutable) buffer.
  * Part of the BufferReference discriminated union.
@@ -145,11 +166,34 @@ export interface PieceTableState {
    */
   readonly chunkSize: number;
   /**
-   * The chunk index that must be loaded next (enforces sequential ordering).
-   * Chunks must arrive as 0, 1, 2, … in order.
+   * High-water mark for sequential chunk loading.
+   * After out-of-order support: still advances to Math.max(prev, chunkIndex + 1)
+   * on each first-time load. Use `loadedChunks` to test whether a specific chunk
+   * has ever been successfully loaded.
    * Irrelevant when chunkSize === 0.
    */
   readonly nextExpectedChunk: number;
+  /**
+   * Set of chunk indices that have been loaded at least once.
+   * Persists across evictions — used to distinguish first-time loads from re-loads
+   * and to guard against duplicate registration of unloaded line counts.
+   * Empty when chunkSize === 0.
+   */
+  readonly loadedChunks: ReadonlySet<number>;
+  /**
+   * Pre-declared metadata for chunks not yet in memory.
+   * Populated by DECLARE_CHUNK_METADATA; entries are not removed on LOAD_CHUNK
+   * (they serve as a cache for post-eviction re-loads).
+   * Empty when chunkSize === 0.
+   */
+  readonly chunkMetadata: ReadonlyMap<number, ChunkMetadata>;
+  /**
+   * Known total byte length of the file declared before loading begins.
+   * 0 means the total size has not been declared.
+   * When chunkSize > 0 and totalFileSize > 0, callers can compute
+   * Math.ceil(totalFileSize / chunkSize) to determine the expected chunk count.
+   */
+  readonly totalFileSize: number;
 }
 
 // =============================================================================
@@ -247,6 +291,15 @@ export interface LineIndexState<M extends EvaluationMode = EvaluationMode> {
   readonly lastReconciledVersion: number;
   /** Whether a background rebuild is pending */
   readonly rebuildPending: M extends 'eager' ? false : boolean;
+  /**
+   * Line counts for chunks declared via DECLARE_CHUNK_METADATA but not yet loaded
+   * (or currently evicted).  Keyed by chunk index.
+   * `getLineCountFromIndex` sums `lineCount` with the values in this map so that
+   * consumers can query the total expected line count before all chunks are loaded.
+   * Entries are added by DECLARE_CHUNK_METADATA and EVICT_CHUNK (when metadata is
+   * known); entries are removed by LOAD_CHUNK.
+   */
+  readonly unloadedLineCountsByChunk: ReadonlyMap<number, number>;
 }
 
 /**
@@ -520,4 +573,11 @@ export interface DocumentStoreConfig {
   lineEnding?: 'lf' | 'crlf' | 'cr';
   /** Timeout in ms for grouping consecutive undo entries (default: 0, disabled) */
   undoGroupTimeout?: number;
+  /**
+   * Known total byte length of the file, declared before chunk loading begins.
+   * When provided alongside `chunkSize`, callers can compute the expected chunk
+   * count and the document length is known upfront even before content arrives.
+   * 0 or omitted means the total size is not yet known.
+   */
+  totalFileSize?: number;
 }

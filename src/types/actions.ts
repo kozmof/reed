@@ -4,7 +4,7 @@
  * Actions are serializable for debugging, time-travel, and collaboration.
  */
 
-import type { SelectionRange } from './state.ts';
+import type { SelectionRange, ChunkMetadata } from './state.ts';
 import type { ByteOffset, ByteLength, ReadonlyUint8Array } from './branded.ts';
 import { strEnum } from './str-enum.ts';
 
@@ -182,6 +182,17 @@ export interface EvictChunkAction {
   readonly chunkIndex: number;
 }
 
+/**
+ * Pre-declare metadata for one or more chunks before their content is loaded.
+ * This lets the line index answer line-count queries for unloaded ranges.
+ * Does NOT bump state.version and does NOT emit a content-change event.
+ */
+export interface DeclareChunkMetadataAction {
+  readonly type: 'DECLARE_CHUNK_METADATA';
+  /** Metadata entries to register. One entry per chunk; duplicates for already-loaded chunks are ignored. */
+  readonly metadata: readonly ChunkMetadata[];
+}
+
 // =============================================================================
 // Union Type
 // =============================================================================
@@ -203,7 +214,8 @@ export type DocumentAction =
   | TransactionRollbackAction
   | ApplyRemoteAction
   | LoadChunkAction
-  | EvictChunkAction;
+  | EvictChunkAction
+  | DeclareChunkMetadataAction;
 
 /**
  * Single source of truth for all valid action type strings.
@@ -227,6 +239,7 @@ export const DocumentActionTypes = strEnum([
   'APPLY_REMOTE',
   'LOAD_CHUNK',
   'EVICT_CHUNK',
+  'DECLARE_CHUNK_METADATA',
 ]);
 
 /** Union of all valid action type strings, derived from DocumentActionTypes. */
@@ -345,6 +358,15 @@ export function isDocumentAction(value: unknown): value is DocumentAction {
       );
     case 'EVICT_CHUNK':
       return typeof (action as EvictChunkAction).chunkIndex === 'number';
+    case 'DECLARE_CHUNK_METADATA': {
+      const decl = action as DeclareChunkMetadataAction;
+      if (!Array.isArray(decl.metadata)) return false;
+      return decl.metadata.every(
+        m => typeof m.chunkIndex === 'number' &&
+             typeof m.byteLength === 'number' &&
+             typeof m.lineCount === 'number'
+      );
+    }
     default:
       return ((_: never) => false)(type);
   }
@@ -558,6 +580,27 @@ export function validateAction(
       const evictAction = action as Partial<EvictChunkAction>;
       if (typeof evictAction.chunkIndex !== 'number') {
         errors.push('EVICT_CHUNK action requires a numeric "chunkIndex" property');
+      }
+      break;
+    }
+
+    case 'DECLARE_CHUNK_METADATA': {
+      const declAction = action as Partial<DeclareChunkMetadataAction>;
+      if (!Array.isArray(declAction.metadata)) {
+        errors.push('DECLARE_CHUNK_METADATA action requires an array "metadata" property');
+      } else {
+        for (let i = 0; i < declAction.metadata.length; i++) {
+          const m = declAction.metadata[i] as Partial<ChunkMetadata>;
+          if (typeof m.chunkIndex !== 'number') {
+            errors.push(`DECLARE_CHUNK_METADATA metadata[${i}].chunkIndex must be a number`);
+          }
+          if (typeof m.byteLength !== 'number') {
+            errors.push(`DECLARE_CHUNK_METADATA metadata[${i}].byteLength must be a number`);
+          }
+          if (typeof m.lineCount !== 'number') {
+            errors.push(`DECLARE_CHUNK_METADATA metadata[${i}].lineCount must be a number`);
+          }
+        }
       }
       break;
     }

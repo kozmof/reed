@@ -14,6 +14,7 @@ import type {
   SelectionState,
   HistoryState,
   DocumentMetadata,
+  ChunkMetadata,
 } from '../../types/state.ts';
 import { byteOffset, byteLength } from '../../types/branded.ts';
 import type { ByteOffset, ByteLength } from '../../types/branded.ts';
@@ -30,13 +31,15 @@ const DEFAULT_CONFIG: Required<DocumentStoreConfig> = {
   encoding: 'utf-8',
   lineEnding: 'lf',
   undoGroupTimeout: 0,
+  totalFileSize: 0,
 };
 
 /**
  * Create an empty piece table state.
  * @param chunkSize - Bytes per chunk for large-file streaming. 0 = non-chunked (default).
+ * @param totalFileSize - Known total byte length of the file. 0 = unknown.
  */
-export function createEmptyPieceTableState(chunkSize: number = 0): PieceTableState {
+export function createEmptyPieceTableState(chunkSize: number = 0, totalFileSize: number = 0): PieceTableState {
   return Object.freeze({
     root: null,
     originalBuffer: new Uint8Array(0),
@@ -45,6 +48,9 @@ export function createEmptyPieceTableState(chunkSize: number = 0): PieceTableSta
     chunkMap: new Map<number, Uint8Array>(),
     chunkSize,
     nextExpectedChunk: 0,
+    loadedChunks: new Set<number>(),
+    chunkMetadata: new Map<number, ChunkMetadata>(),
+    totalFileSize,
   });
 }
 
@@ -139,6 +145,9 @@ export function createPieceTableState(content: string): PieceTableState {
     chunkMap: new Map<number, Uint8Array>(),
     chunkSize: 0,
     nextExpectedChunk: 0,
+    loadedChunks: new Set<number>(),
+    chunkMetadata: new Map<number, ChunkMetadata>(),
+    totalFileSize: 0,
   });
 }
 
@@ -153,6 +162,7 @@ export function createEmptyLineIndexState(): LineIndexState {
     dirtyRanges: Object.freeze([]),
     lastReconciledVersion: 0,
     rebuildPending: false,
+    unloadedLineCountsByChunk: new Map<number, number>(),
   });
 }
 
@@ -269,6 +279,7 @@ export function createLineIndexState(content: string): LineIndexState {
     dirtyRanges: Object.freeze([]),
     lastReconciledVersion: 0,
     rebuildPending: false,
+    unloadedLineCountsByChunk: new Map<number, number>(),
   });
 }
 
@@ -362,11 +373,13 @@ export function createInitialState(
     ? mergedConfig.chunkSize
     : 0;
 
+  const totalFileSize = mergedConfig.totalFileSize ?? 0;
+
   return Object.freeze({
     version: 0,
     pieceTable: content.length > 0
       ? createPieceTableState(content)
-      : createEmptyPieceTableState(chunkSize),
+      : createEmptyPieceTableState(chunkSize, totalFileSize),
     lineIndex: createLineIndexState(content),
     selection: createInitialSelectionState(),
     history: createInitialHistoryState(mergedConfig.historyLimit, mergedConfig.undoGroupTimeout),

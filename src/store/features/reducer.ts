@@ -10,7 +10,7 @@ import type { DocumentAction } from '../../types/actions.ts';
 import type { ByteOffset } from '../../types/branded.ts';
 import type { DeleteBoundaryContext, ReadTextFn } from '../../types/operations.ts';
 import { byteOffset, byteLength } from '../../types/branded.ts';
-import { withState, createChunkPieceNode, withPieceNode } from '../core/state.ts';
+import { withState, createChunkPieceNode, withPieceNode, withLineIndexState } from '../core/state.ts';
 import { fixRedViolations } from '../core/rb-tree.ts';
 import {
   pieceTableInsert as ptInsert,
@@ -1070,16 +1070,39 @@ export function documentReducer(
       });
     }
 
+    case 'DECLARE_CHUNK_METADATA': {
+      if (state.pieceTable.chunkSize === 0) return state; // non-chunked mode
+
+      const { loadedChunks, chunkMetadata } = state.pieceTable;
+      const newChunkMetadata = new Map(chunkMetadata);
+      const newUnloadedCounts = new Map(state.lineIndex.unloadedLineCountsByChunk);
+      let changed = false;
+
+      for (const m of action.metadata) {
+        // Ignore metadata for chunks already in memory; their real lines are in the tree.
+        if (loadedChunks.has(m.chunkIndex)) continue;
+        newChunkMetadata.set(m.chunkIndex, m);
+        newUnloadedCounts.set(m.chunkIndex, m.lineCount);
+        changed = true;
+      }
+
+      if (!changed) return state;
+
+      // DECLARE_CHUNK_METADATA does not bump version or emit content-change.
+      return withState(state, {
+        pieceTable: Object.freeze({ ...state.pieceTable, chunkMetadata: newChunkMetadata }),
+        lineIndex: withLineIndexState(state.lineIndex, { unloadedLineCountsByChunk: newUnloadedCounts }),
+      });
+    }
+
     case 'LOAD_CHUNK': {
       const { chunkIndex, data } = action;
-      const { chunkSize, nextExpectedChunk, chunkMap, totalLength } = state.pieceTable;
+      const { chunkSize, nextExpectedChunk, chunkMap, loadedChunks, totalLength } = state.pieceTable;
 
       // Non-chunked mode: chunkSize must be set in the store config
       if (chunkSize === 0) return state;
-      // Reject chunks beyond the next expected sequential index (never-loaded future chunk).
-      if (chunkIndex > nextExpectedChunk) return state;
-      // Reject sequential gap: chunk is below nextExpectedChunk but still present in the map
-      // (duplicate load of a chunk that was never evicted).
+      // Reject if this chunk is already in memory (duplicate dispatch or double-load).
+      // A chunk that was evicted is no longer in chunkMap, so re-loads are allowed.
       if (chunkMap.has(chunkIndex)) return state;
 
       const chunkBytes = data as Uint8Array;
@@ -1087,31 +1110,52 @@ export function documentReducer(
 
       const chunkText = textDecoder.decode(chunkBytes);
 
-      // Determine insertion position and whether this is a first-time or re-load.
-      const isFirstLoad = chunkIndex === nextExpectedChunk;
-      const insertionPos = isFirstLoad
-        ? byteOffset(totalLength)  // append at end for sequential first-time load
-        : byteOffset(findReloadInsertionPos(state.pieceTable.root, chunkIndex)); // re-load: find position before higher chunks
+      // Determine whether this is a first-time load or a re-load after eviction.
+      // loadedChunks persists across evictions, so a chunk absent from chunkMap but
+      // present in loadedChunks is a re-load.
+      const isFirstLoad = !loadedChunks.has(chunkIndex);
+
+      // For sequential first-time loads (next in order), use the O(log n) append path.
+      // For out-of-order first-time loads and all re-loads, find the correct insertion
+      // position via an O(n) walk that places the new piece before any higher-indexed chunk.
+      const isSequentialFirst = isFirstLoad && chunkIndex === nextExpectedChunk;
+      const insertionPos = isSequentialFirst
+        ? byteOffset(totalLength)
+        : byteOffset(findReloadInsertionPos(state.pieceTable.root, chunkIndex));
 
       const newChunkMap = new Map(chunkMap);
       newChunkMap.set(chunkIndex, chunkBytes);
 
-      const newRoot = isFirstLoad
+      const newRoot = isSequentialFirst
         ? appendChunkPiece(state.pieceTable.root, chunkIndex, chunkBytes.length)
         : insertChunkPieceAt(state.pieceTable.root, insertionPos, chunkIndex, chunkBytes.length);
+
+      // Update loadedChunks on first load; advance the high-water mark.
+      const newLoadedChunks = isFirstLoad
+        ? new Set([...loadedChunks, chunkIndex])
+        : loadedChunks;
 
       const newPieceTable = Object.freeze({
         ...state.pieceTable,
         root: newRoot,
         chunkMap: newChunkMap,
         totalLength: totalLength + chunkBytes.length,
-        // Only advance the sequential pointer on a first-time load.
-        nextExpectedChunk: isFirstLoad ? chunkIndex + 1 : nextExpectedChunk,
+        // High-water mark: always advances to max(prev, chunkIndex + 1).
+        nextExpectedChunk: Math.max(nextExpectedChunk, chunkIndex + 1),
+        loadedChunks: newLoadedChunks,
       });
 
       const nextVersion = state.version + 1;
+      // Remove this chunk's pre-declared line count from the side-cache now that
+      // real lines are being inserted into the line index tree.
+      let newLineIndex = state.lineIndex;
+      if (state.lineIndex.unloadedLineCountsByChunk.has(chunkIndex)) {
+        const newMap = new Map(state.lineIndex.unloadedLineCountsByChunk);
+        newMap.delete(chunkIndex);
+        newLineIndex = withLineIndexState(newLineIndex, { unloadedLineCountsByChunk: newMap });
+      }
       // The store schedules background reconciliation when lineIndex.rebuildPending is true.
-      const newLineIndex = liInsertLazy(state.lineIndex, insertionPos, chunkText, nextVersion);
+      newLineIndex = liInsertLazy(newLineIndex, insertionPos, chunkText, nextVersion);
 
       return withState(state, {
         version: nextVersion,
@@ -1150,7 +1194,16 @@ export function documentReducer(
       });
 
       const nextVersion = state.version + 1;
-      const newLineIndex = liDeleteLazy(state.lineIndex, range.start, range.end, chunkText, nextVersion);
+      let newLineIndex = liDeleteLazy(state.lineIndex, range.start, range.end, chunkText, nextVersion);
+
+      // If metadata was pre-declared for this chunk, restore its line count to the
+      // side-cache so getLineCountFromIndex continues to return the total expected count.
+      const metadata = state.pieceTable.chunkMetadata.get(chunkIndex);
+      if (metadata !== undefined) {
+        const newMap = new Map(newLineIndex.unloadedLineCountsByChunk);
+        newMap.set(chunkIndex, metadata.lineCount);
+        newLineIndex = withLineIndexState(newLineIndex, { unloadedLineCountsByChunk: newMap });
+      }
 
       return withState(state, {
         version: nextVersion,

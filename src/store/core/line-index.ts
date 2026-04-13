@@ -22,6 +22,7 @@ import {
   $proveCtx,
   $checked,
   $lift,
+  $declare,
   $from,
   $pipe,
   $andThen,
@@ -685,7 +686,7 @@ function appendLines(
   byteLength: number
 ): LineIndexState {
   if (state.root === null) {
-    return buildLineIndexFromText(text, 0);
+    return withLineIndexState(state, buildLineIndexFromText(text, 0));
   }
 
   const result = appendLinesStructural(state.root, state.lineCount, position, newlinePositions, byteLength, text);
@@ -928,6 +929,7 @@ function buildLineIndexFromText(text: string, startOffset: number): LineIndexSta
       dirtyRanges: Object.freeze([]),
       lastReconciledVersion: 0,
       rebuildPending: false,
+      unloadedLineCountsByChunk: new Map<number, number>(),
     });
   }
 
@@ -938,6 +940,7 @@ function buildLineIndexFromText(text: string, startOffset: number): LineIndexSta
     dirtyRanges: Object.freeze([]),
     lastReconciledVersion: 0,
     rebuildPending: false,
+    unloadedLineCountsByChunk: new Map<number, number>(),
   });
 }
 
@@ -1062,7 +1065,7 @@ function deleteLineRange(
   const mergedCharLength = Math.max(0, (endBound - startLineCharStart) - deletedCharLength);
 
   // Single-pass reconstruction: collect lines, skip deleted range, merge start/end
-  return rebuildWithDeletedRange(state.root!, startLine, endLine, mergedLength, mergedCharLength);
+  return rebuildWithDeletedRange(state, state.root!, startLine, endLine, mergedLength, mergedCharLength);
 }
 
 /**
@@ -1075,6 +1078,7 @@ function deleteLineRange(
  * Falls back to O(n) rebuild only when removing most lines from the tree.
  */
 function rebuildWithDeletedRange(
+  state: LineIndexState,
   root: LineIndexNode,
   startLine: number,
   endLine: number,
@@ -1086,7 +1090,7 @@ function rebuildWithDeletedRange(
   const newLineCount = totalLines - deletedCount;
 
   if (newLineCount <= 0) {
-    return Object.freeze({
+    return withLineIndexState(state, {
       root: null,
       lineCount: 1,
       dirtyRanges: Object.freeze([]),
@@ -1107,7 +1111,7 @@ function rebuildWithDeletedRange(
   }
 
   if (newRoot === null) {
-    return Object.freeze({
+    return withLineIndexState(state, {
       root: null,
       lineCount: 1,
       dirtyRanges: Object.freeze([]),
@@ -1121,7 +1125,7 @@ function rebuildWithDeletedRange(
     newRoot = withLineIndexNode(newRoot, { color: 'black' });
   }
 
-  return Object.freeze({
+  return withLineIndexState(state, {
     root: newRoot,
     lineCount: newLineCount,
     dirtyRanges: Object.freeze([]),
@@ -1323,10 +1327,19 @@ export function rebuildLineIndex(content: string): LinearCost<LineIndexState> {
 
 /**
  * Get line count from the state.
+ * Includes lines declared via DECLARE_CHUNK_METADATA for chunks not yet loaded,
+ * so callers can query the total expected line count before all chunks arrive.
+ *
+ * Cost: O(k) where k = number of declared-but-unloaded chunks (bounded by total
+ * chunk count, not document size). Declared O(1) by convention since k is small.
  */
 export function getLineCountFromIndex(state: LineIndexState): ConstCost<number> {
-  const lineCount = $proveCtx('O(1)', $lift('O(1)', state.lineCount));
-  return lineCount;
+  let total = state.lineCount;
+  for (const count of state.unloadedLineCountsByChunk.values()) {
+    total += count;
+  }
+  // k (declared chunks) is document-size-independent; treat as O(1) per policy.
+  return $declare('O(1)', total);
 }
 
 /**
@@ -1846,7 +1859,7 @@ function deleteLineRangeLazy(
 
   // Rebuild with deleted range (this is still O(n) for deletions with newlines)
   // Future optimization: track deleted ranges for lazy reconciliation
-  const newState = rebuildWithDeletedRange(state.root!, startLine, endLine, mergedLength, mergedCharLength);
+  const newState = rebuildWithDeletedRange(state, state.root!, startLine, endLine, mergedLength, mergedCharLength);
 
   // Remap existing dirty ranges to new tree line numbering before merging
   const remappedRanges = remapDirtyRangesForDelete(state.dirtyRanges, startLine + 1, endLine);

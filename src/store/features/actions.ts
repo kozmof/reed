@@ -21,7 +21,9 @@ import type {
   RemoteChange,
   LoadChunkAction,
   EvictChunkAction,
+  DeclareChunkMetadataAction,
 } from '../../types/actions.ts';
+import type { ChunkMetadata } from '../../types/state.ts';
 import { isDocumentAction } from '../../types/actions.ts';
 
 /**
@@ -162,6 +164,16 @@ export const DocumentActions = {
    */
   evictChunk(chunkIndex: number): EvictChunkAction {
     return Object.freeze({ type: 'EVICT_CHUNK', chunkIndex });
+  },
+
+  /**
+   * Pre-declare metadata for one or more chunks before their content is loaded.
+   * Allows getLineCountFromIndex to include unloaded chunk line counts.
+   * Does not bump state.version and does not emit a content-change event.
+   * @param metadata - Array of chunk metadata entries
+   */
+  declareChunkMetadata(metadata: readonly ChunkMetadata[]): DeclareChunkMetadataAction {
+    return Object.freeze({ type: 'DECLARE_CHUNK_METADATA', metadata });
   },
 };
 

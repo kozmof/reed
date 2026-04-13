@@ -71,14 +71,17 @@ No benchmark harness for large-document edits, mixed line endings, or reconcilia
 
 ---
 
-### #009 — Phase 4: chunk loading infrastructure incomplete
+### #009 — Phase 4: chunk loading infrastructure incomplete *(resolved 2026-04-13)*
 
-The reducer actions for chunk loading are implemented, but the surrounding runtime is not yet built:
+All four sub-items addressed:
 
-- **Out-of-order (random-access) loading not supported.** `nextExpectedChunk` enforces sequential arrival (0, 1, 2, …). Supporting random-access requires 'unloaded' placeholder pieces or gap tracking in the piece table.
-- **No line-index pre-population from chunk metadata.** Immediate line-count queries on unloaded content are not possible without loading.
-- **No configurable `totalFileSize`.** `DocumentStoreConfig` has no field for declaring the known total file size before loading begins.
-- **No async chunk fetch subsystem, LRU/eviction policy manager, or background file parsing workers.**
+- **Out-of-order (random-access) loading** — `nextExpectedChunk` is now a high-water mark rather than a strict gate. `loadedChunks: ReadonlySet<number>` (added to `PieceTableState`) tracks first-time loads across evictions. Gap-then-fill sequences (e.g. chunk 0, 2, 1) are accepted; out-of-order first loads use the existing `findReloadInsertionPos` helper while sequential loads retain the O(log n) `appendChunkPiece` fast path. (`src/store/features/reducer.ts`, `src/types/state.ts`)
+
+- **Line-index pre-population from chunk metadata** — New `DECLARE_CHUNK_METADATA` action registers `ChunkMetadata` (chunkIndex, byteLength, lineCount) before chunks are loaded. A `unloadedLineCountsByChunk: ReadonlyMap<number, number>` side-cache on `LineIndexState` feeds `getLineCountFromIndex`, which now sums tree line count and all declared-but-unloaded chunk counts. Entries are removed on `LOAD_CHUNK` and restored on `EVICT_CHUNK` when metadata is known. Does not bump `state.version` or emit `content-change`. (`src/types/state.ts`, `src/types/actions.ts`, `src/store/features/reducer.ts`, `src/store/core/line-index.ts`)
+
+- **Configurable `totalFileSize`** — `DocumentStoreConfig.totalFileSize?: number` added; stored as `PieceTableState.totalFileSize` (0 = unknown). (`src/types/state.ts`, `src/store/core/state.ts`)
+
+- **Async chunk fetch subsystem** — New `ChunkManager` module (`src/store/features/chunk-manager.ts`) provides `ChunkLoader` / `ChunkManagerConfig` / `ChunkManager` interfaces and a `createChunkManager(store, loader, config?)` factory. Features: in-flight deduplication, LRU eviction (`maxLoadedChunks`, default 8), chunk pinning via `setActiveChunks`, background `prefetch`, and graceful `dispose`. Exported from `src/store/index.ts` and `src/index.ts`.
 
 **Source:** Report 4 (chunk), §5 Missing Infrastructure; design-dimensions §XVII Phase 4 open items
 

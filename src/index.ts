@@ -47,6 +47,7 @@ export type {
   DocumentMetadata,
   DocumentState,
   DocumentStoreConfig,
+  ChunkMetadata,
 } from './types/index.ts';
 
 // Action types
@@ -65,6 +66,7 @@ export type {
   ApplyRemoteAction,
   LoadChunkAction,
   EvictChunkAction,
+  DeclareChunkMetadataAction,
   DocumentAction,
   DocumentActionType,
   ActionValidationResult,
@@ -118,6 +120,10 @@ export type {
 
 // Piece table types
 export type { StreamOptions, DocumentChunk } from './store/index.ts';
+
+// Chunk manager types
+export type { ChunkLoader, ChunkManagerConfig, ChunkManager } from './store/index.ts';
+export { createChunkManager } from './store/index.ts';
 
 // Diff types
 export type { DiffEdit, DiffResult } from './store/index.ts';

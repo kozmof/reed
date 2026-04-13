@@ -150,3 +150,7 @@ export {
   getRedoCount,
   isHistoryEmpty,
 } from './features/history.ts';
+
+// Chunk manager — async chunk fetch subsystem for large-file streaming
+export { createChunkManager } from './features/chunk-manager.ts';
+export type { ChunkLoader, ChunkManagerConfig, ChunkManager } from './features/chunk-manager.ts';
