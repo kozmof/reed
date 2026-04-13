@@ -225,7 +225,82 @@ All rebalancing is O(log n).
 
 ---
 
-## 5. Complexity Summary
+## 5. Chunk Buffer — Why It Is Separate from `originalBuffer`
+
+### 5.1 Purpose
+
+For large documents, loading the entire content upfront is impractical. The chunk system
+allows the document to be populated **incrementally**: the backing store sends fixed-size
+byte arrays one at a time, and each arrives as a `LOAD_CHUNK` action. Chunks that have
+already been scrolled past can be **evicted** (`EVICT_CHUNK`) to free memory, and
+re-loaded on demand when that region is visited again.
+
+`originalBuffer` cannot support this lifecycle because it is a single immutable
+`Uint8Array` loaded all at once. There is no way to release part of it, and its piece
+nodes carry no index that could identify a sub-region to evict.
+
+### 5.2 Data structure differences
+
+| | `originalBuffer` | chunk buffers |
+|---|---|---|
+| Storage | Single `Uint8Array` on `PieceTableState` | `Map<number, Uint8Array>` (`chunkMap`) |
+| Piece node type | `OriginalPieceNode` | `ChunkPieceNode` |
+| Extra field on piece node | — | `chunkIndex: number` |
+| `start` field meaning | Absolute offset within `originalBuffer` | Offset **within that chunk's `Uint8Array`** |
+| Lifetime | Permanent (never removed) | Evictable; re-loadable |
+
+The critical asymmetry is the `start` field. A `ChunkPieceNode` with
+`chunkIndex = 2, start = 40` means byte 40 of the `Uint8Array` stored at
+`chunkMap.get(2)` — not byte 40 of any combined buffer. This is necessary so that each
+chunk's buffer can be replaced independently without touching any other piece node.
+
+### 5.3 Eviction and re-load lifecycle
+
+```
+LOAD_CHUNK { chunkIndex: 3, data: Uint8Array }
+  → chunkMap.set(3, data)
+  → ChunkPieceNode(s) inserted into the RB-tree at the correct document position
+  → nextExpectedChunk advances (sequential first loads only)
+
+EVICT_CHUNK { chunkIndex: 3 }
+  → all ChunkPieceNodes with chunkIndex === 3 removed from the tree
+  → chunkMap.delete(3)
+  → totalLength shrinks accordingly
+
+LOAD_CHUNK { chunkIndex: 3, data: Uint8Array }   ← re-load after eviction
+  → findReloadInsertionPos() locates the gap left by the eviction
+    (finds the first node whose chunkIndex > 3 and inserts before it)
+  → piece node re-inserted; chunkMap entry restored
+```
+
+`getBuffer()` in `piece-table.ts` is the single access point for all buffer types. For
+chunk pieces it does `chunkMap.get(ref.chunkIndex)` and throws if the chunk has been
+evicted — this is the intended failure mode when a region is accessed before re-loading.
+
+### 5.4 Why chunks cannot be transparently merged into `originalBuffer`
+
+Once all chunks have arrived it may seem that `chunkMap` could be collapsed: concatenate
+every chunk buffer into `originalBuffer` and retag all `ChunkPieceNode`s as
+`OriginalPieceNode`s. There are two blockers:
+
+1. **`start` offsets must be remapped.** Each chunk piece's `start` is relative to its
+   own chunk buffer. After concatenation the correct offset would be
+   `chunkIndex × chunkSize + oldStart`. Every chunk piece node in the entire tree must be
+   rewritten — an O(n) pass with no safe shortcut.
+
+2. **Eviction becomes permanently impossible.** The `chunkIndex` field is the only handle
+   that lets `EVICT_CHUNK` locate and remove a specific region. Once it is discarded there
+   is no way to identify which nodes belong to which chunk, and no way to release memory
+   for individual document regions later.
+
+Merging is only safe when the document is guaranteed never to need eviction again (e.g.
+the file is small enough to stay fully resident). Even then, the offset-remapping tree
+walk is a required step — skipping it produces silent data corruption on all reads from
+former chunk pieces.
+
+---
+
+## 6. Complexity Summary
 
 | Operation | Complexity |
 |---|---|
@@ -236,3 +311,6 @@ All rebalancing is O(log n).
 | Read full document | O(n) |
 | Position lookup | O(log n) via `subtreeLength` augment |
 | Snapshot (undo entry) | O(1) structural sharing |
+| Load chunk (first load) | O(log n) |
+| Load chunk (re-load) | O(log n) |
+| Evict chunk | O(k + log n), k = nodes in evicted chunk |
