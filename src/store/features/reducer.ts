@@ -14,7 +14,7 @@ import type { ByteOffset } from '../../types/branded.ts';
 import { byteOffset, byteLength } from '../../types/branded.ts';
 import { withState, createChunkPieceNode, withPieceNode, withLineIndexState } from '../core/state.ts';
 import { fixRedViolations } from '../core/rb-tree.ts';
-import { getText, insertChunkPieceAt } from '../core/piece-table.ts';
+import { getText, insertChunkPieceAt, pieceTableInOrder } from '../core/piece-table.ts';
 import {
   lineIndexInsertLazy as liInsertLazy,
   lineIndexDeleteLazy as liDeleteLazy,
@@ -144,32 +144,14 @@ function appendChunkPiece(
  */
 function findReloadInsertionPos(root: PieceNode | null, targetChunkIndex: number): number {
   if (root === null) return 0;
-
-  const nodeStack: PieceNode[] = [];
-  const offsetStack: number[] = [];
-  let currentOffset = 0;
-  let currentNode: PieceNode | null = root;
-
-  while (currentNode !== null || nodeStack.length > 0) {
-    while (currentNode !== null) {
-      nodeStack.push(currentNode);
-      offsetStack.push(currentOffset);
-      currentOffset += currentNode.left?.subtreeLength ?? 0;
-      currentNode = currentNode.left;
-    }
-    const n = nodeStack.pop()!;
-    const nOffset = offsetStack.pop()!;
-    const pieceStart = nOffset + (n.left?.subtreeLength ?? 0);
-
+  let result = root.subtreeLength;
+  pieceTableInOrder(root, (n, pieceStart) => {
     if (n.bufferType === 'chunk' && n.chunkIndex > targetChunkIndex) {
-      return pieceStart;
+      result = pieceStart;
+      return true;
     }
-
-    currentOffset = pieceStart + n.length;
-    currentNode = n.right;
-  }
-
-  return root.subtreeLength; // append at end
+  });
+  return result;
 }
 
 /**
@@ -186,39 +168,14 @@ function findChunkDocumentRange(
   chunkIndex: number
 ): { start: ByteOffset; end: ByteOffset } | null {
   if (root === null) return null;
-
   let rangeStart = -1;
   let rangeEnd = -1;
-
-  const nodeStack: PieceNode[] = [];
-  const offsetStack: number[] = [];
-  let currentOffset = 0;
-  let currentNode: PieceNode | null = root;
-
-  while (currentNode !== null || nodeStack.length > 0) {
-    // Descend to leftmost
-    while (currentNode !== null) {
-      nodeStack.push(currentNode);
-      offsetStack.push(currentOffset);
-      currentOffset += currentNode.left?.subtreeLength ?? 0;
-      currentNode = currentNode.left;
-    }
-
-    // Process node
-    const n = nodeStack.pop()!;
-    const nOffset = offsetStack.pop()!;
-    const pieceStart = nOffset + (n.left?.subtreeLength ?? 0);
-
+  pieceTableInOrder(root, (n, pieceStart) => {
     if (n.bufferType === 'chunk' && n.chunkIndex === chunkIndex) {
       if (rangeStart === -1) rangeStart = pieceStart;
       rangeEnd = pieceStart + n.length;
     }
-
-    // Move to right subtree
-    currentOffset = pieceStart + n.length;
-    currentNode = n.right;
-  }
-
+  });
   if (rangeStart === -1) return null;
   return { start: byteOffset(rangeStart), end: byteOffset(rangeEnd) };
 }
@@ -235,35 +192,14 @@ function hasAddPiecesInRange(
   rangeEnd: ByteOffset
 ): boolean {
   if (root === null) return false;
-
-  const nodeStack: PieceNode[] = [];
-  const offsetStack: number[] = [];
-  let currentOffset = 0;
-  let currentNode: PieceNode | null = root;
-
-  while (currentNode !== null || nodeStack.length > 0) {
-    while (currentNode !== null) {
-      nodeStack.push(currentNode);
-      offsetStack.push(currentOffset);
-      currentOffset += currentNode.left?.subtreeLength ?? 0;
-      currentNode = currentNode.left;
+  let found = false;
+  pieceTableInOrder(root, (n, pieceStart) => {
+    if (n.bufferType === 'add' && pieceStart < rangeEnd && pieceStart + n.length > rangeStart) {
+      found = true;
+      return true;
     }
-
-    const n = nodeStack.pop()!;
-    const nOffset = offsetStack.pop()!;
-    const pieceStart = nOffset + (n.left?.subtreeLength ?? 0);
-    const pieceEnd = pieceStart + n.length;
-
-    if (n.bufferType === 'add') {
-      // Overlap: piece starts before rangeEnd AND piece ends after rangeStart
-      if (pieceStart < rangeEnd && pieceEnd > rangeStart) return true;
-    }
-
-    currentOffset = pieceEnd;
-    currentNode = n.right;
-  }
-
-  return false;
+  });
+  return found;
 }
 
 /**
@@ -420,9 +356,14 @@ export function documentReducer(
       for (const change of action.changes) {
         if (change.type === 'insert' && change.text.length > 0) {
           didApplyChange = true;
-          newState = pieceTableInsert(newState, change.start, change.text).state;
+          // Normalize line endings on remote inserts the same way local inserts are treated,
+          // so mixed-origin edits never silently introduce a different line-ending style.
+          const insertText = newState.metadata.normalizeInsertedLineEndings
+            ? normalizeLineEndings(change.text, newState.metadata.lineEnding)
+            : change.text;
+          newState = pieceTableInsert(newState, change.start, insertText).state;
           const readText = (start: ByteOffset, end: ByteOffset) => getText(newState.pieceTable, start, end);
-          const li = liInsertLazy(newState.lineIndex, change.start, change.text, nextVersion, readText);
+          const li = liInsertLazy(newState.lineIndex, change.start, insertText, nextVersion, readText);
           newState = withState(newState, { lineIndex: li });
         } else if (change.type === 'delete' && change.length > 0) {
           didApplyChange = true;

@@ -27,6 +27,44 @@ import {
 } from '../../types/cost-doc.ts';
 import { createPieceNode, createChunkPieceNode, withPieceNode } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry, type RootToLeafInsertPath } from './rb-tree.ts';
+
+// =============================================================================
+// In-Order Traversal Helper
+// =============================================================================
+
+/**
+ * Iterative in-order traversal of the piece tree.
+ * Calls `visitor(node, pieceStart)` for each node in document order, where
+ * `pieceStart` is the byte offset of that node's first byte in the document.
+ * Returns early (stops iteration) if `visitor` returns `true`.
+ */
+export function pieceTableInOrder(
+  root: PieceNode | null,
+  visitor: (node: PieceNode, pieceStart: number) => boolean | void
+): void {
+  if (root === null) return;
+  const nodeStack: PieceNode[] = [];
+  const offsetStack: number[] = [];
+  let currentOffset = 0;
+  let currentNode: PieceNode | null = root;
+
+  while (currentNode !== null || nodeStack.length > 0) {
+    while (currentNode !== null) {
+      nodeStack.push(currentNode);
+      offsetStack.push(currentOffset);
+      currentOffset += currentNode.left?.subtreeLength ?? 0;
+      currentNode = currentNode.left;
+    }
+    const n = nodeStack.pop()!;
+    const nOffset = offsetStack.pop()!;
+    const pieceStart = nOffset + (n.left?.subtreeLength ?? 0);
+
+    if (visitor(n, pieceStart) === true) return;
+
+    currentOffset = pieceStart + n.length;
+    currentNode = n.right;
+  }
+}
 import { textEncoder, textDecoder } from './encoding.ts';
 import { GrowableBuffer } from './growable-buffer.ts';
 
@@ -604,8 +642,11 @@ export function pieceTableDelete(
   const deleteLength = Math.min(end, state.totalLength) - Math.max(start, 0);
   if (deleteLength <= 0) return $proveCtx('O(n)', $lift('O(n)', state));
 
-  // Rebuild tree excluding the deleted range
-  const newRoot = deleteRange(state.root, 0, start, end);
+  // Rebuild tree excluding the deleted range, then ensure root stays black.
+  let newRoot = deleteRange(state.root, 0, start, end);
+  if (newRoot !== null && isRed(newRoot)) {
+    newRoot = withPieceNode(newRoot, { color: 'black' });
+  }
 
   return $proveCtx('O(n)', $lift('O(n)', Object.freeze({
     ...state,
@@ -709,10 +750,9 @@ function deleteRange(
       );
     }
 
-    // Combine the two pieces
-    return withPieceNode(leftPiece, {
-      right: rightPiece,
-    });
+    // Combine the two pieces. fixRedViolations handles the case where leftPiece
+    // inherits node.color === 'red' and rightPiece is also red (red-red violation).
+    return fixRedViolations(withPieceNode(leftPiece, { right: rightPiece }), withPieceNode);
   }
 
   if (keepBefore > 0) {

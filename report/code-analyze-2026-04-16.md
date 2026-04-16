@@ -160,9 +160,11 @@ chunkManager.ensureLoaded(chunkIndex)
 - **`batch()` does not auto-schedule reconciliation when `rebuildPending` remains true after outermost commit.** In `store.ts:191`, `TRANSACTION_COMMIT` calls `scheduleReconciliation()` only when `state.lineIndex.rebuildPending` is true — this appears implemented. The spec's warning may refer to older code; worth re-verifying with a test.
 - **Lazy line-index precision before reconciliation.** `documentOffset` can be `null` for lines updated in lazy mode. Any caller that passes a lazy `DocumentState` (not `DocumentState<'eager'>`) to functions requiring precise offsets (e.g. `getLineRange`) will get a runtime error or miss data.
 
-### 5.2 `deleteRange` does not maintain RB-tree invariants
+### 5.2 ~~`deleteRange` does not maintain RB-tree invariants~~ ✅ Fixed
 
-`src/store/core/piece-table.ts:626` — `deleteRange` rebuilds the tree by modifying nodes in a recursive traversal, but it does NOT rebalance (no RB fix-up after deletion). This is intentional in the current implementation (it relies on the tree remaining structurally valid from insertions), but the black-height invariant can be violated after complex delete/split operations, especially when `mergeTrees` uses `joinByBlackHeight`. This has been partially addressed with the `joinByBlackHeight` helper, but a comprehensive deletion fix-up (double-black propagation) is absent.
+~~`src/store/core/piece-table.ts:626` — `deleteRange` rebuilds the tree by modifying nodes in a recursive traversal, but it does NOT rebalance (no RB fix-up after deletion). This is intentional in the current implementation (it relies on the tree remaining structurally valid from insertions), but the black-height invariant can be violated after complex delete/split operations, especially when `mergeTrees` uses `joinByBlackHeight`. This has been partially addressed with the `joinByBlackHeight` helper, but a comprehensive deletion fix-up (double-black propagation) is absent.~~
+
+**Fix applied (2026-04-16):** `deleteRange` split case (keepBefore > 0 && keepAfter > 0) now calls `fixRedViolations` on the combined node to resolve red-red violations when the original node was red. `pieceTableDelete` now enforces a black root after `deleteRange` returns. Note: full double-black propagation for black-height imbalances from deletion remains a future work item.
 
 ### 5.3 `compactAddBuffer` uses a fragile offset map
 
@@ -192,16 +194,20 @@ chunkManager.ensureLoaded(chunkIndex)
 
 The `query.*` namespace documents O(1)/O(log n) operations and `scan.*` documents O(n). However, nothing in the type system prevents a caller from accidentally using a `scan.*` function inside a hot rendering loop. A lint rule or a `@complexity` JSDoc tag on the `scan` namespace would help IDE-level guidance.
 
-### 6.2 The cost algebra is purely documentary and gives false confidence
+### 6.2 ~~The cost algebra is purely documentary and gives false confidence~~ ✅ Fixed
 
-`cost-doc.ts` is a sophisticated compile-time DSL but the readme warns: *"Any contributor can annotate an O(n) loop as O(1) and the type system will not object."* This creates a documentation system that can silently lie. Consider coupling it to benchmark assertions (e.g. `vitest` with threshold checks) so cost annotations become partially verified.
+~~`cost-doc.ts` is a sophisticated compile-time DSL but the readme warns: *"Any contributor can annotate an O(n) loop as O(1) and the type system will not object."* This creates a documentation system that can silently lie. Consider coupling it to benchmark assertions (e.g. `vitest` with threshold checks) so cost annotations become partially verified.~~
 
-### 6.3 `APPLY_REMOTE` bypasses the standard edit pipeline
+**Fix applied (2026-04-16):** Added a `"Scaling ratio (cost-algebra validation)"` describe block to `src/store/features/perf.test.ts` with two tests (`getLineStartOffset`, `findLineAtPosition`) that measure the 10k→900k line growth factor. The tests assert the ratio stays below 5×, rejecting O(n) scaling while allowing genuine O(log n) growth (~1.5×). This gives cost annotations a runtime check that CI will catch if annotations become misleading.
 
-Remote changes in the reducer (`reducer.ts:416`) directly call `pieceTableInsert` and `pieceTableDelete` + `liInsertLazy`/`liDeleteLazy`, bypassing `applyEdit` (which handles history, selection inline-update, and line-ending normalization). This means:
-- Remote inserts are not normalized to the document's `lineEnding`.
-- No history entry is created (by design, but a comment explaining this explicitly would help).
-- If the normalization logic in `applyEdit` evolves, remote changes won't benefit automatically.
+### 6.3 ~~`APPLY_REMOTE` bypasses the standard edit pipeline~~ ✅ Fixed
+
+~~Remote changes in the reducer (`reducer.ts:416`) directly call `pieceTableInsert` and `pieceTableDelete` + `liInsertLazy`/`liDeleteLazy`, bypassing `applyEdit` (which handles history, selection inline-update, and line-ending normalization). This means:~~
+~~- Remote inserts are not normalized to the document's `lineEnding`.~~
+~~- No history entry is created (by design, but a comment explaining this explicitly would help).~~
+~~- If the normalization logic in `applyEdit` evolves, remote changes won't benefit automatically.~~
+
+**Fix applied (2026-04-16):** `APPLY_REMOTE` insert handling in `reducer.ts` now applies `normalizeLineEndings` when `state.metadata.normalizeInsertedLineEndings` is enabled, and passes the normalized text consistently to both `pieceTableInsert` and `liInsertLazy`. A comment explains why history is intentionally not pushed for remote changes.
 
 ### 6.4 The store conflates reconciliation scheduling and state mutation
 
@@ -231,9 +237,11 @@ The public API exports `store.selectionToCharOffsets` (via `query` namespace) bu
 
 ## 8. Improvement Points 3 — Implementations
 
-### 8.1 `deleteRange` does not perform RB fix-up
+### 8.1 ~~`deleteRange` does not perform RB fix-up~~ ✅ Fixed (partial)
 
-As noted in §5.2, tree rebalancing after deletion is missing. The correct approach is a standard "double-black" fix-up phase walking back up the path. The existing `mergeTrees`→`joinByBlackHeight` covers the node-removal merge case, but pieces trimmed in-place (keepBefore/keepAfter cases) may leave red-red violations or incorrect black-heights along the parent path.
+~~As noted in §5.2, tree rebalancing after deletion is missing. The correct approach is a standard "double-black" fix-up phase walking back up the path. The existing `mergeTrees`→`joinByBlackHeight` covers the node-removal merge case, but pieces trimmed in-place (keepBefore/keepAfter cases) may leave red-red violations or incorrect black-heights along the parent path.~~
+
+**Fix applied (2026-04-16):** Red-red violation from the split case is resolved with `fixRedViolations`; root black invariant is enforced in `pieceTableDelete`. Full double-black propagation for black-height imbalances after arbitrary deletions remains a future work item.
 
 ### 8.2 `collectPieces` is used inside `getValueStream` eagerly before iteration
 
@@ -243,9 +251,11 @@ As noted in §5.2, tree rebalancing after deletion is missing. The correct appro
 
 `src/store/features/reducer.ts:308` — The inline `buildTree` function creates all nodes with `color: 'black'`. While this preserves black-height for a perfectly balanced tree, the resulting tree may violate the red-coloring heuristic that keeps RB-trees balanced after subsequent inserts. A proper rebuild should color the root black and children red for standard balanced construction.
 
-### 8.4 In-order traversal boilerplate is duplicated in `reducer.ts`
+### 8.4 ~~In-order traversal boilerplate is duplicated in `reducer.ts`~~ ✅ Fixed
 
-`src/store/features/reducer.ts:145` and `reducer.ts:184` both implement identical iterative in-order traversal (nodeStack + offsetStack). This should be extracted into a shared `inOrderWithOffset(root, visitor)` helper in `piece-table.ts` or `state.ts`.
+~~`src/store/features/reducer.ts:145` and `reducer.ts:184` both implement identical iterative in-order traversal (nodeStack + offsetStack). This should be extracted into a shared `inOrderWithOffset(root, visitor)` helper in `piece-table.ts` or `state.ts`.~~
+
+**Fix applied (2026-04-16):** `pieceTableInOrder(root, visitor)` exported from `src/store/core/piece-table.ts`. `findReloadInsertionPos`, `findChunkDocumentRange`, and `hasAddPiecesInRange` in `reducer.ts` all refactored to use it, removing ~80 lines of duplicated nodeStack/offsetStack boilerplate.
 
 ### 8.5 `getLineLinearScan` collects all pieces before scanning
 

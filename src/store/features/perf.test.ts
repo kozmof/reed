@@ -343,7 +343,62 @@ describe('Undo / redo', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 7. Stress: mixed edit workload
+// 7. Scaling ratio (cost-algebra validation)
+//
+// These tests confirm that cost annotations are not silently wrong by
+// measuring the actual growth rate between the 10k-line and 900k-line
+// fixtures. An O(log n) operation's time should grow by roughly
+// log(900k)/log(10k) ≈ 1.5×, not 90× (the linear ratio).
+// A measured ratio > 5× is treated as a regression.
+// ---------------------------------------------------------------------------
+
+describe('Scaling ratio (cost-algebra validation)', () => {
+  const ITERS = 5_000;
+
+  it('getLineStartOffset ratio (10k → 900k lines) is sub-linear', () => {
+    const state_sm = createInitialState({ content: content_sm });
+    const state_lg = createInitialState({ content: content_lg });
+    const rng_sm = makeDeterministicRng(1001);
+    const rng_lg = makeDeterministicRng(1002);
+
+    const ms_sm = bench(() => {
+      getLineStartOffset(state_sm.lineIndex.root, Math.floor(rng_sm() * LINES_SM));
+    }, ITERS, STABLE_READ_BENCH);
+
+    const ms_lg = bench(() => {
+      getLineStartOffset(state_lg.lineIndex.root, Math.floor(rng_lg() * LINES_LG));
+    }, ITERS, STABLE_READ_BENCH);
+
+    const ratio = ms_sm > 0 ? ms_lg / ms_sm : 1;
+    // O(log n): expected ≈ log(900k)/log(10k) ≈ 1.5×. Threshold 5× rejects O(n).
+    console.log(`[PERF] scaling ratio ${LINES_LG.toLocaleString()}/${LINES_SM.toLocaleString()} lines: ${ratio.toFixed(2)}×`);
+    expect(ratio, 'getLineStartOffset must not scale linearly with document size').toBeLessThan(5);
+  });
+
+  it('findLineAtPosition ratio (10k → 900k lines) is sub-linear', () => {
+    const state_sm = createInitialState({ content: content_sm });
+    const state_lg = createInitialState({ content: content_lg });
+    const rng_sm = makeDeterministicRng(1003);
+    const rng_lg = makeDeterministicRng(1004);
+
+    const ms_sm = bench(() => {
+      const pos = byteOffset(Math.floor(rng_sm() * state_sm.pieceTable.totalLength));
+      query.findLineAtPosition(state_sm, pos);
+    }, ITERS, STABLE_READ_BENCH);
+
+    const ms_lg = bench(() => {
+      const pos = byteOffset(Math.floor(rng_lg() * state_lg.pieceTable.totalLength));
+      query.findLineAtPosition(state_lg, pos);
+    }, ITERS, STABLE_READ_BENCH);
+
+    const ratio = ms_sm > 0 ? ms_lg / ms_sm : 1;
+    console.log(`[PERF] findLineAtPosition scaling ratio: ${ratio.toFixed(2)}×`);
+    expect(ratio, 'findLineAtPosition must not scale linearly with document size').toBeLessThan(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. Stress: mixed edit workload
 // ---------------------------------------------------------------------------
 
 describe('Mixed edit workload', () => {
