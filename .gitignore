@@ -26,5 +26,8 @@ tmp/
 
 .devcontainer
 .npm-cache
+.pnpm-store
 
 .claude
+
+coverage
