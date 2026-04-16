@@ -13,11 +13,17 @@
     "test:perf:watch": "vitest --config vitest.perf.config.ts",
     "coverage": "vitest run --coverage",
     "gen-fixture": "npx tsx scripts/gen-fixture.ts",
-    "bench": "npx tsx src/benchmarks/bench.ts"
+    "bench": "npx tsx src/benchmarks/bench.ts",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
     "@vitest/coverage-v8": "4.0.18",
+    "oxfmt": "^0.44.0",
+    "oxlint": "^1.59.0",
     "typescript": "~5.9.3",
     "vite": "^7.2.4",
     "vitest": "^4.0.18"
