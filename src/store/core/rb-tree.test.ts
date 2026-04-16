@@ -118,18 +118,6 @@ function insertWithPath(root: TestNode | null, key: number): TestNode {
   return fixInsertWithPath(insertPath, withTestNode);
 }
 
-function buildInsertedTree(root: TestNode, key: number): TestNode {
-  const newNode = createNode(key, 'red');
-  if (key < root.key) {
-    return withTestNode(root, {
-      left: root.left === null ? newNode : buildInsertedTree(root.left, key),
-    });
-  }
-  return withTestNode(root, {
-    right: root.right === null ? newNode : buildInsertedTree(root.right, key),
-  });
-}
-
 function insertWithFullFix(root: TestNode | null, key: number): TestNode {
   if (root === null) return createNode(key, 'black');
   // Use the O(log n) path-based fixer (fixInsert was O(n) and is no longer exported).

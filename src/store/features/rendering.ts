@@ -338,7 +338,7 @@ export function estimateTotalHeight(
   for (let i = 0; i < totalLines; i += step) {
     const nodeResult = findLineByNumber(state.lineIndex.root, i);
     if (nodeResult !== null) {
-      sampleHeight += wrappedHeight($from(nodeResult).charLength, charsPerLine, config.baseLineHeight);
+      sampleHeight += wrappedHeight(nodeResult.charLength, charsPerLine, config.baseLineHeight);
     }
   }
 

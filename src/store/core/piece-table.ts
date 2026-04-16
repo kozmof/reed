@@ -156,8 +156,8 @@ export function getPieceBuffer(
       return chunk;
     }
     default: {
-      const _never: never = piece.bufferType;
-      throw new Error(`Unknown buffer type: ${_never}`);
+      const _never: never = piece;
+      throw new Error(`Unknown buffer type: ${String(_never)}`);
     }
   }
 }

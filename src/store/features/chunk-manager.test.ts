@@ -3,7 +3,7 @@
  * Verifies deduplication, LRU eviction, pinning, prefetch, and dispose behaviour.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createChunkManager } from './chunk-manager.ts';
 import { createDocumentStore } from './store.ts';
 

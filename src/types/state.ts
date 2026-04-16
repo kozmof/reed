@@ -437,11 +437,14 @@ export interface HistoryEntry {
  */
 class PStackCons<T> {
   private declare readonly _brand: never;
-  constructor(
-    readonly top: T,
-    readonly rest: PStack<T>,
-    readonly size: number,
-  ) {}
+  readonly top: T;
+  readonly rest: PStack<T>;
+  readonly size: number;
+  constructor(top: T, rest: PStack<T>, size: number) {
+    this.top = top;
+    this.rest = rest;
+    this.size = size;
+  }
 }
 
 /**

@@ -185,7 +185,7 @@ describe('Event Creators', () => {
       const nextState = createInitialState({ content: 'Hello World' });
       const action = DocumentActions.insert(byteOffset(5), ' World');
 
-      const event = createContentChangeEvent(action, prevState, nextState, [[5, 11]]);
+      const event = createContentChangeEvent(action, prevState, nextState, [[byteOffset(5), byteOffset(11)]]);
 
       expect(event.type).toBe('content-change');
       expect(event.action).toBe(action);

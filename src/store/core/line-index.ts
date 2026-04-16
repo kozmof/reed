@@ -32,7 +32,7 @@ import {
   type LogCost,
   type NLogNCost,
 } from '../../types/cost-doc.ts';
-import { asEagerLineIndex, createLineIndexNode, withLineIndexNode, withLineIndexState } from './state.ts';
+import { createLineIndexNode, withLineIndexNode, withLineIndexState } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry, type RootToLeafInsertPath } from './rb-tree.ts';
 import {
   mergeDirtyRanges,
@@ -41,9 +41,6 @@ import {
   reconcileViewport,
   type ReconciliationConfig,
 } from './reconcile.ts';
-
-// Type-safe wrapper for withLineIndexNode to use with generic R-B tree functions
-import { textEncoder } from './encoding.ts';
 
 const withLine: WithNodeFn<LineIndexNode> = withLineIndexNode;
 

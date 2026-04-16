@@ -457,21 +457,20 @@ export function withPieceNode<T extends PieceNode>(
   node: T,
   changes: PieceNodeUpdates
 ): T {
-  const newNode = { ...node, ...changes };
+  const base = { ...node, ...changes };
 
-  // Recalculate subtree aggregates if children or length changed
   if ('left' in changes || 'right' in changes || 'length' in changes) {
-    const leftLength = newNode.left?.subtreeLength ?? 0;
-    const rightLength = newNode.right?.subtreeLength ?? 0;
-    newNode.subtreeLength = newNode.length + leftLength + rightLength;
-
-    const selfAddLength = newNode.bufferType === 'add' ? newNode.length : 0;
-    const leftAddLength = newNode.left?.subtreeAddLength ?? 0;
-    const rightAddLength = newNode.right?.subtreeAddLength ?? 0;
-    newNode.subtreeAddLength = selfAddLength + leftAddLength + rightAddLength;
+    const leftLength = base.left?.subtreeLength ?? 0;
+    const rightLength = base.right?.subtreeLength ?? 0;
+    const subtreeLength = base.length + leftLength + rightLength;
+    const selfAddLength = base.bufferType === 'add' ? base.length : 0;
+    const leftAddLength = base.left?.subtreeAddLength ?? 0;
+    const rightAddLength = base.right?.subtreeAddLength ?? 0;
+    const subtreeAddLength = selfAddLength + leftAddLength + rightAddLength;
+    return Object.freeze({ ...base, subtreeLength, subtreeAddLength }) as unknown as T;
   }
 
-  return Object.freeze(newNode) as T;
+  return Object.freeze(base) as T;
 }
 
 /**

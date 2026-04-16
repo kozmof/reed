@@ -536,7 +536,7 @@ export function documentReducer(
       if (metadata !== undefined) {
         const newMap = new Map(newLineIndex.unloadedLineCountsByChunk);
         newMap.set(chunkIndex, metadata.lineCount);
-        newLineIndex = withLineIndexState(newLineIndex, { unloadedLineCountsByChunk: newMap });
+        newLineIndex = withLineIndexState(newLineIndex, { unloadedLineCountsByChunk: newMap }) as typeof newLineIndex;
       }
 
       return withState(state, {
