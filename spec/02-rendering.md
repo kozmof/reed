@@ -5,6 +5,7 @@
 Current rendering code is a **pure selector/utilities layer** in `src/store/features/rendering.ts`, surfaced via `rendering.*`.
 
 Implemented utilities:
+
 - `getVisibleLineRange(scroll, totalLines, overscan?)`
 - `getVisibleLines(state, config)`
 - `getVisibleLine(state, lineNumber)`

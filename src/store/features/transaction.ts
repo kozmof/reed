@@ -3,13 +3,13 @@
  * Extracted from store.ts for testability, reusability, and composability.
  */
 
-import type { DocumentState } from '../../types/state.ts';
+import type { DocumentState } from "../../types/state.ts";
 
 /**
  * Result of a commit operation.
  */
 export interface CommitResult {
-  readonly kind: 'commit';
+  readonly kind: "commit";
   /** Whether this completed the outermost transaction. */
   readonly isOutermost: boolean;
 }
@@ -18,7 +18,7 @@ export interface CommitResult {
  * Result of a rollback operation.
  */
 export interface RollbackResult {
-  readonly kind: 'rollback';
+  readonly kind: "rollback";
   /** Whether this completed the outermost transaction. */
   readonly isOutermost: boolean;
   /** The snapshot to restore to. Null when depth was already 0. */
@@ -75,7 +75,7 @@ export function createTransactionManager(): TransactionManager {
     if (snapshotStack.length !== depth) {
       throw new Error(
         `TransactionManager invariant violated after ${op}: ` +
-        `snapshotStack.length=${snapshotStack.length}, depth=${depth}`
+          `snapshotStack.length=${snapshotStack.length}, depth=${depth}`,
       );
     }
   }
@@ -83,31 +83,33 @@ export function createTransactionManager(): TransactionManager {
   function begin(currentState: DocumentState): void {
     snapshotStack.push(currentState);
     depth++;
-    assertInvariant('begin');
+    assertInvariant("begin");
   }
 
   function commit(): CommitResult {
     if (depth <= 0) {
-      return { kind: 'commit', isOutermost: false };
+      return { kind: "commit", isOutermost: false };
     }
 
     depth--;
     snapshotStack.pop();
-    assertInvariant('commit');
+    assertInvariant("commit");
 
-    return { kind: 'commit', isOutermost: depth === 0 };
+    return { kind: "commit", isOutermost: depth === 0 };
   }
 
   function rollback(): RollbackResult {
     if (depth <= 0) {
-      throw new Error('TransactionManager: rollback() called with no active transaction (depth is already 0)');
+      throw new Error(
+        "TransactionManager: rollback() called with no active transaction (depth is already 0)",
+      );
     }
 
     const snapshot = snapshotStack.pop() ?? null;
     depth--;
-    assertInvariant('rollback');
+    assertInvariant("rollback");
 
-    return { kind: 'rollback', isOutermost: depth === 0, snapshot };
+    return { kind: "rollback", isOutermost: depth === 0, snapshot };
   }
 
   function emergencyReset(): DocumentState | null {
@@ -121,8 +123,12 @@ export function createTransactionManager(): TransactionManager {
     begin,
     commit,
     rollback,
-    get depth() { return depth; },
-    get isActive() { return depth > 0; },
+    get depth() {
+      return depth;
+    },
+    get isActive() {
+      return depth > 0;
+    },
     emergencyReset,
   };
 }

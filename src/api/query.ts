@@ -4,15 +4,15 @@
  * For O(n) traversals see `scan.*`. For rendering utilities see `rendering.*`.
  */
 
-import type { DocumentState } from '../types/state.ts';
-import type { ByteOffset } from '../types/branded.ts';
-import { $constCostFn } from '../types/cost-doc.ts';
+import type { DocumentState } from "../types/state.ts";
+import type { ByteOffset } from "../types/branded.ts";
+import { $constCostFn } from "../types/cost-doc.ts";
 import {
   getText,
   getLength,
   findPieceAtPosition,
   getBufferStats,
-} from '../store/core/piece-table.ts';
+} from "../store/core/piece-table.ts";
 import {
   findLineAtPosition as findLineAtPositionFromRoot,
   findLineByNumber as findLineByNumberFromRoot,
@@ -22,18 +22,17 @@ import {
   getLineCountFromIndex as getLineCountFromIndexState,
   getCharStartOffset as getCharStartOffsetFromRoot,
   findLineAtCharPosition as findLineAtCharPositionFromRoot,
-} from '../store/core/line-index.ts';
-import { asEagerLineIndex } from '../store/core/state.ts';
-import type { QueryApi } from './interfaces.ts';
+} from "../store/core/line-index.ts";
+import { asEagerLineIndex } from "../store/core/state.ts";
+import type { QueryApi } from "./interfaces.ts";
 
-function isReconciledState(state: DocumentState): state is DocumentState<'eager'> {
+function isReconciledState(state: DocumentState): state is DocumentState<"eager"> {
   return state.lineIndex.rebuildPending === false && state.lineIndex.dirtyRanges.length === 0;
 }
 
-
 function findLineAtPosition(
   state: DocumentState,
-  position: Parameters<typeof findLineAtPositionFromRoot>[1]
+  position: Parameters<typeof findLineAtPositionFromRoot>[1],
 ) {
   return findLineAtPositionFromRoot(state.lineIndex.root, position);
 }
@@ -59,7 +58,7 @@ function getLineStartOffset(state: DocumentState, lineNumber: number) {
  *  - Caller needs best-effort from any state, tolerates null → use `getLineRangePrecise`
  *  - Caller needs to reconcile on demand → call `store.reconcileNow()` first
  */
-function getLineRange(state: DocumentState<'eager'>, lineNumber: number) {
+function getLineRange(state: DocumentState<"eager">, lineNumber: number) {
   return getLineRangeFromIndex(state.lineIndex, lineNumber);
 }
 
@@ -123,7 +122,7 @@ export const query = {
   findPieceAtPosition,
   /** @complexity O(1) — runtime mode check for line-index cleanliness */
   isReconciledState: $constCostFn(isReconciledState),
-/** @complexity O(log n) — tree walk to find line at byte position */
+  /** @complexity O(log n) — tree walk to find line at byte position */
   findLineAtPosition,
   /** @complexity O(log n) — tree walk to find line by 1-based line number */
   findLineByNumber,

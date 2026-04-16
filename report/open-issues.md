@@ -1,15 +1,16 @@
 # Open Issues and Improvements
 
 Updated 2026-04-16. Resolved issues removed; new issues from all reports added.
-Items marked *(acknowledged — not fixing)* have a documented rationale for deferral and are included for completeness.
+Items marked _(acknowledged — not fixing)_ have a documented rationale for deferral and are included for completeness.
 
 ---
 
 ## Architecture / Design
 
-### #001 — No invariant document for core structures *(resolved 2026-04-16)*
+### #001 — No invariant document for core structures _(resolved 2026-04-16)_
 
 Created `docs/invariants.md` capturing:
+
 - Piece table subtree field invariants (`subtreeLength`, `subtreeAddLength`, RB invariants, immutability, chunk ordering)
 - Line index mode guarantees (`'eager'` vs `'lazy'` `documentOffset` nullability, `subtreeByteLength` accuracy, `lineCount` accuracy)
 - Reconciliation lifecycle invariants (`rebuildPending` ↔ `dirtyRanges.length > 0`, `lastReconciledVersion` monotonicity, dirty range merge rules, sentinel semantics, `rebuildLineIndex` `maxDirtyRanges` preservation)
@@ -19,9 +20,10 @@ Created `docs/invariants.md` capturing:
 
 ---
 
-### #002 — No benchmark harness *(resolved 2026-04-16)*
+### #002 — No benchmark harness _(resolved 2026-04-16)_
 
 Created `src/benchmarks/bench.ts` — a standalone Node.js benchmark harness runnable via `npm run bench`. Covers:
+
 - Large-document initial load (10 k lines)
 - 1 000 sequential single-char inserts into a 5 k-line document
 - 200 CRLF inserts into an LF document (exercises the rebuild-on-CRLF path)
@@ -35,7 +37,7 @@ Each benchmark reports median wall-clock time and fails with `process.exit(1)` i
 
 ---
 
-### #003 — `reconcileNow` bumps `state.version`; background reconciliation does not *(resolved 2026-04-16)*
+### #003 — `reconcileNow` bumps `state.version`; background reconciliation does not _(resolved 2026-04-16)_
 
 `reconcileNow()` no longer increments `state.version`. It passes `state.version` (unchanged) to `reconcileFull` and returns the reconciled state without bumping the version counter. Version semantics are now consistent: only content-modifying actions increment the version. (`src/store/features/store.ts`)
 
@@ -43,7 +45,7 @@ Each benchmark reports median wall-clock time and fails with `process.exit(1)` i
 
 ---
 
-### #004 — Eager reconciliation before every undo/redo is O(n) *(resolved 2026-04-16)*
+### #004 — Eager reconciliation before every undo/redo is O(n) _(resolved 2026-04-16)_
 
 `historyUndo` and `historyRedo` now call `reconcileRangeForChanges` instead of `reconcileFull`. The helper computes the union of line ranges touched by the history entry's changes (via `findLineAtPosition`, O(log n)) and reconciles only that window. Falls back to `reconcileFull` only when a sentinel dirty range is present. (`src/store/features/history.ts`, `src/store/features/edit.ts`)
 
@@ -51,7 +53,7 @@ Each benchmark reports median wall-clock time and fails with `process.exit(1)` i
 
 ---
 
-### #005 — Background reconciliation has no back-pressure *(resolved 2026-04-16)*
+### #005 — Background reconciliation has no back-pressure _(resolved 2026-04-16)_
 
 Added `maxDirtyRanges?: number` to `DocumentStoreConfig` (default `32`). The value is stored on `LineIndexState.maxDirtyRanges` and threaded through all three internal `mergeDirtyRanges` call sites in `lineIndexInsertLazy` and `lineIndexDeleteLazy`. Callers can now lower the threshold for memory-constrained environments or raise it to defer reconciliation longer before collapsing to a sentinel. (`src/types/state.ts`, `src/store/core/line-index.ts`, `src/store/core/state.ts`)
 
@@ -59,9 +61,10 @@ Added `maxDirtyRanges?: number` to `DocumentStoreConfig` (default `32`). The val
 
 ---
 
-### #006 — `reducer.ts` and `store.ts` are large monoliths *(resolved 2026-04-16)*
+### #006 — `reducer.ts` and `store.ts` are large monoliths _(resolved 2026-04-16)_
 
 `reducer.ts` reduced from 1318 lines to 614 lines. Extracted:
+
 - `src/store/features/edit.ts` (675 lines) — exports `applyEdit`, `applyChange`, `applyInverseChange`, `reconcileRangeForChanges`, and all edit-pipeline helpers (`validatePosition`, `validateRange`, `pieceTableInsert`, `pieceTableDelete`, `getTextRange`, `historyPush`, `makeInsertChange`, `makeDeleteChange`, `makeReplaceChange`, etc.)
 - `src/store/features/history.ts` extended — exports `historyUndo`, `historyRedo` (imports `applyChange`/`applyInverseChange` from `edit.ts` to avoid circular dependency)
 
@@ -71,7 +74,7 @@ Added `maxDirtyRanges?: number` to `DocumentStoreConfig` (default `32`). The val
 
 ---
 
-### #007 — `line-index.ts` is a 2000+ line monolith *(resolved 2026-04-16)*
+### #007 — `line-index.ts` is a 2000+ line monolith _(resolved 2026-04-16)_
 
 `line-index.ts` reduced from 2291 lines to 1875 lines. Created `src/store/core/reconcile.ts` (471 lines) containing `mergeDirtyRanges`, `reconcileRange`, `reconcileFull`, `reconcileViewport`, and `ReconciliationConfig`. `line-index.ts` imports all five from `reconcile.ts` and re-exports them to preserve its public API unchanged.
 
@@ -79,7 +82,7 @@ Added `maxDirtyRanges?: number` to `DocumentStoreConfig` (default `32`). The val
 
 ---
 
-### #008 — Chunk eviction semantics are undocumented *(resolved 2026-04-16)*
+### #008 — Chunk eviction semantics are undocumented _(resolved 2026-04-16)_
 
 Added comprehensive JSDoc to `EvictChunkAction` in `src/types/actions.ts` and `evictChunk()` in `src/store/features/actions.ts`. The documentation covers: which operations are safe after eviction, what the caller must do before evicting modified chunks (check `hasAddPiecesInRange`), the runtime error thrown by `getBuffer('Chunk N is not loaded')`, and the line-index side-cache restoration behaviour for pre-declared chunk metadata.
 
@@ -87,7 +90,7 @@ Added comprehensive JSDoc to `EvictChunkAction` in `src/types/actions.ts` and `e
 
 ---
 
-### #009 — Phase 4: chunk loading infrastructure incomplete *(resolved 2026-04-13)*
+### #009 — Phase 4: chunk loading infrastructure incomplete _(resolved 2026-04-13)_
 
 All four sub-items addressed:
 
@@ -105,7 +108,7 @@ All four sub-items addressed:
 
 ## Types & Interfaces
 
-### #010 — `LineIndexNode<M>` phantom type verbosity *(acknowledged — not fixing)*
+### #010 — `LineIndexNode<M>` phantom type verbosity _(acknowledged — not fixing)_
 
 All tree operations must carry `<M extends EvaluationMode>`. Since `M` only affects `documentOffset` nullability, parameterizing only `LineIndexState<M>` (not individual nodes) would simplify type signatures.
 
@@ -115,7 +118,7 @@ Not fixing: removing the phantom from `LineIndexNode` would weaken the type syst
 
 ---
 
-### #011 — `HistoryChange.byteLength` invariant unprotected at construction *(resolved 2026-04-16)*
+### #011 — `HistoryChange.byteLength` invariant unprotected at construction _(resolved 2026-04-16)_
 
 All `HistoryInsertChange`, `HistoryDeleteChange`, and `HistoryReplaceChange` objects are now created exclusively through `makeInsertChange`, `makeDeleteChange`, and `makeReplaceChange` factory functions in `src/store/features/edit.ts`. Each factory derives `byteLength` from `textEncoder.encode(text).byteLength` rather than accepting it as a parameter, making divergence impossible. All inline object literals in `applyEdit` and `coalesceChanges` have been replaced with factory calls.
 
@@ -123,7 +126,7 @@ All `HistoryInsertChange`, `HistoryDeleteChange`, and `HistoryReplaceChange` obj
 
 ---
 
-### #012 — `DocumentStoreConfig.lineEnding` not enforced on insert *(resolved 2026-04-16)*
+### #012 — `DocumentStoreConfig.lineEnding` not enforced on insert _(resolved 2026-04-16)_
 
 Added opt-in line-ending normalization via `normalizeInsertedLineEndings?: boolean` in `DocumentStoreConfig` (default `false`). When enabled, the INSERT and REPLACE handlers in `documentReducer` call `normalizeLineEndings(text, state.metadata.lineEnding)` before passing text to `applyEdit`. Normalization handles all three modes: `'lf'` (CRLF → LF, lone CR → LF), `'crlf'` (lone CR → LF then lone LF → CRLF), `'cr'` (CRLF → CR, lone LF → CR). Defaults to `false` to avoid breaking existing callers that intentionally insert mixed line endings. (`src/types/state.ts`, `src/store/core/state.ts`, `src/store/features/reducer.ts`)
 
@@ -133,7 +136,7 @@ Added opt-in line-ending normalization via `normalizeInsertedLineEndings?: boole
 
 ## Algorithms
 
-### #013 — `deleteLineRangeLazy` calls O(n) tree rebuild even in lazy mode *(acknowledged — not fixing)*
+### #013 — `deleteLineRangeLazy` calls O(n) tree rebuild even in lazy mode _(acknowledged — not fixing)_
 
 For multi-line deletions, `rebuildWithDeletedRange` is called even in lazy mode because the resulting tree shape changes. Lazy delete with newlines has the same O(n) cost as eager delete, negating the lazy optimization for this case.
 
@@ -143,7 +146,7 @@ Not fixing: the Red-Black tree must be rebalanced after removing each line node 
 
 ---
 
-### #014 — `reconcileInPlace` visits all nodes even when offsets are already correct *(acknowledged — not fixing)*
+### #014 — `reconcileInPlace` visits all nodes even when offsets are already correct _(acknowledged — not fixing)_
 
 The short-circuit `node.documentOffset !== correctOffset` avoids node allocation but not subtree traversal. A subtree-level correctness flag (analogous to `rebuildPending` at the state level) would allow pruning entire subtrees known to be clean.
 
@@ -155,7 +158,7 @@ Not fixing: coordinating invalidation across every lazy tree mutation (`insertLi
 
 ## Implementations
 
-### #015 — `findNewlineBytePositions` allocates `Uint8Array` on every call (hot path) *(resolved 2026-04-16)*
+### #015 — `findNewlineBytePositions` allocates `Uint8Array` on every call (hot path) _(resolved 2026-04-16)_
 
 Replaced `textEncoder.encode(text)` scan with a direct `charCodeAt` loop. The loop accumulates UTF-8 byte widths using the standard 1/2/3/4-byte rules (with surrogate-pair detection for code points > U+FFFF) and records newline byte positions inline — no `Uint8Array` allocation. Total byte length is returned as a by-product of the same pass. (`src/store/core/line-index.ts`)
 
@@ -163,7 +166,7 @@ Replaced `textEncoder.encode(text)` scan with a direct `charCodeAt` loop. The lo
 
 ---
 
-### #016 — `fixInsert` is O(n) and still exported *(resolved 2026-04-16)*
+### #016 — `fixInsert` is O(n) and still exported _(resolved 2026-04-16)_
 
 `fixInsert` changed from `export function` to `function` (unexported). Added a `@deprecated` JSDoc noting that callers should use `fixInsertWithPath` instead. Added `void fixInsert;` to suppress the unused-symbol warning. The `rb-tree.test.ts` import of `fixInsert` was removed; the relevant test now exercises `rebalanceAfterInsert` + `ensureBlackRoot` directly. (`src/store/core/rb-tree.ts`, `src/store/core/rb-tree.test.ts`)
 
@@ -171,7 +174,7 @@ Replaced `textEncoder.encode(text)` scan with a direct `charCodeAt` loop. The lo
 
 ---
 
-### #017 — `getAffectedRange` for `APPLY_REMOTE` spans the full change extent *(resolved 2026-04-16)*
+### #017 — `getAffectedRange` for `APPLY_REMOTE` spans the full change extent _(resolved 2026-04-16)_
 
 Renamed `getAffectedRange` → `getAffectedRanges`. Return type changed from `readonly [ByteOffset, ByteOffset]` to `readonly (readonly [ByteOffset, ByteOffset])[]`. For single-change actions (INSERT, DELETE, REPLACE) a single-element array is returned. For `APPLY_REMOTE`, one `[start, end)` range is returned per change — no bounding-box merge. `ContentChangeEvent.affectedRange` → `affectedRanges`. Updated all consumers: `src/store/features/events.ts`, `src/store/features/store.ts`, `src/api/events.ts`, `src/store/index.ts`, `src/types/store.ts`, `src/store/features/events.test.ts`.
 
@@ -179,7 +182,7 @@ Renamed `getAffectedRange` → `getAffectedRanges`. Return type changed from `re
 
 ---
 
-### #018 — `notifyListeners` allocates `Array.from(listeners)` on every notification *(resolved 2026-04-16)*
+### #018 — `notifyListeners` allocates `Array.from(listeners)` on every notification _(resolved 2026-04-16)_
 
 Replaced `Set<StoreListener>` with `StoreListener[]` and a copy-on-write pattern. `subscribe` and `unsubscribe` clone the array (new reference) only when called during an active notification (`notifying === true`); otherwise they mutate in place. `notifyListeners` iterates the array directly — no `Array.from()` allocation. (`src/store/features/store.ts`)
 
@@ -187,7 +190,7 @@ Replaced `Set<StoreListener>` with `StoreListener[]` and a copy-on-write pattern
 
 ---
 
-### #019 — `scheduleReconciliation` 200ms `setTimeout` fallback accumulates in Node.js *(resolved 2026-04-16)*
+### #019 — `scheduleReconciliation` 200ms `setTimeout` fallback accumulates in Node.js _(resolved 2026-04-16)_
 
 Added `reconcileMode?: 'idle' | 'sync' | 'none'` to `DocumentStoreConfig` (default `'idle'`). In `scheduleReconciliation`: `'none'` returns immediately (no scheduling), `'sync'` calls `reconcileFull` inline before returning, `'idle'` preserves the existing `requestIdleCallback` + 200ms `setTimeout` path. The mode is stored in the store closure and checked on every `scheduleReconciliation` call. (`src/types/state.ts`, `src/store/core/state.ts`, `src/store/features/store.ts`)
 
@@ -195,7 +198,7 @@ Added `reconcileMode?: 'idle' | 'sync' | 'none'` to `DocumentStoreConfig` (defau
 
 ---
 
-### #020 — `GrowableBuffer` shared-mutation contract needs a dev-mode assertion *(resolved 2026-04-16)*
+### #020 — `GrowableBuffer` shared-mutation contract needs a dev-mode assertion _(resolved 2026-04-16)_
 
 Added a `process.env.NODE_ENV !== 'production'` guard at the top of `subarray()` that throws `GrowableBuffer: out-of-bounds read [${start}, ${end}) exceeds valid length ${this.length}` when `start < 0` or `end > this.length`. No impact on production bundles (tree-shaken by Vite). (`src/store/core/growable-buffer.ts`)
 
@@ -203,7 +206,7 @@ Added a `process.env.NODE_ENV !== 'production'` guard at the top of `subarray()`
 
 ---
 
-### #021 — `$declare` escape hatch is unchecked *(acknowledged — by design)*
+### #021 — `$declare` escape hatch is unchecked _(acknowledged — by design)_
 
 `$declare` allows any value to be annotated with an arbitrary cost level without compile-time or runtime verification. Unlike `$prove`, which validates that the inner annotation does not exceed the declared maximum, `$declare` is a pure assertion with no backing check. A contributor can annotate an O(n) function as O(1) using `$declare` and the type system will not object.
 
@@ -213,7 +216,7 @@ By design: `$declare` exists for contexts where cost is provable by reasoning bu
 
 ---
 
-### #022 — Inner rollback restores only the matching snapshot, not outermost state *(acknowledged — not fixing)*
+### #022 — Inner rollback restores only the matching snapshot, not outermost state _(acknowledged — not fixing)_
 
 ```ts
 dispatch(TRANSACTION_START)    // begin(stateA), depth=1

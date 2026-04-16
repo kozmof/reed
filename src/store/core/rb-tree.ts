@@ -3,7 +3,7 @@
  * Provides immutable balancing operations for any R-B tree node type.
  */
 
-import type { NodeColor, RBNode } from '../../types/state.ts';
+import type { NodeColor, RBNode } from "../../types/state.ts";
 
 // Re-export RBNode for consumers that import from rb-tree
 export type { RBNode };
@@ -19,7 +19,7 @@ export type { RBNode };
  */
 export type WithNodeFn<N extends RBNode<N>> = (
   node: N,
-  updates: Partial<{ color: NodeColor; left: N | null; right: N | null }>
+  updates: Partial<{ color: NodeColor; left: N | null; right: N | null }>,
 ) => N;
 
 // =============================================================================
@@ -31,7 +31,7 @@ export type WithNodeFn<N extends RBNode<N>> = (
  * Returns false for null/undefined nodes (they're treated as black).
  */
 export function isRed<N extends RBNode<N>>(node: N | null | undefined): boolean {
-  return node != null && node.color === 'red';
+  return node != null && node.color === "red";
 }
 
 /**
@@ -39,7 +39,7 @@ export function isRed<N extends RBNode<N>>(node: N | null | undefined): boolean 
  * Null nodes are considered black.
  */
 export function isBlack<N extends RBNode<N>>(node: N | null | undefined): boolean {
-  return node == null || node.color === 'black';
+  return node == null || node.color === "black";
 }
 
 // =============================================================================
@@ -56,10 +56,7 @@ export function isBlack<N extends RBNode<N>>(node: N | null | undefined): boolea
  *        / \          / \
  *       b   c        a   b
  */
-export function rotateLeft<N extends RBNode<N>>(
-  node: N,
-  withNode: WithNodeFn<N>
-): N {
+export function rotateLeft<N extends RBNode<N>>(node: N, withNode: WithNodeFn<N>): N {
   const right = node.right as N | null;
   if (right === null) return node;
 
@@ -82,10 +79,7 @@ export function rotateLeft<N extends RBNode<N>>(
  *      / \              / \
  *     a   b            b   c
  */
-export function rotateRight<N extends RBNode<N>>(
-  node: N,
-  withNode: WithNodeFn<N>
-): N {
+export function rotateRight<N extends RBNode<N>>(node: N, withNode: WithNodeFn<N>): N {
   const left = node.left as N | null;
   if (left === null) return node;
 
@@ -105,12 +99,9 @@ export function rotateRight<N extends RBNode<N>>(
 /**
  * Ensure the root is black.
  */
-export function ensureBlackRoot<N extends RBNode<N>>(
-  node: N,
-  withNode: WithNodeFn<N>
-): N {
-  if (node.color === 'red') {
-    return withNode(node, { color: 'black' });
+export function ensureBlackRoot<N extends RBNode<N>>(node: N, withNode: WithNodeFn<N>): N {
+  if (node.color === "red") {
+    return withNode(node, { color: "black" });
   }
   return node;
 }
@@ -119,18 +110,15 @@ export function ensureBlackRoot<N extends RBNode<N>>(
  * Fix red-red violations at a node.
  * Implements the four rotation cases of Red-Black tree balancing.
  */
-export function fixRedViolations<N extends RBNode<N>>(
-  node: N,
-  withNode: WithNodeFn<N>
-): N {
+export function fixRedViolations<N extends RBNode<N>>(node: N, withNode: WithNodeFn<N>): N {
   let result = node;
 
   // Case 1: Left-Left (right rotation)
   if (isRed(result.left) && isRed(result.left?.left)) {
     result = rotateRight(result, withNode);
     result = withNode(result, {
-      color: 'black',
-      right: result.right ? withNode(result.right as N, { color: 'red' }) : null,
+      color: "black",
+      right: result.right ? withNode(result.right as N, { color: "red" }) : null,
     });
   }
   // Case 2: Left-Right (left-right rotation)
@@ -139,16 +127,16 @@ export function fixRedViolations<N extends RBNode<N>>(
     result = withNode(result, { left: newLeft });
     result = rotateRight(result, withNode);
     result = withNode(result, {
-      color: 'black',
-      right: result.right ? withNode(result.right as N, { color: 'red' }) : null,
+      color: "black",
+      right: result.right ? withNode(result.right as N, { color: "red" }) : null,
     });
   }
   // Case 3: Right-Right (left rotation)
   else if (isRed(result.right) && isRed(result.right?.right)) {
     result = rotateLeft(result, withNode);
     result = withNode(result, {
-      color: 'black',
-      left: result.left ? withNode(result.left as N, { color: 'red' }) : null,
+      color: "black",
+      left: result.left ? withNode(result.left as N, { color: "red" }) : null,
     });
   }
   // Case 4: Right-Left (right-left rotation)
@@ -157,8 +145,8 @@ export function fixRedViolations<N extends RBNode<N>>(
     result = withNode(result, { right: newRight });
     result = rotateLeft(result, withNode);
     result = withNode(result, {
-      color: 'black',
-      left: result.left ? withNode(result.left as N, { color: 'red' }) : null,
+      color: "black",
+      left: result.left ? withNode(result.left as N, { color: "red" }) : null,
     });
   }
 
@@ -169,10 +157,7 @@ export function fixRedViolations<N extends RBNode<N>>(
  * Rebalance tree after insert to fix red-red violations.
  * Recursively fixes violations from leaves up to root.
  */
-export function rebalanceAfterInsert<N extends RBNode<N>>(
-  node: N,
-  withNode: WithNodeFn<N>
-): N {
+export function rebalanceAfterInsert<N extends RBNode<N>>(node: N, withNode: WithNodeFn<N>): N {
   // Fix left subtree first
   let newLeft = node.left as N | null;
   if (newLeft !== null) {
@@ -200,10 +185,7 @@ export function rebalanceAfterInsert<N extends RBNode<N>>(
  * @deprecated O(n) — traverses the entire tree. Use `fixInsertWithPath` (O(log n)) instead.
  * This function is kept as an internal helper; it is no longer part of the public API.
  */
-function fixInsert<N extends RBNode<N>>(
-  root: N,
-  withNode: WithNodeFn<N>
-): N {
+function fixInsert<N extends RBNode<N>>(root: N, withNode: WithNodeFn<N>): N {
   return ensureBlackRoot(rebalanceAfterInsert(root, withNode), withNode);
 }
 
@@ -221,7 +203,7 @@ void fixInsert; // suppress "unused" lint warnings in strict configs
  */
 export interface InsertionPathEntry<N extends RBNode<N>> {
   node: N;
-  direction: 'left' | 'right';
+  direction: "left" | "right";
 }
 
 /**
@@ -233,8 +215,9 @@ export interface InsertionPathEntry<N extends RBNode<N>> {
  * at the type level: passing an unreversed (leaf-to-root) array to
  * fixInsertWithPath is a compile error.
  */
-export type RootToLeafInsertPath<N extends RBNode<N>> =
-  InsertionPathEntry<N>[] & { readonly _pathOrder: 'root-to-leaf' };
+export type RootToLeafInsertPath<N extends RBNode<N>> = InsertionPathEntry<N>[] & {
+  readonly _pathOrder: "root-to-leaf";
+};
 
 /**
  * Fix a red-red violation at a node during insertion.
@@ -246,13 +229,15 @@ export type RootToLeafInsertPath<N extends RBNode<N>> =
  */
 function fixInsertViolation<N extends RBNode<N>>(
   node: N,
-  withNode: WithNodeFn<N>
+  withNode: WithNodeFn<N>,
 ): { fixed: N; propagate: boolean } {
   const leftRed = isRed(node.left);
   const rightRed = isRed(node.right);
 
-  const hasLeftViolation = leftRed && (isRed((node.left as N)?.left) || isRed((node.left as N)?.right));
-  const hasRightViolation = rightRed && (isRed((node.right as N)?.right) || isRed((node.right as N)?.left));
+  const hasLeftViolation =
+    leftRed && (isRed((node.left as N)?.left) || isRed((node.left as N)?.right));
+  const hasRightViolation =
+    rightRed && (isRed((node.right as N)?.right) || isRed((node.right as N)?.left));
 
   if (!hasLeftViolation && !hasRightViolation) {
     return { fixed: node, propagate: false };
@@ -262,9 +247,9 @@ function fixInsertViolation<N extends RBNode<N>>(
   if (leftRed && rightRed) {
     return {
       fixed: withNode(node, {
-        color: 'red' as NodeColor,
-        left: withNode(node.left as N, { color: 'black' }),
-        right: withNode(node.right as N, { color: 'black' }),
+        color: "red" as NodeColor,
+        left: withNode(node.left as N, { color: "black" }),
+        right: withNode(node.right as N, { color: "black" }),
       }),
       propagate: true,
     };
@@ -287,18 +272,19 @@ function fixInsertViolation<N extends RBNode<N>>(
  */
 export function fixInsertWithPath<N extends RBNode<N>>(
   insertPath: RootToLeafInsertPath<N>,
-  withNode: WithNodeFn<N>
+  withNode: WithNodeFn<N>,
 ): N {
   for (let i = insertPath.length - 1; i >= 0; i--) {
     // Sync: if the child below was modified, update this node's reference to it
     if (i < insertPath.length - 1) {
       const childBelow = insertPath[i + 1].node;
       const dir = insertPath[i].direction;
-      const myChild = dir === 'left' ? insertPath[i].node.left : insertPath[i].node.right;
+      const myChild = dir === "left" ? insertPath[i].node.left : insertPath[i].node.right;
       if (myChild !== childBelow) {
-        insertPath[i].node = dir === 'left'
-          ? withNode(insertPath[i].node, { left: childBelow })
-          : withNode(insertPath[i].node, { right: childBelow });
+        insertPath[i].node =
+          dir === "left"
+            ? withNode(insertPath[i].node, { left: childBelow })
+            : withNode(insertPath[i].node, { right: childBelow });
       }
     }
 

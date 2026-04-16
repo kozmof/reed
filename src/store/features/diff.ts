@@ -6,10 +6,10 @@
  * http://www.xmailserver.org/diff2.pdf
  */
 
-import type { DocumentAction } from '../../types/actions.ts';
-import { byteOffset } from '../../types/branded.ts';
-import { DocumentActions } from './actions.ts';
-import { textEncoder } from '../core/encoding.ts';
+import type { DocumentAction } from "../../types/actions.ts";
+import { byteOffset } from "../../types/branded.ts";
+import { DocumentActions } from "./actions.ts";
+import { textEncoder } from "../core/encoding.ts";
 import {
   $prove,
   $proveCtx,
@@ -21,7 +21,7 @@ import {
   $map,
   type LinearCost,
   type QuadCost,
-} from '../../types/cost-doc.ts';
+} from "../../types/cost-doc.ts";
 
 // =============================================================================
 // Types
@@ -32,7 +32,7 @@ import {
  */
 export interface DiffEdit {
   /** Type of edit */
-  type: 'insert' | 'delete' | 'equal';
+  type: "insert" | "delete" | "equal";
   /** Text involved in this edit */
   text: string;
   /** Position in the old text (for delete/equal) */
@@ -62,38 +62,52 @@ export interface DiffResult {
 export function diff(oldText: string, newText: string): QuadCost<DiffResult> {
   // Handle trivial cases
   if (oldText === newText) {
-    return $proveCtx('O(n^2)', $lift('O(n)', {
-      edits: oldText.length > 0 ? [{ type: 'equal', text: oldText, oldPos: 0, newPos: 0 }] : [],
-      distance: 0,
-    } satisfies DiffResult));
+    return $proveCtx(
+      "O(n^2)",
+      $lift("O(n)", {
+        edits: oldText.length > 0 ? [{ type: "equal", text: oldText, oldPos: 0, newPos: 0 }] : [],
+        distance: 0,
+      } satisfies DiffResult),
+    );
   }
 
   if (oldText.length === 0) {
-    return $proveCtx('O(n^2)', $lift('O(1)', {
-      edits: [{ type: 'insert', text: newText, oldPos: 0, newPos: 0 }],
-      distance: newText.length,
-    } satisfies DiffResult));
+    return $proveCtx(
+      "O(n^2)",
+      $lift("O(1)", {
+        edits: [{ type: "insert", text: newText, oldPos: 0, newPos: 0 }],
+        distance: newText.length,
+      } satisfies DiffResult),
+    );
   }
 
   if (newText.length === 0) {
-    return $proveCtx('O(n^2)', $lift('O(1)', {
-      edits: [{ type: 'delete', text: oldText, oldPos: 0, newPos: 0 }],
-      distance: oldText.length,
-    } satisfies DiffResult));
+    return $proveCtx(
+      "O(n^2)",
+      $lift("O(1)", {
+        edits: [{ type: "delete", text: oldText, oldPos: 0, newPos: 0 }],
+        distance: oldText.length,
+      } satisfies DiffResult),
+    );
   }
 
   // Find common prefix
   let prefixLen = 0;
-  while (prefixLen < oldText.length && prefixLen < newText.length &&
-         oldText[prefixLen] === newText[prefixLen]) {
+  while (
+    prefixLen < oldText.length &&
+    prefixLen < newText.length &&
+    oldText[prefixLen] === newText[prefixLen]
+  ) {
     prefixLen++;
   }
 
   // Find common suffix (but don't overlap with prefix)
   let suffixLen = 0;
-  while (suffixLen < oldText.length - prefixLen &&
-         suffixLen < newText.length - prefixLen &&
-         oldText[oldText.length - 1 - suffixLen] === newText[newText.length - 1 - suffixLen]) {
+  while (
+    suffixLen < oldText.length - prefixLen &&
+    suffixLen < newText.length - prefixLen &&
+    oldText[oldText.length - 1 - suffixLen] === newText[newText.length - 1 - suffixLen]
+  ) {
     suffixLen++;
   }
 
@@ -110,7 +124,7 @@ export function diff(oldText: string, newText: string): QuadCost<DiffResult> {
   // Add prefix as equal
   if (prefixLen > 0) {
     edits.push({
-      type: 'equal',
+      type: "equal",
       text: oldText.slice(0, prefixLen),
       oldPos: 0,
       newPos: 0,
@@ -123,7 +137,7 @@ export function diff(oldText: string, newText: string): QuadCost<DiffResult> {
   // Add suffix as equal
   if (suffixLen > 0) {
     edits.push({
-      type: 'equal',
+      type: "equal",
       text: oldText.slice(oldText.length - suffixLen),
       oldPos: oldText.length - suffixLen,
       newPos: newText.length - suffixLen,
@@ -133,15 +147,12 @@ export function diff(oldText: string, newText: string): QuadCost<DiffResult> {
   // Calculate distance
   let distance = 0;
   for (const edit of edits) {
-    if (edit.type !== 'equal') {
+    if (edit.type !== "equal") {
       distance += edit.text.length;
     }
   }
 
-  return $proveCtx(
-    'O(n^2)',
-    $lift<'O(n^2)', DiffResult>('O(n^2)', { edits, distance })
-  );
+  return $proveCtx("O(n^2)", $lift<"O(n^2)", DiffResult>("O(n^2)", { edits, distance }));
 }
 
 /**
@@ -152,7 +163,7 @@ function myersDiff(
   oldText: string,
   newText: string,
   oldOffset: number,
-  newOffset: number
+  newOffset: number,
 ): DiffEdit[] {
   const n = oldText.length;
   const m = newText.length;
@@ -162,11 +173,11 @@ function myersDiff(
   }
 
   if (n === 0) {
-    return [{ type: 'insert', text: newText, oldPos: oldOffset, newPos: newOffset }];
+    return [{ type: "insert", text: newText, oldPos: oldOffset, newPos: newOffset }];
   }
 
   if (m === 0) {
-    return [{ type: 'delete', text: oldText, oldPos: oldOffset, newPos: newOffset }];
+    return [{ type: "delete", text: oldText, oldPos: oldOffset, newPos: newOffset }];
   }
 
   // For small strings, use simple DP approach (threshold: n*m < 10000 cells)
@@ -225,7 +236,7 @@ function backtrack(
   oldOffset: number,
   newOffset: number,
   d: number,
-  max: number
+  max: number,
 ): DiffEdit[] {
   const edits: DiffEdit[] = [];
   let x = oldText.length;
@@ -256,7 +267,7 @@ function backtrack(
       if (x === prevX) {
         // Insert
         edits.push({
-          type: 'insert',
+          type: "insert",
           text: newText[y - 1],
           oldPos: oldOffset + x,
           newPos: newOffset + y - 1,
@@ -265,7 +276,7 @@ function backtrack(
       } else {
         // Delete
         edits.push({
-          type: 'delete',
+          type: "delete",
           text: oldText[x - 1],
           oldPos: oldOffset + x - 1,
           newPos: newOffset + y,
@@ -287,7 +298,7 @@ function simpleDiff(
   oldText: string,
   newText: string,
   oldOffset: number,
-  newOffset: number
+  newOffset: number,
 ): DiffEdit[] {
   // Use dynamic programming LCS approach with flat typed array
   const n = oldText.length;
@@ -315,7 +326,7 @@ function simpleDiff(
   while (i > 0 || j > 0) {
     if (i > 0 && j > 0 && oldText[i - 1] === newText[j - 1]) {
       edits.push({
-        type: 'equal',
+        type: "equal",
         text: oldText[i - 1],
         oldPos: oldOffset + i - 1,
         newPos: newOffset + j - 1,
@@ -324,7 +335,7 @@ function simpleDiff(
       j--;
     } else if (j > 0 && (i === 0 || dp[i * cols + (j - 1)] >= dp[(i - 1) * cols + j])) {
       edits.push({
-        type: 'insert',
+        type: "insert",
         text: newText[j - 1],
         oldPos: oldOffset + i,
         newPos: newOffset + j - 1,
@@ -332,7 +343,7 @@ function simpleDiff(
       j--;
     } else {
       edits.push({
-        type: 'delete',
+        type: "delete",
         text: oldText[i - 1],
         oldPos: oldOffset + i - 1,
         newPos: newOffset + j,
@@ -386,10 +397,10 @@ function consolidateEdits(edits: DiffEdit[]): DiffEdit[] {
  */
 export function computeSetValueActions(
   oldContent: string,
-  newContent: string
+  newContent: string,
 ): QuadCost<DocumentAction[]> {
   if (oldContent === newContent) {
-    return $proveCtx('O(n^2)', $lift('O(1)', []));
+    return $proveCtx("O(n^2)", $lift("O(1)", []));
   }
 
   const diffResult = diff(oldContent, newContent);
@@ -401,23 +412,23 @@ export function computeSetValueActions(
 
   // First pass: collect all operations with their positions
   interface PendingOp {
-    type: 'insert' | 'delete';
-    position: number;  // String position in original
+    type: "insert" | "delete";
+    position: number; // String position in original
     text: string;
   }
 
   const ops: PendingOp[] = [];
 
   for (const edit of diffResult.edits) {
-    if (edit.type === 'delete') {
+    if (edit.type === "delete") {
       ops.push({
-        type: 'delete',
+        type: "delete",
         position: edit.oldPos,
         text: edit.text,
       });
-    } else if (edit.type === 'insert') {
+    } else if (edit.type === "insert") {
       ops.push({
-        type: 'insert',
+        type: "insert",
         position: edit.oldPos,
         text: edit.text,
       });
@@ -436,22 +447,21 @@ export function computeSetValueActions(
     // Convert string position to byte position using the pre-built map (O(1))
     const bytePos = charToByteMap[op.position] + byteOffsetDelta;
 
-    if (op.type === 'delete') {
+    if (op.type === "delete") {
       const deleteByteLen = textEncoder.encode(op.text).length;
-      actions.push(DocumentActions.delete(byteOffset(bytePos), byteOffset(bytePos + deleteByteLen)));
+      actions.push(
+        DocumentActions.delete(byteOffset(bytePos), byteOffset(bytePos + deleteByteLen)),
+      );
       stringOffset -= op.text.length;
       byteOffsetDelta -= deleteByteLen;
-    } else if (op.type === 'insert') {
+    } else if (op.type === "insert") {
       actions.push(DocumentActions.insert(byteOffset(bytePos), op.text));
       stringOffset += op.text.length;
       byteOffsetDelta += textEncoder.encode(op.text).length;
     }
   }
 
-  return $proveCtx(
-    'O(n^2)',
-    $lift<'O(n^2)', DocumentAction[]>('O(n^2)', actions)
-  );
+  return $proveCtx("O(n^2)", $lift<"O(n^2)", DocumentAction[]>("O(n^2)", actions));
 }
 
 /**
@@ -481,12 +491,12 @@ function buildCharToByteMap(str: string): number[] {
       bytes += 1;
     } else if (c < 0x800) {
       bytes += 2;
-    } else if (c >= 0xD800 && c <= 0xDBFF) {
+    } else if (c >= 0xd800 && c <= 0xdbff) {
       // High surrogate: lone slice encodes as U+FFFD (3 bytes)
       bytes += 3;
       map[i + 1] = bytes;
       const lo = i + 1 < str.length ? str.charCodeAt(i + 1) : 0;
-      if (lo >= 0xDC00 && lo <= 0xDFFF) {
+      if (lo >= 0xdc00 && lo <= 0xdfff) {
         // Full pair adds 1 byte over the lone-high-surrogate count (3 + 1 = 4 total)
         bytes += 1;
         i++;
@@ -503,14 +513,14 @@ function buildCharToByteMap(str: string): number[] {
  * Check if a character code is a low surrogate (second half of surrogate pair).
  */
 function isLowSurrogate(code: number): boolean {
-  return code >= 0xDC00 && code <= 0xDFFF;
+  return code >= 0xdc00 && code <= 0xdfff;
 }
 
 /**
  * Check if a character code is a high surrogate (first half of surrogate pair).
  */
 function isHighSurrogate(code: number): boolean {
-  return code >= 0xD800 && code <= 0xDBFF;
+  return code >= 0xd800 && code <= 0xdbff;
 }
 
 /**
@@ -519,16 +529,19 @@ function isHighSurrogate(code: number): boolean {
  */
 export function computeSetValueActionsOptimized(
   oldContent: string,
-  newContent: string
+  newContent: string,
 ): LinearCost<DocumentAction[]> {
   if (oldContent === newContent) {
-    return $proveCtx('O(n)', $lift('O(n)', []));
+    return $proveCtx("O(n)", $lift("O(n)", []));
   }
 
   // Find the differing region (in string indices)
   let start = 0;
-  while (start < oldContent.length && start < newContent.length &&
-         oldContent[start] === newContent[start]) {
+  while (
+    start < oldContent.length &&
+    start < newContent.length &&
+    oldContent[start] === newContent[start]
+  ) {
     start++;
   }
 
@@ -539,8 +552,7 @@ export function computeSetValueActionsOptimized(
 
   let oldEnd = oldContent.length;
   let newEnd = newContent.length;
-  while (oldEnd > start && newEnd > start &&
-         oldContent[oldEnd - 1] === newContent[newEnd - 1]) {
+  while (oldEnd > start && newEnd > start && oldContent[oldEnd - 1] === newContent[newEnd - 1]) {
     oldEnd--;
     newEnd--;
   }
@@ -558,7 +570,7 @@ export function computeSetValueActionsOptimized(
   const insertedText = newContent.slice(start, newEnd);
 
   if (deletedText.length === 0 && insertedText.length === 0) {
-    return $proveCtx('O(n)', $lift('O(n)', []));
+    return $proveCtx("O(n)", $lift("O(n)", []));
   }
 
   // Convert string indices to byte indices for the piece table
@@ -568,23 +580,25 @@ export function computeSetValueActionsOptimized(
   if (deletedText.length === 0) {
     // Pure insert
     return $proveCtx(
-      'O(n)',
-      $lift<'O(n)', DocumentAction[]>('O(n)', [DocumentActions.insert(byteStart, insertedText)])
+      "O(n)",
+      $lift<"O(n)", DocumentAction[]>("O(n)", [DocumentActions.insert(byteStart, insertedText)]),
     );
   }
 
   if (insertedText.length === 0) {
     // Pure delete
     return $proveCtx(
-      'O(n)',
-      $lift<'O(n)', DocumentAction[]>('O(n)', [DocumentActions.delete(byteStart, byteOldEnd)])
+      "O(n)",
+      $lift<"O(n)", DocumentAction[]>("O(n)", [DocumentActions.delete(byteStart, byteOldEnd)]),
     );
   }
 
   // Replace
   return $proveCtx(
-    'O(n)',
-    $lift<'O(n)', DocumentAction[]>('O(n)', [DocumentActions.replace(byteStart, byteOldEnd, insertedText)])
+    "O(n)",
+    $lift<"O(n)", DocumentAction[]>("O(n)", [
+      DocumentActions.replace(byteStart, byteOldEnd, insertedText),
+    ]),
   );
 }
 
@@ -592,11 +606,14 @@ export function computeSetValueActionsOptimized(
 // High-level setValue function
 // =============================================================================
 
-import type { DocumentState, PieceTableState } from '../../types/state.ts';
-import { documentReducer } from './reducer.ts';
-import { getValue } from '../core/piece-table.ts';
+import type { DocumentState, PieceTableState } from "../../types/state.ts";
+import { documentReducer } from "./reducer.ts";
+import { getValue } from "../core/piece-table.ts";
 
-function applyDocumentActions(state: DocumentState, actions: readonly DocumentAction[]): DocumentState {
+function applyDocumentActions(
+  state: DocumentState,
+  actions: readonly DocumentAction[],
+): DocumentState {
   let nextState = state;
   for (const action of actions) {
     nextState = documentReducer(nextState, action);
@@ -614,26 +631,28 @@ function applyDocumentActions(state: DocumentState, actions: readonly DocumentAc
  * @param newContent - The new content to set
  * @returns New document state with the content changed
  */
-export function setValue(
-  state: DocumentState,
-  newContent: string,
-): LinearCost<DocumentState> {
-  return $prove('O(n)', $checked(() => $pipe(
-    $from(getValue(state.pieceTable)),
-    $andThen((oldContent) => {
-      if (oldContent === newContent) {
-        return $lift('O(n)', state);
-      }
+export function setValue(state: DocumentState, newContent: string): LinearCost<DocumentState> {
+  return $prove(
+    "O(n)",
+    $checked(() =>
+      $pipe(
+        $from(getValue(state.pieceTable)),
+        $andThen((oldContent) => {
+          if (oldContent === newContent) {
+            return $lift("O(n)", state);
+          }
 
-      return $pipe(
-        $from(computeSetValueActionsOptimized(oldContent, newContent)),
-        $map((resolvedActions) => {
-          if (resolvedActions.length === 0) return state;
-          return applyDocumentActions(state, resolvedActions);
+          return $pipe(
+            $from(computeSetValueActionsOptimized(oldContent, newContent)),
+            $map((resolvedActions) => {
+              if (resolvedActions.length === 0) return state;
+              return applyDocumentActions(state, resolvedActions);
+            }),
+          );
         }),
-      );
-    }),
-  )));
+      ),
+    ),
+  );
 }
 
 /**
@@ -652,22 +671,27 @@ export function setValueWithDiff(
   state: DocumentState,
   newContent: string,
 ): QuadCost<DocumentState> {
-  return $prove('O(n^2)', $checked(() => $pipe(
-    $from(getValue(state.pieceTable)),
-    $andThen((oldContent) => {
-      if (oldContent === newContent) {
-        return $lift('O(n^2)', state);
-      }
+  return $prove(
+    "O(n^2)",
+    $checked(() =>
+      $pipe(
+        $from(getValue(state.pieceTable)),
+        $andThen((oldContent) => {
+          if (oldContent === newContent) {
+            return $lift("O(n^2)", state);
+          }
 
-      return $pipe(
-        $from(computeSetValueActions(oldContent, newContent)),
-        $map((resolvedActions) => {
-          if (resolvedActions.length === 0) return state;
-          return applyDocumentActions(state, resolvedActions);
+          return $pipe(
+            $from(computeSetValueActions(oldContent, newContent)),
+            $map((resolvedActions) => {
+              if (resolvedActions.length === 0) return state;
+              return applyDocumentActions(state, resolvedActions);
+            }),
+          );
         }),
-      );
-    }),
-  )));
+      ),
+    ),
+  );
 }
 
 /**
@@ -682,15 +706,20 @@ export function computeSetValueActionsFromState(
   pieceTable: PieceTableState,
   newContent: string,
 ): LinearCost<DocumentAction[]> {
-  return $prove('O(n)', $checked(() => $pipe(
-    $from(getValue(pieceTable)),
-    $andThen((oldContent) => {
-      if (oldContent === newContent) {
-        return $lift<'O(n)', DocumentAction[]>('O(n)', []);
-      }
-      return $from(computeSetValueActionsOptimized(oldContent, newContent));
-    }),
-  )));
+  return $prove(
+    "O(n)",
+    $checked(() =>
+      $pipe(
+        $from(getValue(pieceTable)),
+        $andThen((oldContent) => {
+          if (oldContent === newContent) {
+            return $lift<"O(n)", DocumentAction[]>("O(n)", []);
+          }
+          return $from(computeSetValueActionsOptimized(oldContent, newContent));
+        }),
+      ),
+    ),
+  );
 }
 
 /**
@@ -705,13 +734,18 @@ export function computeSetValueActionsFromStateWithDiff(
   pieceTable: PieceTableState,
   newContent: string,
 ): QuadCost<DocumentAction[]> {
-  return $prove('O(n^2)', $checked(() => $pipe(
-    $from(getValue(pieceTable)),
-    $andThen((oldContent) => {
-      if (oldContent === newContent) {
-        return $lift<'O(n^2)', DocumentAction[]>('O(n^2)', []);
-      }
-      return $from(computeSetValueActions(oldContent, newContent));
-    }),
-  )));
+  return $prove(
+    "O(n^2)",
+    $checked(() =>
+      $pipe(
+        $from(getValue(pieceTable)),
+        $andThen((oldContent) => {
+          if (oldContent === newContent) {
+            return $lift<"O(n^2)", DocumentAction[]>("O(n^2)", []);
+          }
+          return $from(computeSetValueActions(oldContent, newContent));
+        }),
+      ),
+    ),
+  );
 }

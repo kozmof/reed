@@ -3,10 +3,14 @@
  */
 
 // Store factory
-export { createDocumentStore, createDocumentStoreWithEvents, isDocumentStore } from './features/store.ts';
+export {
+  createDocumentStore,
+  createDocumentStoreWithEvents,
+  isDocumentStore,
+} from "./features/store.ts";
 
 // Action creators
-export { DocumentActions, serializeAction, deserializeAction } from './features/actions.ts';
+export { DocumentActions, serializeAction, deserializeAction } from "./features/actions.ts";
 
 // State factories
 export {
@@ -23,10 +27,10 @@ export {
   withState,
   withPieceNode,
   withLineIndexNode,
-} from './core/state.ts';
+} from "./core/state.ts";
 
 // Reducer
-export { documentReducer } from './features/reducer.ts';
+export { documentReducer } from "./features/reducer.ts";
 
 // Piece table operations
 export {
@@ -46,8 +50,8 @@ export {
   getBuffer,
   getBufferSlice,
   getPieceBuffer,
-} from './core/piece-table.ts';
-export type { StreamOptions, DocumentChunk, PieceTableInsertResult } from './core/piece-table.ts';
+} from "./core/piece-table.ts";
+export type { StreamOptions, DocumentChunk, PieceTableInsertResult } from "./core/piece-table.ts";
 
 // Line index operations
 export {
@@ -79,7 +83,7 @@ export {
   type ReconciliationConfig,
   // Debug utilities
   assertEagerOffsets,
-} from './core/line-index.ts';
+} from "./core/line-index.ts";
 
 // Diff and setValue operations
 export {
@@ -90,8 +94,8 @@ export {
   computeSetValueActionsFromStateWithDiff,
   setValue,
   setValueWithDiff,
-} from './features/diff.ts';
-export type { DiffEdit, DiffResult } from './features/diff.ts';
+} from "./features/diff.ts";
+export type { DiffEdit, DiffResult } from "./features/diff.ts";
 
 // Event system
 export {
@@ -102,7 +106,7 @@ export {
   createSaveEvent,
   createDirtyChangeEvent,
   getAffectedRanges,
-} from './features/events.ts';
+} from "./features/events.ts";
 export type {
   DocumentEvent,
   ContentChangeEvent,
@@ -115,7 +119,7 @@ export type {
   EventHandler,
   Unsubscribe,
   DocumentEventEmitter,
-} from './features/events.ts';
+} from "./features/events.ts";
 
 // Rendering utilities
 export {
@@ -129,18 +133,18 @@ export {
   lineColumnToPosition,
   selectionToCharOffsets,
   charOffsetsToSelection,
-} from './features/rendering.ts';
+} from "./features/rendering.ts";
 export type {
   VisibleLine,
   ViewportConfig,
   VisibleLinesResult,
   ScrollPosition,
   LineHeightConfig,
-} from './features/rendering.ts';
+} from "./features/rendering.ts";
 
 // Transaction management
-export { createTransactionManager } from './features/transaction.ts';
-export type { TransactionManager, TransactionResult } from './features/transaction.ts';
+export { createTransactionManager } from "./features/transaction.ts";
+export type { TransactionManager, TransactionResult } from "./features/transaction.ts";
 
 // History helpers
 export {
@@ -149,8 +153,8 @@ export {
   getUndoCount,
   getRedoCount,
   isHistoryEmpty,
-} from './features/history.ts';
+} from "./features/history.ts";
 
 // Chunk manager — async chunk fetch subsystem for large-file streaming
-export { createChunkManager } from './features/chunk-manager.ts';
-export type { ChunkLoader, ChunkManagerConfig, ChunkManager } from './features/chunk-manager.ts';
+export { createChunkManager } from "./features/chunk-manager.ts";
+export type { ChunkLoader, ChunkManagerConfig, ChunkManager } from "./features/chunk-manager.ts";

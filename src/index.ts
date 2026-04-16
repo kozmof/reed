@@ -48,7 +48,7 @@ export type {
   DocumentState,
   DocumentStoreConfig,
   ChunkMetadata,
-} from './types/index.ts';
+} from "./types/index.ts";
 
 // Action types
 export type {
@@ -70,7 +70,7 @@ export type {
   DocumentAction,
   DocumentActionType,
   ActionValidationResult,
-} from './types/index.ts';
+} from "./types/index.ts";
 
 // Store types
 export type {
@@ -81,7 +81,7 @@ export type {
   DocumentStoreWithEvents,
   ReadonlyDocumentStore,
   DocumentReducer,
-} from './types/index.ts';
+} from "./types/index.ts";
 
 // Branded position types
 export type {
@@ -90,7 +90,7 @@ export type {
   CharOffset,
   LineNumber,
   ColumnNumber,
-} from './types/index.ts';
+} from "./types/index.ts";
 
 // Cost algebra types
 export type {
@@ -116,17 +116,17 @@ export type {
   LinearCost,
   NLogNCost,
   QuadCost,
-} from './types/index.ts';
+} from "./types/index.ts";
 
 // Piece table types
-export type { StreamOptions, DocumentChunk } from './store/index.ts';
+export type { StreamOptions, DocumentChunk } from "./store/index.ts";
 
 // Chunk manager types
-export type { ChunkLoader, ChunkManagerConfig, ChunkManager } from './store/index.ts';
-export { createChunkManager } from './store/index.ts';
+export type { ChunkLoader, ChunkManagerConfig, ChunkManager } from "./store/index.ts";
+export { createChunkManager } from "./store/index.ts";
 
 // Diff types
-export type { DiffEdit, DiffResult } from './store/index.ts';
+export type { DiffEdit, DiffResult } from "./store/index.ts";
 
 // Event types
 export type {
@@ -140,7 +140,7 @@ export type {
   DocumentEventMap,
   EventHandler,
   DocumentEventEmitter,
-} from './store/index.ts';
+} from "./store/index.ts";
 
 // Rendering types
 export type {
@@ -149,13 +149,23 @@ export type {
   VisibleLinesResult,
   ScrollPosition,
   LineHeightConfig,
-} from './store/index.ts';
+} from "./store/index.ts";
 
 // Line index types
-export type { ReconciliationConfig } from './store/index.ts';
+export type { ReconciliationConfig } from "./store/index.ts";
 
 // =============================================================================
 // Namespaced runtime exports
 // =============================================================================
 
-export { store, query, scan, events, rendering, history, diff, position, cost } from './api/index.ts';
+export {
+  store,
+  query,
+  scan,
+  events,
+  rendering,
+  history,
+  diff,
+  position,
+  cost,
+} from "./api/index.ts";

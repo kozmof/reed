@@ -1,10 +1,10 @@
-import { configDefaults, defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    exclude: [...configDefaults.exclude, '**/perf.test.ts'],
+    exclude: [...configDefaults.exclude, "**/perf.test.ts"],
     coverage: {
-      provider: 'v8'
-    }
+      provider: "v8",
+    },
   },
 });

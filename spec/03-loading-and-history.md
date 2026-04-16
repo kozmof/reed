@@ -31,18 +31,21 @@
 History is immutable and stored in `DocumentState.history`.
 
 `HistoryState`:
+
 - `undoStack`
 - `redoStack`
 - `limit`
 - `coalesceTimeout`
 
 `HistoryEntry` stores:
+
 - `changes`
 - `selectionBefore`
 - `selectionAfter`
 - `timestamp`
 
 `HistoryChange` variants:
+
 - `insert`
 - `delete`
 - `replace`
@@ -50,23 +53,27 @@ History is immutable and stored in `DocumentState.history`.
 ## 3. Undo/Redo and Grouping
 
 Implemented:
+
 - `UNDO`, `REDO`, `HISTORY_CLEAR`
 - timeout-based coalescing for consecutive edits
 - selection restoration on undo/redo
 
 Transaction behavior:
+
 - store-level transaction manager tracks depth/snapshots
 - `batch()` executes actions inside transaction and notifies listeners once
 - rollback restores snapshot
 - `withTransaction(store, fn)` wraps begin/commit/rollback with the same safety behavior
 
 Important current behavior:
+
 - `batch()` is a notification boundary, not a history-collapsing boundary.
 - Each action still contributes history unless coalesced.
 
 ## 4. Related Events
 
 `store.createDocumentStoreWithEvents` emits:
+
 - `content-change` for local text edits and `APPLY_REMOTE`
 - `selection-change`
 - `history-change`

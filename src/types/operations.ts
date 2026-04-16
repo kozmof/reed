@@ -4,7 +4,7 @@
  * not persistent state structures.
  */
 
-import type { ByteOffset } from './branded.ts';
+import type { ByteOffset } from "./branded.ts";
 
 /**
  * Callback to read text from the piece table.

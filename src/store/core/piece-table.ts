@@ -6,12 +6,8 @@
  * for compute regions (see `src/types/cost-doc.ts`).
  */
 
-import type {
-  PieceNode,
-  PieceTableState,
-  BufferReference,
-} from '../../types/state.ts';
-import { byteOffset, byteLength, type ByteOffset, type ByteLength } from '../../types/branded.ts';
+import type { PieceNode, PieceTableState, BufferReference } from "../../types/state.ts";
+import { byteOffset, byteLength, type ByteOffset, type ByteLength } from "../../types/branded.ts";
 import {
   $prove,
   $proveCtx,
@@ -24,9 +20,16 @@ import {
   type ConstCost,
   type LogCost,
   type LinearCost,
-} from '../../types/cost-doc.ts';
-import { createPieceNode, createChunkPieceNode, withPieceNode } from './state.ts';
-import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry, type RootToLeafInsertPath } from './rb-tree.ts';
+} from "../../types/cost-doc.ts";
+import { createPieceNode, createChunkPieceNode, withPieceNode } from "./state.ts";
+import {
+  fixInsertWithPath,
+  fixRedViolations,
+  isRed,
+  type WithNodeFn,
+  type InsertionPathEntry,
+  type RootToLeafInsertPath,
+} from "./rb-tree.ts";
 
 // =============================================================================
 // In-Order Traversal Helper
@@ -40,7 +43,7 @@ import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type Inser
  */
 export function pieceTableInOrder(
   root: PieceNode | null,
-  visitor: (node: PieceNode, pieceStart: number) => boolean | void
+  visitor: (node: PieceNode, pieceStart: number) => boolean | void,
 ): void {
   if (root === null) return;
   const nodeStack: PieceNode[] = [];
@@ -65,8 +68,8 @@ export function pieceTableInOrder(
     currentNode = n.right;
   }
 }
-import { textEncoder, textDecoder } from './encoding.ts';
-import { GrowableBuffer } from './growable-buffer.ts';
+import { textEncoder, textDecoder } from "./encoding.ts";
+import { GrowableBuffer } from "./growable-buffer.ts";
 
 // Type-safe wrapper for withPieceNode to use with generic R-B tree functions
 const withPiece: WithNodeFn<PieceNode> = withPieceNode;
@@ -80,8 +83,13 @@ const withPiece: WithNodeFn<PieceNode> = withPieceNode;
  * Provides a type-safe way to reference buffer locations.
  */
 export function getPieceBufferRef(piece: PieceNode): BufferReference {
-  if (piece.bufferType === 'chunk') {
-    return { bufferType: 'chunk', chunkIndex: piece.chunkIndex, start: piece.start, length: piece.length };
+  if (piece.bufferType === "chunk") {
+    return {
+      bufferType: "chunk",
+      chunkIndex: piece.chunkIndex,
+      start: piece.start,
+      length: piece.length,
+    };
   }
   return { bufferType: piece.bufferType, start: piece.start, length: piece.length };
 }
@@ -93,14 +101,13 @@ export function getPieceBufferRef(piece: PieceNode): BufferReference {
  * callers must use `ref.start` as the offset into the returned slice, not 0.
  * Prefer getBufferSlice when you only need the bytes covered by the reference.
  */
-export function getBuffer(
-  state: PieceTableState,
-  ref: BufferReference
-): Uint8Array {
+export function getBuffer(state: PieceTableState, ref: BufferReference): Uint8Array {
   switch (ref.bufferType) {
-    case 'original': return state.originalBuffer;
-    case 'add':      return state.addBuffer.bytes;
-    case 'chunk': {
+    case "original":
+      return state.originalBuffer;
+    case "add":
+      return state.addBuffer.bytes;
+    case "chunk": {
       const chunk = state.chunkMap.get(ref.chunkIndex);
       if (chunk === undefined) throw new Error(`Chunk ${ref.chunkIndex} is not loaded`);
       return chunk;
@@ -116,16 +123,13 @@ export function getBuffer(
  * Get a subarray slice from the appropriate buffer.
  * This is the most common operation - extracting bytes from a piece.
  */
-export function getBufferSlice(
-  state: PieceTableState,
-  ref: BufferReference
-): Uint8Array {
+export function getBufferSlice(state: PieceTableState, ref: BufferReference): Uint8Array {
   switch (ref.bufferType) {
-    case 'original':
+    case "original":
       return state.originalBuffer.subarray(ref.start, ref.start + ref.length);
-    case 'add':
+    case "add":
       return state.addBuffer.bytes.subarray(ref.start, ref.start + ref.length);
-    case 'chunk': {
+    case "chunk": {
       const chunk = state.chunkMap.get(ref.chunkIndex);
       if (chunk === undefined) throw new Error(`Chunk ${ref.chunkIndex} is not loaded`);
       return chunk.subarray(ref.start, ref.start + ref.length);
@@ -143,14 +147,13 @@ export function getBufferSlice(
  * For 'chunk' pieces the returned buffer is the full chunk — use piece.start as the offset.
  * Prefer getBufferSlice when you need only the bytes covered by the piece.
  */
-export function getPieceBuffer(
-  state: PieceTableState,
-  piece: PieceNode
-): Uint8Array {
+export function getPieceBuffer(state: PieceTableState, piece: PieceNode): Uint8Array {
   switch (piece.bufferType) {
-    case 'original': return state.originalBuffer;
-    case 'add':      return state.addBuffer.bytes;
-    case 'chunk': {
+    case "original":
+      return state.originalBuffer;
+    case "add":
+      return state.addBuffer.bytes;
+    case "chunk": {
       const chunk = state.chunkMap.get(piece.chunkIndex);
       if (chunk === undefined) throw new Error(`Chunk ${piece.chunkIndex} is not loaded`);
       return chunk;
@@ -186,7 +189,7 @@ export interface PieceLocation {
  */
 export interface PathEntry {
   node: PieceNode;
-  direction: 'left' | 'right';
+  direction: "left" | "right";
 }
 
 // =============================================================================
@@ -199,7 +202,7 @@ export interface PathEntry {
  */
 export function findPieceAtPosition(
   root: PieceNode | null,
-  position: ByteOffset
+  position: ByteOffset,
 ): LogCost<PieceLocation> | null {
   if (root === null) return null;
   if (position < 0) return null;
@@ -214,21 +217,21 @@ export function findPieceAtPosition(
     const pieceEnd = pieceStart + current.length;
 
     if (position < pieceStart) {
-      path.push({ node: current, direction: 'left' });
+      path.push({ node: current, direction: "left" });
       current = current.left;
     } else if (position >= pieceEnd) {
-      path.push({ node: current, direction: 'right' });
+      path.push({ node: current, direction: "right" });
       currentOffset = pieceEnd;
       current = current.right;
     } else {
       return $proveCtx(
-        'O(log n)',
-        $lift('O(log n)', {
+        "O(log n)",
+        $lift("O(log n)", {
           node: current,
           offsetInPiece: position - pieceStart,
           pieceStartOffset: pieceStart,
           path,
-        })
+        }),
       );
     }
   }
@@ -248,19 +251,19 @@ export function findLastPiece(root: PieceNode | null): LogCost<PieceLocation> | 
 
   while (current.right !== null) {
     currentOffset += (current.left?.subtreeLength ?? 0) + current.length;
-    path.push({ node: current, direction: 'right' });
+    path.push({ node: current, direction: "right" });
     current = current.right;
   }
 
   const leftLength = current.left?.subtreeLength ?? 0;
   return $proveCtx(
-    'O(log n)',
-    $lift('O(log n)', {
+    "O(log n)",
+    $lift("O(log n)", {
       node: current,
       offsetInPiece: current.length,
       pieceStartOffset: currentOffset + leftLength,
       path,
-    })
+    }),
   );
 }
 
@@ -278,7 +281,7 @@ export function collectPieces(root: PieceNode | null): LinearCost<readonly Piece
   }
 
   inOrder(root);
-  return $proveCtx('O(n)', $lift('O(n)', result));
+  return $proveCtx("O(n)", $lift("O(n)", result));
 }
 
 // =============================================================================
@@ -292,23 +295,23 @@ export function collectPieces(root: PieceNode | null): LinearCost<readonly Piece
 export function rbInsertPiece(
   root: PieceNode | null,
   position: number,
-  bufferType: 'original' | 'add',
+  bufferType: "original" | "add",
   start: ByteOffset,
-  length: ByteLength
+  length: ByteLength,
 ): LogCost<PieceNode> {
   // Create the new node (always red initially)
-  const newPiece = createPieceNode(bufferType, start, length, 'red');
+  const newPiece = createPieceNode(bufferType, start, length, "red");
 
   if (root === null) {
     // Empty tree - new node becomes black root
-    return $proveCtx('O(log n)', $lift('O(log n)', withPieceNode(newPiece, { color: 'black' })));
+    return $proveCtx("O(log n)", $lift("O(log n)", withPieceNode(newPiece, { color: "black" })));
   }
 
   // Insert using standard BST insertion, collecting new nodes along insertion path
   const insertPath = bstInsert(root, position, newPiece);
 
   // Fix Red-Black violations using path-based O(log n) approach
-  return $proveCtx('O(log n)', $lift('O(log n)', fixInsertWithPath(insertPath, withPiece)));
+  return $proveCtx("O(log n)", $lift("O(log n)", fixInsertWithPath(insertPath, withPiece)));
 }
 
 /**
@@ -319,7 +322,7 @@ export function rbInsertPiece(
 function bstInsert(
   root: PieceNode,
   position: number,
-  newNode: PieceNode
+  newNode: PieceNode,
 ): RootToLeafInsertPath<PieceNode> {
   const insertPath: InsertionPathEntry<PieceNode>[] = [];
 
@@ -328,16 +331,16 @@ function bstInsert(
     const pieceStart = offset + leftLength;
 
     let result: PieceNode;
-    let direction: 'left' | 'right';
+    let direction: "left" | "right";
     if (position <= pieceStart) {
-      direction = 'left';
+      direction = "left";
       if (node.left === null) {
         result = withPieceNode(node, { left: newNode });
       } else {
         result = withPieceNode(node, { left: insert(node.left, offset) });
       }
     } else {
-      direction = 'right';
+      direction = "right";
       const newOffset = pieceStart + node.length;
       if (node.right === null) {
         result = withPieceNode(node, { right: newNode });
@@ -369,10 +372,7 @@ function bstInsert(
  * children were populated the right subtree would be detached from the tree
  * when `insertWithSplit` replaces the original node with the left half.
  */
-export function splitPiece(
-  piece: PieceNode,
-  offsetInPiece: number
-): [PieceNode, PieceNode | null] {
+export function splitPiece(piece: PieceNode, offsetInPiece: number): [PieceNode, PieceNode | null] {
   if (offsetInPiece <= 0) {
     return [piece, null];
   }
@@ -383,22 +383,22 @@ export function splitPiece(
   let leftPiece: PieceNode;
   let rightPiece: PieceNode;
 
-  if (piece.bufferType === 'chunk') {
+  if (piece.bufferType === "chunk") {
     leftPiece = createChunkPieceNode(
       piece.chunkIndex,
       piece.start,
       byteLength(offsetInPiece),
       piece.color,
       piece.left,
-      null
+      null,
     );
     rightPiece = createChunkPieceNode(
       piece.chunkIndex,
       byteOffset(piece.start + offsetInPiece),
       byteLength(piece.length - offsetInPiece),
-      'red',
+      "red",
       null,
-      piece.right
+      piece.right,
     );
   } else {
     leftPiece = createPieceNode(
@@ -407,15 +407,15 @@ export function splitPiece(
       byteLength(offsetInPiece),
       piece.color,
       piece.left,
-      null
+      null,
     );
     rightPiece = createPieceNode(
       piece.bufferType,
       byteOffset(piece.start + offsetInPiece),
       byteLength(piece.length - offsetInPiece),
-      'red',
+      "red",
       null,
-      piece.right
+      piece.right,
     );
   }
 
@@ -443,9 +443,9 @@ export interface PieceTableInsertResult {
 export function pieceTableInsert(
   state: PieceTableState,
   position: ByteOffset,
-  text: string
+  text: string,
 ): LinearCost<PieceTableInsertResult> {
-  if (text.length === 0) return $proveCtx('O(n)', $lift('O(n)', { state, insertedByteLength: 0 }));
+  if (text.length === 0) return $proveCtx("O(n)", $lift("O(n)", { state, insertedByteLength: 0 }));
 
   const textBytes = textEncoder.encode(text);
 
@@ -455,69 +455,91 @@ export function pieceTableInsert(
 
   // Handle empty tree
   if (state.root === null) {
-    const newRoot = createPieceNode('add', byteOffset(newAddStart), byteLength(textBytes.length), 'black');
-    return $proveCtx('O(n)', $lift('O(n)', {
-      state: Object.freeze({
-        ...state,
-        root: newRoot,
-        addBuffer,
-        totalLength: textBytes.length,
+    const newRoot = createPieceNode(
+      "add",
+      byteOffset(newAddStart),
+      byteLength(textBytes.length),
+      "black",
+    );
+    return $proveCtx(
+      "O(n)",
+      $lift("O(n)", {
+        state: Object.freeze({
+          ...state,
+          root: newRoot,
+          addBuffer,
+          totalLength: textBytes.length,
+        }),
+        insertedByteLength: textBytes.length,
       }),
-      insertedByteLength: textBytes.length,
-    }));
+    );
   }
 
   const location: LogCost<PieceLocation | null> =
-    findPieceAtPosition(state.root, position) ?? $proveCtx('O(log n)', $lift('O(log n)', null));
+    findPieceAtPosition(state.root, position) ?? $proveCtx("O(log n)", $lift("O(log n)", null));
 
-  return $prove('O(n)', $checked(() => $pipe(
-    $from(location),
-    $andThen((resolvedLocation) => {
-      if (resolvedLocation === null) {
-        return $from(rbInsertPiece(
-          state.root,
-          state.totalLength,
-          'add',
-          byteOffset(newAddStart),
-          byteLength(textBytes.length)
-        ));
-      }
-      if (resolvedLocation.offsetInPiece === 0) {
-        return $from(rbInsertPiece(
-          state.root,
-          resolvedLocation.pieceStartOffset,
-          'add',
-          byteOffset(newAddStart),
-          byteLength(textBytes.length)
-        ));
-      }
-      if (resolvedLocation.offsetInPiece === resolvedLocation.node.length) {
-        return $from(rbInsertPiece(
-          state.root,
-          resolvedLocation.pieceStartOffset + resolvedLocation.node.length,
-          'add',
-          byteOffset(newAddStart),
-          byteLength(textBytes.length)
-        ));
-      }
-      // Split path performs O(log n) insertions as well.
-      return $lift('O(log n)', insertWithSplit(
-        resolvedLocation,
-        'add',
-        byteOffset(newAddStart),
-        byteLength(textBytes.length)
-      ));
-    }),
-    $map((newRoot) => ({
-      state: Object.freeze({
-        ...state,
-        root: newRoot,
-        addBuffer,
-        totalLength: state.totalLength + textBytes.length,
-      }),
-      insertedByteLength: textBytes.length,
-    })),
-  )));
+  return $prove(
+    "O(n)",
+    $checked(() =>
+      $pipe(
+        $from(location),
+        $andThen((resolvedLocation) => {
+          if (resolvedLocation === null) {
+            return $from(
+              rbInsertPiece(
+                state.root,
+                state.totalLength,
+                "add",
+                byteOffset(newAddStart),
+                byteLength(textBytes.length),
+              ),
+            );
+          }
+          if (resolvedLocation.offsetInPiece === 0) {
+            return $from(
+              rbInsertPiece(
+                state.root,
+                resolvedLocation.pieceStartOffset,
+                "add",
+                byteOffset(newAddStart),
+                byteLength(textBytes.length),
+              ),
+            );
+          }
+          if (resolvedLocation.offsetInPiece === resolvedLocation.node.length) {
+            return $from(
+              rbInsertPiece(
+                state.root,
+                resolvedLocation.pieceStartOffset + resolvedLocation.node.length,
+                "add",
+                byteOffset(newAddStart),
+                byteLength(textBytes.length),
+              ),
+            );
+          }
+          // Split path performs O(log n) insertions as well.
+          return $lift(
+            "O(log n)",
+            insertWithSplit(
+              resolvedLocation,
+              "add",
+              byteOffset(newAddStart),
+              byteLength(textBytes.length),
+            ),
+          );
+        }),
+        $map((newRoot) => ({
+          state: Object.freeze({
+            ...state,
+            root: newRoot,
+            addBuffer,
+            totalLength: state.totalLength + textBytes.length,
+          }),
+          insertedByteLength: textBytes.length,
+        })),
+      ),
+    ),
+  );
 }
 
 /**
@@ -535,10 +557,10 @@ export function insertChunkPieceAt(
     chunkIndex,
     byteOffset(0),
     byteLength(chunkByteLength),
-    'red',
+    "red",
   );
   if (root === null) {
-    return withPieceNode(newLeaf, { color: 'black' });
+    return withPieceNode(newLeaf, { color: "black" });
   }
   return rbReInsertPiece(root, position, newLeaf);
 }
@@ -547,15 +569,11 @@ export function insertChunkPieceAt(
  * Insert a pre-existing piece node into the tree at the given document position.
  * Unlike rbInsertPiece, this preserves all piece properties (including chunkIndex).
  */
-function rbReInsertPiece(
-  root: PieceNode,
-  position: number,
-  piece: PieceNode
-): LogCost<PieceNode> {
+function rbReInsertPiece(root: PieceNode, position: number, piece: PieceNode): LogCost<PieceNode> {
   // Start as red, will be fixed by fixup
-  const insertNode = withPieceNode(piece, { color: 'red', left: null, right: null });
+  const insertNode = withPieceNode(piece, { color: "red", left: null, right: null });
   const insertPath = bstInsert(root, position, insertNode);
-  return $proveCtx('O(log n)', $lift('O(log n)', fixInsertWithPath(insertPath, withPiece)));
+  return $proveCtx("O(log n)", $lift("O(log n)", fixInsertWithPath(insertPath, withPiece)));
 }
 
 /**
@@ -563,9 +581,9 @@ function rbReInsertPiece(
  */
 function insertWithSplit(
   location: PieceLocation,
-  bufferType: 'original' | 'add',
+  bufferType: "original" | "add",
   start: ByteOffset,
-  length: ByteLength
+  length: ByteLength,
 ): PieceNode {
   // We need to:
   // 1. Replace the found piece with its left part
@@ -575,11 +593,7 @@ function insertWithSplit(
   const [leftPart, rightPart] = splitPiece(location.node, location.offsetInPiece);
 
   // Rebuild the tree with the split
-  const replaceResult = replacePieceInTree(
-    location.path,
-    location.node,
-    leftPart
-  );
+  const replaceResult = replacePieceInTree(location.path, location.node, leftPart);
 
   // Insert the new piece after the left part
   const insertPos = location.pieceStartOffset + leftPart.length;
@@ -601,11 +615,7 @@ function insertWithSplit(
  * Instead of traversing the entire tree O(n), we walk back up the path
  * that was built during findPieceAtPosition, creating only O(log n) new nodes.
  */
-function replacePieceInTree(
-  path: PathEntry[],
-  oldNode: PieceNode,
-  newNode: PieceNode
-): PieceNode {
+function replacePieceInTree(path: PathEntry[], oldNode: PieceNode, newNode: PieceNode): PieceNode {
   // Start with the new node, preserving the old node's children
   let current = withPieceNode(newNode, {
     left: oldNode.left,
@@ -617,7 +627,7 @@ function replacePieceInTree(
   for (let i = path.length - 1; i >= 0; i--) {
     const { node: parent, direction } = path[i];
 
-    if (direction === 'left') {
+    if (direction === "left") {
       current = withPieceNode(parent, { left: current });
     } else {
       current = withPieceNode(parent, { right: current });
@@ -634,25 +644,31 @@ function replacePieceInTree(
 export function pieceTableDelete(
   state: PieceTableState,
   start: ByteOffset,
-  end: ByteOffset
+  end: ByteOffset,
 ): LinearCost<PieceTableState> {
-  if (start >= end) return $proveCtx('O(n)', $lift('O(n)', state));
-  if (state.root === null) return $proveCtx('O(n)', $lift('O(n)', state));
+  if (start >= end) return $proveCtx("O(n)", $lift("O(n)", state));
+  if (state.root === null) return $proveCtx("O(n)", $lift("O(n)", state));
 
   const deleteLength = Math.min(end, state.totalLength) - Math.max(start, 0);
-  if (deleteLength <= 0) return $proveCtx('O(n)', $lift('O(n)', state));
+  if (deleteLength <= 0) return $proveCtx("O(n)", $lift("O(n)", state));
 
   // Rebuild tree excluding the deleted range, then ensure root stays black.
   let newRoot = deleteRange(state.root, 0, start, end);
   if (newRoot !== null && isRed(newRoot)) {
-    newRoot = withPieceNode(newRoot, { color: 'black' });
+    newRoot = withPieceNode(newRoot, { color: "black" });
   }
 
-  return $proveCtx('O(n)', $lift('O(n)', Object.freeze({
-    ...state,
-    root: newRoot,
-    totalLength: state.totalLength - deleteLength,
-  })));
+  return $proveCtx(
+    "O(n)",
+    $lift(
+      "O(n)",
+      Object.freeze({
+        ...state,
+        root: newRoot,
+        totalLength: state.totalLength - deleteLength,
+      }),
+    ),
+  );
 }
 
 /**
@@ -667,7 +683,7 @@ function deleteRange(
   node: PieceNode | null,
   offset: number,
   deleteStart: number,
-  deleteEnd: number
+  deleteEnd: number,
 ): PieceNode | null {
   if (node === null) return null;
 
@@ -682,14 +698,16 @@ function deleteRange(
   const pieceEnd = pieceStart + node.length;
 
   // Recurse into left child only if its range [offset, pieceStart) overlaps [deleteStart, deleteEnd)
-  const newLeft = (node.left !== null && offset < deleteEnd && deleteStart < pieceStart)
-    ? deleteRange(node.left, offset, deleteStart, deleteEnd)
-    : node.left;
+  const newLeft =
+    node.left !== null && offset < deleteEnd && deleteStart < pieceStart
+      ? deleteRange(node.left, offset, deleteStart, deleteEnd)
+      : node.left;
 
   // Recurse into right child only if its range [pieceEnd, subtreeEnd) overlaps [deleteStart, deleteEnd)
-  const newRight = (node.right !== null && pieceEnd < deleteEnd && deleteStart < subtreeEnd)
-    ? deleteRange(node.right, pieceEnd, deleteStart, deleteEnd)
-    : node.right;
+  const newRight =
+    node.right !== null && pieceEnd < deleteEnd && deleteStart < subtreeEnd
+      ? deleteRange(node.right, pieceEnd, deleteStart, deleteEnd)
+      : node.right;
 
   // Check if this piece [pieceStart, pieceEnd) overlaps [deleteStart, deleteEnd)
   if (pieceEnd <= deleteStart || pieceStart >= deleteEnd) {
@@ -714,22 +732,22 @@ function deleteRange(
     let leftPiece: PieceNode;
     let rightPiece: PieceNode;
 
-    if (node.bufferType === 'chunk') {
+    if (node.bufferType === "chunk") {
       leftPiece = createChunkPieceNode(
         node.chunkIndex,
         node.start,
         byteLength(keepBefore),
         node.color,
         newLeft,
-        null
+        null,
       );
       rightPiece = createChunkPieceNode(
         node.chunkIndex,
         byteOffset(node.start + node.length - keepAfter),
         byteLength(keepAfter),
-        'red',
+        "red",
         null,
-        newRight
+        newRight,
       );
     } else {
       leftPiece = createPieceNode(
@@ -738,15 +756,15 @@ function deleteRange(
         byteLength(keepBefore),
         node.color,
         newLeft,
-        null
+        null,
       );
       rightPiece = createPieceNode(
         node.bufferType,
         byteOffset(node.start + node.length - keepAfter),
         byteLength(keepAfter),
-        'red',
+        "red",
         null,
-        newRight
+        newRight,
       );
     }
 
@@ -774,7 +792,6 @@ function deleteRange(
   });
 }
 
-
 /**
  * Compute the black-height of a tree (number of black nodes on any root-to-leaf path).
  */
@@ -782,7 +799,7 @@ function blackHeight(node: PieceNode | null): number {
   let h = 0;
   let n = node;
   while (n !== null) {
-    if (n.color === 'black') h++;
+    if (n.color === "black") h++;
     n = n.left;
   }
   return h;
@@ -806,7 +823,7 @@ function extractMin(node: PieceNode): { min: PieceNode; rest: PieceNode | null }
     rest = fixRedViolations(rest, withPiece);
   }
   if (rest !== null && isRed(rest)) {
-    rest = withPieceNode(rest, { color: 'black' });
+    rest = withPieceNode(rest, { color: "black" });
   }
 
   return { min: current, rest };
@@ -819,10 +836,7 @@ function extractMin(node: PieceNode): { min: PieceNode; rest: PieceNode | null }
  *
  * All keys in `left` must be less than all keys in `right` (by inorder position).
  */
-function mergeTrees(
-  left: PieceNode | null,
-  right: PieceNode | null
-): PieceNode | null {
+function mergeTrees(left: PieceNode | null, right: PieceNode | null): PieceNode | null {
   if (left === null) return right;
   if (right === null) return left;
 
@@ -839,14 +853,14 @@ function mergeTrees(
 function joinByBlackHeight(
   left: PieceNode | null,
   key: PieceNode,
-  right: PieceNode | null
+  right: PieceNode | null,
 ): PieceNode {
   const lh = blackHeight(left);
   const rh = blackHeight(right);
 
   if (lh === rh) {
     // Equal black-heights: make key the root (black) with both as children
-    return withPieceNode(key, { left, right, color: 'black' });
+    return withPieceNode(key, { left, right, color: "black" });
   }
 
   let result: PieceNode;
@@ -858,7 +872,7 @@ function joinByBlackHeight(
 
   // Ensure root is black
   if (isRed(result)) {
-    result = withPieceNode(result, { color: 'black' });
+    result = withPieceNode(result, { color: "black" });
   }
   return result;
 }
@@ -872,7 +886,7 @@ function joinRight(
   key: PieceNode,
   right: PieceNode | null,
   lh: number,
-  rh: number
+  rh: number,
 ): PieceNode {
   // Walk down right spine of left tree to matching black-height
   const path: PieceNode[] = [];
@@ -883,7 +897,7 @@ function joinRight(
   while (bh > rh && node.right !== null) {
     path.push(node);
     node = node.right;
-    if (node.color === 'black') bh--;
+    if (node.color === "black") bh--;
   }
 
   // If we haven't reached the target bh, descend one more level
@@ -893,7 +907,7 @@ function joinRight(
     let joined: PieceNode = withPieceNode(key, {
       left: null,
       right,
-      color: 'red',
+      color: "red",
     });
     // Rebuild path
     for (let i = path.length - 1; i >= 0; i--) {
@@ -907,7 +921,7 @@ function joinRight(
   let joined: PieceNode = withPieceNode(key, {
     left: node,
     right,
-    color: 'red',
+    color: "red",
   });
 
   // Rebuild path back to root, fixing violations
@@ -928,7 +942,7 @@ function joinLeft(
   key: PieceNode,
   right: PieceNode,
   lh: number,
-  rh: number
+  rh: number,
 ): PieceNode {
   // Walk down left spine of right tree to matching black-height
   const path: PieceNode[] = [];
@@ -938,7 +952,7 @@ function joinLeft(
   while (bh > lh && node.left !== null) {
     path.push(node);
     node = node.left;
-    if (node.color === 'black') bh--;
+    if (node.color === "black") bh--;
   }
 
   if (bh > lh) {
@@ -946,7 +960,7 @@ function joinLeft(
     let joined: PieceNode = withPieceNode(key, {
       left,
       right: null,
-      color: 'red',
+      color: "red",
     });
     for (let i = path.length - 1; i >= 0; i--) {
       joined = withPieceNode(path[i], { left: joined });
@@ -959,7 +973,7 @@ function joinLeft(
   let joined: PieceNode = withPieceNode(key, {
     left,
     right: node,
-    color: 'red',
+    color: "red",
   });
 
   // Rebuild path back to root, fixing violations
@@ -979,30 +993,35 @@ function joinLeft(
  * Get the entire document content as a string.
  */
 export function getValue(state: PieceTableState): LinearCost<string> {
-  if (state.root === null) return $proveCtx('O(n)', $lift('O(n)', ''));
+  if (state.root === null) return $proveCtx("O(n)", $lift("O(n)", ""));
 
-  return $prove('O(n)', $checked(() => $pipe(
-    $from(collectPieces(state.root)),
-    $map((pieces) => {
-      // Pre-calculate total length for efficient concatenation
-      let totalBytes = 0;
-      for (const piece of pieces) {
-        totalBytes += piece.length;
-      }
+  return $prove(
+    "O(n)",
+    $checked(() =>
+      $pipe(
+        $from(collectPieces(state.root)),
+        $map((pieces) => {
+          // Pre-calculate total length for efficient concatenation
+          let totalBytes = 0;
+          for (const piece of pieces) {
+            totalBytes += piece.length;
+          }
 
-      // Build result buffer
-      const result = new Uint8Array(totalBytes);
-      let offset = 0;
+          // Build result buffer
+          const result = new Uint8Array(totalBytes);
+          let offset = 0;
 
-      for (const piece of pieces) {
-        const buffer = getPieceBuffer(state, piece);
-        result.set(buffer.subarray(piece.start, piece.start + piece.length), offset);
-        offset += piece.length;
-      }
+          for (const piece of pieces) {
+            const buffer = getPieceBuffer(state, piece);
+            result.set(buffer.subarray(piece.start, piece.start + piece.length), offset);
+            offset += piece.length;
+          }
 
-      return textDecoder.decode(result);
-    }),
-  )));
+          return textDecoder.decode(result);
+        }),
+      ),
+    ),
+  );
 }
 
 /**
@@ -1011,12 +1030,12 @@ export function getValue(state: PieceTableState): LinearCost<string> {
 export function getText(
   state: PieceTableState,
   start: ByteOffset,
-  end: ByteOffset
+  end: ByteOffset,
 ): LinearCost<string> {
-  if (state.root === null) return $proveCtx('O(n)', $lift('O(n)', ''));
-  if (start < 0) return $proveCtx('O(n)', $lift('O(n)', ''));
-  if (start >= end) return $proveCtx('O(n)', $lift('O(n)', ''));
-  if (start >= state.totalLength) return $proveCtx('O(n)', $lift('O(n)', ''));
+  if (state.root === null) return $proveCtx("O(n)", $lift("O(n)", ""));
+  if (start < 0) return $proveCtx("O(n)", $lift("O(n)", ""));
+  if (start >= end) return $proveCtx("O(n)", $lift("O(n)", ""));
+  if (start >= state.totalLength) return $proveCtx("O(n)", $lift("O(n)", ""));
 
   const actualEnd = Math.min(end, state.totalLength);
 
@@ -1026,7 +1045,10 @@ export function getText(
   const writeState = { offset: 0 };
   collectBytesInRange(state, state.root, 0, start, actualEnd, result, writeState);
 
-  return $proveCtx('O(n)', $lift('O(n)', textDecoder.decode(result.subarray(0, writeState.offset))));
+  return $proveCtx(
+    "O(n)",
+    $lift("O(n)", textDecoder.decode(result.subarray(0, writeState.offset))),
+  );
 }
 
 /**
@@ -1039,7 +1061,7 @@ function collectBytesInRange(
   start: number,
   end: number,
   result: Uint8Array,
-  writeState: { offset: number }
+  writeState: { offset: number },
 ): void {
   if (node === null) return;
 
@@ -1058,10 +1080,7 @@ function collectBytesInRange(
     const copyStart = Math.max(0, start - pieceStart);
     const copyEnd = Math.min(node.length, end - pieceStart);
 
-    result.set(
-      buffer.subarray(node.start + copyStart, node.start + copyEnd),
-      writeState.offset
-    );
+    result.set(buffer.subarray(node.start + copyStart, node.start + copyEnd), writeState.offset);
     writeState.offset += copyEnd - copyStart;
   }
 
@@ -1075,7 +1094,7 @@ function collectBytesInRange(
  * Get the total length of the document.
  */
 export function getLength(state: PieceTableState): ConstCost<number> {
-  return $proveCtx('O(1)', $lift('O(1)', state.totalLength));
+  return $proveCtx("O(1)", $lift("O(1)", state.totalLength));
 }
 
 /**
@@ -1086,17 +1105,22 @@ export function getLength(state: PieceTableState): ConstCost<number> {
  * For line-index based line access with DocumentState, use `getLineContent()` from rendering.ts.
  */
 export function getLineLinearScan(state: PieceTableState, lineNumber: number): LinearCost<string> {
-  if (state.root === null) return $proveCtx('O(n)', $lift('O(n)', ''));
-  if (lineNumber < 0) return $proveCtx('O(n)', $lift('O(n)', ''));
+  if (state.root === null) return $proveCtx("O(n)", $lift("O(n)", ""));
+  if (lineNumber < 0) return $proveCtx("O(n)", $lift("O(n)", ""));
 
   // Find line start and end offsets by scanning for newlines
-  return $prove('O(n)', $checked(() => $pipe(
-    $from(findLineOffsets(state, lineNumber)),
-    $andThen((lineOffsets) => {
-      if (lineOffsets === null) return $lift('O(n)', '');
-      return $from(getText(state, lineOffsets.start, lineOffsets.end));
-    }),
-  )));
+  return $prove(
+    "O(n)",
+    $checked(() =>
+      $pipe(
+        $from(findLineOffsets(state, lineNumber)),
+        $andThen((lineOffsets) => {
+          if (lineOffsets === null) return $lift("O(n)", "");
+          return $from(getText(state, lineOffsets.start, lineOffsets.end));
+        }),
+      ),
+    ),
+  );
 }
 
 /**
@@ -1105,42 +1129,50 @@ export function getLineLinearScan(state: PieceTableState, lineNumber: number): L
  */
 function findLineOffsets(
   state: PieceTableState,
-  lineNumber: number
+  lineNumber: number,
 ): LinearCost<{ start: ByteOffset; end: ByteOffset } | null> {
-  if (state.root === null) return $proveCtx('O(n)', $lift('O(n)', null));
+  if (state.root === null) return $proveCtx("O(n)", $lift("O(n)", null));
 
-  return $prove('O(n)', $checked(() => $pipe(
-    $from(collectPieces(state.root)),
-    $map((pieces) => {
-      let currentLine = 0;
-      let lineStartOffset = 0;
-      let currentOffset = 0;
+  return $prove(
+    "O(n)",
+    $checked(() =>
+      $pipe(
+        $from(collectPieces(state.root)),
+        $map((pieces) => {
+          let currentLine = 0;
+          let lineStartOffset = 0;
+          let currentOffset = 0;
 
-      for (const piece of pieces) {
-        const buffer = getPieceBuffer(state, piece);
-        for (let i = 0; i < piece.length; i++) {
-          // Check for newline byte (0x0A)
-          if (buffer[piece.start + i] === 0x0A) {
-            if (currentLine === lineNumber) {
-              // Found the end of target line (include newline)
-              return { start: byteOffset(lineStartOffset), end: byteOffset(currentOffset + i + 1) };
+          for (const piece of pieces) {
+            const buffer = getPieceBuffer(state, piece);
+            for (let i = 0; i < piece.length; i++) {
+              // Check for newline byte (0x0A)
+              if (buffer[piece.start + i] === 0x0a) {
+                if (currentLine === lineNumber) {
+                  // Found the end of target line (include newline)
+                  return {
+                    start: byteOffset(lineStartOffset),
+                    end: byteOffset(currentOffset + i + 1),
+                  };
+                }
+                currentLine++;
+                lineStartOffset = currentOffset + i + 1;
+              }
             }
-            currentLine++;
-            lineStartOffset = currentOffset + i + 1;
+
+            currentOffset += piece.length;
           }
-        }
 
-        currentOffset += piece.length;
-      }
+          // Handle last line (no trailing newline)
+          if (currentLine === lineNumber) {
+            return { start: byteOffset(lineStartOffset), end: byteOffset(state.totalLength) };
+          }
 
-      // Handle last line (no trailing newline)
-      if (currentLine === lineNumber) {
-        return { start: byteOffset(lineStartOffset), end: byteOffset(state.totalLength) };
-      }
-
-      return null;
-    }),
-  )));
+          return null;
+        }),
+      ),
+    ),
+  );
 }
 
 // =============================================================================
@@ -1174,7 +1206,10 @@ export function getBufferStats(state: PieceTableState): ConstCost<BufferStats> {
   const addBufferWaste = addBufferSize - addBufferUsed;
   const wasteRatio = addBufferSize > 0 ? addBufferWaste / addBufferSize : 0;
 
-  return $proveCtx('O(1)', $lift('O(1)', { addBufferSize, addBufferUsed, addBufferWaste, wasteRatio }));
+  return $proveCtx(
+    "O(1)",
+    $lift("O(1)", { addBufferSize, addBufferUsed, addBufferWaste, wasteRatio }),
+  );
 }
 
 /**
@@ -1190,60 +1225,68 @@ export function getBufferStats(state: PieceTableState): ConstCost<BufferStats> {
  */
 export function compactAddBuffer(
   state: PieceTableState,
-  threshold: number = 0.5
+  threshold: number = 0.5,
 ): LinearCost<PieceTableState> {
-  return $prove('O(n)', $checked(() => $pipe(
-    $from(getBufferStats(state)),
-    $andThen((stats) => {
-      // Don't compact if waste is below threshold
-      if (stats.wasteRatio < threshold) {
-        return $lift('O(n)', state);
-      }
-
-      // Don't compact if there's nothing to compact
-      if (stats.addBufferUsed === 0) {
-        // No add buffer content - reset to empty
-        return $lift('O(n)', Object.freeze({
-          ...state,
-          addBuffer: GrowableBuffer.empty(1024),
-        }));
-      }
-
-      if (state.root === null) {
-        return $lift('O(n)', state);
-      }
-
-      return $pipe(
-        $from(collectPieces(state.root)),
-        $map((pieces) => {
-          // Single pass: build offset map and copy live data simultaneously
-          const offsetMap = new Map<number, number>();
-          const newBuffer = new Uint8Array(Math.max(stats.addBufferUsed * 2, 1024));
-          let writeOffset = 0;
-
-          for (const piece of pieces) {
-            if (piece.bufferType === 'add') {
-              offsetMap.set(piece.start, writeOffset);
-              newBuffer.set(
-                state.addBuffer.subarray(piece.start, piece.start + piece.length),
-                writeOffset
-              );
-              writeOffset += piece.length;
-            }
+  return $prove(
+    "O(n)",
+    $checked(() =>
+      $pipe(
+        $from(getBufferStats(state)),
+        $andThen((stats) => {
+          // Don't compact if waste is below threshold
+          if (stats.wasteRatio < threshold) {
+            return $lift("O(n)", state);
           }
 
-          // Rebuild tree with updated offsets
-          const newRoot = rebuildTreeWithNewOffsets(state.root, offsetMap);
+          // Don't compact if there's nothing to compact
+          if (stats.addBufferUsed === 0) {
+            // No add buffer content - reset to empty
+            return $lift(
+              "O(n)",
+              Object.freeze({
+                ...state,
+                addBuffer: GrowableBuffer.empty(1024),
+              }),
+            );
+          }
 
-          return Object.freeze({
-            ...state,
-            root: newRoot,
-            addBuffer: new GrowableBuffer(newBuffer, writeOffset),
-          });
+          if (state.root === null) {
+            return $lift("O(n)", state);
+          }
+
+          return $pipe(
+            $from(collectPieces(state.root)),
+            $map((pieces) => {
+              // Single pass: build offset map and copy live data simultaneously
+              const offsetMap = new Map<number, number>();
+              const newBuffer = new Uint8Array(Math.max(stats.addBufferUsed * 2, 1024));
+              let writeOffset = 0;
+
+              for (const piece of pieces) {
+                if (piece.bufferType === "add") {
+                  offsetMap.set(piece.start, writeOffset);
+                  newBuffer.set(
+                    state.addBuffer.subarray(piece.start, piece.start + piece.length),
+                    writeOffset,
+                  );
+                  writeOffset += piece.length;
+                }
+              }
+
+              // Rebuild tree with updated offsets
+              const newRoot = rebuildTreeWithNewOffsets(state.root, offsetMap);
+
+              return Object.freeze({
+                ...state,
+                root: newRoot,
+                addBuffer: new GrowableBuffer(newBuffer, writeOffset),
+              });
+            }),
+          );
         }),
-      );
-    }),
-  )));
+      ),
+    ),
+  );
 }
 
 /**
@@ -1251,14 +1294,14 @@ export function compactAddBuffer(
  */
 function rebuildTreeWithNewOffsets(
   node: PieceNode | null,
-  offsetMap: Map<number, number>
+  offsetMap: Map<number, number>,
 ): PieceNode | null {
   if (node === null) return null;
 
   const newLeft = rebuildTreeWithNewOffsets(node.left, offsetMap);
   const newRight = rebuildTreeWithNewOffsets(node.right, offsetMap);
 
-  if (node.bufferType === 'add') {
+  if (node.bufferType === "add") {
     const newStart = offsetMap.get(node.start);
     if (newStart !== undefined && newStart !== node.start) {
       return withPieceNode(node, {
@@ -1300,7 +1343,7 @@ function rebuildTreeWithNewOffsets(
  */
 export function charToByteOffset(text: string, charOffset: number): LinearCost<number> {
   const clampedOffset = Math.max(0, Math.min(charOffset, text.length));
-  return $proveCtx('O(n)', $lift('O(n)', textEncoder.encode(text.slice(0, clampedOffset)).length));
+  return $proveCtx("O(n)", $lift("O(n)", textEncoder.encode(text.slice(0, clampedOffset)).length));
 }
 
 /**
@@ -1321,10 +1364,10 @@ export function charToByteOffset(text: string, charOffset: number): LinearCost<n
  * ```
  */
 export function byteToCharOffset(text: string, byteOffset: number): LinearCost<number> {
-  if (byteOffset <= 0) return $proveCtx('O(n)', $lift('O(n)', 0));
+  if (byteOffset <= 0) return $proveCtx("O(n)", $lift("O(n)", 0));
 
   const bytes = textEncoder.encode(text);
-  if (byteOffset >= bytes.length) return $proveCtx('O(n)', $lift('O(n)', text.length));
+  if (byteOffset >= bytes.length) return $proveCtx("O(n)", $lift("O(n)", text.length));
 
   // Single encode + byte scanning using UTF-8 sequence length detection
   let charPos = 0;
@@ -1334,8 +1377,8 @@ export function byteToCharOffset(text: string, byteOffset: number): LinearCost<n
     const b = bytes[bytePos];
     let seqLen: number;
     if (b < 0x80) seqLen = 1;
-    else if ((b & 0xE0) === 0xC0) seqLen = 2;
-    else if ((b & 0xF0) === 0xE0) seqLen = 3;
+    else if ((b & 0xe0) === 0xc0) seqLen = 2;
+    else if ((b & 0xf0) === 0xe0) seqLen = 3;
     else seqLen = 4;
 
     if (bytePos + seqLen > byteOffset) break;
@@ -1344,7 +1387,7 @@ export function byteToCharOffset(text: string, byteOffset: number): LinearCost<n
     charPos += seqLen === 4 ? 2 : 1;
   }
 
-  return $proveCtx('O(n)', $lift('O(n)', charPos));
+  return $proveCtx("O(n)", $lift("O(n)", charPos));
 }
 
 // =============================================================================
@@ -1400,18 +1443,17 @@ export interface DocumentChunk {
  */
 export function getValueStream(
   state: PieceTableState,
-  options: StreamOptions = {}
+  options: StreamOptions = {},
 ): Generator<DocumentChunk, void, undefined> {
   const {
     chunkSize = 64 * 1024, // 64KB default
     start = 0,
-    end = state.totalLength
+    end = state.totalLength,
   } = options;
 
   // Collect pieces eagerly here (O(n)) — before the generator is iterated.
-  const pieces = state.root === null || start >= end || start < 0
-    ? null
-    : collectPieces(state.root);
+  const pieces =
+    state.root === null || start >= end || start < 0 ? null : collectPieces(state.root);
 
   return streamChunks(state, pieces, chunkSize, start, end);
 }
@@ -1421,7 +1463,7 @@ function* streamChunks(
   pieces: readonly PieceNode[] | null,
   chunkSize: number,
   start: number,
-  end: number
+  end: number,
 ): Generator<DocumentChunk, void, undefined> {
   if (pieces === null) {
     return;
@@ -1462,9 +1504,9 @@ function* streamChunks(
     chunkBuffer.set(
       buffer.subarray(
         piece.start + offsetInCurrentPiece,
-        piece.start + offsetInCurrentPiece + bytesToRead
+        piece.start + offsetInCurrentPiece + bytesToRead,
       ),
-      chunkOffset
+      chunkOffset,
     );
 
     chunkOffset += bytesToRead;

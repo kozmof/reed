@@ -8,11 +8,23 @@
  *   export const query = { ... } satisfies QueryApi;
  */
 
-import type { ConstCost, LogCost, LinearCost } from '../types/cost-doc.ts';
-import type { DocumentState, HistoryState, LineIndexState, LineIndexNode, PieceTableState, PieceNode } from '../types/state.ts';
-import type { ByteOffset, ByteLength } from '../types/branded.ts';
-import type { LineLocation } from '../store/core/line-index.ts';
-import type { PieceLocation, BufferStats, DocumentChunk, StreamOptions } from '../store/core/piece-table.ts';
+import type { ConstCost, LogCost, LinearCost } from "../types/cost-doc.ts";
+import type {
+  DocumentState,
+  HistoryState,
+  LineIndexState,
+  LineIndexNode,
+  PieceTableState,
+  PieceNode,
+} from "../types/state.ts";
+import type { ByteOffset, ByteLength } from "../types/branded.ts";
+import type { LineLocation } from "../store/core/line-index.ts";
+import type {
+  PieceLocation,
+  BufferStats,
+  DocumentChunk,
+  StreamOptions,
+} from "../store/core/piece-table.ts";
 
 // =============================================================================
 // Query namespace interfaces
@@ -23,14 +35,26 @@ import type { PieceLocation, BufferStats, DocumentChunk, StreamOptions } from '.
  * Low-level selectors operating directly on LineIndexState / LineIndexNode.
  */
 export interface QueryLineIndexApi {
-  findLineAtPosition(root: LineIndexNode | null, position: ByteOffset): LogCost<LineLocation> | null;
+  findLineAtPosition(
+    root: LineIndexNode | null,
+    position: ByteOffset,
+  ): LogCost<LineLocation> | null;
   findLineByNumber(root: LineIndexNode | null, lineNumber: number): LogCost<LineIndexNode> | null;
   getLineStartOffset(root: LineIndexNode | null, lineNumber: number): LogCost<number>;
-  getLineRange(state: LineIndexState<'eager'>, lineNumber: number): LogCost<{ start: ByteOffset; length: ByteLength }> | null;
-  getLineRangePrecise(state: LineIndexState, lineNumber: number): LogCost<{ start: ByteOffset; length: ByteLength }> | null;
+  getLineRange(
+    state: LineIndexState<"eager">,
+    lineNumber: number,
+  ): LogCost<{ start: ByteOffset; length: ByteLength }> | null;
+  getLineRangePrecise(
+    state: LineIndexState,
+    lineNumber: number,
+  ): LogCost<{ start: ByteOffset; length: ByteLength }> | null;
   getLineCount(state: LineIndexState): ConstCost<number>;
   getCharStartOffset(root: LineIndexNode | null, lineNumber: number): LogCost<number>;
-  findLineAtCharPosition(root: LineIndexNode | null, charPosition: number): LogCost<{ lineNumber: number; charOffsetInLine: number }> | null;
+  findLineAtCharPosition(
+    root: LineIndexNode | null,
+    charPosition: number,
+  ): LogCost<{ lineNumber: number; charOffsetInLine: number }> | null;
 }
 
 /**
@@ -46,12 +70,24 @@ export interface QueryApi {
   findLineAtPosition(state: DocumentState, position: ByteOffset): LogCost<LineLocation> | null;
   findLineByNumber(state: DocumentState, lineNumber: number): LogCost<LineIndexNode> | null;
   getLineStartOffset(state: DocumentState, lineNumber: number): LogCost<number>;
-  getLineRange(state: DocumentState<'eager'>, lineNumber: number): LogCost<{ start: ByteOffset; length: ByteLength }> | null;
-  getLineRangeChecked(state: DocumentState, lineNumber: number): LogCost<{ start: ByteOffset; length: ByteLength }> | null;
-  getLineRangePrecise(state: DocumentState, lineNumber: number): LogCost<{ start: ByteOffset; length: ByteLength }> | null;
+  getLineRange(
+    state: DocumentState<"eager">,
+    lineNumber: number,
+  ): LogCost<{ start: ByteOffset; length: ByteLength }> | null;
+  getLineRangeChecked(
+    state: DocumentState,
+    lineNumber: number,
+  ): LogCost<{ start: ByteOffset; length: ByteLength }> | null;
+  getLineRangePrecise(
+    state: DocumentState,
+    lineNumber: number,
+  ): LogCost<{ start: ByteOffset; length: ByteLength }> | null;
   getLineCount(state: DocumentState): ConstCost<number>;
   getCharStartOffset(state: DocumentState, lineNumber: number): LogCost<number>;
-  findLineAtCharPosition(state: DocumentState, charPosition: number): LogCost<{ lineNumber: number; charOffsetInLine: number }> | null;
+  findLineAtCharPosition(
+    state: DocumentState,
+    charPosition: number,
+  ): LogCost<{ lineNumber: number; charOffsetInLine: number }> | null;
   getSelectionHead(state: DocumentState): ConstCost<ByteOffset | undefined>;
   lineIndex: QueryLineIndexApi;
 }
@@ -66,7 +102,10 @@ export interface QueryApi {
  */
 export interface ScanApi {
   getValue(state: PieceTableState): LinearCost<string>;
-  getValueStream(state: PieceTableState, options?: StreamOptions): LinearCost<Generator<DocumentChunk, void, undefined>>;
+  getValueStream(
+    state: PieceTableState,
+    options?: StreamOptions,
+  ): LinearCost<Generator<DocumentChunk, void, undefined>>;
   collectPieces(root: PieceNode | null): LinearCost<readonly PieceNode[]>;
   collectLines(root: LineIndexNode | null): LinearCost<readonly LineIndexNode[]>;
   rebuildLineIndex(content: string): LinearCost<LineIndexState>;

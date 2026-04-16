@@ -185,12 +185,12 @@ keepBefore = deleteStart - pieceStart   // bytes before the cut
 keepAfter  = pieceEnd   - deleteEnd     // bytes after the cut
 ```
 
-| Condition | Action |
-|---|---|
-| `keepBefore <= 0 && keepAfter <= 0` | Entire piece deleted — merge subtrees via `mergeTrees()` |
-| `keepBefore > 0 && keepAfter > 0` | Deletion punches a hole — split into two pieces (same as insert-split) |
-| `keepBefore > 0` | Trim right end — shorten `length`, `start` unchanged |
-| `keepAfter > 0` | Trim left end — advance `start`, shorten `length` |
+| Condition                           | Action                                                                 |
+| ----------------------------------- | ---------------------------------------------------------------------- |
+| `keepBefore <= 0 && keepAfter <= 0` | Entire piece deleted — merge subtrees via `mergeTrees()`               |
+| `keepBefore > 0 && keepAfter > 0`   | Deletion punches a hole — split into two pieces (same as insert-split) |
+| `keepBefore > 0`                    | Trim right end — shorten `length`, `start` unchanged                   |
+| `keepAfter > 0`                     | Trim left end — advance `start`, shorten `length`                      |
 
 No bytes in either buffer are modified in any case.
 
@@ -241,13 +241,13 @@ nodes carry no index that could identify a sub-region to evict.
 
 ### 5.2 Data structure differences
 
-| | `originalBuffer` | chunk buffers |
-|---|---|---|
-| Storage | Single `Uint8Array` on `PieceTableState` | `Map<number, Uint8Array>` (`chunkMap`) |
-| Piece node type | `OriginalPieceNode` | `ChunkPieceNode` |
-| Extra field on piece node | — | `chunkIndex: number` |
-| `start` field meaning | Absolute offset within `originalBuffer` | Offset **within that chunk's `Uint8Array`** |
-| Lifetime | Permanent (never removed) | Evictable; re-loadable |
+|                           | `originalBuffer`                         | chunk buffers                               |
+| ------------------------- | ---------------------------------------- | ------------------------------------------- |
+| Storage                   | Single `Uint8Array` on `PieceTableState` | `Map<number, Uint8Array>` (`chunkMap`)      |
+| Piece node type           | `OriginalPieceNode`                      | `ChunkPieceNode`                            |
+| Extra field on piece node | —                                        | `chunkIndex: number`                        |
+| `start` field meaning     | Absolute offset within `originalBuffer`  | Offset **within that chunk's `Uint8Array`** |
+| Lifetime                  | Permanent (never removed)                | Evictable; re-loadable                      |
 
 The critical asymmetry is the `start` field. A `ChunkPieceNode` with
 `chunkIndex = 2, start = 40` means byte 40 of the `Uint8Array` stored at
@@ -302,15 +302,15 @@ former chunk pieces.
 
 ## 6. Complexity Summary
 
-| Operation | Complexity |
-|---|---|
-| Insert at boundary | O(log n) |
-| Insert in middle (split) | O(log n) |
-| Delete within one piece | O(log n) |
-| Delete across k pieces | O(k + log n) |
-| Read full document | O(n) |
-| Position lookup | O(log n) via `subtreeLength` augment |
-| Snapshot (undo entry) | O(1) structural sharing |
-| Load chunk (first load) | O(log n) |
-| Load chunk (re-load) | O(log n) |
-| Evict chunk | O(k + log n), k = nodes in evicted chunk |
+| Operation                | Complexity                               |
+| ------------------------ | ---------------------------------------- |
+| Insert at boundary       | O(log n)                                 |
+| Insert in middle (split) | O(log n)                                 |
+| Delete within one piece  | O(log n)                                 |
+| Delete across k pieces   | O(k + log n)                             |
+| Read full document       | O(n)                                     |
+| Position lookup          | O(log n) via `subtreeLength` augment     |
+| Snapshot (undo entry)    | O(1) structural sharing                  |
+| Load chunk (first load)  | O(log n)                                 |
+| Load chunk (re-load)     | O(log n)                                 |
+| Evict chunk              | O(k + log n), k = nodes in evicted chunk |

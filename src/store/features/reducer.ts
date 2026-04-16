@@ -8,18 +8,28 @@
  * maps DocumentActions to the correct pipeline function.
  */
 
-import type { DocumentState, SelectionRange, NonEmptyReadonlyArray, PieceNode } from '../../types/state.ts';
-import type { DocumentAction } from '../../types/actions.ts';
-import type { ByteOffset } from '../../types/branded.ts';
-import { byteOffset, byteLength } from '../../types/branded.ts';
-import { withState, createChunkPieceNode, withPieceNode, withLineIndexState } from '../core/state.ts';
-import { fixRedViolations } from '../core/rb-tree.ts';
-import { getText, insertChunkPieceAt, pieceTableInOrder } from '../core/piece-table.ts';
+import type {
+  DocumentState,
+  SelectionRange,
+  NonEmptyReadonlyArray,
+  PieceNode,
+} from "../../types/state.ts";
+import type { DocumentAction } from "../../types/actions.ts";
+import type { ByteOffset } from "../../types/branded.ts";
+import { byteOffset, byteLength } from "../../types/branded.ts";
+import {
+  withState,
+  createChunkPieceNode,
+  withPieceNode,
+  withLineIndexState,
+} from "../core/state.ts";
+import { fixRedViolations } from "../core/rb-tree.ts";
+import { getText, insertChunkPieceAt, pieceTableInOrder } from "../core/piece-table.ts";
 import {
   lineIndexInsertLazy as liInsertLazy,
   lineIndexDeleteLazy as liDeleteLazy,
-} from '../core/line-index.ts';
-import { textDecoder } from '../core/encoding.ts';
+} from "../core/line-index.ts";
+import { textDecoder } from "../core/encoding.ts";
 import {
   validatePosition,
   validateRange,
@@ -30,8 +40,8 @@ import {
   getDeleteBoundaryContext,
   shouldRebuildLineIndexForDelete,
   rebuildLineIndexFromPieceTableState,
-} from './edit.ts';
-import { historyUndo, historyRedo } from './history.ts';
+} from "./edit.ts";
+import { historyUndo, historyRedo } from "./history.ts";
 
 // Regex patterns used for line-ending normalisation.
 const CRLF_RE = /\r\n/g;
@@ -43,20 +53,20 @@ const LONE_LF_RE = /(?<!\r)\n/g;
  * Returns the original string unchanged if it contains no CR or LF characters
  * (fast path — avoids regex overhead for typical short inserts without newlines).
  */
-function normalizeLineEndings(text: string, lineEnding: 'lf' | 'crlf' | 'cr'): string {
+function normalizeLineEndings(text: string, lineEnding: "lf" | "crlf" | "cr"): string {
   // Fast path: no line-break characters at all
-  if (!text.includes('\r') && !text.includes('\n')) return text;
+  if (!text.includes("\r") && !text.includes("\n")) return text;
 
   switch (lineEnding) {
-    case 'lf':
+    case "lf":
       // Normalise CRLF → LF first, then any remaining lone CR → LF
-      return text.replace(CRLF_RE, '\n').replace(LONE_CR_RE, '\n');
-    case 'crlf':
+      return text.replace(CRLF_RE, "\n").replace(LONE_CR_RE, "\n");
+    case "crlf":
       // Normalise lone CR → LF first (to avoid double-processing), then lone LF → CRLF
-      return text.replace(LONE_CR_RE, '\n').replace(LONE_LF_RE, '\r\n');
-    case 'cr':
+      return text.replace(LONE_CR_RE, "\n").replace(LONE_LF_RE, "\r\n");
+    case "cr":
       // Normalise CRLF → CR first, then any remaining lone LF → CR
-      return text.replace(CRLF_RE, '\r').replace(LONE_LF_RE, '\r');
+      return text.replace(CRLF_RE, "\r").replace(LONE_LF_RE, "\r");
   }
 }
 
@@ -67,17 +77,16 @@ function normalizeLineEndings(text: string, lineEnding: 'lf' | 'crlf' | 'cr'): s
 /**
  * Update selection state.
  */
-function setSelection(
-  state: DocumentState,
-  ranges: readonly SelectionRange[]
-): DocumentState {
+function setSelection(state: DocumentState, ranges: readonly SelectionRange[]): DocumentState {
   if (ranges.length === 0) {
-    console.warn('SET_SELECTION: ranges must be non-empty; action ignored');
+    console.warn("SET_SELECTION: ranges must be non-empty; action ignored");
     return state;
   }
   return withState(state, {
     selection: Object.freeze({
-      ranges: Object.freeze(ranges.map(r => Object.freeze({ ...r }))) as NonEmptyReadonlyArray<SelectionRange>,
+      ranges: Object.freeze(
+        ranges.map((r) => Object.freeze({ ...r })),
+      ) as NonEmptyReadonlyArray<SelectionRange>,
       primaryIndex: 0,
     }),
   });
@@ -96,17 +105,17 @@ function setSelection(
 function appendChunkPiece(
   root: PieceNode | null,
   chunkIndex: number,
-  chunkByteLength: number
+  chunkByteLength: number,
 ): PieceNode {
   const newLeaf = createChunkPieceNode(
     chunkIndex,
     byteOffset(0),
     byteLength(chunkByteLength),
-    'red',
+    "red",
   );
 
   if (root === null) {
-    return withPieceNode(newLeaf, { color: 'black' });
+    return withPieceNode(newLeaf, { color: "black" });
   }
 
   // Walk the right spine collecting ancestors (root → rightmost parent).
@@ -118,21 +127,15 @@ function appendChunkPiece(
   }
 
   // Attach leaf to the rightmost node, then fix any red-red violation at that level.
-  let updated: PieceNode = fixRedViolations(
-    withPieceNode(cur, { right: newLeaf }),
-    withPieceNode,
-  );
+  let updated: PieceNode = fixRedViolations(withPieceNode(cur, { right: newLeaf }), withPieceNode);
 
   // Walk back up, applying fixup at each ancestor level.
   for (let i = path.length - 1; i >= 0; i--) {
-    updated = fixRedViolations(
-      withPieceNode(path[i], { right: updated }),
-      withPieceNode,
-    );
+    updated = fixRedViolations(withPieceNode(path[i], { right: updated }), withPieceNode);
   }
 
   // Ensure the root is always black.
-  return updated.color === 'black' ? updated : withPieceNode(updated, { color: 'black' });
+  return updated.color === "black" ? updated : withPieceNode(updated, { color: "black" });
 }
 
 /**
@@ -146,7 +149,7 @@ function findReloadInsertionPos(root: PieceNode | null, targetChunkIndex: number
   if (root === null) return 0;
   let result = root.subtreeLength;
   pieceTableInOrder(root, (n, pieceStart) => {
-    if (n.bufferType === 'chunk' && n.chunkIndex > targetChunkIndex) {
+    if (n.bufferType === "chunk" && n.chunkIndex > targetChunkIndex) {
       result = pieceStart;
       return true;
     }
@@ -165,13 +168,13 @@ function findReloadInsertionPos(root: PieceNode | null, targetChunkIndex: number
  */
 function findChunkDocumentRange(
   root: PieceNode | null,
-  chunkIndex: number
+  chunkIndex: number,
 ): { start: ByteOffset; end: ByteOffset } | null {
   if (root === null) return null;
   let rangeStart = -1;
   let rangeEnd = -1;
   pieceTableInOrder(root, (n, pieceStart) => {
-    if (n.bufferType === 'chunk' && n.chunkIndex === chunkIndex) {
+    if (n.bufferType === "chunk" && n.chunkIndex === chunkIndex) {
       if (rangeStart === -1) rangeStart = pieceStart;
       rangeEnd = pieceStart + n.length;
     }
@@ -189,12 +192,12 @@ function findChunkDocumentRange(
 function hasAddPiecesInRange(
   root: PieceNode | null,
   rangeStart: ByteOffset,
-  rangeEnd: ByteOffset
+  rangeEnd: ByteOffset,
 ): boolean {
   if (root === null) return false;
   let found = false;
   pieceTableInOrder(root, (n, pieceStart) => {
-    if (n.bufferType === 'add' && pieceStart < rangeEnd && pieceStart + n.length > rangeStart) {
+    if (n.bufferType === "add" && pieceStart < rangeEnd && pieceStart + n.length > rangeStart) {
       found = true;
       return true;
     }
@@ -212,7 +215,7 @@ function hasAddPiecesInRange(
  */
 function removeChunkPiecesFromTree(
   root: PieceNode | null,
-  targetChunk: number
+  targetChunk: number,
 ): { newRoot: PieceNode | null; removedLength: number } {
   if (root === null) return { newRoot: null, removedLength: 0 };
 
@@ -229,7 +232,7 @@ function removeChunkPiecesFromTree(
       currentNode = currentNode.left;
     }
     const n = nodeStack.pop()!;
-    if (n.bufferType === 'chunk' && n.chunkIndex === targetChunk) {
+    if (n.bufferType === "chunk" && n.chunkIndex === targetChunk) {
       removedLength += n.length;
     } else {
       survivors.push(n);
@@ -251,10 +254,10 @@ function removeChunkPiecesFromTree(
     const rightLen = right?.subtreeLength ?? 0;
     const leftAdd = left?.subtreeAddLength ?? 0;
     const rightAdd = right?.subtreeAddLength ?? 0;
-    const selfAdd = src.bufferType === 'add' ? src.length : 0;
+    const selfAdd = src.bufferType === "add" ? src.length : 0;
     return Object.freeze({
       ...src,
-      color: 'black' as const,
+      color: "black" as const,
       left,
       right,
       subtreeLength: src.length + leftLen + rightLen,
@@ -273,45 +276,71 @@ function removeChunkPiecesFromTree(
  * Core reducer implementation with structural sharing.
  * Handles all document actions and returns new immutable state.
  */
-export function documentReducer(
-  state: DocumentState,
-  action: DocumentAction
-): DocumentState {
+export function documentReducer(state: DocumentState, action: DocumentAction): DocumentState {
   switch (action.type) {
-    case 'INSERT': {
+    case "INSERT": {
       const position = validatePosition(action.start, state.pieceTable.totalLength);
       if (action.text.length === 0) return state;
       const insertText = state.metadata.normalizeInsertedLineEndings
         ? normalizeLineEndings(action.text, state.metadata.lineEnding)
         : action.text;
-      return applyEdit(state, { kind: 'insert', position, insertText, timestamp: action.timestamp, selection: action.selection });
+      return applyEdit(state, {
+        kind: "insert",
+        position,
+        insertText,
+        timestamp: action.timestamp,
+        selection: action.selection,
+      });
     }
 
-    case 'DELETE': {
-      const { start, end, valid } = validateRange(action.start, action.end, state.pieceTable.totalLength);
+    case "DELETE": {
+      const { start, end, valid } = validateRange(
+        action.start,
+        action.end,
+        state.pieceTable.totalLength,
+      );
       if (!valid) return state;
       if (end - start <= 0) return state;
       const deletedText = getTextRange(state, start, end);
-      return applyEdit(state, { kind: 'delete', position: start, deleteEnd: end, deletedText, timestamp: action.timestamp, selection: action.selection });
+      return applyEdit(state, {
+        kind: "delete",
+        position: start,
+        deleteEnd: end,
+        deletedText,
+        timestamp: action.timestamp,
+        selection: action.selection,
+      });
     }
 
-    case 'REPLACE': {
-      const { start, end, valid } = validateRange(action.start, action.end, state.pieceTable.totalLength);
+    case "REPLACE": {
+      const { start, end, valid } = validateRange(
+        action.start,
+        action.end,
+        state.pieceTable.totalLength,
+      );
       if (!valid) return state;
       const oldText = getTextRange(state, start, end);
       const replaceText = state.metadata.normalizeInsertedLineEndings
         ? normalizeLineEndings(action.text, state.metadata.lineEnding)
         : action.text;
-      return applyEdit(state, { kind: 'replace', position: start, deleteEnd: end, deletedText: oldText, insertText: replaceText, timestamp: action.timestamp, selection: action.selection });
+      return applyEdit(state, {
+        kind: "replace",
+        position: start,
+        deleteEnd: end,
+        deletedText: oldText,
+        insertText: replaceText,
+        timestamp: action.timestamp,
+        selection: action.selection,
+      });
     }
 
-    case 'SET_SELECTION': {
+    case "SET_SELECTION": {
       return withState(setSelection(state, action.ranges), {
         version: state.version + 1,
       });
     }
 
-    case 'UNDO': {
+    case "UNDO": {
       const nextVersion = state.version + 1;
       const newState = historyUndo(state, nextVersion);
       if (newState === state) return state; // No undo available
@@ -320,7 +349,7 @@ export function documentReducer(
       });
     }
 
-    case 'REDO': {
+    case "REDO": {
       const nextVersion = state.version + 1;
       const newState = historyRedo(state, nextVersion);
       if (newState === state) return state; // No redo available
@@ -329,7 +358,7 @@ export function documentReducer(
       });
     }
 
-    case 'HISTORY_CLEAR': {
+    case "HISTORY_CLEAR": {
       // Clear both undo and redo stacks while preserving config
       return withState(state, {
         history: Object.freeze({
@@ -342,19 +371,19 @@ export function documentReducer(
       });
     }
 
-    case 'TRANSACTION_START':
-    case 'TRANSACTION_COMMIT':
-    case 'TRANSACTION_ROLLBACK':
+    case "TRANSACTION_START":
+    case "TRANSACTION_COMMIT":
+    case "TRANSACTION_ROLLBACK":
       // Transaction handling is done in the store, not the reducer
       return state;
 
-    case 'APPLY_REMOTE': {
+    case "APPLY_REMOTE": {
       // Apply remote changes from collaboration
       const nextVersion = state.version + 1;
       let newState = state;
       let didApplyChange = false;
       for (const change of action.changes) {
-        if (change.type === 'insert' && change.text.length > 0) {
+        if (change.type === "insert" && change.text.length > 0) {
           didApplyChange = true;
           // Normalize line endings on remote inserts the same way local inserts are treated,
           // so mixed-origin edits never silently introduce a different line-ending style.
@@ -362,10 +391,17 @@ export function documentReducer(
             ? normalizeLineEndings(change.text, newState.metadata.lineEnding)
             : change.text;
           newState = pieceTableInsert(newState, change.start, insertText).state;
-          const readText = (start: ByteOffset, end: ByteOffset) => getText(newState.pieceTable, start, end);
-          const li = liInsertLazy(newState.lineIndex, change.start, insertText, nextVersion, readText);
+          const readText = (start: ByteOffset, end: ByteOffset) =>
+            getText(newState.pieceTable, start, end);
+          const li = liInsertLazy(
+            newState.lineIndex,
+            change.start,
+            insertText,
+            nextVersion,
+            readText,
+          );
           newState = withState(newState, { lineIndex: li });
-        } else if (change.type === 'delete' && change.length > 0) {
+        } else if (change.type === "delete" && change.length > 0) {
           didApplyChange = true;
           // Capture deleted text before deleting for line index update
           const endPosition = byteOffset(change.start + change.length);
@@ -381,7 +417,7 @@ export function documentReducer(
               endPosition,
               deletedText,
               nextVersion,
-              deleteContext
+              deleteContext,
             );
             newState = pieceTableDelete(newState, change.start, endPosition);
             newState = withState(newState, { lineIndex: li });
@@ -395,16 +431,16 @@ export function documentReducer(
       const metadata = newState.metadata.isDirty
         ? newState.metadata
         : Object.freeze({
-          ...newState.metadata,
-          isDirty: true,
-        });
+            ...newState.metadata,
+            isDirty: true,
+          });
       return withState(newState, {
         version: nextVersion,
         metadata,
       });
     }
 
-    case 'DECLARE_CHUNK_METADATA': {
+    case "DECLARE_CHUNK_METADATA": {
       if (state.pieceTable.chunkSize === 0) return state; // non-chunked mode
 
       const { loadedChunks, chunkMetadata } = state.pieceTable;
@@ -425,13 +461,16 @@ export function documentReducer(
       // DECLARE_CHUNK_METADATA does not bump version or emit content-change.
       return withState(state, {
         pieceTable: Object.freeze({ ...state.pieceTable, chunkMetadata: newChunkMetadata }),
-        lineIndex: withLineIndexState(state.lineIndex, { unloadedLineCountsByChunk: newUnloadedCounts }),
+        lineIndex: withLineIndexState(state.lineIndex, {
+          unloadedLineCountsByChunk: newUnloadedCounts,
+        }),
       });
     }
 
-    case 'LOAD_CHUNK': {
+    case "LOAD_CHUNK": {
       const { chunkIndex, data } = action;
-      const { chunkSize, nextExpectedChunk, chunkMap, loadedChunks, totalLength } = state.pieceTable;
+      const { chunkSize, nextExpectedChunk, chunkMap, loadedChunks, totalLength } =
+        state.pieceTable;
 
       // Non-chunked mode: chunkSize must be set in the store config
       if (chunkSize === 0) return state;
@@ -465,9 +504,7 @@ export function documentReducer(
         : insertChunkPieceAt(state.pieceTable.root, insertionPos, chunkIndex, chunkBytes.length);
 
       // Update loadedChunks on first load; advance the high-water mark.
-      const newLoadedChunks = isFirstLoad
-        ? new Set([...loadedChunks, chunkIndex])
-        : loadedChunks;
+      const newLoadedChunks = isFirstLoad ? new Set([...loadedChunks, chunkIndex]) : loadedChunks;
 
       const newPieceTable = Object.freeze({
         ...state.pieceTable,
@@ -498,7 +535,7 @@ export function documentReducer(
       });
     }
 
-    case 'EVICT_CHUNK': {
+    case "EVICT_CHUNK": {
       const { chunkIndex } = action;
       const { chunkMap } = state.pieceTable;
 
@@ -515,7 +552,10 @@ export function documentReducer(
       const chunkBytes = chunkMap.get(chunkIndex)!;
       const chunkText = textDecoder.decode(chunkBytes);
 
-      const { newRoot, removedLength } = removeChunkPiecesFromTree(state.pieceTable.root, chunkIndex);
+      const { newRoot, removedLength } = removeChunkPiecesFromTree(
+        state.pieceTable.root,
+        chunkIndex,
+      );
 
       const newChunkMap = new Map(chunkMap);
       newChunkMap.delete(chunkIndex);
@@ -528,7 +568,13 @@ export function documentReducer(
       });
 
       const nextVersion = state.version + 1;
-      let newLineIndex = liDeleteLazy(state.lineIndex, range.start, range.end, chunkText, nextVersion);
+      let newLineIndex = liDeleteLazy(
+        state.lineIndex,
+        range.start,
+        range.end,
+        chunkText,
+        nextVersion,
+      );
 
       // If metadata was pre-declared for this chunk, restore its line count to the
       // side-cache so getLineCountFromIndex continues to return the total expected count.
@@ -536,7 +582,9 @@ export function documentReducer(
       if (metadata !== undefined) {
         const newMap = new Map(newLineIndex.unloadedLineCountsByChunk);
         newMap.set(chunkIndex, metadata.lineCount);
-        newLineIndex = withLineIndexState(newLineIndex, { unloadedLineCountsByChunk: newMap }) as typeof newLineIndex;
+        newLineIndex = withLineIndexState(newLineIndex, {
+          unloadedLineCountsByChunk: newMap,
+        }) as typeof newLineIndex;
       }
 
       return withState(state, {

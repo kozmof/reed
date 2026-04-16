@@ -3,51 +3,53 @@
  * Tests canUndo, canRedo, getUndoCount, getRedoCount, isHistoryEmpty, and HISTORY_CLEAR action.
  */
 
-import { describe, it, expect, vi } from 'vitest';
-import {
-  canUndo,
-  canRedo,
-  getUndoCount,
-  getRedoCount,
-  isHistoryEmpty,
-} from './history.ts';
-import { createInitialState } from './../core/state.ts';
-import { documentReducer } from './reducer.ts';
-import { DocumentActions } from './actions.ts';
-import type { HistoryState } from '../../types/state.ts';
-import { pstackFromArray } from '../../types/state.ts';
-import { byteOffset, byteLength } from '../../types/branded.ts';
+import { describe, it, expect, vi } from "vitest";
+import { canUndo, canRedo, getUndoCount, getRedoCount, isHistoryEmpty } from "./history.ts";
+import { createInitialState } from "./../core/state.ts";
+import { documentReducer } from "./reducer.ts";
+import { DocumentActions } from "./actions.ts";
+import type { HistoryState } from "../../types/state.ts";
+import { pstackFromArray } from "../../types/state.ts";
+import { byteOffset, byteLength } from "../../types/branded.ts";
 
 // =============================================================================
 // canUndo Tests
 // =============================================================================
 
-describe('canUndo', () => {
-  it('should return false for initial state', () => {
+describe("canUndo", () => {
+  it("should return false for initial state", () => {
     const state = createInitialState();
     expect(canUndo(state)).toBe(false);
   });
 
-  it('should return true after an edit action', () => {
+  it("should return true after an edit action", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
     expect(canUndo(state)).toBe(true);
   });
 
-  it('should return false after undoing all changes', () => {
+  it("should return false after undoing all changes", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
     state = documentReducer(state, DocumentActions.undo());
     expect(canUndo(state)).toBe(false);
   });
 
-  it('should work with HistoryState directly', () => {
+  it("should work with HistoryState directly", () => {
     const historyState: HistoryState = {
       undoStack: pstackFromArray([
         {
-          changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: byteLength(1)}],
-          selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
-          selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
+          changes: [
+            { type: "insert", position: byteOffset(0), text: "a", byteLength: byteLength(1) },
+          ],
+          selectionBefore: {
+            ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }],
+            primaryIndex: 0,
+          },
+          selectionAfter: {
+            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            primaryIndex: 0,
+          },
           timestamp: Date.now(),
         },
       ]),
@@ -58,11 +60,11 @@ describe('canUndo', () => {
     expect(canUndo(historyState)).toBe(true);
   });
 
-  it('should return true after multiple edits', () => {
+  it("should return true after multiple edits", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'a'));
-    state = documentReducer(state, DocumentActions.insert(byteOffset(1), 'b'));
-    state = documentReducer(state, DocumentActions.insert(byteOffset(2), 'c'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "a"));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(1), "b"));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(2), "c"));
     expect(canUndo(state)).toBe(true);
   });
 });
@@ -71,41 +73,49 @@ describe('canUndo', () => {
 // canRedo Tests
 // =============================================================================
 
-describe('canRedo', () => {
-  it('should return false for initial state', () => {
+describe("canRedo", () => {
+  it("should return false for initial state", () => {
     const state = createInitialState();
     expect(canRedo(state)).toBe(false);
   });
 
-  it('should return false after an edit without undo', () => {
+  it("should return false after an edit without undo", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
     expect(canRedo(state)).toBe(false);
   });
 
-  it('should return true after undo', () => {
+  it("should return true after undo", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
     state = documentReducer(state, DocumentActions.undo());
     expect(canRedo(state)).toBe(true);
   });
 
-  it('should return false after redo', () => {
+  it("should return false after redo", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
     state = documentReducer(state, DocumentActions.undo());
     state = documentReducer(state, DocumentActions.redo());
     expect(canRedo(state)).toBe(false);
   });
 
-  it('should work with HistoryState directly', () => {
+  it("should work with HistoryState directly", () => {
     const historyState: HistoryState = {
       undoStack: null,
       redoStack: pstackFromArray([
         {
-          changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: byteLength(1)}],
-          selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
-          selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
+          changes: [
+            { type: "insert", position: byteOffset(0), text: "a", byteLength: byteLength(1) },
+          ],
+          selectionBefore: {
+            ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }],
+            primaryIndex: 0,
+          },
+          selectionAfter: {
+            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            primaryIndex: 0,
+          },
           timestamp: Date.now(),
         },
       ]),
@@ -120,47 +130,63 @@ describe('canRedo', () => {
 // getUndoCount Tests
 // =============================================================================
 
-describe('getUndoCount', () => {
-  it('should return 0 for initial state', () => {
+describe("getUndoCount", () => {
+  it("should return 0 for initial state", () => {
     const state = createInitialState();
     expect(getUndoCount(state)).toBe(0);
   });
 
-  it('should return correct count after multiple edits', () => {
+  it("should return correct count after multiple edits", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'a'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "a"));
     expect(getUndoCount(state)).toBe(1);
 
-    state = documentReducer(state, DocumentActions.insert(byteOffset(1), 'b'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(1), "b"));
     expect(getUndoCount(state)).toBe(2);
 
-    state = documentReducer(state, DocumentActions.insert(byteOffset(2), 'c'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(2), "c"));
     expect(getUndoCount(state)).toBe(3);
   });
 
-  it('should decrease after undo', () => {
+  it("should decrease after undo", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'a'));
-    state = documentReducer(state, DocumentActions.insert(byteOffset(1), 'b'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "a"));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(1), "b"));
     expect(getUndoCount(state)).toBe(2);
 
     state = documentReducer(state, DocumentActions.undo());
     expect(getUndoCount(state)).toBe(1);
   });
 
-  it('should work with HistoryState directly', () => {
+  it("should work with HistoryState directly", () => {
     const historyState: HistoryState = {
       undoStack: pstackFromArray([
         {
-          changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: byteLength(1)}],
-          selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
-          selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
+          changes: [
+            { type: "insert", position: byteOffset(0), text: "a", byteLength: byteLength(1) },
+          ],
+          selectionBefore: {
+            ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }],
+            primaryIndex: 0,
+          },
+          selectionAfter: {
+            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            primaryIndex: 0,
+          },
           timestamp: Date.now(),
         },
         {
-          changes: [{ type: 'insert', position: byteOffset(1), text: 'b', byteLength: byteLength(1)}],
-          selectionBefore: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
-          selectionAfter: { ranges: [{ anchor: byteOffset(2), head: byteOffset(2) }], primaryIndex: 0 },
+          changes: [
+            { type: "insert", position: byteOffset(1), text: "b", byteLength: byteLength(1) },
+          ],
+          selectionBefore: {
+            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            primaryIndex: 0,
+          },
+          selectionAfter: {
+            ranges: [{ anchor: byteOffset(2), head: byteOffset(2) }],
+            primaryIndex: 0,
+          },
           timestamp: Date.now(),
         },
       ]),
@@ -176,17 +202,17 @@ describe('getUndoCount', () => {
 // getRedoCount Tests
 // =============================================================================
 
-describe('getRedoCount', () => {
-  it('should return 0 for initial state', () => {
+describe("getRedoCount", () => {
+  it("should return 0 for initial state", () => {
     const state = createInitialState();
     expect(getRedoCount(state)).toBe(0);
   });
 
-  it('should return correct count after undos', () => {
+  it("should return correct count after undos", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'a'));
-    state = documentReducer(state, DocumentActions.insert(byteOffset(1), 'b'));
-    state = documentReducer(state, DocumentActions.insert(byteOffset(2), 'c'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "a"));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(1), "b"));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(2), "c"));
 
     state = documentReducer(state, DocumentActions.undo());
     expect(getRedoCount(state)).toBe(1);
@@ -195,10 +221,10 @@ describe('getRedoCount', () => {
     expect(getRedoCount(state)).toBe(2);
   });
 
-  it('should decrease after redo', () => {
+  it("should decrease after redo", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'a'));
-    state = documentReducer(state, DocumentActions.insert(byteOffset(1), 'b'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "a"));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(1), "b"));
     state = documentReducer(state, DocumentActions.undo());
     state = documentReducer(state, DocumentActions.undo());
     expect(getRedoCount(state)).toBe(2);
@@ -207,14 +233,22 @@ describe('getRedoCount', () => {
     expect(getRedoCount(state)).toBe(1);
   });
 
-  it('should work with HistoryState directly', () => {
+  it("should work with HistoryState directly", () => {
     const historyState: HistoryState = {
       undoStack: null,
       redoStack: pstackFromArray([
         {
-          changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: byteLength(1)}],
-          selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
-          selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
+          changes: [
+            { type: "insert", position: byteOffset(0), text: "a", byteLength: byteLength(1) },
+          ],
+          selectionBefore: {
+            ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }],
+            primaryIndex: 0,
+          },
+          selectionAfter: {
+            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            primaryIndex: 0,
+          },
           timestamp: Date.now(),
         },
       ]),
@@ -229,35 +263,35 @@ describe('getRedoCount', () => {
 // isHistoryEmpty Tests
 // =============================================================================
 
-describe('isHistoryEmpty', () => {
-  it('should return true for initial state', () => {
+describe("isHistoryEmpty", () => {
+  it("should return true for initial state", () => {
     const state = createInitialState();
     expect(isHistoryEmpty(state)).toBe(true);
   });
 
-  it('should return false after an edit', () => {
+  it("should return false after an edit", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
     expect(isHistoryEmpty(state)).toBe(false);
   });
 
-  it('should return false after undo (redo stack not empty)', () => {
+  it("should return false after undo (redo stack not empty)", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
     state = documentReducer(state, DocumentActions.undo());
     expect(isHistoryEmpty(state)).toBe(false);
   });
 
-  it('should return true after undo then redo', () => {
+  it("should return true after undo then redo", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
     state = documentReducer(state, DocumentActions.undo());
     state = documentReducer(state, DocumentActions.redo());
     // Undo stack has 1 entry, redo stack is empty
     expect(isHistoryEmpty(state)).toBe(false);
   });
 
-  it('should work with HistoryState directly', () => {
+  it("should work with HistoryState directly", () => {
     const emptyHistory: HistoryState = {
       undoStack: null,
       redoStack: null,
@@ -269,9 +303,17 @@ describe('isHistoryEmpty', () => {
     const nonEmptyHistory: HistoryState = {
       undoStack: pstackFromArray([
         {
-          changes: [{ type: 'insert', position: byteOffset(0), text: 'a', byteLength: byteLength(1)}],
-          selectionBefore: { ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }], primaryIndex: 0 },
-          selectionAfter: { ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }], primaryIndex: 0 },
+          changes: [
+            { type: "insert", position: byteOffset(0), text: "a", byteLength: byteLength(1) },
+          ],
+          selectionBefore: {
+            ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }],
+            primaryIndex: 0,
+          },
+          selectionAfter: {
+            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            primaryIndex: 0,
+          },
           timestamp: Date.now(),
         },
       ]),
@@ -287,11 +329,11 @@ describe('isHistoryEmpty', () => {
 // HISTORY_CLEAR Action Tests
 // =============================================================================
 
-describe('HISTORY_CLEAR action', () => {
-  it('should clear both undo and redo stacks', () => {
+describe("HISTORY_CLEAR action", () => {
+  it("should clear both undo and redo stacks", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
-    state = documentReducer(state, DocumentActions.insert(byteOffset(5), ' World'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(5), " World"));
     state = documentReducer(state, DocumentActions.undo());
 
     // Should have entries in both stacks
@@ -306,17 +348,17 @@ describe('HISTORY_CLEAR action', () => {
     expect(isHistoryEmpty(state)).toBe(true);
   });
 
-  it('should preserve history limit', () => {
+  it("should preserve history limit", () => {
     let state = createInitialState({ historyLimit: 50 });
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
     state = documentReducer(state, DocumentActions.historyClear());
 
     expect(state.history.limit).toBe(50);
   });
 
-  it('should increment version', () => {
+  it("should increment version", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
     const versionBefore = state.version;
 
     state = documentReducer(state, DocumentActions.historyClear());
@@ -324,10 +366,10 @@ describe('HISTORY_CLEAR action', () => {
     expect(state.version).toBe(versionBefore + 1);
   });
 
-  it('should not affect document content', () => {
+  it("should not affect document content", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
-    state = documentReducer(state, DocumentActions.insert(byteOffset(5), ' World'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(5), " World"));
 
     const lengthBefore = state.pieceTable.totalLength;
 
@@ -336,7 +378,7 @@ describe('HISTORY_CLEAR action', () => {
     expect(state.pieceTable.totalLength).toBe(lengthBefore);
   });
 
-  it('should work on empty history', () => {
+  it("should work on empty history", () => {
     let state = createInitialState();
 
     // Should not throw when clearing empty history
@@ -345,9 +387,9 @@ describe('HISTORY_CLEAR action', () => {
     expect(isHistoryEmpty(state)).toBe(true);
   });
 
-  it('should return frozen history state', () => {
+  it("should return frozen history state", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
     state = documentReducer(state, DocumentActions.historyClear());
 
     expect(Object.isFrozen(state.history)).toBe(true);
@@ -360,8 +402,8 @@ describe('HISTORY_CLEAR action', () => {
 // Integration Tests
 // =============================================================================
 
-describe('History helpers integration', () => {
-  it('should track full undo/redo cycle correctly', () => {
+describe("History helpers integration", () => {
+  it("should track full undo/redo cycle correctly", () => {
     let state = createInitialState();
 
     // Initial state
@@ -372,15 +414,15 @@ describe('History helpers integration', () => {
     expect(isHistoryEmpty(state)).toBe(true);
 
     // Make edits
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'a'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "a"));
     expect(canUndo(state)).toBe(true);
     expect(canRedo(state)).toBe(false);
     expect(getUndoCount(state)).toBe(1);
 
-    state = documentReducer(state, DocumentActions.insert(byteOffset(1), 'b'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(1), "b"));
     expect(getUndoCount(state)).toBe(2);
 
-    state = documentReducer(state, DocumentActions.insert(byteOffset(2), 'c'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(2), "c"));
     expect(getUndoCount(state)).toBe(3);
 
     // Undo
@@ -404,16 +446,16 @@ describe('History helpers integration', () => {
     expect(isHistoryEmpty(state)).toBe(true);
   });
 
-  it('should clear redo stack on new edit', () => {
+  it("should clear redo stack on new edit", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'a'));
-    state = documentReducer(state, DocumentActions.insert(byteOffset(1), 'b'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "a"));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(1), "b"));
     state = documentReducer(state, DocumentActions.undo());
 
     expect(getRedoCount(state)).toBe(1);
 
     // New edit should clear redo stack
-    state = documentReducer(state, DocumentActions.insert(byteOffset(1), 'c'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(1), "c"));
 
     expect(getRedoCount(state)).toBe(0);
     expect(canRedo(state)).toBe(false);
@@ -424,21 +466,21 @@ describe('History helpers integration', () => {
 // Undo Coalescing Tests
 // =============================================================================
 
-describe('Undo coalescing', () => {
-  it('should not coalesce when timeout is 0 (default)', () => {
+describe("Undo coalescing", () => {
+  it("should not coalesce when timeout is 0 (default)", () => {
     let state = createInitialState();
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'a'));
-    state = documentReducer(state, DocumentActions.insert(byteOffset(1), 'b'));
-    state = documentReducer(state, DocumentActions.insert(byteOffset(2), 'c'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "a"));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(1), "b"));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(2), "c"));
 
     expect(getUndoCount(state)).toBe(3);
   });
 
-  it('should coalesce contiguous inserts within timeout', () => {
+  it("should coalesce contiguous inserts within timeout", () => {
     let state = createInitialState({ undoGroupTimeout: 300 });
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'a'));
-    state = documentReducer(state, DocumentActions.insert(byteOffset(1), 'b'));
-    state = documentReducer(state, DocumentActions.insert(byteOffset(2), 'c'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "a"));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(1), "b"));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(2), "c"));
 
     // All three inserts should be coalesced into one entry
     expect(getUndoCount(state)).toBe(1);
@@ -448,42 +490,42 @@ describe('Undo coalescing', () => {
     expect(state.pieceTable.totalLength).toBe(0);
   });
 
-  it('should not coalesce non-contiguous inserts', () => {
+  it("should not coalesce non-contiguous inserts", () => {
     let state = createInitialState({ undoGroupTimeout: 300 });
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'a'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "a"));
     // Insert at position 0 instead of 1 (not contiguous with previous insert end)
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'b'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "b"));
 
     expect(getUndoCount(state)).toBe(2);
   });
 
-  it('should not coalesce different change types', () => {
+  it("should not coalesce different change types", () => {
     let state = createInitialState({ undoGroupTimeout: 300 });
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'abc'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "abc"));
     state = documentReducer(state, DocumentActions.delete(byteOffset(2), byteOffset(3)));
 
     expect(getUndoCount(state)).toBe(2);
   });
 
-  it('should not coalesce when timeout has expired', () => {
+  it("should not coalesce when timeout has expired", () => {
     let state = createInitialState({ undoGroupTimeout: 300 });
 
     // Insert first character
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'a'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "a"));
 
     // Mock Date.now to return a time beyond the timeout
     const originalNow = Date.now;
-    vi.spyOn(Date, 'now').mockReturnValue(originalNow() + 500);
+    vi.spyOn(Date, "now").mockReturnValue(originalNow() + 500);
 
-    state = documentReducer(state, DocumentActions.insert(byteOffset(1), 'b'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(1), "b"));
 
     vi.restoreAllMocks();
 
     expect(getUndoCount(state)).toBe(2);
   });
 
-  it('should coalesce backspace deletes', () => {
-    let state = createInitialState({ undoGroupTimeout: 300, content: 'abcd' });
+  it("should coalesce backspace deletes", () => {
+    let state = createInitialState({ undoGroupTimeout: 300, content: "abcd" });
 
     // Delete 'd' (backspace from end)
     state = documentReducer(state, DocumentActions.delete(byteOffset(3), byteOffset(4)));
@@ -500,8 +542,8 @@ describe('Undo coalescing', () => {
     expect(state.pieceTable.totalLength).toBe(4);
   });
 
-  it('should coalesce forward deletes', () => {
-    let state = createInitialState({ undoGroupTimeout: 300, content: 'abcd' });
+  it("should coalesce forward deletes", () => {
+    let state = createInitialState({ undoGroupTimeout: 300, content: "abcd" });
 
     // Forward delete at position 1 (delete 'b')
     state = documentReducer(state, DocumentActions.delete(byteOffset(1), byteOffset(2)));
@@ -516,21 +558,24 @@ describe('Undo coalescing', () => {
     expect(state.pieceTable.totalLength).toBe(4);
   });
 
-  it('should preserve coalesceTimeout across HISTORY_CLEAR', () => {
+  it("should preserve coalesceTimeout across HISTORY_CLEAR", () => {
     let state = createInitialState({ undoGroupTimeout: 300 });
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'a'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "a"));
     state = documentReducer(state, DocumentActions.historyClear());
 
     expect(state.history.coalesceTimeout).toBe(300);
   });
 
-  it('should coalesce multi-byte characters correctly', () => {
+  it("should coalesce multi-byte characters correctly", () => {
     let state = createInitialState({ undoGroupTimeout: 300 });
     // Insert emoji (4 bytes in UTF-8)
-    state = documentReducer(state, DocumentActions.insert(byteOffset(0), '\u{1F600}'));
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "\u{1F600}"));
     const firstByteLength = state.pieceTable.totalLength;
     // Insert another emoji contiguously
-    state = documentReducer(state, DocumentActions.insert(byteOffset(firstByteLength), '\u{1F601}'));
+    state = documentReducer(
+      state,
+      DocumentActions.insert(byteOffset(firstByteLength), "\u{1F601}"),
+    );
 
     expect(getUndoCount(state)).toBe(1);
 

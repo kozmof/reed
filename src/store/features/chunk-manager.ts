@@ -12,8 +12,8 @@
  * store.dispatch(DocumentActions.*).
  */
 
-import type { DocumentStore } from '../../types/store.ts';
-import { DocumentActions } from './actions.ts';
+import type { DocumentStore } from "../../types/store.ts";
+import { DocumentActions } from "./actions.ts";
 
 // =============================================================================
 // Public interfaces
@@ -56,7 +56,7 @@ export interface ChunkManagerConfig {
    * - 'parallel'  — fire all fetches concurrently (default, lower latency)
    * - 'queue'     — serialise fetches one at a time (lower peak I/O)
    */
-  fetchStrategy?: 'parallel' | 'queue';
+  fetchStrategy?: "parallel" | "queue";
 }
 
 /**
@@ -114,10 +114,10 @@ export interface ChunkManager {
 export function createChunkManager(
   store: DocumentStore,
   loader: ChunkLoader,
-  config: ChunkManagerConfig = {}
+  config: ChunkManagerConfig = {},
 ): ChunkManager {
   const maxLoadedChunks = Math.max(1, config.maxLoadedChunks ?? 8);
-  const fetchStrategy = config.fetchStrategy ?? 'parallel';
+  const fetchStrategy = config.fetchStrategy ?? "parallel";
 
   // In-flight fetch promises keyed by chunk index.
   // Removed once the fetch resolves or rejects.
@@ -185,19 +185,26 @@ export function createChunkManager(
 
   function doFetch(chunkIndex: number): Promise<void> {
     const fetch = (): Promise<void> =>
-      loader.loadChunk(chunkIndex).then(data => {
-        if (disposed) return;
-        if (data.length === 0) throw new Error(`ChunkLoader returned empty data for chunk ${chunkIndex}`);
-        store.dispatch(DocumentActions.loadChunk(chunkIndex, data));
-        lruTouch(chunkIndex);
-        evictIfOverLimit();
-      }).finally(() => {
-        inFlight.delete(chunkIndex);
-      });
+      loader
+        .loadChunk(chunkIndex)
+        .then((data) => {
+          if (disposed) return;
+          if (data.length === 0)
+            throw new Error(`ChunkLoader returned empty data for chunk ${chunkIndex}`);
+          store.dispatch(DocumentActions.loadChunk(chunkIndex, data));
+          lruTouch(chunkIndex);
+          evictIfOverLimit();
+        })
+        .finally(() => {
+          inFlight.delete(chunkIndex);
+        });
 
-    if (fetchStrategy === 'queue') {
+    if (fetchStrategy === "queue") {
       const promise = fetchQueue.then(fetch, fetch);
-      fetchQueue = promise.then(() => {}, () => {});
+      fetchQueue = promise.then(
+        () => {},
+        () => {},
+      );
       return promise;
     }
 

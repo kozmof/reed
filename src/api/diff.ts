@@ -10,7 +10,7 @@ import {
   computeSetValueActionsFromStateWithDiff,
   setValue,
   setValueWithDiff,
-} from '../store/features/diff.ts';
+} from "../store/features/diff.ts";
 
 export const diff = {
   diff: diffAlgorithm,

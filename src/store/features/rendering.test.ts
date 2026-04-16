@@ -2,8 +2,8 @@
  * Tests for rendering utilities.
  */
 
-import { describe, it, expect } from 'vitest';
-import { createInitialState } from './../core/state.ts';
+import { describe, it, expect } from "vitest";
+import { createInitialState } from "./../core/state.ts";
 import {
   getVisibleLineRange,
   getVisibleLines,
@@ -13,12 +13,12 @@ import {
   estimateTotalHeight,
   positionToLineColumn,
   lineColumnToPosition,
-} from './rendering.ts';
-import type { ScrollPosition, LineHeightConfig, VisibleLine } from './rendering.ts';
-import { byteOffset } from '../../types/branded.ts';
+} from "./rendering.ts";
+import type { ScrollPosition, LineHeightConfig, VisibleLine } from "./rendering.ts";
+import { byteOffset } from "../../types/branded.ts";
 
-describe('getVisibleLineRange', () => {
-  it('should calculate visible lines from scroll position', () => {
+describe("getVisibleLineRange", () => {
+  it("should calculate visible lines from scroll position", () => {
     const scroll: ScrollPosition = {
       scrollTop: 200,
       lineHeight: 20,
@@ -34,7 +34,7 @@ describe('getVisibleLineRange', () => {
     expect(result.endLine).toBe(35);
   });
 
-  it('should clamp to document bounds', () => {
+  it("should clamp to document bounds", () => {
     const scroll: ScrollPosition = {
       scrollTop: 0,
       lineHeight: 20,
@@ -47,7 +47,7 @@ describe('getVisibleLineRange', () => {
     expect(result.endLine).toBe(9); // Only 10 lines in document
   });
 
-  it('should apply custom overscan', () => {
+  it("should apply custom overscan", () => {
     const scroll: ScrollPosition = {
       scrollTop: 100,
       lineHeight: 20,
@@ -62,7 +62,7 @@ describe('getVisibleLineRange', () => {
     expect(result.endLine).toBe(25);
   });
 
-  it('should handle zero scroll', () => {
+  it("should handle zero scroll", () => {
     const scroll: ScrollPosition = {
       scrollTop: 0,
       lineHeight: 20,
@@ -76,8 +76,8 @@ describe('getVisibleLineRange', () => {
   });
 });
 
-describe('getVisibleLines', () => {
-  it('should return sentinel line for empty document', () => {
+describe("getVisibleLines", () => {
+  it("should return sentinel line for empty document", () => {
     const state = createInitialState();
     const result = getVisibleLines(state, {
       startLine: 0,
@@ -87,12 +87,12 @@ describe('getVisibleLines', () => {
     expect(result.lines).toHaveLength(1);
     expect(result.totalLines).toBe(1);
     expect(result.lines[0].lineNumber).toBe(0);
-    expect(result.lines[0].content).toBe('');
+    expect(result.lines[0].content).toBe("");
   });
 
-  it('should return visible lines with content', () => {
+  it("should return visible lines with content", () => {
     const state = createInitialState({
-      content: 'Line 0\nLine 1\nLine 2\nLine 3\nLine 4',
+      content: "Line 0\nLine 1\nLine 2\nLine 3\nLine 4",
     });
 
     const result = getVisibleLines(state, {
@@ -102,15 +102,15 @@ describe('getVisibleLines', () => {
     });
 
     expect(result.lines).toHaveLength(3);
-    expect(result.lines[0].content).toBe('Line 0');
+    expect(result.lines[0].content).toBe("Line 0");
     expect(result.lines[0].lineNumber).toBe(0);
-    expect(result.lines[1].content).toBe('Line 1');
-    expect(result.lines[2].content).toBe('Line 2');
+    expect(result.lines[1].content).toBe("Line 1");
+    expect(result.lines[2].content).toBe("Line 2");
   });
 
-  it('should strip trailing newlines from content', () => {
+  it("should strip trailing newlines from content", () => {
     const state = createInitialState({
-      content: 'Hello\nWorld\n',
+      content: "Hello\nWorld\n",
     });
 
     const result = getVisibleLines(state, {
@@ -119,15 +119,15 @@ describe('getVisibleLines', () => {
       overscan: 0,
     });
 
-    expect(result.lines[0].content).toBe('Hello');
+    expect(result.lines[0].content).toBe("Hello");
     expect(result.lines[0].hasNewline).toBe(true);
-    expect(result.lines[1].content).toBe('World');
+    expect(result.lines[1].content).toBe("World");
     expect(result.lines[1].hasNewline).toBe(true);
   });
 
-  it('should include offsets', () => {
+  it("should include offsets", () => {
     const state = createInitialState({
-      content: 'ABC\nDEF\n',
+      content: "ABC\nDEF\n",
     });
 
     const result = getVisibleLines(state, {
@@ -142,9 +142,9 @@ describe('getVisibleLines', () => {
     expect(result.lines[1].endOffset).toBe(8); // 'DEF\n'
   });
 
-  it('should apply overscan', () => {
+  it("should apply overscan", () => {
     const state = createInitialState({
-      content: 'L0\nL1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9',
+      content: "L0\nL1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9",
     });
 
     const result = getVisibleLines(state, {
@@ -160,9 +160,9 @@ describe('getVisibleLines', () => {
     expect(result.lines.length).toBe(6);
   });
 
-  it('should return frozen results', () => {
+  it("should return frozen results", () => {
     const state = createInitialState({
-      content: 'Hello\nWorld',
+      content: "Hello\nWorld",
     });
 
     const result = getVisibleLines(state, {
@@ -177,56 +177,56 @@ describe('getVisibleLines', () => {
   });
 });
 
-describe('getVisibleLine', () => {
-  it('should return null for invalid line number', () => {
-    const state = createInitialState({ content: 'Hello' });
+describe("getVisibleLine", () => {
+  it("should return null for invalid line number", () => {
+    const state = createInitialState({ content: "Hello" });
 
     expect(getVisibleLine(state, -1)).toBeNull();
     expect(getVisibleLine(state, 100)).toBeNull();
   });
 
-  it('should return line content', () => {
+  it("should return line content", () => {
     const state = createInitialState({
-      content: 'Line 0\nLine 1\nLine 2',
+      content: "Line 0\nLine 1\nLine 2",
     });
 
     const line = getVisibleLine(state, 1);
 
     expect(line).not.toBeNull();
     expect(line!.lineNumber).toBe(1);
-    expect(line!.content).toBe('Line 1');
+    expect(line!.content).toBe("Line 1");
     expect(line!.hasNewline).toBe(true);
   });
 
-  it('should handle last line without newline', () => {
+  it("should handle last line without newline", () => {
     const state = createInitialState({
-      content: 'Hello\nWorld',
+      content: "Hello\nWorld",
     });
 
     const line = getVisibleLine(state, 1);
 
-    expect(line!.content).toBe('World');
+    expect(line!.content).toBe("World");
     expect(line!.hasNewline).toBe(false);
   });
 
-  it('should return frozen result', () => {
-    const state = createInitialState({ content: 'Test' });
+  it("should return frozen result", () => {
+    const state = createInitialState({ content: "Test" });
     const line = getVisibleLine(state, 0);
 
     expect(Object.isFrozen(line)).toBe(true);
   });
 });
 
-describe('estimateLineHeight', () => {
+describe("estimateLineHeight", () => {
   const mockLine: VisibleLine = {
     lineNumber: 0,
-    content: 'A'.repeat(50),
+    content: "A".repeat(50),
     startOffset: 0,
     endOffset: 50,
     hasNewline: true,
   };
 
-  it('should return base height when wrapping disabled', () => {
+  it("should return base height when wrapping disabled", () => {
     const config: LineHeightConfig = {
       baseLineHeight: 20,
       charWidth: 8,
@@ -237,7 +237,7 @@ describe('estimateLineHeight', () => {
     expect(estimateLineHeight(mockLine, config)).toBe(20);
   });
 
-  it('should calculate wrapped height', () => {
+  it("should calculate wrapped height", () => {
     const config: LineHeightConfig = {
       baseLineHeight: 20,
       charWidth: 8,
@@ -249,10 +249,10 @@ describe('estimateLineHeight', () => {
     expect(estimateLineHeight(mockLine, config)).toBe(40);
   });
 
-  it('should handle empty line', () => {
+  it("should handle empty line", () => {
     const emptyLine: VisibleLine = {
       lineNumber: 0,
-      content: '',
+      content: "",
       startOffset: 0,
       endOffset: 1,
       hasNewline: true,
@@ -269,10 +269,10 @@ describe('estimateLineHeight', () => {
   });
 });
 
-describe('estimateTotalHeight', () => {
-  it('should calculate total height without wrapping', () => {
+describe("estimateTotalHeight", () => {
+  it("should calculate total height without wrapping", () => {
     const state = createInitialState({
-      content: 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5',
+      content: "Line 1\nLine 2\nLine 3\nLine 4\nLine 5",
     });
 
     const config: LineHeightConfig = {
@@ -285,9 +285,9 @@ describe('estimateTotalHeight', () => {
     expect(estimateTotalHeight(state, config)).toBe(100); // 5 lines * 20
   });
 
-  it('should calculate height with wrapping for small docs', () => {
+  it("should calculate height with wrapping for small docs", () => {
     const state = createInitialState({
-      content: 'Short\n' + 'A'.repeat(50) + '\nShort',
+      content: "Short\n" + "A".repeat(50) + "\nShort",
     });
 
     const config: LineHeightConfig = {
@@ -305,10 +305,10 @@ describe('estimateTotalHeight', () => {
   });
 });
 
-describe('positionToLineColumn', () => {
-  it('should convert position to line/column', () => {
+describe("positionToLineColumn", () => {
+  it("should convert position to line/column", () => {
     const state = createInitialState({
-      content: 'Hello\nWorld',
+      content: "Hello\nWorld",
     });
 
     expect(positionToLineColumn(state, byteOffset(0))).toEqual({ line: 0, column: 0 });
@@ -317,15 +317,15 @@ describe('positionToLineColumn', () => {
     expect(positionToLineColumn(state, byteOffset(11))).toEqual({ line: 1, column: 5 });
   });
 
-  it('should handle empty document', () => {
+  it("should handle empty document", () => {
     const state = createInitialState();
 
     expect(positionToLineColumn(state, byteOffset(0))).toEqual({ line: 0, column: 0 });
   });
 
-  it('should handle position at newline', () => {
+  it("should handle position at newline", () => {
     const state = createInitialState({
-      content: 'ABC\nDEF',
+      content: "ABC\nDEF",
     });
 
     // Position 3 is at the newline
@@ -334,10 +334,10 @@ describe('positionToLineColumn', () => {
   });
 });
 
-describe('lineColumnToPosition', () => {
-  it('should convert line/column to position', () => {
+describe("lineColumnToPosition", () => {
+  it("should convert line/column to position", () => {
     const state = createInitialState({
-      content: 'Hello\nWorld',
+      content: "Hello\nWorld",
     });
 
     expect(lineColumnToPosition(state, 0, 0)).toBe(0);
@@ -346,18 +346,18 @@ describe('lineColumnToPosition', () => {
     expect(lineColumnToPosition(state, 1, 5)).toBe(11);
   });
 
-  it('should return null for invalid line', () => {
+  it("should return null for invalid line", () => {
     const state = createInitialState({
-      content: 'Hello',
+      content: "Hello",
     });
 
     expect(lineColumnToPosition(state, -1, 0)).toBeNull();
     expect(lineColumnToPosition(state, 100, 0)).toBeNull();
   });
 
-  it('should clamp column to line length', () => {
+  it("should clamp column to line length", () => {
     const state = createInitialState({
-      content: 'Hi\nWorld',
+      content: "Hi\nWorld",
     });
 
     // Line 0 is 'Hi\n' (3 chars with newline, 2 without)
@@ -366,9 +366,9 @@ describe('lineColumnToPosition', () => {
     expect(result).toBe(3); // Clamped to line length including newline
   });
 
-  it('should handle unicode', () => {
+  it("should handle unicode", () => {
     const state = createInitialState({
-      content: '世界\nHello',
+      content: "世界\nHello",
     });
 
     // Line index uses byte positions (UTF-8)
@@ -377,38 +377,38 @@ describe('lineColumnToPosition', () => {
   });
 });
 
-describe('getLineContent (optimization)', () => {
-  it('should get line content by number using line index', () => {
+describe("getLineContent (optimization)", () => {
+  it("should get line content by number using line index", () => {
     const state = createInitialState({
-      content: 'Line 1\nLine 2\nLine 3',
+      content: "Line 1\nLine 2\nLine 3",
     });
 
-    expect(getLineContent(state, 0)).toBe('Line 1');
-    expect(getLineContent(state, 1)).toBe('Line 2');
-    expect(getLineContent(state, 2)).toBe('Line 3');
+    expect(getLineContent(state, 0)).toBe("Line 1");
+    expect(getLineContent(state, 1)).toBe("Line 2");
+    expect(getLineContent(state, 2)).toBe("Line 3");
   });
 
-  it('should return null for out-of-range line', () => {
+  it("should return null for out-of-range line", () => {
     const state = createInitialState({
-      content: 'Hello',
+      content: "Hello",
     });
 
     expect(getLineContent(state, -1)).toBeNull();
     expect(getLineContent(state, 5)).toBeNull();
   });
 
-  it('should return empty string for empty document', () => {
+  it("should return empty string for empty document", () => {
     const state = createInitialState();
     // Line 0 exists (empty document has one empty line); content is '' not null.
-    expect(getLineContent(state, 0)).toBe('');
+    expect(getLineContent(state, 0)).toBe("");
   });
 
-  it('should handle unicode content', () => {
+  it("should handle unicode content", () => {
     const state = createInitialState({
-      content: '你好\nworld',
+      content: "你好\nworld",
     });
 
-    expect(getLineContent(state, 0)).toBe('你好');
-    expect(getLineContent(state, 1)).toBe('world');
+    expect(getLineContent(state, 0)).toBe("你好");
+    expect(getLineContent(state, 1)).toBe("world");
   });
 });

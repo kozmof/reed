@@ -20,18 +20,18 @@ import type {
   SelectionState,
   SelectionRange,
   NonEmptyReadonlyArray,
-} from '../../types/state.ts';
-import { pstackPush, pstackPeek, pstackPop, pstackTrimToSize } from '../../types/state.ts';
-import type { ByteOffset } from '../../types/branded.ts';
-import type { DeleteBoundaryContext, ReadTextFn } from '../../types/operations.ts';
-import { byteOffset, byteLength } from '../../types/branded.ts';
-import { withState, withLineIndexState } from '../core/state.ts';
-import { asEagerLineIndex } from '../core/state.ts';
+} from "../../types/state.ts";
+import { pstackPush, pstackPeek, pstackPop, pstackTrimToSize } from "../../types/state.ts";
+import type { ByteOffset } from "../../types/branded.ts";
+import type { DeleteBoundaryContext, ReadTextFn } from "../../types/operations.ts";
+import { byteOffset, byteLength } from "../../types/branded.ts";
+import { withState, withLineIndexState } from "../core/state.ts";
+import { asEagerLineIndex } from "../core/state.ts";
 import {
   pieceTableInsert as ptInsert,
   pieceTableDelete as ptDelete,
   getText,
-} from '../core/piece-table.ts';
+} from "../core/piece-table.ts";
 import {
   lineIndexInsert as liInsert,
   lineIndexDelete as liDelete,
@@ -41,8 +41,8 @@ import {
   reconcileRange,
   findLineAtPosition,
   rebuildLineIndex,
-} from '../core/line-index.ts';
-import { textEncoder } from '../core/encoding.ts';
+} from "../core/line-index.ts";
+import { textEncoder } from "../core/encoding.ts";
 
 // =============================================================================
 // Position Validation
@@ -68,7 +68,7 @@ export function validatePosition(position: number, totalLength: number): ByteOff
 export function validateRange(
   start: number,
   end: number,
-  totalLength: number
+  totalLength: number,
 ): { start: ByteOffset; end: ByteOffset; valid: boolean } {
   // Inverted range is invalid (should be no-op). Clamp anyway so callers that
   // accidentally use start/end without checking valid still get in-bounds values.
@@ -97,7 +97,7 @@ export function validateRange(
 export function pieceTableInsert(
   state: DocumentState,
   position: ByteOffset,
-  text: string
+  text: string,
 ): { state: DocumentState; insertedByteLength: number } {
   const result = ptInsert(state.pieceTable, position, text);
   return {
@@ -113,7 +113,7 @@ export function pieceTableInsert(
 export function pieceTableDelete(
   state: DocumentState,
   start: ByteOffset,
-  end: ByteOffset
+  end: ByteOffset,
 ): DocumentState {
   const newPieceTable = ptDelete(state.pieceTable, start, end);
   return withState(state, {
@@ -142,8 +142,19 @@ export function getTextRange(state: DocumentState, start: ByteOffset, end: ByteO
  * the strategy — it applies regardless of evaluation mode.
  */
 interface LineIndexStrategy {
-  insert(lineIndex: LineIndexState, position: ByteOffset, text: string, readText?: ReadTextFn): LineIndexState;
-  delete(lineIndex: LineIndexState, position: ByteOffset, end: ByteOffset, text: string, context?: DeleteBoundaryContext): LineIndexState;
+  insert(
+    lineIndex: LineIndexState,
+    position: ByteOffset,
+    text: string,
+    readText?: ReadTextFn,
+  ): LineIndexState;
+  delete(
+    lineIndex: LineIndexState,
+    position: ByteOffset,
+    end: ByteOffset,
+    text: string,
+    context?: DeleteBoundaryContext,
+  ): LineIndexState;
 }
 
 /** Eager strategy: updates byte offsets immediately (used by undo/redo after reconcile). */
@@ -163,18 +174,14 @@ export function lazyStrategy(version: number): LineIndexStrategy {
 export function getDeleteBoundaryContext(
   state: DocumentState,
   start: ByteOffset,
-  end: ByteOffset
+  end: ByteOffset,
 ): DeleteBoundaryContext {
   const startN = start;
   const endN = end;
   const totalLength = state.pieceTable.totalLength;
 
-  const prevChar = startN > 0
-    ? getText(state.pieceTable, byteOffset(startN - 1), start)
-    : '';
-  const nextChar = endN < totalLength
-    ? getText(state.pieceTable, end, byteOffset(endN + 1))
-    : '';
+  const prevChar = startN > 0 ? getText(state.pieceTable, byteOffset(startN - 1), start) : "";
+  const nextChar = endN < totalLength ? getText(state.pieceTable, end, byteOffset(endN + 1)) : "";
 
   return {
     prevChar: prevChar.length > 0 ? prevChar : undefined,
@@ -184,23 +191,29 @@ export function getDeleteBoundaryContext(
 
 export function shouldRebuildLineIndexForDelete(
   deletedText: string,
-  deleteContext?: DeleteBoundaryContext
+  deleteContext?: DeleteBoundaryContext,
 ): boolean {
-  if (deletedText.includes('\r')) return true;
+  if (deletedText.includes("\r")) return true;
   // Deleting LF immediately after a CR can rewrite CRLF boundaries across
   // line edges while keeping logical line-break count unchanged.
-  if (deletedText.includes('\n') && deleteContext?.prevChar === '\r') return true;
+  if (deletedText.includes("\n") && deleteContext?.prevChar === "\r") return true;
   // Deleting any content between '\r' and '\n' can collapse two logical
   // breaks into one CRLF break without deleting newline bytes directly.
-  if (deleteContext?.prevChar === '\r' && deleteContext?.nextChar === '\n') return true;
+  if (deleteContext?.prevChar === "\r" && deleteContext?.nextChar === "\n") return true;
   return false;
 }
 
 export function rebuildLineIndexFromPieceTableState(state: DocumentState): DocumentState {
-  const content = getText(state.pieceTable, byteOffset(0), byteOffset(state.pieceTable.totalLength));
+  const content = getText(
+    state.pieceTable,
+    byteOffset(0),
+    byteOffset(state.pieceTable.totalLength),
+  );
   const rebuilt = rebuildLineIndex(content);
   // Preserve user-configured maxDirtyRanges — rebuildLineIndex resets it to the default 32.
-  const rebuiltWithConfig = withLineIndexState(rebuilt, { maxDirtyRanges: state.lineIndex.maxDirtyRanges });
+  const rebuiltWithConfig = withLineIndexState(rebuilt, {
+    maxDirtyRanges: state.lineIndex.maxDirtyRanges,
+  });
   return withState(state, { lineIndex: rebuiltWithConfig });
 }
 
@@ -212,22 +225,19 @@ export function rebuildLineIndexFromPieceTableState(state: DocumentState): Docum
  * Compute the expected cursor position after a change.
  * This is used to properly restore selection on redo.
  */
-function computeSelectionAfterChange(
-  state: DocumentState,
-  change: HistoryChange
-): SelectionState {
+function computeSelectionAfterChange(state: DocumentState, change: HistoryChange): SelectionState {
   let newPosition: number;
 
   switch (change.type) {
-    case 'insert':
+    case "insert":
       // After insert, cursor should be at end of inserted text
       newPosition = change.position + change.byteLength;
       break;
-    case 'delete':
+    case "delete":
       // After delete, cursor should be at the deletion point
       newPosition = change.position;
       break;
-    case 'replace':
+    case "replace":
       // After replace, cursor should be at end of inserted text
       newPosition = change.position + change.byteLength;
       break;
@@ -236,7 +246,9 @@ function computeSelectionAfterChange(
   }
 
   return Object.freeze({
-    ranges: Object.freeze([Object.freeze({ anchor: byteOffset(newPosition), head: byteOffset(newPosition) })] as const),
+    ranges: Object.freeze([
+      Object.freeze({ anchor: byteOffset(newPosition), head: byteOffset(newPosition) }),
+    ] as const),
     primaryIndex: 0,
   });
 }
@@ -250,7 +262,7 @@ function canCoalesce(
   lastEntry: HistoryEntry,
   newChange: HistoryChange,
   timeout: number,
-  now: number
+  now: number,
 ): boolean {
   if (timeout <= 0) return false;
   if (now - lastEntry.timestamp > timeout) return false;
@@ -260,10 +272,10 @@ function canCoalesce(
   if (last.type !== newChange.type) return false;
 
   switch (newChange.type) {
-    case 'insert':
+    case "insert":
       // Contiguous typing: new insert starts where last insert ended
       return newChange.position === last.position + last.byteLength;
-    case 'delete': {
+    case "delete": {
       // Backspace: new delete ends where last delete starts
       if (newChange.position + newChange.byteLength === last.position) return true;
       // Forward delete: same position as last delete
@@ -279,15 +291,12 @@ function canCoalesce(
  * Merge two changes into a single coalesced change.
  * Assumes canCoalesce() returned true for these changes.
  */
-function coalesceChanges(
-  existing: HistoryChange,
-  incoming: HistoryChange
-): HistoryChange {
+function coalesceChanges(existing: HistoryChange, incoming: HistoryChange): HistoryChange {
   switch (incoming.type) {
-    case 'insert':
+    case "insert":
       // Append: concatenate text, keep earlier position
       return makeInsertChange(existing.position, existing.text + incoming.text);
-    case 'delete': {
+    case "delete": {
       if (incoming.position + incoming.byteLength === existing.position) {
         // Backspace: prepend text, use earlier position
         return makeDeleteChange(incoming.position, incoming.text + existing.text);
@@ -298,7 +307,9 @@ function coalesceChanges(
     default:
       // canCoalesce() only returns true for 'insert' and 'delete' changes, so
       // 'replace' (the only remaining variant) should never reach here.
-      throw new Error(`coalesceChanges called with uncoalesceable change type: ${(incoming as HistoryChange).type}`);
+      throw new Error(
+        `coalesceChanges called with uncoalesceable change type: ${(incoming as HistoryChange).type}`,
+      );
   }
 }
 
@@ -312,7 +323,7 @@ function coalesceChanges(
 
 export function makeInsertChange(position: ByteOffset, text: string): HistoryInsertChange {
   return Object.freeze({
-    type: 'insert' as const,
+    type: "insert" as const,
     position,
     text,
     byteLength: byteLength(textEncoder.encode(text).byteLength),
@@ -321,7 +332,7 @@ export function makeInsertChange(position: ByteOffset, text: string): HistoryIns
 
 export function makeDeleteChange(position: ByteOffset, text: string): HistoryDeleteChange {
   return Object.freeze({
-    type: 'delete' as const,
+    type: "delete" as const,
     position,
     text,
     byteLength: byteLength(textEncoder.encode(text).byteLength),
@@ -331,10 +342,10 @@ export function makeDeleteChange(position: ByteOffset, text: string): HistoryDel
 export function makeReplaceChange(
   position: ByteOffset,
   text: string,
-  oldText: string
+  oldText: string,
 ): HistoryReplaceChange {
   return Object.freeze({
-    type: 'replace' as const,
+    type: "replace" as const,
     position,
     text,
     byteLength: byteLength(textEncoder.encode(text).byteLength),
@@ -350,7 +361,7 @@ export function makeReplaceChange(
 export function historyPush(
   state: DocumentState,
   change: HistoryChange,
-  now: number
+  now: number,
 ): DocumentState {
   const history = state.history;
 
@@ -416,12 +427,12 @@ export function historyPush(
 export function reconcileRangeForChanges(
   lineIndex: LineIndexState,
   changes: readonly HistoryChange[],
-  version: number
+  version: number,
 ): LineIndexState {
   if (!lineIndex.rebuildPending) return lineIndex;
 
   // If the sentinel is set, we cannot do a targeted reconcile — fall back.
-  if (lineIndex.dirtyRanges.some(r => r.kind === 'sentinel')) {
+  if (lineIndex.dirtyRanges.some((r) => r.kind === "sentinel")) {
     return reconcileFull(lineIndex, version);
   }
 
@@ -461,23 +472,23 @@ export function reconcileRangeForChanges(
  */
 export function invertChange(change: HistoryChange): HistoryChange {
   switch (change.type) {
-    case 'insert':
+    case "insert":
       return Object.freeze({
-        type: 'delete' as const,
+        type: "delete" as const,
         position: change.position,
         text: change.text,
         byteLength: change.byteLength,
       });
-    case 'delete':
+    case "delete":
       return Object.freeze({
-        type: 'insert' as const,
+        type: "insert" as const,
         position: change.position,
         text: change.text,
         byteLength: change.byteLength,
       });
-    case 'replace':
+    case "replace":
       return Object.freeze({
-        type: 'replace' as const,
+        type: "replace" as const,
         position: change.position,
         text: change.oldText,
         byteLength: change.oldByteLength,
@@ -497,23 +508,29 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
   const li = asEagerLineIndex(state.lineIndex);
 
   switch (change.type) {
-    case 'insert': {
+    case "insert": {
       const { state: s } = pieceTableInsert(state, change.position, change.text);
       const readText = (start: ByteOffset, end: ByteOffset) => getText(s.pieceTable, start, end);
       const newLineIndex = eagerStrategy.insert(li, change.position, change.text, readText);
       return withState(s, { lineIndex: newLineIndex });
     }
-    case 'delete': {
+    case "delete": {
       const end = byteOffset(change.position + change.byteLength);
       const deleteContext = getDeleteBoundaryContext(state, change.position, end);
       const s = pieceTableDelete(state, change.position, end);
       if (shouldRebuildLineIndexForDelete(change.text, deleteContext)) {
         return rebuildLineIndexFromPieceTableState(s);
       }
-      const newLineIndex = eagerStrategy.delete(li, change.position, end, change.text, deleteContext);
+      const newLineIndex = eagerStrategy.delete(
+        li,
+        change.position,
+        end,
+        change.text,
+        deleteContext,
+      );
       return withState(s, { lineIndex: newLineIndex });
     }
-    case 'replace': {
+    case "replace": {
       const deleteEnd = byteOffset(change.position + change.oldByteLength);
       const deleteContext = getDeleteBoundaryContext(state, change.position, deleteEnd);
       const s = pieceTableDelete(state, change.position, deleteEnd);
@@ -521,7 +538,13 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
       if (shouldRebuildLineIndexForDelete(change.oldText, deleteContext)) {
         return rebuildLineIndexFromPieceTableState(s2);
       }
-      const li1 = eagerStrategy.delete(li, change.position, deleteEnd, change.oldText, deleteContext);
+      const li1 = eagerStrategy.delete(
+        li,
+        change.position,
+        deleteEnd,
+        change.oldText,
+        deleteContext,
+      );
       const readText = (start: ByteOffset, end: ByteOffset) => getText(s2.pieceTable, start, end);
       const li2 = eagerStrategy.insert(li1, change.position, change.text, readText);
       return withState(s2, { lineIndex: li2 });
@@ -551,14 +574,14 @@ export function applyInverseChange(state: DocumentState, change: HistoryChange):
  */
 export type EditOperation =
   | {
-      readonly kind: 'insert';
+      readonly kind: "insert";
       readonly position: ByteOffset;
       readonly insertText: string;
       readonly timestamp?: number;
       readonly selection?: readonly SelectionRange[];
     }
   | {
-      readonly kind: 'delete';
+      readonly kind: "delete";
       readonly position: ByteOffset;
       readonly deleteEnd: ByteOffset;
       readonly deletedText: string;
@@ -566,7 +589,7 @@ export type EditOperation =
       readonly selection?: readonly SelectionRange[];
     }
   | {
-      readonly kind: 'replace';
+      readonly kind: "replace";
       readonly position: ByteOffset;
       readonly deleteEnd: ByteOffset;
       readonly deletedText: string;
@@ -592,14 +615,15 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   // Using op.kind narrowing rather than op.deleteEnd !== undefined guards means
   // the delete-phase decision is structurally visible rather than inferred from
   // an optional field, and TypeScript enforces which fields are present in each branch.
-  const deleteContext = op.kind !== 'insert'
-    ? getDeleteBoundaryContext(newState, op.position, op.deleteEnd)
-    : undefined;
-  const needsRebuild = op.kind !== 'insert'
-    && shouldRebuildLineIndexForDelete(op.deletedText, deleteContext);
+  const deleteContext =
+    op.kind !== "insert"
+      ? getDeleteBoundaryContext(newState, op.position, op.deleteEnd)
+      : undefined;
+  const needsRebuild =
+    op.kind !== "insert" && shouldRebuildLineIndexForDelete(op.deletedText, deleteContext);
 
   // Delete phase
-  if (op.kind !== 'insert') {
+  if (op.kind !== "insert") {
     if (needsRebuild) {
       // Skip lazy line-index update — a full rebuild will follow after the insert phase.
       newState = pieceTableDelete(newState, op.position, op.deleteEnd);
@@ -613,7 +637,7 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
         op.position,
         op.deleteEnd,
         op.deletedText,
-        deleteContext
+        deleteContext,
       );
       newState = pieceTableDelete(newState, op.position, op.deleteEnd);
       newState = withState(newState, { lineIndex: delLineIndex });
@@ -621,13 +645,19 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   }
 
   // Insert phase
-  if (op.kind !== 'delete') {
+  if (op.kind !== "delete") {
     if (op.insertText.length > 0) {
       const result = pieceTableInsert(newState, op.position, op.insertText);
       newState = result.state;
       if (!needsRebuild) {
-        const readText = (start: ByteOffset, end: ByteOffset) => getText(newState.pieceTable, start, end);
-        const insLineIndex = strategy.insert(newState.lineIndex, op.position, op.insertText, readText);
+        const readText = (start: ByteOffset, end: ByteOffset) =>
+          getText(newState.pieceTable, start, end);
+        const insLineIndex = strategy.insert(
+          newState.lineIndex,
+          op.position,
+          op.insertText,
+          readText,
+        );
         newState = withState(newState, { lineIndex: insLineIndex });
       }
     }
@@ -642,7 +672,9 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   if (op.selection) {
     newState = withState(newState, {
       selection: Object.freeze({
-        ranges: Object.freeze(op.selection.map(r => Object.freeze({ ...r }))) as NonEmptyReadonlyArray<SelectionRange>,
+        ranges: Object.freeze(
+          op.selection.map((r) => Object.freeze({ ...r })),
+        ) as NonEmptyReadonlyArray<SelectionRange>,
         primaryIndex: 0,
       }),
     });
@@ -652,13 +684,13 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   // Factory functions enforce byteLength === utf8ByteLength(text) at construction.
   let historyChange: HistoryChange;
   switch (op.kind) {
-    case 'replace':
+    case "replace":
       historyChange = makeReplaceChange(op.position, op.insertText, op.deletedText);
       break;
-    case 'delete':
+    case "delete":
       historyChange = makeDeleteChange(op.position, op.deletedText);
       break;
-    case 'insert':
+    case "insert":
       historyChange = makeInsertChange(op.position, op.insertText);
       break;
   }

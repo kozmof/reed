@@ -73,7 +73,7 @@ export type ReadonlyUint8Array = Readonly<Uint8Array> & {
  * - Working with piece table start/length values
  * - Calculating buffer positions
  */
-export type ByteOffset = Branded<number, 'ByteOffset'>;
+export type ByteOffset = Branded<number, "ByteOffset">;
 
 /**
  * Character offset in a string.
@@ -84,7 +84,7 @@ export type ByteOffset = Branded<number, 'ByteOffset'>;
  * - User-facing cursor positions
  * - Selection ranges in the editor UI
  */
-export type CharOffset = Branded<number, 'CharOffset'>;
+export type CharOffset = Branded<number, "CharOffset">;
 
 /**
  * Byte length (size/count of bytes).
@@ -93,19 +93,19 @@ export type CharOffset = Branded<number, 'CharOffset'>;
  * Semantically distinct from ByteOffset: an offset is a position,
  * a length is a size/count.
  */
-export type ByteLength = Branded<number, 'ByteLength'>;
+export type ByteLength = Branded<number, "ByteLength">;
 
 /**
  * Line number (0-indexed).
  * Represents a line in the document.
  */
-export type LineNumber = Branded<number, 'LineNumber'>;
+export type LineNumber = Branded<number, "LineNumber">;
 
 /**
  * Column number (0-indexed).
  * Represents a character position within a line.
  */
-export type ColumnNumber = Branded<number, 'ColumnNumber'>;
+export type ColumnNumber = Branded<number, "ColumnNumber">;
 
 // =============================================================================
 // Constructor Functions
@@ -279,22 +279,14 @@ export function compareCharOffsets(a: CharOffset, b: CharOffset): number {
 /**
  * Clamp a ByteOffset to a valid range.
  */
-export function clampByteOffset(
-  offset: ByteOffset,
-  min: ByteOffset,
-  max: ByteOffset
-): ByteOffset {
+export function clampByteOffset(offset: ByteOffset, min: ByteOffset, max: ByteOffset): ByteOffset {
   return Math.max(min, Math.min(max, offset)) as ByteOffset;
 }
 
 /**
  * Clamp a CharOffset to a valid range.
  */
-export function clampCharOffset(
-  offset: CharOffset,
-  min: CharOffset,
-  max: CharOffset
-): CharOffset {
+export function clampCharOffset(offset: CharOffset, min: CharOffset, max: CharOffset): CharOffset {
   return Math.max(min, Math.min(max, offset)) as CharOffset;
 }
 
@@ -326,4 +318,3 @@ export const LINE_ZERO: LineNumber = 0 as LineNumber;
  * Column zero - the first column.
  */
 export const COLUMN_ZERO: ColumnNumber = 0 as ColumnNumber;
-

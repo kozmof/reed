@@ -4,14 +4,14 @@
  * Redux, Zustand, Vue, Svelte, and vanilla JavaScript.
  */
 
-import type { DocumentState } from './state.ts';
-import type { DocumentAction } from './actions.ts';
+import type { DocumentState } from "./state.ts";
+import type { DocumentAction } from "./actions.ts";
 import type {
   DocumentEventEmitter,
   DocumentEventMap,
   EventHandler,
   Unsubscribe,
-} from '../store/features/events.ts';
+} from "../store/features/events.ts";
 
 // Re-export so the public API surface (types/index.ts) can import from one place.
 export type { Unsubscribe };
@@ -97,7 +97,7 @@ export interface ReconcilableDocumentStore extends DocumentStore {
    * guaranteeing no dirty ranges remain.
    * Use sparingly - prefer scheduleReconciliation() for non-critical updates.
    */
-  reconcileNow(): DocumentState<'eager'>;
+  reconcileNow(): DocumentState<"eager">;
 
   /**
    * Snapshot-gated synchronous reconciliation.
@@ -105,7 +105,7 @@ export interface ReconcilableDocumentStore extends DocumentStore {
    * preventing a reconciled mode transition from being applied to an out-of-date view.
    * Use this when reconciling from an async context where the snapshot may have aged.
    */
-  reconcileIfCurrent(snapshot: DocumentState): DocumentState<'eager'> | null;
+  reconcileIfCurrent(snapshot: DocumentState): DocumentState<"eager"> | null;
 
   /**
    * Set viewport bounds and ensure those lines have accurate offsets.
@@ -123,7 +123,7 @@ export interface ReconcilableDocumentStore extends DocumentStore {
    * Prefer this over getSnapshot() when APIs that require DocumentState<'eager'>
    * (e.g. query.getLineRange) are needed without an explicit reconciliation call.
    */
-  getEagerSnapshot(): DocumentState<'eager'>;
+  getEagerSnapshot(): DocumentState<"eager">;
 
   /**
    * Emergency reset when a rollback dispatch itself throws.
@@ -148,10 +148,7 @@ export interface ReadonlyDocumentStore {
  * Type for the document reducer function.
  * Pure function that produces new state from old state + action.
  */
-export type DocumentReducer = (
-  state: DocumentState,
-  action: DocumentAction
-) => DocumentState;
+export type DocumentReducer = (state: DocumentState, action: DocumentAction) => DocumentState;
 
 /**
  * Extended store interface that combines state management with event emission.
@@ -180,7 +177,7 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
    */
   addEventListener<K extends keyof DocumentEventMap>(
     type: K,
-    handler: EventHandler<DocumentEventMap[K]>
+    handler: EventHandler<DocumentEventMap[K]>,
   ): Unsubscribe;
 
   /**
@@ -191,7 +188,7 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
    */
   removeEventListener<K extends keyof DocumentEventMap>(
     type: K,
-    handler: EventHandler<DocumentEventMap[K]>
+    handler: EventHandler<DocumentEventMap[K]>,
   ): void;
 
   /**
@@ -203,4 +200,3 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
 
 // ReadTextFn and DeleteBoundaryContext have moved to types/state.ts —
 // they are operational parameters of line-index functions, not store interface types.
-

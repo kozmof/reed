@@ -27,7 +27,7 @@ import {
   COLUMN_ZERO,
   rawByteOffset,
   rawCharOffset,
-} from '../types/branded.ts';
+} from "../types/branded.ts";
 
 export const position = {
   // Constructors

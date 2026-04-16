@@ -38,7 +38,7 @@ Standard RB-tree invariants hold after every structural operation:
 - The root is always black.
 - No red node has a red parent.
 - Every path from root to null has the same number of black nodes
-  (the *black-height* invariant).
+  (the _black-height_ invariant).
 
 `fixInsertWithPath` restores invariants after insertion.  
 `fixRedViolations` restores the red-property after a right-spine graft (chunk
@@ -62,10 +62,10 @@ point for re-loaded chunks.
 The line index is an immutable Red-Black tree of `LineIndexNode` values.  
 It can be in one of two evaluation modes:
 
-| Mode | `documentOffset` | `dirtyRanges` | `rebuildPending` |
-|------|-----------------|---------------|-----------------|
-| `'eager'` | Always `number` (accurate byte offset) | Empty array `[]` | `false` |
-| `'lazy'`  | May be `null` (offset not yet computed) | Non-empty; describes pending corrections | `true` |
+| Mode      | `documentOffset`                        | `dirtyRanges`                            | `rebuildPending` |
+| --------- | --------------------------------------- | ---------------------------------------- | ---------------- |
+| `'eager'` | Always `number` (accurate byte offset)  | Empty array `[]`                         | `false`          |
+| `'lazy'`  | May be `null` (offset not yet computed) | Non-empty; describes pending corrections | `true`           |
 
 ### 2.1 `subtreeByteLength` Is Always Accurate
 

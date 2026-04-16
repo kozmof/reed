@@ -2,7 +2,7 @@
  * Tests for branded position types.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from "vitest";
 import {
   byteOffset,
   charOffset,
@@ -24,7 +24,7 @@ import {
   type ByteOffset,
   type CharOffset,
   type LineNumber,
-} from './branded.ts';
+} from "./branded.ts";
 import {
   $declare,
   $prove,
@@ -46,39 +46,39 @@ import {
   type CostFn,
   type LogCost,
   type LinearCost,
-} from './cost-doc.ts';
+} from "./cost-doc.ts";
 
-describe('Branded Types', () => {
-  describe('constructor functions', () => {
-    it('should create ByteOffset from number', () => {
+describe("Branded Types", () => {
+  describe("constructor functions", () => {
+    it("should create ByteOffset from number", () => {
       const offset = byteOffset(42);
       expect(offset).toBe(42);
     });
 
-    it('should create CharOffset from number', () => {
+    it("should create CharOffset from number", () => {
       const offset = charOffset(10);
       expect(offset).toBe(10);
     });
 
-    it('should create LineNumber from number', () => {
+    it("should create LineNumber from number", () => {
       const line = lineNumber(5);
       expect(line).toBe(5);
     });
 
-    it('should create ColumnNumber from number', () => {
+    it("should create ColumnNumber from number", () => {
       const col = columnNumber(20);
       expect(col).toBe(20);
     });
   });
 
-  describe('validation functions', () => {
-    it('should validate valid offsets', () => {
+  describe("validation functions", () => {
+    it("should validate valid offsets", () => {
       expect(isValidOffset(0)).toBe(true);
       expect(isValidOffset(100)).toBe(true);
       expect(isValidOffset(1000000)).toBe(true);
     });
 
-    it('should reject invalid offsets', () => {
+    it("should reject invalid offsets", () => {
       expect(isValidOffset(-1)).toBe(false);
       expect(isValidOffset(-100)).toBe(false);
       expect(isValidOffset(1.5)).toBe(false);
@@ -86,55 +86,55 @@ describe('Branded Types', () => {
       expect(isValidOffset(Infinity)).toBe(false);
     });
 
-    it('should validate valid line numbers', () => {
+    it("should validate valid line numbers", () => {
       expect(isValidLineNumber(0)).toBe(true);
       expect(isValidLineNumber(1)).toBe(true);
       expect(isValidLineNumber(1000)).toBe(true);
     });
 
-    it('should reject invalid line numbers', () => {
+    it("should reject invalid line numbers", () => {
       expect(isValidLineNumber(-1)).toBe(false);
       expect(isValidLineNumber(0.5)).toBe(false);
     });
   });
 
-  describe('arithmetic helpers', () => {
-    it('should add to ByteOffset', () => {
+  describe("arithmetic helpers", () => {
+    it("should add to ByteOffset", () => {
       const offset = byteOffset(10);
       const result = addByteOffset(offset, 5);
       expect(result).toBe(15);
     });
 
-    it('should compute ByteOffset difference', () => {
+    it("should compute ByteOffset difference", () => {
       const a = byteOffset(20);
       const b = byteOffset(15);
       expect(diffByteOffset(a, b)).toBe(5);
     });
 
-    it('should add to CharOffset', () => {
+    it("should add to CharOffset", () => {
       const offset = charOffset(10);
       const result = addCharOffset(offset, 3);
       expect(result).toBe(13);
     });
 
-    it('should increment line number', () => {
+    it("should increment line number", () => {
       const line = lineNumber(5);
       expect(nextLine(line)).toBe(6);
     });
 
-    it('should decrement line number', () => {
+    it("should decrement line number", () => {
       const line = lineNumber(5);
       expect(prevLine(line)).toBe(4);
     });
 
-    it('should not go below zero for line number', () => {
+    it("should not go below zero for line number", () => {
       const line = lineNumber(0);
       expect(prevLine(line)).toBe(0);
     });
   });
 
-  describe('clamping', () => {
-    it('should clamp ByteOffset to range', () => {
+  describe("clamping", () => {
+    it("should clamp ByteOffset to range", () => {
       const min = byteOffset(5);
       const max = byteOffset(15);
 
@@ -143,7 +143,7 @@ describe('Branded Types', () => {
       expect(clampByteOffset(byteOffset(20), min, max)).toBe(15);
     });
 
-    it('should clamp CharOffset to range', () => {
+    it("should clamp CharOffset to range", () => {
       const min = charOffset(0);
       const max = charOffset(100);
 
@@ -152,8 +152,8 @@ describe('Branded Types', () => {
     });
   });
 
-  describe('zero constants', () => {
-    it('should provide zero constants', () => {
+  describe("zero constants", () => {
+    it("should provide zero constants", () => {
       expect(ZERO_BYTE_OFFSET).toBe(0);
       expect(ZERO_CHAR_OFFSET).toBe(0);
       expect(LINE_ZERO).toBe(0);
@@ -161,10 +161,10 @@ describe('Branded Types', () => {
     });
   });
 
-  describe('type safety', () => {
+  describe("type safety", () => {
     // These tests verify that the branded types work at runtime
     // The actual type safety is enforced at compile time by TypeScript
-    it('should allow using branded types as numbers', () => {
+    it("should allow using branded types as numbers", () => {
       const byte: ByteOffset = byteOffset(10);
       const char: CharOffset = charOffset(5);
       const line: LineNumber = lineNumber(3);
@@ -174,7 +174,7 @@ describe('Branded Types', () => {
       expect(line * 2).toBe(6);
     });
 
-    it('should support comparison operations', () => {
+    it("should support comparison operations", () => {
       const a = byteOffset(10);
       const b = byteOffset(20);
 
@@ -184,128 +184,138 @@ describe('Branded Types', () => {
     });
   });
 
-  describe('cost boundaries', () => {
-    it('should reject unwrapped callback plan', () => {
+  describe("cost boundaries", () => {
+    it("should reject unwrapped callback plan", () => {
       if (false) {
         // @ts-expect-error $prove requires a checked plan wrapper
-        $prove('O(log n)', () => $pipe($lift('O(1)', [1, 2, 3]), $binarySearch(2)));
+        $prove("O(log n)", () => $pipe($lift("O(1)", [1, 2, 3]), $binarySearch(2)));
       }
     });
 
-    it('should reject context input for unchecked declaration', () => {
+    it("should reject context input for unchecked declaration", () => {
       // @ts-expect-error $declare only accepts plain values
-      $declare('O(1)', $lift('O(1)', 7));
+      $declare("O(1)", $lift("O(1)", 7));
     });
 
-    it('should declare plain values at unchecked boundary', () => {
-      const result = $declare('O(1)', 7);
+    it("should declare plain values at unchecked boundary", () => {
+      const result = $declare("O(1)", 7);
       expect(result).toBe(7);
     });
 
-    it('should keep legacy labels compatible', () => {
-      const legacy = $declare('const', 3);
-      const bigO = $declare('O(1)', 3);
+    it("should keep legacy labels compatible", () => {
+      const legacy = $declare("const", 3);
+      const bigO = $declare("O(1)", 3);
       expect(legacy).toBe(bigO);
     });
 
-    it('should validate $checked log plan', () => {
-      const result = $prove('O(log n)', $checked(() => $pipe(
-        $lift('O(1)', [1, 2, 3]),
-        $binarySearch(2),
-      )));
+    it("should validate $checked log plan", () => {
+      const result = $prove(
+        "O(log n)",
+        $checked(() => $pipe($lift("O(1)", [1, 2, 3]), $binarySearch(2))),
+      );
       expect(result).toBe(1);
     });
 
-    it('should validate linear context', () => {
+    it("should validate linear context", () => {
       const linearCtx = $pipe(
-        $lift('O(1)', [1, 2, 3]),
+        $lift("O(1)", [1, 2, 3]),
         $linearScan((x: number) => x === 2),
       );
-      const result = $proveCtx('O(n)', linearCtx);
+      const result = $proveCtx("O(n)", linearCtx);
       expect(result).toBe(2);
     });
 
-    it('should execute callback exactly once', () => {
+    it("should execute callback exactly once", () => {
       let calls = 0;
-      const result = $prove('O(log n)', $checked(() => {
-        calls += 1;
-        return $pipe(
-          $lift('O(1)', [1, 2, 3]),
-          $binarySearch(2),
-        );
-      }));
+      const result = $prove(
+        "O(log n)",
+        $checked(() => {
+          calls += 1;
+          return $pipe($lift("O(1)", [1, 2, 3]), $binarySearch(2));
+        }),
+      );
       expect(result).toBe(1);
       expect(calls).toBe(1);
     });
 
-    it('should support compact $ boundary helper', () => {
-      const c = $declare('O(1)', 1);
-      const l = $proveCtx('O(log n)', $pipe($lift('O(1)', [1, 2, 3]), $binarySearch(2)));
-      const n = $proveCtx('O(n)', $pipe($lift('O(1)', [1, 2, 3]), $linearScan((x: number) => x === 3)));
+    it("should support compact $ boundary helper", () => {
+      const c = $declare("O(1)", 1);
+      const l = $proveCtx("O(log n)", $pipe($lift("O(1)", [1, 2, 3]), $binarySearch(2)));
+      const n = $proveCtx(
+        "O(n)",
+        $pipe(
+          $lift("O(1)", [1, 2, 3]),
+          $linearScan((x: number) => x === 3),
+        ),
+      );
       expect(c + l + (n ?? 0)).toBe(5);
     });
   });
 
-  describe('cost function contracts', () => {
-    it('should annotate function output with log cost', () => {
-      const fn: CostFn<'log', [number], number> = $logCostFn((value: number) => value + 1);
+  describe("cost function contracts", () => {
+    it("should annotate function output with log cost", () => {
+      const fn: CostFn<"log", [number], number> = $logCostFn((value: number) => value + 1);
       const result = fn(41);
       expect(result).toBe(42);
     });
 
-    it('should compose functions via $pipe/$andThen and use the dominant cost', () => {
+    it("should compose functions via $pipe/$andThen and use the dominant cost", () => {
       const fetch = $logCostFn((arr: readonly number[], x: number) => arr.indexOf(x));
       const double = $linearCostFn((n: number) => n * 2);
 
-      const plan = $checked(() => $pipe(
-        $from(fetch([10, 20, 30], 20)),           // log: indexOf = 1
-        $andThen((idx: number) => $from(double(idx))), // linear: 1 * 2 = 2
-        $map((n: number) => n + 1),                      // linear: 2 + 1 = 3
-      ));
+      const plan = $checked(() =>
+        $pipe(
+          $from(fetch([10, 20, 30], 20)), // log: indexOf = 1
+          $andThen((idx: number) => $from(double(idx))), // linear: 1 * 2 = 2
+          $map((n: number) => n + 1), // linear: 2 + 1 = 3
+        ),
+      );
 
-      const linearResult: LinearCost<number> = $prove('O(n)', plan);
+      const linearResult: LinearCost<number> = $prove("O(n)", plan);
       expect(linearResult).toBe(3);
       // @ts-expect-error linear is not <= log
-      const _logResult: LogCost<number> = $prove('O(n)', plan);
+      const _logResult: LogCost<number> = $prove("O(n)", plan);
     });
 
-    it('should support direct linear function annotation', () => {
-      const fn: CostFn<'linear', [number], string> = $linearCostFn((value: number) => String(value));
-      expect(fn(7)).toBe('7');
+    it("should support direct linear function annotation", () => {
+      const fn: CostFn<"linear", [number], string> = $linearCostFn((value: number) =>
+        String(value),
+      );
+      expect(fn(7)).toBe("7");
     });
 
-    it('should support nlogn and quad function annotation', () => {
-      const nlogn: CostFn<'nlogn', [readonly number[]], number[]> =
-        $nlognCostFn((values: readonly number[]) => [...values].sort((a, b) => a - b));
-      const quad: CostFn<'quad', [number], number> =
-        $quadCostFn((value: number) => value * value);
+    it("should support nlogn and quad function annotation", () => {
+      const nlogn: CostFn<"nlogn", [readonly number[]], number[]> = $nlognCostFn(
+        (values: readonly number[]) => [...values].sort((a, b) => a - b),
+      );
+      const quad: CostFn<"quad", [number], number> = $quadCostFn((value: number) => value * value);
 
       expect(nlogn([3, 1, 2])).toEqual([1, 2, 3]);
       expect(quad(4)).toBe(16);
     });
 
-    it('should preserve dominant cost when sequencing log then linear via $andThen', () => {
+    it("should preserve dominant cost when sequencing log then linear via $andThen", () => {
       const fetch = $logCostFn((arr: readonly number[], x: number) => arr.indexOf(x));
       const double = $linearCostFn((n: number) => n * 2);
 
-      const plan = $checked(() => $pipe(
-        $from(fetch([10, 20, 30], 20)),                // log: indexOf = 1
-        $andThen((idx: number) => $from(double(idx))), // linear: 1 * 2 = 2
-        $map((n: number) => n + 1),                          // linear: 2 + 1 = 3
-      ));
+      const plan = $checked(() =>
+        $pipe(
+          $from(fetch([10, 20, 30], 20)), // log: indexOf = 1
+          $andThen((idx: number) => $from(double(idx))), // linear: 1 * 2 = 2
+          $map((n: number) => n + 1), // linear: 2 + 1 = 3
+        ),
+      );
 
-      const linearResult: LinearCost<number> = $prove('O(n)', plan);
+      const linearResult: LinearCost<number> = $prove("O(n)", plan);
       expect(linearResult).toBe(3);
       // @ts-expect-error linear is not <= log
-      const _logResult: LogCost<number> = $prove('O(n)', plan);
+      const _logResult: LogCost<number> = $prove("O(n)", plan);
     });
 
-    it('should combine two context values using $zipCtx with dominant cost', () => {
-      const fetchIndex = $logCostFn(
-        (arr: readonly number[], x: number) => arr.indexOf(x)
-      );
-      const findAbove = $linearCostFn(
-        (arr: readonly number[], threshold: number) => arr.filter(v => v > threshold)
+    it("should combine two context values using $zipCtx with dominant cost", () => {
+      const fetchIndex = $logCostFn((arr: readonly number[], x: number) => arr.indexOf(x));
+      const findAbove = $linearCostFn((arr: readonly number[], threshold: number) =>
+        arr.filter((v) => v > threshold),
       );
 
       // left: O(log n), value = indexOf(3) = 2
@@ -317,84 +327,80 @@ describe('Branded Types', () => {
         return $zipCtx(left, right, (idx, arr) => arr[idx] ?? -1);
       });
 
-      const linearResult: LinearCost<number> = $prove('O(n)', plan);
+      const linearResult: LinearCost<number> = $prove("O(n)", plan);
       expect(linearResult).toBe(5);
       // @ts-expect-error linear is not <= log
-      const _logResult: LogCost<number> = $prove('O(n)', plan);
+      const _logResult: LogCost<number> = $prove("O(n)", plan);
     });
   });
 
-  describe('cost context pipeline', () => {
-    it('should validate $checked plan boundaries', () => {
-      const checkedLogPlan = $checked(() => $pipe(
-        $lift('O(1)', [1, 2, 3]),
-        $binarySearch(2),
-      ));
+  describe("cost context pipeline", () => {
+    it("should validate $checked plan boundaries", () => {
+      const checkedLogPlan = $checked(() => $pipe($lift("O(1)", [1, 2, 3]), $binarySearch(2)));
 
-      expect($prove('O(log n)', checkedLogPlan)).toBe(1);
+      expect($prove("O(log n)", checkedLogPlan)).toBe(1);
       // @ts-expect-error log is not <= const
-      $prove('O(1)', checkedLogPlan);
+      $prove("O(1)", checkedLogPlan);
     });
 
-    it('should model sequential composition as dominant cost', () => {
+    it("should model sequential composition as dominant cost", () => {
       const seqLog = $pipe(
-        $lift('O(1)', [1, 2, 3]),
+        $lift("O(1)", [1, 2, 3]),
         $binarySearch(2),
         $map((index: number) => index + 10),
       );
 
-      expect($proveCtx('O(log n)', seqLog)).toBe(11);
+      expect($proveCtx("O(log n)", seqLog)).toBe(11);
       // @ts-expect-error log is not <= const
-      $proveCtx('O(1)', seqLog);
+      $proveCtx("O(1)", seqLog);
     });
 
-    it('should infer nlogn for linear nesting with log body', () => {
+    it("should infer nlogn for linear nesting with log body", () => {
       const nestedNlogn = $pipe(
-        $lift('O(1)', [1, 2, 3, 4]),
-        $forEachN((x: number) =>
-          $pipe(
-            $lift('O(1)', [1, 2, 3, 4, 5]),
-            $binarySearch(x),
-          )
-        ),
+        $lift("O(1)", [1, 2, 3, 4]),
+        $forEachN((x: number) => $pipe($lift("O(1)", [1, 2, 3, 4, 5]), $binarySearch(x))),
         $map((xs: readonly number[]) => xs.length),
       );
 
-      expect($proveCtx('O(n log n)', nestedNlogn)).toBe(4);
+      expect($proveCtx("O(n log n)", nestedNlogn)).toBe(4);
       // @ts-expect-error nlogn is not <= linear
-      $proveCtx('O(n)', nestedNlogn);
+      $proveCtx("O(n)", nestedNlogn);
     });
 
-    it('should infer quad for linear nesting with linear body', () => {
+    it("should infer quad for linear nesting with linear body", () => {
       const nestedQuad = $pipe(
-        $lift('O(1)', [1, 2, 3, 4]),
+        $lift("O(1)", [1, 2, 3, 4]),
         $forEachN((x: number) =>
           $pipe(
-            $lift('O(1)', [1, 2, 3, 4, 5]),
+            $lift("O(1)", [1, 2, 3, 4, 5]),
             $linearScan((y: number) => y === x),
-          )
+          ),
         ),
       );
 
-      expect($proveCtx('O(n^2)', nestedQuad)).toEqual([1, 2, 3, 4]);
+      expect($proveCtx("O(n^2)", nestedQuad)).toEqual([1, 2, 3, 4]);
       // @ts-expect-error quad is not <= nlogn
-      $proveCtx('O(n log n)', nestedQuad);
+      $proveCtx("O(n log n)", nestedQuad);
     });
 
-    it('should compose function-call costs incrementally with $from + $andThen', () => {
-      const lookup: CostFn<'log', [readonly number[], number], number> =
-        $logCostFn((values: readonly number[], target: number) => values.indexOf(target));
-      const project: CostFn<'linear', [number], string> =
-        $linearCostFn((index: number) => `index:${index}`);
+    it("should compose function-call costs incrementally with $from + $andThen", () => {
+      const lookup: CostFn<"log", [readonly number[], number], number> = $logCostFn(
+        (values: readonly number[], target: number) => values.indexOf(target),
+      );
+      const project: CostFn<"linear", [number], string> = $linearCostFn(
+        (index: number) => `index:${index}`,
+      );
 
-      const incrementalPlan = $checked(() => $pipe(
-        $from(lookup([10, 20, 30], 20)),
-        $andThen((index: number) => $from(project(index))),
-      ));
+      const incrementalPlan = $checked(() =>
+        $pipe(
+          $from(lookup([10, 20, 30], 20)),
+          $andThen((index: number) => $from(project(index))),
+        ),
+      );
 
-      expect($prove('O(n)', incrementalPlan)).toBe('index:1');
+      expect($prove("O(n)", incrementalPlan)).toBe("index:1");
       // @ts-expect-error linear is not <= log
-      $prove('O(log n)', incrementalPlan);
+      $prove("O(log n)", incrementalPlan);
     });
   });
 });

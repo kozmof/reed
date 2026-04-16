@@ -92,6 +92,7 @@ Key design decisions:
 ## 3. Relations of Implementations (Functions)
 
 **Insert path (user keystroke)**:
+
 ```
 store.dispatch(INSERT)
   → documentReducer (reducer.ts)
@@ -108,6 +109,7 @@ store.dispatch(INSERT)
 ```
 
 **Reconciliation path (background)**:
+
 ```
 scheduleReconciliation()
   → requestIdleCallback / setTimeout
@@ -118,6 +120,7 @@ scheduleReconciliation()
 ```
 
 **Read path (query)**:
+
 ```
 query.getLineRange(state, lineNumber)
   → getLineRangeFromIndex (line-index.ts)
@@ -125,6 +128,7 @@ query.getLineRange(state, lineNumber)
 ```
 
 **Chunk loading path (streaming)**:
+
 ```
 chunkManager.ensureLoaded(chunkIndex)
   → ChunkLoader.loadChunk(i)
@@ -137,18 +141,18 @@ chunkManager.ensureLoaded(chunkIndex)
 
 ## 4. Specific Contexts and Usages
 
-| Use case | Entry point | Notes |
-|---|---|---|
-| Basic editing | `createDocumentStore`, `dispatch({type:'INSERT'…})` | Returns `DocumentState` synchronously |
-| Event-driven UI | `createDocumentStoreWithEvents` + `addEventListener('content-change'…)` | Emits typed events after each dispatch |
-| React/SSR | `store.getSnapshot()` / `getServerSnapshot()` | Compatible with `useSyncExternalStore` |
-| Batched multi-edit | `store.batch([…actions])` | One notification after all complete |
-| Undo/redo | `dispatch({type:'UNDO'})`, `history.canUndo(state)` | PStack gives O(1) undo/redo |
-| Large files | `createDocumentStore({chunkSize:65536})` + `createChunkManager(store, loader)` | Async LRU eviction with metadata pre-declaration |
-| Collaboration | `dispatch({type:'APPLY_REMOTE', changes:[…]})` | Remote changes bypass local history |
-| Viewport rendering | `store.setViewport(start, end)` + `query.getLineRange` | Eager reconciliation of visible range only |
-| Diff/setValue | `diff.setValue(store, newContent)` | Computes edit diff, dispatches actions |
-| Complexity auditing | `cost.*` namespace | Type-level annotations; not enforced at runtime |
+| Use case            | Entry point                                                                    | Notes                                            |
+| ------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------ |
+| Basic editing       | `createDocumentStore`, `dispatch({type:'INSERT'…})`                            | Returns `DocumentState` synchronously            |
+| Event-driven UI     | `createDocumentStoreWithEvents` + `addEventListener('content-change'…)`        | Emits typed events after each dispatch           |
+| React/SSR           | `store.getSnapshot()` / `getServerSnapshot()`                                  | Compatible with `useSyncExternalStore`           |
+| Batched multi-edit  | `store.batch([…actions])`                                                      | One notification after all complete              |
+| Undo/redo           | `dispatch({type:'UNDO'})`, `history.canUndo(state)`                            | PStack gives O(1) undo/redo                      |
+| Large files         | `createDocumentStore({chunkSize:65536})` + `createChunkManager(store, loader)` | Async LRU eviction with metadata pre-declaration |
+| Collaboration       | `dispatch({type:'APPLY_REMOTE', changes:[…]})`                                 | Remote changes bypass local history              |
+| Viewport rendering  | `store.setViewport(start, end)` + `query.getLineRange`                         | Eager reconciliation of visible range only       |
+| Diff/setValue       | `diff.setValue(store, newContent)`                                             | Computes edit diff, dispatches actions           |
+| Complexity auditing | `cost.*` namespace                                                             | Type-level annotations; not enforced at runtime  |
 
 ---
 
@@ -156,7 +160,7 @@ chunkManager.ensureLoaded(chunkIndex)
 
 ### 5.1 Known gaps (documented in SPEC.md)
 
-- **`APPLY_REMOTE` does not auto-emit `content-change`** in the event-store wrapper. The event emitter in `store.ts:createDocumentStoreWithEvents` emits for `isTextEditAction || action.type === 'APPLY_REMOTE'` — this *is* implemented. However SPEC.md flags it as a gap; verify whether the event carries correct `affectedRanges` for the full multi-change batch.
+- **`APPLY_REMOTE` does not auto-emit `content-change`** in the event-store wrapper. The event emitter in `store.ts:createDocumentStoreWithEvents` emits for `isTextEditAction || action.type === 'APPLY_REMOTE'` — this _is_ implemented. However SPEC.md flags it as a gap; verify whether the event carries correct `affectedRanges` for the full multi-change batch.
 - **`batch()` does not auto-schedule reconciliation when `rebuildPending` remains true after outermost commit.** In `store.ts:191`, `TRANSACTION_COMMIT` calls `scheduleReconciliation()` only when `state.lineIndex.rebuildPending` is true — this appears implemented. The spec's warning may refer to older code; worth re-verifying with a test.
 - **Lazy line-index precision before reconciliation.** `documentOffset` can be `null` for lines updated in lazy mode. Any caller that passes a lazy `DocumentState` (not `DocumentState<'eager'>`) to functions requiring precise offsets (e.g. `getLineRange`) will get a runtime error or miss data.
 
@@ -196,7 +200,7 @@ The `query.*` namespace documents O(1)/O(log n) operations and `scan.*` document
 
 ### 6.2 ~~The cost algebra is purely documentary and gives false confidence~~ ✅ Fixed
 
-~~`cost-doc.ts` is a sophisticated compile-time DSL but the readme warns: *"Any contributor can annotate an O(n) loop as O(1) and the type system will not object."* This creates a documentation system that can silently lie. Consider coupling it to benchmark assertions (e.g. `vitest` with threshold checks) so cost annotations become partially verified.~~
+~~`cost-doc.ts` is a sophisticated compile-time DSL but the readme warns: _"Any contributor can annotate an O(n) loop as O(1) and the type system will not object."_ This creates a documentation system that can silently lie. Consider coupling it to benchmark assertions (e.g. `vitest` with threshold checks) so cost annotations become partially verified.~~
 
 **Fix applied (2026-04-16):** Added a `"Scaling ratio (cost-algebra validation)"` describe block to `src/store/features/perf.test.ts` with two tests (`getLineStartOffset`, `findLineAtPosition`) that measure the 10k→900k line growth factor. The tests assert the ratio stays below 5×, rejecting O(n) scaling while allowing genuine O(log n) growth (~1.5×). This gives cost annotations a runtime check that CI will catch if annotations become misleading.
 
@@ -270,29 +274,35 @@ The public API exports `store.selectionToCharOffsets` (via `query` namespace) bu
 ## 9. Learning Paths
 
 ### Entry point: understand the data model
+
 1. `src/types/state.ts` — Start here. Understand `DocumentState`, `PieceTableState`, `LineIndexState`.
 2. `src/types/branded.ts` — Learn the `ByteOffset`/`CharOffset` discipline.
 3. `src/store/core/growable-buffer.ts` — The `addBuffer` append-only store.
 
 ### Understanding the piece table
+
 4. `src/store/core/rb-tree.ts` — Generic immutable RB-tree: rotations, `fixInsertWithPath`.
 5. `src/store/core/state.ts` — `createPieceNode`, `withPieceNode` (how structural sharing works).
 6. `src/store/core/piece-table.ts` — `pieceTableInsert`, `pieceTableDelete`, `getText`.
 
 ### Understanding the line index
+
 7. `src/store/core/line-index.ts` — `lineIndexInsertLazy`, `findLineByNumber`, `getLineRange`.
 8. `src/store/core/reconcile.ts` — `reconcileFull`, `reconcileViewport`.
 
 ### Understanding the store
+
 9. `src/store/features/edit.ts` — `applyEdit`: the main edit pipeline composing piece-table + line-index + history.
 10. `src/store/features/reducer.ts` — `documentReducer`: maps every `DocumentAction` to a state transition.
 11. `src/store/features/store.ts` — `createDocumentStore`: listener management, transactions, reconciliation scheduling.
 
 ### Public API surface
+
 12. `src/api/query.ts` — O(1)/O(log n) selectors — the safe read path.
 13. `src/api/interfaces.ts` — `QueryApi`, `ScanApi`, `HistoryApi` typed contracts.
 14. `src/index.ts` — The full public API surface in one file.
 
 ### Advanced / large file support
+
 15. `src/store/features/chunk-manager.ts` — Async LRU chunk loader.
 16. `src/types/cost-doc.ts` — Cost algebra DSL for understanding and annotating complexity claims.

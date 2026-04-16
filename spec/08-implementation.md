@@ -5,6 +5,7 @@
 ### 1.1 Core state, types, and API namespaces
 
 Implemented in:
+
 - `src/types/*`
 - `src/store/core/state.ts`
 - `src/api/*`
@@ -14,6 +15,7 @@ Includes immutable state factories, branded offset types, action/store contracts
 ### 1.2 Text storage and indexing
 
 Implemented in:
+
 - `src/store/core/piece-table.ts`
 - `src/store/core/line-index.ts`
 - `src/store/core/rb-tree.ts`
@@ -23,6 +25,7 @@ Includes piece-table edits, line-index maintenance, lazy/eager reconciliation pa
 ### 1.3 Reducer/store runtime
 
 Implemented in:
+
 - `src/store/features/reducer.ts`
 - `src/store/features/store.ts`
 - `src/store/features/transaction.ts`
@@ -33,6 +36,7 @@ Includes immutable reducer transitions, undo/redo, nested transactions, batching
 ### 1.4 Diff, events, rendering selectors
 
 Implemented in:
+
 - `src/store/features/diff.ts`
 - `src/store/features/events.ts`
 - `src/store/features/rendering.ts`
@@ -42,6 +46,7 @@ Includes diff/setValue helpers, typed event emitter/store wrapper, and viewport/
 ### 1.5 Public query/scan/history/diff layers
 
 Implemented in:
+
 - `src/api/query.ts`
 - `src/api/scan.ts`
 - `src/api/history.ts`
@@ -54,10 +59,12 @@ Separates query-style lookups from scan-style traversals and exposes dedicated h
 ### 2.1 Collaboration primitives
 
 Implemented:
+
 - `RemoteChange` and `APPLY_REMOTE` reducer path
 - event-store `content-change` emission for remote edits
 
 Missing:
+
 - transport/provider bridge
 - CRDT sync engine
 - awareness/cursor presence
@@ -66,10 +73,12 @@ Missing:
 ### 2.2 Chunk management primitives
 
 Implemented:
+
 - action types and action creators (`LOAD_CHUNK`, `EVICT_CHUNK`)
 - `chunkSize` in config
 
 Missing:
+
 - actual chunk runtime behavior (reducer currently no-op)
 
 ## 3. Not Implemented

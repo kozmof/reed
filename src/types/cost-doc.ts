@@ -39,21 +39,40 @@ export type Nat = 0 | 1 | 2 | 3;
 /**
  * Saturating addition over Nat.
  */
-export type AddNat<A extends Nat, B extends Nat> =
-  A extends 0 ? B :
-  A extends 1 ? (B extends 0 ? 1 : B extends 1 ? 2 : B extends 2 ? 3 : 3) :
-  A extends 2 ? (B extends 0 ? 2 : B extends 1 ? 3 : 3) :
-  3;
+export type AddNat<A extends Nat, B extends Nat> = A extends 0
+  ? B
+  : A extends 1
+    ? B extends 0
+      ? 1
+      : B extends 1
+        ? 2
+        : B extends 2
+          ? 3
+          : 3
+    : A extends 2
+      ? B extends 0
+        ? 2
+        : B extends 1
+          ? 3
+          : 3
+      : 3;
 
 /**
  * Greater-than-or-equal over Nat.
  */
-export type GteNat<A extends Nat, B extends Nat> =
-  A extends B ? true :
-  A extends 3 ? true :
-  A extends 2 ? (B extends 3 ? false : true) :
-  A extends 1 ? (B extends 0 ? true : false) :
-  false;
+export type GteNat<A extends Nat, B extends Nat> = A extends B
+  ? true
+  : A extends 3
+    ? true
+    : A extends 2
+      ? B extends 3
+        ? false
+        : true
+      : A extends 1
+        ? B extends 0
+          ? true
+          : false
+        : false;
 
 /**
  * Asymptotic cost pair: O(n^p log^l n).
@@ -65,54 +84,62 @@ export type Cost = { p: Nat; l: Nat };
  * - Canonical labels are used for type-level algebra.
  * - Big-O labels are accepted at `$` boundaries for readability.
  */
-export type CostLabel = 'const' | 'log' | 'linear' | 'nlogn' | 'quad';
+export type CostLabel = "const" | "log" | "linear" | "nlogn" | "quad";
 export type CostLevel = CostLabel;
-export type CostBigO = 'O(1)' | 'O(log n)' | 'O(n)' | 'O(n log n)' | 'O(n^2)';
+export type CostBigO = "O(1)" | "O(log n)" | "O(n)" | "O(n log n)" | "O(n^2)";
 export type CostInputLabel = CostLabel | CostBigO;
 const costLabelByInput = {
-  const: 'const',
-  log: 'log',
-  linear: 'linear',
-  nlogn: 'nlogn',
-  quad: 'quad',
-  'O(1)': 'const',
-  'O(log n)': 'log',
-  'O(n)': 'linear',
-  'O(n log n)': 'nlogn',
-  'O(n^2)': 'quad',
+  const: "const",
+  log: "log",
+  linear: "linear",
+  nlogn: "nlogn",
+  quad: "quad",
+  "O(1)": "const",
+  "O(log n)": "log",
+  "O(n)": "linear",
+  "O(n log n)": "nlogn",
+  "O(n^2)": "quad",
 } as const satisfies Record<CostInputLabel, CostLabel>;
 export type NormalizeCostLabel<L extends CostInputLabel> = (typeof costLabelByInput)[L];
 
 /**
  * Label -> cost pair mapping.
  */
-export type CostOfLabel<L extends CostLabel> =
-  L extends 'const' ? { p: 0; l: 0 } :
-  L extends 'log' ? { p: 0; l: 1 } :
-  L extends 'linear' ? { p: 1; l: 0 } :
-  L extends 'nlogn' ? { p: 1; l: 1 } :
-  { p: 2; l: 0 };
+export type CostOfLabel<L extends CostLabel> = L extends "const"
+  ? { p: 0; l: 0 }
+  : L extends "log"
+    ? { p: 0; l: 1 }
+    : L extends "linear"
+      ? { p: 1; l: 0 }
+      : L extends "nlogn"
+        ? { p: 1; l: 1 }
+        : { p: 2; l: 0 };
 
 /**
  * Named cost constants for combinator typing.
  */
-export type C_CONST = CostOfLabel<'const'>;
-export type C_LOG = CostOfLabel<'log'>;
-export type C_LIN = CostOfLabel<'linear'>;
-export type C_NLOGN = CostOfLabel<'nlogn'>;
-export type C_QUAD = CostOfLabel<'quad'>;
+export type C_CONST = CostOfLabel<"const">;
+export type C_LOG = CostOfLabel<"log">;
+export type C_LIN = CostOfLabel<"linear">;
+export type C_NLOGN = CostOfLabel<"nlogn">;
+export type C_QUAD = CostOfLabel<"quad">;
 
 /**
  * Cost comparison and composition primitives.
  */
 export type GteCost<A extends Cost, B extends Cost> =
-  GteNat<A['p'], B['p']> extends true
-    ? (A['p'] extends B['p'] ? GteNat<A['l'], B['l']> : true)
+  GteNat<A["p"], B["p"]> extends true
+    ? A["p"] extends B["p"]
+      ? GteNat<A["l"], B["l"]>
+      : true
     : false;
 
 export type MaxCost<A extends Cost, B extends Cost> = GteCost<A, B> extends true ? A : B;
 export type Seq<A extends Cost, B extends Cost> = MaxCost<A, B>;
-export type Nest<A extends Cost, B extends Cost> = { p: AddNat<A['p'], B['p']>; l: AddNat<A['l'], B['l']> };
+export type Nest<A extends Cost, B extends Cost> = {
+  p: AddNat<A["p"], B["p"]>;
+  l: AddNat<A["l"], B["l"]>;
+};
 export type Leq<A extends Cost, B extends Cost> = GteCost<B, A>;
 export type Assert<T extends true> = T;
 
@@ -135,21 +162,22 @@ type CostBrand<Level extends CostLabel> = { readonly [costLevel]: Level };
 export type Costed<Level extends CostLevel, T> = T & CostBrand<LevelsUpTo<Level>>;
 
 /** Value from an O(1) operation. */
-export type ConstCost<T> = Costed<'const', T>;
+export type ConstCost<T> = Costed<"const", T>;
 /** Value from an O(log n) operation. */
-export type LogCost<T> = Costed<'log', T>;
+export type LogCost<T> = Costed<"log", T>;
 /** Value from an O(n) operation. */
-export type LinearCost<T> = Costed<'linear', T>;
+export type LinearCost<T> = Costed<"linear", T>;
 /** Value from an O(n log n) operation. */
-export type NLogNCost<T> = Costed<'nlogn', T>;
+export type NLogNCost<T> = Costed<"nlogn", T>;
 /** Value from an O(n^2) operation. */
-export type QuadCost<T> = Costed<'quad', T>;
+export type QuadCost<T> = Costed<"quad", T>;
 
 /**
  * Function contract with declarative cost level.
  */
-export type CostFn<Level extends CostLevel, Args extends readonly unknown[], R> =
-  (...args: Args) => Costed<Level, R>;
+export type CostFn<Level extends CostLevel, Args extends readonly unknown[], R> = (
+  ...args: Args
+) => Costed<Level, R>;
 
 /**
  * Join two cost levels to the dominant one.
@@ -175,10 +203,7 @@ function toCostLevel(max: CostInputLabel): CostLevel {
 
 type CtxLike = { readonly _cost: Cost; readonly value: unknown };
 type CheckedPlanLike = { readonly run: () => CtxLike };
-type UncheckedBoundaryValue<T> =
-  T extends CtxLike ? never :
-  T extends CheckedPlanLike ? never :
-  T;
+type UncheckedBoundaryValue<T> = T extends CtxLike ? never : T extends CheckedPlanLike ? never : T;
 
 /**
  * Explicit unchecked boundary declaration.
@@ -187,12 +212,9 @@ type UncheckedBoundaryValue<T> =
  */
 export function $declare<L extends CostInputLabel, T>(
   max: L,
-  value: UncheckedBoundaryValue<T>
+  value: UncheckedBoundaryValue<T>,
 ): Costed<NormalizeCostLabel<L>, UncheckedBoundaryValue<T>>;
-export function $declare(
-  max: CostInputLabel,
-  value: unknown
-): unknown {
+export function $declare(max: CostInputLabel, value: unknown): unknown {
   return castCost(toCostLevel(max), value);
 }
 
@@ -206,12 +228,10 @@ export function $declare(
  */
 export function $prove<L extends CostInputLabel, C extends Cost, T>(
   max: L,
-  plan: CheckedPlan<C, T> & (Leq<C, CostOfLabel<NormalizeCostLabel<L>>> extends true ? unknown : never)
+  plan: CheckedPlan<C, T> &
+    (Leq<C, CostOfLabel<NormalizeCostLabel<L>>> extends true ? unknown : never),
 ): Costed<NormalizeCostLabel<L>, T>;
-export function $prove(
-  max: CostInputLabel,
-  plan: CheckedPlan<Cost, unknown>
-): unknown {
+export function $prove(max: CostInputLabel, plan: CheckedPlan<Cost, unknown>): unknown {
   return castCost(toCostLevel(max), plan.run().value);
 }
 
@@ -223,12 +243,9 @@ export function $prove(
  */
 export function $proveCtx<L extends CostInputLabel, C extends Cost, T>(
   max: L,
-  ctx: Ctx<C, T> & (Leq<C, CostOfLabel<NormalizeCostLabel<L>>> extends true ? unknown : never)
+  ctx: Ctx<C, T> & (Leq<C, CostOfLabel<NormalizeCostLabel<L>>> extends true ? unknown : never),
 ): Costed<NormalizeCostLabel<L>, T>;
-export function $proveCtx(
-  max: CostInputLabel,
-  ctx: Ctx<Cost, unknown>
-): unknown {
+export function $proveCtx(max: CostInputLabel, ctx: Ctx<Cost, unknown>): unknown {
   return castCost(toCostLevel(max), ctx.value);
 }
 
@@ -238,7 +255,7 @@ export function $proveCtx(
  */
 function annotateCostFn<L extends CostLevel, Args extends readonly unknown[], R>(
   _level: L,
-  fn: (...args: Args) => R
+  fn: (...args: Args) => R,
 ): CostFn<L, Args, R> {
   return fn as unknown as CostFn<L, Args, R>;
 }
@@ -247,47 +264,46 @@ function annotateCostFn<L extends CostLevel, Args extends readonly unknown[], R>
  * Annotate a function as O(1) without changing runtime behavior.
  */
 export function $constCostFn<Args extends readonly unknown[], R>(
-  fn: (...args: Args) => R
-): CostFn<'const', Args, R> {
-  return annotateCostFn('const', fn);
+  fn: (...args: Args) => R,
+): CostFn<"const", Args, R> {
+  return annotateCostFn("const", fn);
 }
 
 /**
  * Annotate a function as O(log n) without changing runtime behavior.
  */
 export function $logCostFn<Args extends readonly unknown[], R>(
-  fn: (...args: Args) => R
-): CostFn<'log', Args, R> {
-  return annotateCostFn('log', fn);
+  fn: (...args: Args) => R,
+): CostFn<"log", Args, R> {
+  return annotateCostFn("log", fn);
 }
 
 /**
  * Annotate a function as O(n) without changing runtime behavior.
  */
 export function $linearCostFn<Args extends readonly unknown[], R>(
-  fn: (...args: Args) => R
-): CostFn<'linear', Args, R> {
-  return annotateCostFn('linear', fn);
+  fn: (...args: Args) => R,
+): CostFn<"linear", Args, R> {
+  return annotateCostFn("linear", fn);
 }
 
 /**
  * Annotate a function as O(n log n) without changing runtime behavior.
  */
 export function $nlognCostFn<Args extends readonly unknown[], R>(
-  fn: (...args: Args) => R
-): CostFn<'nlogn', Args, R> {
-  return annotateCostFn('nlogn', fn);
+  fn: (...args: Args) => R,
+): CostFn<"nlogn", Args, R> {
+  return annotateCostFn("nlogn", fn);
 }
 
 /**
  * Annotate a function as O(n^2) without changing runtime behavior.
  */
 export function $quadCostFn<Args extends readonly unknown[], R>(
-  fn: (...args: Args) => R
-): CostFn<'quad', Args, R> {
-  return annotateCostFn('quad', fn);
+  fn: (...args: Args) => R,
+): CostFn<"quad", Args, R> {
+  return annotateCostFn("quad", fn);
 }
-
 
 // =============================================================================
 // Cost Context Pipeline Combinators
@@ -305,7 +321,7 @@ export function $quadCostFn<Args extends readonly unknown[], R>(
  */
 export type Ctx<C extends Cost, T> = { readonly _cost: C; readonly value: T };
 
-const checkedPlanTag = Symbol('checked-cost-plan');
+const checkedPlanTag = Symbol("checked-cost-plan");
 
 /**
  * Wrapper for a compile-time checked boundary plan.
@@ -329,10 +345,8 @@ export function $checked<C extends Cost, T>(run: () => Ctx<C, T>): CheckedPlan<C
 /**
  * Lift a branded value into a context so it can participate in `$pipe` plans.
  */
-export const $from = <L extends CostLevel, T>(
-  value: Costed<L, T>
-): Ctx<CostOfLabel<L>, T> =>
-  ({ value: value as unknown as T } as Ctx<CostOfLabel<L>, T>);
+export const $from = <L extends CostLevel, T>(value: Costed<L, T>): Ctx<CostOfLabel<L>, T> =>
+  ({ value: value as unknown as T }) as Ctx<CostOfLabel<L>, T>;
 
 /**
  * Lift a plain value into a context at a declared upper bound.
@@ -346,35 +360,53 @@ export const $from = <L extends CostLevel, T>(
  */
 export function $lift<L extends CostInputLabel, T>(
   _level: L,
-  value: T
+  value: T,
 ): Ctx<CostOfLabel<NormalizeCostLabel<L>>, T> {
-  return ({ value } as Ctx<CostOfLabel<NormalizeCostLabel<L>>, T>);
+  return { value } as Ctx<CostOfLabel<NormalizeCostLabel<L>>, T>;
 }
 
-export function $pipe<C extends Cost, T>(
-  ctx: Ctx<C, T>
-): Ctx<C, T>;
+export function $pipe<C extends Cost, T>(ctx: Ctx<C, T>): Ctx<C, T>;
 export function $pipe<C1 extends Cost, A, C2 extends Cost, B>(
   ctx: Ctx<C1, A>,
-  f1: (a: Ctx<C1, A>) => Ctx<C2, B>
+  f1: (a: Ctx<C1, A>) => Ctx<C2, B>,
 ): Ctx<C2, B>;
 export function $pipe<C1 extends Cost, A, C2 extends Cost, B, C3 extends Cost, CC>(
   ctx: Ctx<C1, A>,
   f1: (a: Ctx<C1, A>) => Ctx<C2, B>,
-  f2: (b: Ctx<C2, B>) => Ctx<C3, CC>
-): Ctx<C3, CC>;
-export function $pipe<C1 extends Cost, A, C2 extends Cost, B, C3 extends Cost, CC, C4 extends Cost, D>(
-  ctx: Ctx<C1, A>,
-  f1: (a: Ctx<C1, A>) => Ctx<C2, B>,
   f2: (b: Ctx<C2, B>) => Ctx<C3, CC>,
-  f3: (c: Ctx<C3, CC>) => Ctx<C4, D>
-): Ctx<C4, D>;
-export function $pipe<C1 extends Cost, A, C2 extends Cost, B, C3 extends Cost, CC, C4 extends Cost, D, C5 extends Cost, E>(
+): Ctx<C3, CC>;
+export function $pipe<
+  C1 extends Cost,
+  A,
+  C2 extends Cost,
+  B,
+  C3 extends Cost,
+  CC,
+  C4 extends Cost,
+  D,
+>(
   ctx: Ctx<C1, A>,
   f1: (a: Ctx<C1, A>) => Ctx<C2, B>,
   f2: (b: Ctx<C2, B>) => Ctx<C3, CC>,
   f3: (c: Ctx<C3, CC>) => Ctx<C4, D>,
-  f4: (d: Ctx<C4, D>) => Ctx<C5, E>
+): Ctx<C4, D>;
+export function $pipe<
+  C1 extends Cost,
+  A,
+  C2 extends Cost,
+  B,
+  C3 extends Cost,
+  CC,
+  C4 extends Cost,
+  D,
+  C5 extends Cost,
+  E,
+>(
+  ctx: Ctx<C1, A>,
+  f1: (a: Ctx<C1, A>) => Ctx<C2, B>,
+  f2: (b: Ctx<C2, B>) => Ctx<C3, CC>,
+  f3: (c: Ctx<C3, CC>) => Ctx<C4, D>,
+  f4: (d: Ctx<C4, D>) => Ctx<C5, E>,
 ): Ctx<C5, E>;
 export function $pipe(a: unknown, ...fns: Array<(x: any) => any>): unknown {
   return fns.reduce((x, f) => f(x), a);
@@ -387,7 +419,7 @@ export function $pipe(a: unknown, ...fns: Array<(x: any) => any>): unknown {
 export const $andThen =
   <T, C2 extends Cost, U>(f: (t: T) => Ctx<C2, U>) =>
   <C1 extends Cost>(c: Ctx<C1, T>): Ctx<Seq<C1, C2>, U> =>
-    ({ value: f(c.value).value } as Ctx<Seq<C1, C2>, U>);
+    ({ value: f(c.value).value }) as Ctx<Seq<C1, C2>, U>;
 
 /**
  * O(1) map over the current context value.
@@ -396,7 +428,7 @@ export const $andThen =
 export const $map =
   <T, U>(f: (t: T) => U) =>
   <C extends Cost>(c: Ctx<C, T>): Ctx<C, U> =>
-    ({ value: f(c.value) } as Ctx<C, U>);
+    ({ value: f(c.value) }) as Ctx<C, U>;
 
 /**
  * O(log n) binary search combinator.
@@ -427,7 +459,7 @@ export const $sort =
     const out = [...c.value];
     if (compareFn) out.sort(compareFn);
     else out.sort();
-    return ({ value: out } as Ctx<Seq<C, C_NLOGN>, E[]>);
+    return { value: out } as Ctx<Seq<C, C_NLOGN>, E[]>;
   };
 
 /**
@@ -436,7 +468,7 @@ export const $sort =
 export const $filter =
   <E>(pred: (e: E) => boolean) =>
   <C extends Cost>(c: Ctx<C, readonly E[]>): Ctx<Seq<C, C_LIN>, E[]> =>
-    ({ value: c.value.filter(pred) } as Ctx<Seq<C, C_LIN>, E[]>);
+    ({ value: c.value.filter(pred) }) as Ctx<Seq<C, C_LIN>, E[]>;
 
 /**
  * O(n) scan combinator returning first matching element.
@@ -444,7 +476,7 @@ export const $filter =
 export const $linearScan =
   <E>(pred: (e: E) => boolean) =>
   <C extends Cost>(c: Ctx<C, readonly E[]>): Ctx<Seq<C, C_LIN>, E | undefined> =>
-    ({ value: c.value.find(pred) } as Ctx<Seq<C, C_LIN>, E | undefined>);
+    ({ value: c.value.find(pred) }) as Ctx<Seq<C, C_LIN>, E | undefined>;
 
 /**
  * Combine two context values into one.
@@ -454,9 +486,8 @@ export const $linearScan =
 export const $zipCtx = <C1 extends Cost, A, C2 extends Cost, B, U>(
   left: Ctx<C1, A>,
   right: Ctx<C2, B>,
-  f: (a: A, b: B) => U
-): Ctx<Seq<C1, C2>, U> =>
-  ({ value: f(left.value, right.value) } as Ctx<Seq<C1, C2>, U>);
+  f: (a: A, b: B) => U,
+): Ctx<Seq<C1, C2>, U> => ({ value: f(left.value, right.value) }) as Ctx<Seq<C1, C2>, U>;
 
 /**
  * O(n * body) nested combinator for side effects.
@@ -469,7 +500,7 @@ export const $forEachN =
     c.value.forEach((e) => {
       body(e);
     });
-    return ({ value: c.value } as Ctx<Seq<C, Nest<C_LIN, BodyC>>, E[]>);
+    return { value: c.value } as Ctx<Seq<C, Nest<C_LIN, BodyC>>, E[]>;
   };
 
 /**
@@ -480,5 +511,5 @@ export const $mapN =
   <E, U, BodyC extends Cost>(body: (e: E) => Ctx<BodyC, U>) =>
   <C extends Cost>(c: Ctx<C, readonly E[]>): Ctx<Seq<C, Nest<C_LIN, BodyC>>, U[]> => {
     const result = c.value.map((e) => body(e).value);
-    return ({ value: result } as Ctx<Seq<C, Nest<C_LIN, BodyC>>, U[]>);
+    return { value: result } as Ctx<Seq<C, Nest<C_LIN, BodyC>>, U[]>;
   };

@@ -3,8 +3,8 @@
  * Provides type-safe factory functions for creating document actions.
  */
 
-import type { SelectionRange } from '../../types/state.ts';
-import type { ByteOffset, ReadonlyUint8Array } from '../../types/branded.ts';
+import type { SelectionRange } from "../../types/state.ts";
+import type { ByteOffset, ReadonlyUint8Array } from "../../types/branded.ts";
 import type {
   DocumentAction,
   InsertAction,
@@ -22,9 +22,9 @@ import type {
   LoadChunkAction,
   EvictChunkAction,
   DeclareChunkMetadataAction,
-} from '../../types/actions.ts';
-import type { ChunkMetadata } from '../../types/state.ts';
-import { isDocumentAction } from '../../types/actions.ts';
+} from "../../types/actions.ts";
+import type { ChunkMetadata } from "../../types/state.ts";
+import { isDocumentAction } from "../../types/actions.ts";
 
 /**
  * Action creators for document mutations.
@@ -37,7 +37,7 @@ export const DocumentActions = {
    * @param text - Text to insert
    */
   insert(start: ByteOffset, text: string, selection?: readonly SelectionRange[]): InsertAction {
-    return Object.freeze({ type: 'INSERT', start, text, ...(selection && { selection }) });
+    return Object.freeze({ type: "INSERT", start, text, ...(selection && { selection }) });
   },
 
   /**
@@ -46,7 +46,7 @@ export const DocumentActions = {
    * @param end - End position of deletion (exclusive, byte offset)
    */
   delete(start: ByteOffset, end: ByteOffset, selection?: readonly SelectionRange[]): DeleteAction {
-    return Object.freeze({ type: 'DELETE', start, end, ...(selection && { selection }) });
+    return Object.freeze({ type: "DELETE", start, end, ...(selection && { selection }) });
   },
 
   /**
@@ -55,8 +55,13 @@ export const DocumentActions = {
    * @param end - End position of replacement (exclusive, byte offset)
    * @param text - New text to insert
    */
-  replace(start: ByteOffset, end: ByteOffset, text: string, selection?: readonly SelectionRange[]): ReplaceAction {
-    return Object.freeze({ type: 'REPLACE', start, end, text, ...(selection && { selection }) });
+  replace(
+    start: ByteOffset,
+    end: ByteOffset,
+    text: string,
+    selection?: readonly SelectionRange[],
+  ): ReplaceAction {
+    return Object.freeze({ type: "REPLACE", start, end, text, ...(selection && { selection }) });
   },
 
   /**
@@ -64,28 +69,28 @@ export const DocumentActions = {
    * @param ranges - New selection ranges
    */
   setSelection(ranges: readonly SelectionRange[]): SetSelectionAction {
-    return Object.freeze({ type: 'SET_SELECTION', ranges });
+    return Object.freeze({ type: "SET_SELECTION", ranges });
   },
 
   /**
    * Create an undo action.
    */
   undo(): UndoAction {
-    return Object.freeze({ type: 'UNDO' });
+    return Object.freeze({ type: "UNDO" });
   },
 
   /**
    * Create a redo action.
    */
   redo(): RedoAction {
-    return Object.freeze({ type: 'REDO' });
+    return Object.freeze({ type: "REDO" });
   },
 
   /**
    * Clear all history (both undo and redo stacks).
    */
   historyClear(): HistoryClearAction {
-    return Object.freeze({ type: 'HISTORY_CLEAR' });
+    return Object.freeze({ type: "HISTORY_CLEAR" });
   },
 
   /**
@@ -115,7 +120,7 @@ export const DocumentActions = {
     rollbackStart: ByteOffset,
     rollbackEnd: ByteOffset,
     composedText: string,
-    selection?: readonly SelectionRange[]
+    selection?: readonly SelectionRange[],
   ): ReplaceAction {
     return DocumentActions.replace(rollbackStart, rollbackEnd, composedText, selection);
   },
@@ -124,21 +129,21 @@ export const DocumentActions = {
    * Create a transaction start action.
    */
   transactionStart(): TransactionStartAction {
-    return Object.freeze({ type: 'TRANSACTION_START' });
+    return Object.freeze({ type: "TRANSACTION_START" });
   },
 
   /**
    * Create a transaction commit action.
    */
   transactionCommit(): TransactionCommitAction {
-    return Object.freeze({ type: 'TRANSACTION_COMMIT' });
+    return Object.freeze({ type: "TRANSACTION_COMMIT" });
   },
 
   /**
    * Create a transaction rollback action.
    */
   transactionRollback(): TransactionRollbackAction {
-    return Object.freeze({ type: 'TRANSACTION_ROLLBACK' });
+    return Object.freeze({ type: "TRANSACTION_ROLLBACK" });
   },
 
   /**
@@ -146,7 +151,7 @@ export const DocumentActions = {
    * @param changes - Remote changes from collaboration
    */
   applyRemote(changes: readonly RemoteChange[]): ApplyRemoteAction {
-    return Object.freeze({ type: 'APPLY_REMOTE', changes });
+    return Object.freeze({ type: "APPLY_REMOTE", changes });
   },
 
   /**
@@ -155,7 +160,7 @@ export const DocumentActions = {
    * @param data - Chunk data
    */
   loadChunk(chunkIndex: number, data: ReadonlyUint8Array): LoadChunkAction {
-    return Object.freeze({ type: 'LOAD_CHUNK', chunkIndex, data });
+    return Object.freeze({ type: "LOAD_CHUNK", chunkIndex, data });
   },
 
   /**
@@ -168,7 +173,7 @@ export const DocumentActions = {
    * @param chunkIndex - Zero-based index of the chunk to evict
    */
   evictChunk(chunkIndex: number): EvictChunkAction {
-    return Object.freeze({ type: 'EVICT_CHUNK', chunkIndex });
+    return Object.freeze({ type: "EVICT_CHUNK", chunkIndex });
   },
 
   /**
@@ -178,7 +183,7 @@ export const DocumentActions = {
    * @param metadata - Array of chunk metadata entries
    */
   declareChunkMetadata(metadata: readonly ChunkMetadata[]): DeclareChunkMetadataAction {
-    return Object.freeze({ type: 'DECLARE_CHUNK_METADATA', metadata });
+    return Object.freeze({ type: "DECLARE_CHUNK_METADATA", metadata });
   },
 };
 
@@ -188,10 +193,8 @@ export const DocumentActions = {
  * Note: Uint8Array in LoadChunkAction is converted to base64.
  */
 export function serializeAction(action: DocumentAction): string {
-  if (action.type === 'LOAD_CHUNK') {
-    const base64 = btoa(
-      String.fromCharCode(...new Uint8Array(action.data))
-    );
+  if (action.type === "LOAD_CHUNK") {
+    const base64 = btoa(String.fromCharCode(...new Uint8Array(action.data)));
     return JSON.stringify({ ...action, data: base64 });
   }
   return JSON.stringify(action);
@@ -204,7 +207,12 @@ export function serializeAction(action: DocumentAction): string {
  */
 export function deserializeAction(json: string): DocumentAction {
   const parsed = JSON.parse(json);
-  if (parsed && typeof parsed === 'object' && parsed.type === 'LOAD_CHUNK' && typeof parsed.data === 'string') {
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    parsed.type === "LOAD_CHUNK" &&
+    typeof parsed.data === "string"
+  ) {
     const binary = atob(parsed.data);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {

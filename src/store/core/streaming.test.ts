@@ -2,40 +2,40 @@
  * Tests for getValueStream and streaming operations.
  */
 
-import { describe, it, expect } from 'vitest';
-import { createInitialState } from './state.ts';
-import { getValueStream } from './piece-table.ts';
+import { describe, it, expect } from "vitest";
+import { createInitialState } from "./state.ts";
+import { getValueStream } from "./piece-table.ts";
 
-describe('getValueStream', () => {
-  describe('basic functionality', () => {
-    it('should yield nothing for empty document', () => {
+describe("getValueStream", () => {
+  describe("basic functionality", () => {
+    it("should yield nothing for empty document", () => {
       const state = createInitialState();
       const chunks = [...getValueStream(state.pieceTable)];
       expect(chunks).toHaveLength(0);
     });
 
-    it('should yield single chunk for small document', () => {
-      const state = createInitialState({ content: 'Hello, World!' });
+    it("should yield single chunk for small document", () => {
+      const state = createInitialState({ content: "Hello, World!" });
       const chunks = [...getValueStream(state.pieceTable)];
 
       expect(chunks).toHaveLength(1);
-      expect(chunks[0].content).toBe('Hello, World!');
+      expect(chunks[0].content).toBe("Hello, World!");
       expect(chunks[0].byteOffset).toBe(0);
       expect(chunks[0].isLast).toBe(true);
     });
 
-    it('should reconstruct full content from chunks', () => {
-      const content = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5';
+    it("should reconstruct full content from chunks", () => {
+      const content = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5";
       const state = createInitialState({ content });
 
       const chunks = [...getValueStream(state.pieceTable, { chunkSize: 10 })];
-      const reconstructed = chunks.map(c => c.content).join('');
+      const reconstructed = chunks.map((c) => c.content).join("");
 
       expect(reconstructed).toBe(content);
     });
 
-    it('should yield correct byte offsets', () => {
-      const content = 'AAAAAAAAAA' + 'BBBBBBBBBB' + 'CCCCCCCCCC';
+    it("should yield correct byte offsets", () => {
+      const content = "AAAAAAAAAA" + "BBBBBBBBBB" + "CCCCCCCCCC";
       const state = createInitialState({ content });
 
       const chunks = [...getValueStream(state.pieceTable, { chunkSize: 10 })];
@@ -46,8 +46,8 @@ describe('getValueStream', () => {
       expect(chunks[2].byteOffset).toBe(20);
     });
 
-    it('should mark last chunk correctly', () => {
-      const content = 'A'.repeat(25);
+    it("should mark last chunk correctly", () => {
+      const content = "A".repeat(25);
       const state = createInitialState({ content });
 
       const chunks = [...getValueStream(state.pieceTable, { chunkSize: 10 })];
@@ -59,9 +59,9 @@ describe('getValueStream', () => {
     });
   });
 
-  describe('chunk size', () => {
-    it('should respect chunkSize option', () => {
-      const content = 'A'.repeat(100);
+  describe("chunk size", () => {
+    it("should respect chunkSize option", () => {
+      const content = "A".repeat(100);
       const state = createInitialState({ content });
 
       const chunks = [...getValueStream(state.pieceTable, { chunkSize: 20 })];
@@ -73,61 +73,61 @@ describe('getValueStream', () => {
       expect(chunks[4].byteLength).toBe(20);
     });
 
-    it('should handle chunk size larger than document', () => {
-      const content = 'Small';
+    it("should handle chunk size larger than document", () => {
+      const content = "Small";
       const state = createInitialState({ content });
 
       const chunks = [...getValueStream(state.pieceTable, { chunkSize: 1000 })];
 
       expect(chunks.length).toBe(1);
-      expect(chunks[0].content).toBe('Small');
+      expect(chunks[0].content).toBe("Small");
     });
 
-    it('should use default 64KB chunk size', () => {
-      const content = 'Test';
+    it("should use default 64KB chunk size", () => {
+      const content = "Test";
       const state = createInitialState({ content });
 
       const chunks = [...getValueStream(state.pieceTable)];
 
       expect(chunks.length).toBe(1);
-      expect(chunks[0].content).toBe('Test');
+      expect(chunks[0].content).toBe("Test");
     });
   });
 
-  describe('range options', () => {
-    it('should respect start option', () => {
-      const content = 'Hello, World!';
+  describe("range options", () => {
+    it("should respect start option", () => {
+      const content = "Hello, World!";
       const state = createInitialState({ content });
 
       const chunks = [...getValueStream(state.pieceTable, { start: 7 })];
 
       expect(chunks.length).toBe(1);
-      expect(chunks[0].content).toBe('World!');
+      expect(chunks[0].content).toBe("World!");
       expect(chunks[0].byteOffset).toBe(7);
     });
 
-    it('should respect end option', () => {
-      const content = 'Hello, World!';
+    it("should respect end option", () => {
+      const content = "Hello, World!";
       const state = createInitialState({ content });
 
       const chunks = [...getValueStream(state.pieceTable, { end: 5 })];
 
       expect(chunks.length).toBe(1);
-      expect(chunks[0].content).toBe('Hello');
+      expect(chunks[0].content).toBe("Hello");
     });
 
-    it('should respect both start and end', () => {
-      const content = 'Hello, World!';
+    it("should respect both start and end", () => {
+      const content = "Hello, World!";
       const state = createInitialState({ content });
 
       const chunks = [...getValueStream(state.pieceTable, { start: 7, end: 12 })];
 
       expect(chunks.length).toBe(1);
-      expect(chunks[0].content).toBe('World');
+      expect(chunks[0].content).toBe("World");
     });
 
-    it('should yield nothing for invalid range', () => {
-      const content = 'Hello';
+    it("should yield nothing for invalid range", () => {
+      const content = "Hello";
       const state = createInitialState({ content });
 
       expect([...getValueStream(state.pieceTable, { start: 10, end: 5 })]).toHaveLength(0);
@@ -136,29 +136,29 @@ describe('getValueStream', () => {
     });
   });
 
-  describe('unicode handling', () => {
-    it('should handle unicode content', () => {
-      const content = 'Hello 世界!';
+  describe("unicode handling", () => {
+    it("should handle unicode content", () => {
+      const content = "Hello 世界!";
       const state = createInitialState({ content });
 
       const chunks = [...getValueStream(state.pieceTable)];
-      const reconstructed = chunks.map(c => c.content).join('');
+      const reconstructed = chunks.map((c) => c.content).join("");
 
       expect(reconstructed).toBe(content);
     });
 
-    it('should handle emoji content', () => {
-      const content = '🎉 Party 🎊 Time 🎈';
+    it("should handle emoji content", () => {
+      const content = "🎉 Party 🎊 Time 🎈";
       const state = createInitialState({ content });
 
       const chunks = [...getValueStream(state.pieceTable)];
-      const reconstructed = chunks.map(c => c.content).join('');
+      const reconstructed = chunks.map((c) => c.content).join("");
 
       expect(reconstructed).toBe(content);
     });
 
-    it('should correctly report byte lengths for unicode', () => {
-      const content = '世界'; // 6 bytes in UTF-8
+    it("should correctly report byte lengths for unicode", () => {
+      const content = "世界"; // 6 bytes in UTF-8
       const state = createInitialState({ content });
 
       const chunks = [...getValueStream(state.pieceTable)];
@@ -167,21 +167,21 @@ describe('getValueStream', () => {
     });
   });
 
-  describe('large documents', () => {
-    it('should handle large documents efficiently', () => {
+  describe("large documents", () => {
+    it("should handle large documents efficiently", () => {
       const lines = Array.from({ length: 1000 }, (_, i) => `Line ${i + 1}`);
-      const content = lines.join('\n');
+      const content = lines.join("\n");
       const state = createInitialState({ content });
 
       const chunks = [...getValueStream(state.pieceTable, { chunkSize: 1024 })];
-      const reconstructed = chunks.map(c => c.content).join('');
+      const reconstructed = chunks.map((c) => c.content).join("");
 
       expect(reconstructed).toBe(content);
       expect(chunks.length).toBeGreaterThan(1);
     });
 
-    it('should process chunks incrementally', () => {
-      const content = 'A'.repeat(10000);
+    it("should process chunks incrementally", () => {
+      const content = "A".repeat(10000);
       const state = createInitialState({ content });
 
       let processedBytes = 0;

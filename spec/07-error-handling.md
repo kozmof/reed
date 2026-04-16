@@ -32,6 +32,7 @@
 ## 2. Current Non-Goals / Not Implemented
 
 The following error domains are not implemented because the related runtime layers do not yet exist:
+
 - file I/O errors (open/save/permissions)
 - network/provider/collaboration transport errors
 - chunk-cache eviction policies under memory pressure
@@ -44,6 +45,7 @@ The following error domains are not implemented because the related runtime laye
 ## 4. Recommendation for Next Iteration
 
 As runtime layers are added, keep the same strategy:
+
 - fail-soft at boundary points,
 - keep reducer/store deterministic,
 - isolate observer/transport faults from core state transitions.

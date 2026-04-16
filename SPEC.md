@@ -3,6 +3,7 @@
 ## Scope
 
 This repository currently implements a core text engine and state runtime:
+
 - immutable `DocumentState` snapshots
 - piece table + line index data structures
 - pure reducer transitions
@@ -10,6 +11,7 @@ This repository currently implements a core text engine and state runtime:
 - query/scan API namespaces and selector-level rendering helpers
 
 This repository does **not** currently include:
+
 - framework adapters (React/Vue/Svelte/Redux/Zustand)
 - a full collaboration transport/CRDT bridge
 - real chunk loader/eviction runtime
@@ -24,16 +26,16 @@ This repository does **not** currently include:
 
 ## Specification Documents
 
-| Document | Domain | Current Focus |
-|----------|--------|---------------|
-| [spec/01-core-architecture.md](spec/01-core-architecture.md) | Core | Piece table + line index architecture, reducer/store model, known core gaps |
-| [spec/02-rendering.md](spec/02-rendering.md) | Rendering | Selector-level viewport/line utilities |
-| [spec/03-loading-and-history.md](spec/03-loading-and-history.md) | Data | Streaming read support, history model, chunk-action stub status |
-| [spec/04-collaboration.md](spec/04-collaboration.md) | Collaboration | `APPLY_REMOTE` primitives and current non-implemented collaboration layers |
-| [spec/05-public-api.md](spec/05-public-api.md) | API | Actual exported API surface from `src/index.ts` |
-| [spec/06-testing.md](spec/06-testing.md) | Quality | Current test suites, latest verified run, and coverage gaps |
-| [spec/07-error-handling.md](spec/07-error-handling.md) | Reliability | Implemented fail-soft behavior and known semantic gaps |
-| [spec/08-implementation.md](spec/08-implementation.md) | Status | Implemented, partial, and missing subsystems with near-term priorities |
+| Document                                                         | Domain        | Current Focus                                                               |
+| ---------------------------------------------------------------- | ------------- | --------------------------------------------------------------------------- |
+| [spec/01-core-architecture.md](spec/01-core-architecture.md)     | Core          | Piece table + line index architecture, reducer/store model, known core gaps |
+| [spec/02-rendering.md](spec/02-rendering.md)                     | Rendering     | Selector-level viewport/line utilities                                      |
+| [spec/03-loading-and-history.md](spec/03-loading-and-history.md) | Data          | Streaming read support, history model, chunk-action stub status             |
+| [spec/04-collaboration.md](spec/04-collaboration.md)             | Collaboration | `APPLY_REMOTE` primitives and current non-implemented collaboration layers  |
+| [spec/05-public-api.md](spec/05-public-api.md)                   | API           | Actual exported API surface from `src/index.ts`                             |
+| [spec/06-testing.md](spec/06-testing.md)                         | Quality       | Current test suites, latest verified run, and coverage gaps                 |
+| [spec/07-error-handling.md](spec/07-error-handling.md)           | Reliability   | Implemented fail-soft behavior and known semantic gaps                      |
+| [spec/08-implementation.md](spec/08-implementation.md)           | Status        | Implemented, partial, and missing subsystems with near-term priorities      |
 
 ## Current API Snapshot
 

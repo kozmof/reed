@@ -3,9 +3,9 @@
  * Unit tests for reducer, state factories, action creators, and invariants.
  */
 
-import { describe, it, expect } from 'vitest';
-import { pstackSize, pstackPeek } from '../../types/state.ts';
-import { documentReducer } from './reducer.ts';
+import { describe, it, expect } from "vitest";
+import { pstackSize, pstackPeek } from "../../types/state.ts";
+import { documentReducer } from "./reducer.ts";
 import {
   createInitialState,
   createEmptyPieceTableState,
@@ -20,29 +20,25 @@ import {
   withState,
   withPieceNode,
   withLineIndexNode,
-} from './../core/state.ts';
-import {
-  DocumentActions,
-  serializeAction,
-  deserializeAction,
-} from './actions.ts';
+} from "./../core/state.ts";
+import { DocumentActions, serializeAction, deserializeAction } from "./actions.ts";
 import {
   isTextEditAction,
   isHistoryAction,
   isTransactionAction,
   isDocumentAction,
-} from '../../types/actions.ts';
-import { createDocumentStore, isDocumentStore } from './store.ts';
-import { getLineCountFromIndex } from './../core/line-index.ts';
-import { byteOffset, byteLength, type ByteOffset } from '../../types/branded.ts';
+} from "../../types/actions.ts";
+import { createDocumentStore, isDocumentStore } from "./store.ts";
+import { getLineCountFromIndex } from "./../core/line-index.ts";
+import { byteOffset, byteLength, type ByteOffset } from "../../types/branded.ts";
 
 // =============================================================================
 // State Factory Tests
 // =============================================================================
 
-describe('State Factories', () => {
-  describe('createInitialState', () => {
-    it('should create state with default config', () => {
+describe("State Factories", () => {
+  describe("createInitialState", () => {
+    it("should create state with default config", () => {
       const state = createInitialState();
 
       expect(state.version).toBe(0);
@@ -54,32 +50,32 @@ describe('State Factories', () => {
       expect(state.metadata.isDirty).toBe(false);
     });
 
-    it('should create state with initial content', () => {
-      const state = createInitialState({ content: 'Hello' });
+    it("should create state with initial content", () => {
+      const state = createInitialState({ content: "Hello" });
 
       expect(state.pieceTable.totalLength).toBe(5);
       expect(state.pieceTable.originalBuffer.length).toBe(5);
     });
 
-    it('should create state with custom history limit', () => {
+    it("should create state with custom history limit", () => {
       const state = createInitialState({ historyLimit: 100 });
 
       expect(state.history.limit).toBe(100);
     });
 
-    it('should create state with custom encoding', () => {
-      const state = createInitialState({ encoding: 'utf-16' });
+    it("should create state with custom encoding", () => {
+      const state = createInitialState({ encoding: "utf-16" });
 
-      expect(state.metadata.encoding).toBe('utf-16');
+      expect(state.metadata.encoding).toBe("utf-16");
     });
 
-    it('should create state with custom line ending', () => {
-      const state = createInitialState({ lineEnding: 'crlf' });
+    it("should create state with custom line ending", () => {
+      const state = createInitialState({ lineEnding: "crlf" });
 
-      expect(state.metadata.lineEnding).toBe('crlf');
+      expect(state.metadata.lineEnding).toBe("crlf");
     });
 
-    it('should return frozen state', () => {
+    it("should return frozen state", () => {
       const state = createInitialState();
 
       expect(Object.isFrozen(state)).toBe(true);
@@ -90,8 +86,8 @@ describe('State Factories', () => {
     });
   });
 
-  describe('createEmptyPieceTableState', () => {
-    it('should create empty piece table', () => {
+  describe("createEmptyPieceTableState", () => {
+    it("should create empty piece table", () => {
       const pieceTable = createEmptyPieceTableState();
 
       expect(pieceTable.root).toBeNull();
@@ -100,65 +96,72 @@ describe('State Factories', () => {
       expect(pieceTable.totalLength).toBe(0);
     });
 
-    it('should be frozen', () => {
+    it("should be frozen", () => {
       const pieceTable = createEmptyPieceTableState();
       expect(Object.isFrozen(pieceTable)).toBe(true);
     });
   });
 
-  describe('createPieceTableState', () => {
-    it('should create piece table from content', () => {
-      const pieceTable = createPieceTableState('Hello World');
+  describe("createPieceTableState", () => {
+    it("should create piece table from content", () => {
+      const pieceTable = createPieceTableState("Hello World");
 
       expect(pieceTable.totalLength).toBe(11);
       expect(pieceTable.originalBuffer.length).toBe(11);
       expect(pieceTable.root).not.toBeNull();
     });
 
-    it('should return empty state for empty content', () => {
-      const pieceTable = createPieceTableState('');
+    it("should return empty state for empty content", () => {
+      const pieceTable = createPieceTableState("");
 
       expect(pieceTable.totalLength).toBe(0);
       expect(pieceTable.root).toBeNull();
     });
 
-    it('should pre-allocate add buffer', () => {
-      const pieceTable = createPieceTableState('Hi');
+    it("should pre-allocate add buffer", () => {
+      const pieceTable = createPieceTableState("Hi");
 
       expect(pieceTable.addBuffer.bytes.length).toBeGreaterThan(0);
       expect(pieceTable.addBuffer.length).toBe(0);
     });
   });
 
-  describe('createPieceNode', () => {
-    it('should create node with default values', () => {
-      const node = createPieceNode('original', byteOffset(0), byteLength(10));
+  describe("createPieceNode", () => {
+    it("should create node with default values", () => {
+      const node = createPieceNode("original", byteOffset(0), byteLength(10));
 
-      expect(node.bufferType).toBe('original');
+      expect(node.bufferType).toBe("original");
       expect(node.start).toBe(0);
       expect(node.length).toBe(10);
-      expect(node.color).toBe('black');
+      expect(node.color).toBe("black");
       expect(node.left).toBeNull();
       expect(node.right).toBeNull();
       expect(node.subtreeLength).toBe(10);
     });
 
-    it('should calculate subtreeLength with children', () => {
-      const left = createPieceNode('original', byteOffset(0), byteLength(5));
-      const right = createPieceNode('add', byteOffset(0), byteLength(3));
-      const parent = createPieceNode('original', byteOffset(5), byteLength(10), 'black', left, right);
+    it("should calculate subtreeLength with children", () => {
+      const left = createPieceNode("original", byteOffset(0), byteLength(5));
+      const right = createPieceNode("add", byteOffset(0), byteLength(3));
+      const parent = createPieceNode(
+        "original",
+        byteOffset(5),
+        byteLength(10),
+        "black",
+        left,
+        right,
+      );
 
       expect(parent.subtreeLength).toBe(18); // 5 + 10 + 3
     });
 
-    it('should support red color', () => {
-      const node = createPieceNode('add', byteOffset(0), byteLength(5), 'red');
-      expect(node.color).toBe('red');
+    it("should support red color", () => {
+      const node = createPieceNode("add", byteOffset(0), byteLength(5), "red");
+      expect(node.color).toBe("red");
     });
   });
 
-  describe('createEmptyLineIndexState', () => {
-    it('should create state with 1 line count', () => {
+  describe("createEmptyLineIndexState", () => {
+    it("should create state with 1 line count", () => {
       const lineIndex = createEmptyLineIndexState();
 
       expect(lineIndex.root).not.toBeNull();
@@ -167,35 +170,35 @@ describe('State Factories', () => {
     });
   });
 
-  describe('createLineIndexState', () => {
-    it('should count lines correctly', () => {
-      const lineIndex = createLineIndexState('Line 1\nLine 2\nLine 3');
+  describe("createLineIndexState", () => {
+    it("should count lines correctly", () => {
+      const lineIndex = createLineIndexState("Line 1\nLine 2\nLine 3");
 
       expect(lineIndex.lineCount).toBe(3);
       expect(lineIndex.root).not.toBeNull();
     });
 
-    it('should handle CRLF line endings', () => {
-      const lineIndex = createLineIndexState('Line 1\r\nLine 2\r\nLine 3');
+    it("should handle CRLF line endings", () => {
+      const lineIndex = createLineIndexState("Line 1\r\nLine 2\r\nLine 3");
 
       expect(lineIndex.lineCount).toBe(3);
     });
 
-    it('should handle CR only line endings', () => {
-      const lineIndex = createLineIndexState('Line 1\rLine 2\rLine 3');
+    it("should handle CR only line endings", () => {
+      const lineIndex = createLineIndexState("Line 1\rLine 2\rLine 3");
 
       expect(lineIndex.lineCount).toBe(3);
     });
 
-    it('should handle content without trailing newline', () => {
-      const lineIndex = createLineIndexState('Single line');
+    it("should handle content without trailing newline", () => {
+      const lineIndex = createLineIndexState("Single line");
 
       expect(lineIndex.lineCount).toBe(1);
     });
   });
 
-  describe('createLineIndexNode', () => {
-    it('should create node with metadata', () => {
+  describe("createLineIndexNode", () => {
+    it("should create node with metadata", () => {
       const node = createLineIndexNode(0, 10);
 
       expect(node.documentOffset).toBe(0);
@@ -204,18 +207,18 @@ describe('State Factories', () => {
       expect(node.subtreeByteLength).toBe(10);
     });
 
-    it('should aggregate subtree metadata', () => {
+    it("should aggregate subtree metadata", () => {
       const left = createLineIndexNode(0, 5);
       const right = createLineIndexNode(15, 8);
-      const parent = createLineIndexNode(5, 10, 'black', left, right);
+      const parent = createLineIndexNode(5, 10, "black", left, right);
 
       expect(parent.subtreeLineCount).toBe(3);
       expect(parent.subtreeByteLength).toBe(23); // 5 + 10 + 8
     });
   });
 
-  describe('createInitialSelectionState', () => {
-    it('should create cursor at position 0', () => {
+  describe("createInitialSelectionState", () => {
+    it("should create cursor at position 0", () => {
       const selection = createInitialSelectionState();
 
       expect(selection.ranges.length).toBe(1);
@@ -225,8 +228,8 @@ describe('State Factories', () => {
     });
   });
 
-  describe('createInitialHistoryState', () => {
-    it('should create empty stacks with limit', () => {
+  describe("createInitialHistoryState", () => {
+    it("should create empty stacks with limit", () => {
       const history = createInitialHistoryState(500);
 
       expect(pstackSize(history.undoStack)).toBe(0);
@@ -234,26 +237,26 @@ describe('State Factories', () => {
       expect(history.limit).toBe(500);
     });
 
-    it('should use default limit of 1000', () => {
+    it("should use default limit of 1000", () => {
       const history = createInitialHistoryState();
       expect(history.limit).toBe(1000);
     });
   });
 
-  describe('createInitialMetadata', () => {
-    it('should create metadata with defaults', () => {
+  describe("createInitialMetadata", () => {
+    it("should create metadata with defaults", () => {
       const metadata = createInitialMetadata();
 
       expect(metadata.filePath).toBeUndefined();
-      expect(metadata.encoding).toBe('utf-8');
-      expect(metadata.lineEnding).toBe('lf');
+      expect(metadata.encoding).toBe("utf-8");
+      expect(metadata.lineEnding).toBe("lf");
       expect(metadata.isDirty).toBe(false);
       expect(metadata.lastSaved).toBeUndefined();
     });
   });
 
-  describe('withState', () => {
-    it('should create new state with changes', () => {
+  describe("withState", () => {
+    it("should create new state with changes", () => {
       const state = createInitialState();
       const newState = withState(state, { version: 1 });
 
@@ -261,7 +264,7 @@ describe('State Factories', () => {
       expect(newState).not.toBe(state);
     });
 
-    it('should preserve unchanged properties', () => {
+    it("should preserve unchanged properties", () => {
       const state = createInitialState();
       const newState = withState(state, { version: 1 });
 
@@ -270,7 +273,7 @@ describe('State Factories', () => {
       expect(newState.history).toBe(state.history);
     });
 
-    it('should return frozen state', () => {
+    it("should return frozen state", () => {
       const state = createInitialState();
       const newState = withState(state, { version: 1 });
 
@@ -278,18 +281,18 @@ describe('State Factories', () => {
     });
   });
 
-  describe('withPieceNode', () => {
-    it('should recalculate subtreeLength on child change', () => {
-      const node = createPieceNode('original', byteOffset(0), byteLength(10));
-      const newLeft = createPieceNode('add', byteOffset(0), byteLength(5));
+  describe("withPieceNode", () => {
+    it("should recalculate subtreeLength on child change", () => {
+      const node = createPieceNode("original", byteOffset(0), byteLength(10));
+      const newLeft = createPieceNode("add", byteOffset(0), byteLength(5));
       const newNode = withPieceNode(node, { left: newLeft });
 
       expect(newNode.subtreeLength).toBe(15); // 10 + 5
     });
   });
 
-  describe('withLineIndexNode', () => {
-    it('should recalculate subtree metadata on child change', () => {
+  describe("withLineIndexNode", () => {
+    it("should recalculate subtree metadata on child change", () => {
       const node = createLineIndexNode(0, 10);
       const newLeft = createLineIndexNode(0, 5);
       const newNode = withLineIndexNode(node, { left: newLeft });
@@ -304,152 +307,155 @@ describe('State Factories', () => {
 // Reducer Tests
 // =============================================================================
 
-describe('Document Reducer', () => {
-  describe('INSERT action', () => {
-    it('should increase total length', () => {
+describe("Document Reducer", () => {
+  describe("INSERT action", () => {
+    it("should increase total length", () => {
       const state = createInitialState();
-      const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
+      const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
 
       expect(newState.pieceTable.totalLength).toBe(5);
     });
 
-    it('should increment version', () => {
+    it("should increment version", () => {
       const state = createInitialState();
-      const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hi'));
+      const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hi"));
 
       expect(newState.version).toBe(1);
     });
 
-    it('should mark document as dirty', () => {
+    it("should mark document as dirty", () => {
       const state = createInitialState();
-      const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), 'A'));
+      const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), "A"));
 
       expect(newState.metadata.isDirty).toBe(true);
     });
 
-    it('should push to history', () => {
+    it("should push to history", () => {
       const state = createInitialState();
-      const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Test'));
+      const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), "Test"));
 
       expect(pstackSize(newState.history.undoStack)).toBe(1);
-      expect(pstackPeek(newState.history.undoStack)!.changes[0].type).toBe('insert');
+      expect(pstackPeek(newState.history.undoStack)!.changes[0].type).toBe("insert");
     });
 
-    it('should update line count for newlines', () => {
+    it("should update line count for newlines", () => {
       const state = createInitialState();
-      const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), 'A\nB\nC'));
+      const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), "A\nB\nC"));
 
       expect(newState.lineIndex.lineCount).toBe(3);
     });
 
-    it('should grow add buffer when needed', () => {
+    it("should grow add buffer when needed", () => {
       const state = createInitialState();
-      const longText = 'x'.repeat(2000);
+      const longText = "x".repeat(2000);
       const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), longText));
 
       expect(newState.pieceTable.addBuffer.length).toBeGreaterThanOrEqual(2000);
     });
   });
 
-  describe('DELETE action', () => {
-    it('should decrease total length', () => {
-      const state = createInitialState({ content: 'Hello World' });
+  describe("DELETE action", () => {
+    it("should decrease total length", () => {
+      const state = createInitialState({ content: "Hello World" });
       const newState = documentReducer(state, DocumentActions.delete(byteOffset(0), byteOffset(5)));
 
       expect(newState.pieceTable.totalLength).toBe(6);
     });
 
-    it('should do nothing for zero-length delete', () => {
-      const state = createInitialState({ content: 'Hello' });
+    it("should do nothing for zero-length delete", () => {
+      const state = createInitialState({ content: "Hello" });
       const newState = documentReducer(state, DocumentActions.delete(byteOffset(2), byteOffset(2)));
 
       expect(newState).toBe(state);
     });
 
-    it('should do nothing for negative range', () => {
-      const state = createInitialState({ content: 'Hello' });
+    it("should do nothing for negative range", () => {
+      const state = createInitialState({ content: "Hello" });
       const newState = documentReducer(state, DocumentActions.delete(byteOffset(5), byteOffset(3)));
 
       expect(newState).toBe(state);
     });
 
-    it('should not go below zero length', () => {
-      const state = createInitialState({ content: 'Hi' });
-      const newState = documentReducer(state, DocumentActions.delete(byteOffset(0), byteOffset(100)));
+    it("should not go below zero length", () => {
+      const state = createInitialState({ content: "Hi" });
+      const newState = documentReducer(
+        state,
+        DocumentActions.delete(byteOffset(0), byteOffset(100)),
+      );
 
       expect(newState.pieceTable.totalLength).toBe(0);
     });
   });
 
-  describe('REPLACE action', () => {
-    it('should replace text range', () => {
-      const state = createInitialState({ content: 'Hello World' });
+  describe("REPLACE action", () => {
+    it("should replace text range", () => {
+      const state = createInitialState({ content: "Hello World" });
       const newState = documentReducer(
         state,
-        DocumentActions.replace(byteOffset(6), byteOffset(11), 'Universe')
+        DocumentActions.replace(byteOffset(6), byteOffset(11), "Universe"),
       );
 
       // Original: 11, Delete 5, Add 8 = 14
       expect(newState.pieceTable.totalLength).toBe(14);
     });
 
-    it('should work as insert when range is empty', () => {
-      const state = createInitialState({ content: 'AB' });
+    it("should work as insert when range is empty", () => {
+      const state = createInitialState({ content: "AB" });
       const newState = documentReducer(
         state,
-        DocumentActions.replace(byteOffset(1), byteOffset(1), 'X')
+        DocumentActions.replace(byteOffset(1), byteOffset(1), "X"),
       );
 
       expect(newState.pieceTable.totalLength).toBe(3);
     });
   });
 
-  describe('SET_SELECTION action', () => {
-    it('should update selection ranges', () => {
-      const state = createInitialState({ content: 'Hello' });
+  describe("SET_SELECTION action", () => {
+    it("should update selection ranges", () => {
+      const state = createInitialState({ content: "Hello" });
       const newState = documentReducer(
         state,
-        DocumentActions.setSelection([{ anchor: byteOffset(1), head: byteOffset(4) }])
+        DocumentActions.setSelection([{ anchor: byteOffset(1), head: byteOffset(4) }]),
       );
 
       expect(newState.selection.ranges[0].anchor).toBe(1);
       expect(newState.selection.ranges[0].head).toBe(4);
     });
 
-    it('should increment version', () => {
+    it("should increment version", () => {
       const state = createInitialState();
       const newState = documentReducer(
         state,
-        DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(0) }])
+        DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(0) }]),
       );
 
       expect(newState.version).toBe(1);
     });
 
-    it('should not mark dirty', () => {
+    it("should not mark dirty", () => {
       const state = createInitialState();
       const newState = documentReducer(
         state,
-        DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(0) }])
+        DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(0) }]),
       );
 
       expect(newState.metadata.isDirty).toBe(false);
     });
   });
 
-  describe('UNDO action', () => {
-    it('should revert insert', () => {
+  describe("UNDO action", () => {
+    it("should revert insert", () => {
       let state = createInitialState();
-      state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
+      state = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
       expect(state.pieceTable.totalLength).toBe(5);
 
       state = documentReducer(state, DocumentActions.undo());
       expect(state.pieceTable.totalLength).toBe(0);
     });
 
-    it('should move entry from undo to redo stack', () => {
+    it("should move entry from undo to redo stack", () => {
       let state = createInitialState();
-      state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'A'));
+      state = documentReducer(state, DocumentActions.insert(byteOffset(0), "A"));
       expect(pstackSize(state.history.undoStack)).toBe(1);
       expect(pstackSize(state.history.redoStack)).toBe(0);
 
@@ -458,7 +464,7 @@ describe('Document Reducer', () => {
       expect(pstackSize(state.history.redoStack)).toBe(1);
     });
 
-    it('should return same state when nothing to undo', () => {
+    it("should return same state when nothing to undo", () => {
       const state = createInitialState();
       const newState = documentReducer(state, DocumentActions.undo());
 
@@ -466,10 +472,10 @@ describe('Document Reducer', () => {
     });
   });
 
-  describe('REDO action', () => {
-    it('should reapply undone action', () => {
+  describe("REDO action", () => {
+    it("should reapply undone action", () => {
       let state = createInitialState();
-      state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Hello'));
+      state = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
       state = documentReducer(state, DocumentActions.undo());
       expect(state.pieceTable.totalLength).toBe(0);
 
@@ -477,7 +483,7 @@ describe('Document Reducer', () => {
       expect(state.pieceTable.totalLength).toBe(5);
     });
 
-    it('should return same state when nothing to redo', () => {
+    it("should return same state when nothing to redo", () => {
       const state = createInitialState();
       const newState = documentReducer(state, DocumentActions.redo());
 
@@ -485,10 +491,13 @@ describe('Document Reducer', () => {
     });
   });
 
-  describe('Undo/Redo line index correctness (P3 fix)', () => {
-    it('should update line count after undoing an insert with newlines', () => {
+  describe("Undo/Redo line index correctness (P3 fix)", () => {
+    it("should update line count after undoing an insert with newlines", () => {
       let state = createInitialState();
-      state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'Line 1\nLine 2\nLine 3'));
+      state = documentReducer(
+        state,
+        DocumentActions.insert(byteOffset(0), "Line 1\nLine 2\nLine 3"),
+      );
       expect(getLineCountFromIndex(state.lineIndex)).toBe(3);
 
       state = documentReducer(state, DocumentActions.undo());
@@ -496,9 +505,9 @@ describe('Document Reducer', () => {
       expect(getLineCountFromIndex(state.lineIndex)).toBe(1);
     });
 
-    it('should update line count after redoing an insert with newlines', () => {
+    it("should update line count after redoing an insert with newlines", () => {
       let state = createInitialState();
-      state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'A\nB\nC\nD'));
+      state = documentReducer(state, DocumentActions.insert(byteOffset(0), "A\nB\nC\nD"));
       expect(getLineCountFromIndex(state.lineIndex)).toBe(4);
 
       state = documentReducer(state, DocumentActions.undo());
@@ -508,8 +517,8 @@ describe('Document Reducer', () => {
       expect(getLineCountFromIndex(state.lineIndex)).toBe(4);
     });
 
-    it('should update line count after undoing a delete that removed newlines', () => {
-      let state = createInitialState({ content: 'Line 1\nLine 2\nLine 3' });
+    it("should update line count after undoing a delete that removed newlines", () => {
+      let state = createInitialState({ content: "Line 1\nLine 2\nLine 3" });
       expect(getLineCountFromIndex(state.lineIndex)).toBe(3);
 
       // Delete "Line 2\n" (bytes 7-14)
@@ -520,24 +529,27 @@ describe('Document Reducer', () => {
       expect(getLineCountFromIndex(state.lineIndex)).toBe(3);
     });
 
-    it('should update line count after undoing a replace that changed line structure', () => {
-      let state = createInitialState({ content: 'Hello World' });
+    it("should update line count after undoing a replace that changed line structure", () => {
+      let state = createInitialState({ content: "Hello World" });
       expect(getLineCountFromIndex(state.lineIndex)).toBe(1);
 
       // Replace "World" (bytes 6-11) with "A\nB\nC"
-      state = documentReducer(state, DocumentActions.replace(byteOffset(6), byteOffset(11), 'A\nB\nC'));
+      state = documentReducer(
+        state,
+        DocumentActions.replace(byteOffset(6), byteOffset(11), "A\nB\nC"),
+      );
       expect(getLineCountFromIndex(state.lineIndex)).toBe(3);
 
       state = documentReducer(state, DocumentActions.undo());
       expect(getLineCountFromIndex(state.lineIndex)).toBe(1);
     });
 
-    it('should maintain correct line count through multiple undo/redo cycles', () => {
+    it("should maintain correct line count through multiple undo/redo cycles", () => {
       let state = createInitialState();
-      state = documentReducer(state, DocumentActions.insert(byteOffset(0), 'A\nB'));
+      state = documentReducer(state, DocumentActions.insert(byteOffset(0), "A\nB"));
       expect(getLineCountFromIndex(state.lineIndex)).toBe(2);
 
-      state = documentReducer(state, DocumentActions.insert(byteOffset(3), '\nC\nD'));
+      state = documentReducer(state, DocumentActions.insert(byteOffset(3), "\nC\nD"));
       expect(getLineCountFromIndex(state.lineIndex)).toBe(4);
 
       // Undo second insert
@@ -558,107 +570,92 @@ describe('Document Reducer', () => {
     });
   });
 
-  describe('APPLY_REMOTE action', () => {
-    it('should apply remote insert', () => {
+  describe("APPLY_REMOTE action", () => {
+    it("should apply remote insert", () => {
       const state = createInitialState();
       const newState = documentReducer(
         state,
-        DocumentActions.applyRemote([
-          { type: 'insert', start: byteOffset(0), text: 'Remote' },
-        ])
+        DocumentActions.applyRemote([{ type: "insert", start: byteOffset(0), text: "Remote" }]),
       );
 
       expect(newState.pieceTable.totalLength).toBe(6);
     });
 
-    it('should apply remote delete', () => {
-      const state = createInitialState({ content: 'Hello World' });
+    it("should apply remote delete", () => {
+      const state = createInitialState({ content: "Hello World" });
       const newState = documentReducer(
         state,
         DocumentActions.applyRemote([
-          { type: 'delete', start: byteOffset(5), length: byteLength(6) },
-        ])
+          { type: "delete", start: byteOffset(5), length: byteLength(6) },
+        ]),
       );
 
       expect(newState.pieceTable.totalLength).toBe(5);
     });
 
-    it('should not push to history', () => {
+    it("should not push to history", () => {
       const state = createInitialState();
       const newState = documentReducer(
         state,
-        DocumentActions.applyRemote([
-          { type: 'insert', start: byteOffset(0), text: 'A' },
-        ])
+        DocumentActions.applyRemote([{ type: "insert", start: byteOffset(0), text: "A" }]),
       );
 
       expect(pstackSize(newState.history.undoStack)).toBe(0);
     });
 
-    it('should mark state as dirty after remote content changes', () => {
-      const state = createInitialState({ content: 'Hello' });
+    it("should mark state as dirty after remote content changes", () => {
+      const state = createInitialState({ content: "Hello" });
       const newState = documentReducer(
         state,
-        DocumentActions.applyRemote([
-          { type: 'insert', start: byteOffset(5), text: '!' },
-        ])
+        DocumentActions.applyRemote([{ type: "insert", start: byteOffset(5), text: "!" }]),
       );
 
       expect(newState.metadata.isDirty).toBe(true);
     });
 
-    it('should return the same state for no-op remote payloads', () => {
-      const state = createInitialState({ content: 'Hello' });
+    it("should return the same state for no-op remote payloads", () => {
+      const state = createInitialState({ content: "Hello" });
       const newState = documentReducer(
         state,
         DocumentActions.applyRemote([
-          { type: 'insert', start: byteOffset(5), text: '' },
-          { type: 'delete', start: byteOffset(0), length: byteLength(0) },
-        ])
+          { type: "insert", start: byteOffset(5), text: "" },
+          { type: "delete", start: byteOffset(0), length: byteLength(0) },
+        ]),
       );
 
       expect(newState).toBe(state);
     });
   });
 
-  describe('Transaction actions', () => {
-    it('should return same state for TRANSACTION_START', () => {
+  describe("Transaction actions", () => {
+    it("should return same state for TRANSACTION_START", () => {
       const state = createInitialState();
-      const newState = documentReducer(
-        state,
-        DocumentActions.transactionStart()
-      );
+      const newState = documentReducer(state, DocumentActions.transactionStart());
 
       expect(newState).toBe(state);
     });
 
-    it('should return same state for TRANSACTION_COMMIT', () => {
+    it("should return same state for TRANSACTION_COMMIT", () => {
       const state = createInitialState();
-      const newState = documentReducer(
-        state,
-        DocumentActions.transactionCommit()
-      );
+      const newState = documentReducer(state, DocumentActions.transactionCommit());
 
       expect(newState).toBe(state);
     });
 
-    it('should return same state for TRANSACTION_ROLLBACK', () => {
+    it("should return same state for TRANSACTION_ROLLBACK", () => {
       const state = createInitialState();
-      const newState = documentReducer(
-        state,
-        DocumentActions.transactionRollback()
-      );
+      const newState = documentReducer(state, DocumentActions.transactionRollback());
 
       expect(newState).toBe(state);
     });
   });
 
-  describe('Structural sharing', () => {
-    it('should preserve unchanged subtrees', () => {
-      const state = createInitialState({ content: 'Hello' });
+  describe("Structural sharing", () => {
+    it("should preserve unchanged subtrees", () => {
+      const state = createInitialState({ content: "Hello" });
       const newState = documentReducer(
         state,
-        DocumentActions.setSelection([{ anchor: byteOffset(1), head: byteOffset(1) }])
+        DocumentActions.setSelection([{ anchor: byteOffset(1), head: byteOffset(1) }]),
       );
 
       // pieceTable should be same reference (unchanged)
@@ -669,17 +666,17 @@ describe('Document Reducer', () => {
       expect(newState.history).toBe(state.history);
     });
 
-    it('should only update affected parts', () => {
-      const state = createInitialState({ content: 'Hello' });
-      const newState = documentReducer(state, DocumentActions.insert(byteOffset(5), '!'));
+    it("should only update affected parts", () => {
+      const state = createInitialState({ content: "Hello" });
+      const newState = documentReducer(state, DocumentActions.insert(byteOffset(5), "!"));
 
       // Selection should be same reference if not changed
       expect(newState.selection).toBe(state.selection);
     });
   });
 
-  describe('History limit enforcement', () => {
-    it('should trim undo stack when exceeding limit', () => {
+  describe("History limit enforcement", () => {
+    it("should trim undo stack when exceeding limit", () => {
       let state = createInitialState({ historyLimit: 3 });
 
       // Add 5 entries
@@ -697,92 +694,92 @@ describe('Document Reducer', () => {
 // Action Creator Tests
 // =============================================================================
 
-describe('Action Creators', () => {
-  describe('DocumentActions', () => {
-    it('should create INSERT action', () => {
-      const action = DocumentActions.insert(byteOffset(5), 'Hello');
+describe("Action Creators", () => {
+  describe("DocumentActions", () => {
+    it("should create INSERT action", () => {
+      const action = DocumentActions.insert(byteOffset(5), "Hello");
 
-      expect(action.type).toBe('INSERT');
+      expect(action.type).toBe("INSERT");
       expect(action.start).toBe(5);
-      expect(action.text).toBe('Hello');
+      expect(action.text).toBe("Hello");
     });
 
-    it('should create DELETE action', () => {
+    it("should create DELETE action", () => {
       const action = DocumentActions.delete(byteOffset(0), byteOffset(10));
 
-      expect(action.type).toBe('DELETE');
+      expect(action.type).toBe("DELETE");
       expect(action.start).toBe(0);
       expect(action.end).toBe(10);
     });
 
-    it('should create REPLACE action', () => {
-      const action = DocumentActions.replace(byteOffset(5), byteOffset(10), 'New');
+    it("should create REPLACE action", () => {
+      const action = DocumentActions.replace(byteOffset(5), byteOffset(10), "New");
 
-      expect(action.type).toBe('REPLACE');
+      expect(action.type).toBe("REPLACE");
       expect(action.start).toBe(5);
       expect(action.end).toBe(10);
-      expect(action.text).toBe('New');
+      expect(action.text).toBe("New");
     });
 
-    it('should create SET_SELECTION action', () => {
+    it("should create SET_SELECTION action", () => {
       const ranges = [{ anchor: byteOffset(0), head: byteOffset(5) }];
       const action = DocumentActions.setSelection(ranges);
 
-      expect(action.type).toBe('SET_SELECTION');
+      expect(action.type).toBe("SET_SELECTION");
       expect(action.ranges).toBe(ranges);
     });
 
-    it('should create UNDO action', () => {
+    it("should create UNDO action", () => {
       const action = DocumentActions.undo();
-      expect(action.type).toBe('UNDO');
+      expect(action.type).toBe("UNDO");
     });
 
-    it('should create REDO action', () => {
+    it("should create REDO action", () => {
       const action = DocumentActions.redo();
-      expect(action.type).toBe('REDO');
+      expect(action.type).toBe("REDO");
     });
 
-    it('should create transaction actions', () => {
-      expect(DocumentActions.transactionStart().type).toBe('TRANSACTION_START');
-      expect(DocumentActions.transactionCommit().type).toBe('TRANSACTION_COMMIT');
-      expect(DocumentActions.transactionRollback().type).toBe('TRANSACTION_ROLLBACK');
+    it("should create transaction actions", () => {
+      expect(DocumentActions.transactionStart().type).toBe("TRANSACTION_START");
+      expect(DocumentActions.transactionCommit().type).toBe("TRANSACTION_COMMIT");
+      expect(DocumentActions.transactionRollback().type).toBe("TRANSACTION_ROLLBACK");
     });
 
-    it('should create APPLY_REMOTE action', () => {
-      const changes = [{ type: 'insert' as const, start: byteOffset(0), text: 'Hi' }];
+    it("should create APPLY_REMOTE action", () => {
+      const changes = [{ type: "insert" as const, start: byteOffset(0), text: "Hi" }];
       const action = DocumentActions.applyRemote(changes);
 
-      expect(action.type).toBe('APPLY_REMOTE');
+      expect(action.type).toBe("APPLY_REMOTE");
       expect(action.changes).toBe(changes);
     });
 
-    it('should create LOAD_CHUNK action', () => {
+    it("should create LOAD_CHUNK action", () => {
       const data = new Uint8Array([1, 2, 3]);
       const action = DocumentActions.loadChunk(0, data);
 
-      expect(action.type).toBe('LOAD_CHUNK');
+      expect(action.type).toBe("LOAD_CHUNK");
       expect(action.chunkIndex).toBe(0);
       expect(action.data).toBe(data);
     });
 
-    it('should create EVICT_CHUNK action', () => {
+    it("should create EVICT_CHUNK action", () => {
       const action = DocumentActions.evictChunk(5);
 
-      expect(action.type).toBe('EVICT_CHUNK');
+      expect(action.type).toBe("EVICT_CHUNK");
       expect(action.chunkIndex).toBe(5);
     });
   });
 
-  describe('serializeAction / deserializeAction', () => {
-    it('should round-trip INSERT action', () => {
-      const action = DocumentActions.insert(byteOffset(10), 'Hello');
+  describe("serializeAction / deserializeAction", () => {
+    it("should round-trip INSERT action", () => {
+      const action = DocumentActions.insert(byteOffset(10), "Hello");
       const json = serializeAction(action);
       const restored = deserializeAction(json);
 
       expect(restored).toEqual(action);
     });
 
-    it('should round-trip DELETE action', () => {
+    it("should round-trip DELETE action", () => {
       const action = DocumentActions.delete(byteOffset(5), byteOffset(15));
       const json = serializeAction(action);
       const restored = deserializeAction(json);
@@ -790,20 +787,20 @@ describe('Action Creators', () => {
       expect(restored).toEqual(action);
     });
 
-    it('should round-trip LOAD_CHUNK action with Uint8Array', () => {
+    it("should round-trip LOAD_CHUNK action with Uint8Array", () => {
       const data = new Uint8Array([65, 66, 67, 68]); // ABCD
       const action = DocumentActions.loadChunk(3, data);
       const json = serializeAction(action);
       const restored = deserializeAction(json);
 
-      expect(restored.type).toBe('LOAD_CHUNK');
+      expect(restored.type).toBe("LOAD_CHUNK");
       expect((restored as typeof action).chunkIndex).toBe(3);
       expect((restored as typeof action).data).toBeInstanceOf(Uint8Array);
       expect(Array.from((restored as typeof action).data)).toEqual([65, 66, 67, 68]);
     });
 
-    it('should produce valid JSON', () => {
-      const action = DocumentActions.replace(byteOffset(0), byteOffset(5), 'Test');
+    it("should produce valid JSON", () => {
+      const action = DocumentActions.replace(byteOffset(0), byteOffset(5), "Test");
       const json = serializeAction(action);
 
       expect(() => JSON.parse(json)).not.toThrow();
@@ -815,124 +812,128 @@ describe('Action Creators', () => {
 // Type Guard Tests
 // =============================================================================
 
-describe('Type Guards', () => {
-  describe('isTextEditAction', () => {
-    it('should return true for INSERT', () => {
-      expect(isTextEditAction(DocumentActions.insert(byteOffset(0), 'a'))).toBe(true);
+describe("Type Guards", () => {
+  describe("isTextEditAction", () => {
+    it("should return true for INSERT", () => {
+      expect(isTextEditAction(DocumentActions.insert(byteOffset(0), "a"))).toBe(true);
     });
 
-    it('should return true for DELETE', () => {
+    it("should return true for DELETE", () => {
       expect(isTextEditAction(DocumentActions.delete(byteOffset(0), byteOffset(1)))).toBe(true);
     });
 
-    it('should return true for REPLACE', () => {
-      expect(isTextEditAction(DocumentActions.replace(byteOffset(0), byteOffset(1), 'x'))).toBe(true);
+    it("should return true for REPLACE", () => {
+      expect(isTextEditAction(DocumentActions.replace(byteOffset(0), byteOffset(1), "x"))).toBe(
+        true,
+      );
     });
 
-    it('should return false for UNDO', () => {
+    it("should return false for UNDO", () => {
       expect(isTextEditAction(DocumentActions.undo())).toBe(false);
     });
   });
 
-  describe('isHistoryAction', () => {
-    it('should return true for UNDO', () => {
+  describe("isHistoryAction", () => {
+    it("should return true for UNDO", () => {
       expect(isHistoryAction(DocumentActions.undo())).toBe(true);
     });
 
-    it('should return true for REDO', () => {
+    it("should return true for REDO", () => {
       expect(isHistoryAction(DocumentActions.redo())).toBe(true);
     });
 
-    it('should return false for INSERT', () => {
-      expect(isHistoryAction(DocumentActions.insert(byteOffset(0), 'a'))).toBe(false);
+    it("should return false for INSERT", () => {
+      expect(isHistoryAction(DocumentActions.insert(byteOffset(0), "a"))).toBe(false);
     });
   });
 
-  describe('isTransactionAction', () => {
-    it('should return true for TRANSACTION_START', () => {
+  describe("isTransactionAction", () => {
+    it("should return true for TRANSACTION_START", () => {
       expect(isTransactionAction(DocumentActions.transactionStart())).toBe(true);
     });
 
-    it('should return true for TRANSACTION_COMMIT', () => {
+    it("should return true for TRANSACTION_COMMIT", () => {
       expect(isTransactionAction(DocumentActions.transactionCommit())).toBe(true);
     });
 
-    it('should return true for TRANSACTION_ROLLBACK', () => {
+    it("should return true for TRANSACTION_ROLLBACK", () => {
       expect(isTransactionAction(DocumentActions.transactionRollback())).toBe(true);
     });
 
-    it('should return false for INSERT', () => {
-      expect(isTransactionAction(DocumentActions.insert(byteOffset(0), 'a'))).toBe(false);
+    it("should return false for INSERT", () => {
+      expect(isTransactionAction(DocumentActions.insert(byteOffset(0), "a"))).toBe(false);
     });
   });
 
-  describe('isDocumentAction', () => {
-    it('should validate INSERT action', () => {
-      expect(isDocumentAction({ type: 'INSERT', start: 0, text: 'a' })).toBe(true);
-      expect(isDocumentAction({ type: 'INSERT', start: 'x', text: 'a' })).toBe(false);
-      expect(isDocumentAction({ type: 'INSERT', start: 0 })).toBe(false);
+  describe("isDocumentAction", () => {
+    it("should validate INSERT action", () => {
+      expect(isDocumentAction({ type: "INSERT", start: 0, text: "a" })).toBe(true);
+      expect(isDocumentAction({ type: "INSERT", start: "x", text: "a" })).toBe(false);
+      expect(isDocumentAction({ type: "INSERT", start: 0 })).toBe(false);
     });
 
-    it('should validate DELETE action', () => {
-      expect(isDocumentAction({ type: 'DELETE', start: 0, end: 5 })).toBe(true);
-      expect(isDocumentAction({ type: 'DELETE', start: 0 })).toBe(false);
+    it("should validate DELETE action", () => {
+      expect(isDocumentAction({ type: "DELETE", start: 0, end: 5 })).toBe(true);
+      expect(isDocumentAction({ type: "DELETE", start: 0 })).toBe(false);
     });
 
-    it('should validate REPLACE action', () => {
-      expect(isDocumentAction({ type: 'REPLACE', start: 0, end: 5, text: 'x' })).toBe(true);
-      expect(isDocumentAction({ type: 'REPLACE', start: 0, end: 5 })).toBe(false);
+    it("should validate REPLACE action", () => {
+      expect(isDocumentAction({ type: "REPLACE", start: 0, end: 5, text: "x" })).toBe(true);
+      expect(isDocumentAction({ type: "REPLACE", start: 0, end: 5 })).toBe(false);
     });
 
-    it('should validate SET_SELECTION action', () => {
-      expect(isDocumentAction({ type: 'SET_SELECTION', ranges: [] })).toBe(true);
-      expect(isDocumentAction({ type: 'SET_SELECTION' })).toBe(false);
+    it("should validate SET_SELECTION action", () => {
+      expect(isDocumentAction({ type: "SET_SELECTION", ranges: [] })).toBe(true);
+      expect(isDocumentAction({ type: "SET_SELECTION" })).toBe(false);
     });
 
-    it('should validate simple actions', () => {
-      expect(isDocumentAction({ type: 'UNDO' })).toBe(true);
-      expect(isDocumentAction({ type: 'REDO' })).toBe(true);
-      expect(isDocumentAction({ type: 'HISTORY_CLEAR' })).toBe(true);
-      expect(isDocumentAction({ type: 'TRANSACTION_START' })).toBe(true);
-      expect(isDocumentAction({ type: 'TRANSACTION_COMMIT' })).toBe(true);
-      expect(isDocumentAction({ type: 'TRANSACTION_ROLLBACK' })).toBe(true);
+    it("should validate simple actions", () => {
+      expect(isDocumentAction({ type: "UNDO" })).toBe(true);
+      expect(isDocumentAction({ type: "REDO" })).toBe(true);
+      expect(isDocumentAction({ type: "HISTORY_CLEAR" })).toBe(true);
+      expect(isDocumentAction({ type: "TRANSACTION_START" })).toBe(true);
+      expect(isDocumentAction({ type: "TRANSACTION_COMMIT" })).toBe(true);
+      expect(isDocumentAction({ type: "TRANSACTION_ROLLBACK" })).toBe(true);
     });
 
-    it('should validate APPLY_REMOTE action', () => {
-      expect(isDocumentAction({ type: 'APPLY_REMOTE', changes: [] })).toBe(true);
-      expect(isDocumentAction({ type: 'APPLY_REMOTE' })).toBe(false);
+    it("should validate APPLY_REMOTE action", () => {
+      expect(isDocumentAction({ type: "APPLY_REMOTE", changes: [] })).toBe(true);
+      expect(isDocumentAction({ type: "APPLY_REMOTE" })).toBe(false);
     });
 
-    it('should validate LOAD_CHUNK action', () => {
-      expect(isDocumentAction({
-        type: 'LOAD_CHUNK',
-        chunkIndex: 0,
-        data: new Uint8Array(0),
-      })).toBe(true);
-      expect(isDocumentAction({ type: 'LOAD_CHUNK', chunkIndex: 0 })).toBe(false);
+    it("should validate LOAD_CHUNK action", () => {
+      expect(
+        isDocumentAction({
+          type: "LOAD_CHUNK",
+          chunkIndex: 0,
+          data: new Uint8Array(0),
+        }),
+      ).toBe(true);
+      expect(isDocumentAction({ type: "LOAD_CHUNK", chunkIndex: 0 })).toBe(false);
     });
 
-    it('should validate EVICT_CHUNK action', () => {
-      expect(isDocumentAction({ type: 'EVICT_CHUNK', chunkIndex: 0 })).toBe(true);
-      expect(isDocumentAction({ type: 'EVICT_CHUNK' })).toBe(false);
+    it("should validate EVICT_CHUNK action", () => {
+      expect(isDocumentAction({ type: "EVICT_CHUNK", chunkIndex: 0 })).toBe(true);
+      expect(isDocumentAction({ type: "EVICT_CHUNK" })).toBe(false);
     });
 
-    it('should reject invalid values', () => {
+    it("should reject invalid values", () => {
       expect(isDocumentAction(null)).toBe(false);
       expect(isDocumentAction(undefined)).toBe(false);
-      expect(isDocumentAction('string')).toBe(false);
+      expect(isDocumentAction("string")).toBe(false);
       expect(isDocumentAction(123)).toBe(false);
       expect(isDocumentAction({})).toBe(false);
-      expect(isDocumentAction({ type: 'INVALID' })).toBe(false);
+      expect(isDocumentAction({ type: "INVALID" })).toBe(false);
     });
   });
 
-  describe('isDocumentStore', () => {
-    it('should return true for valid store', () => {
+  describe("isDocumentStore", () => {
+    it("should return true for valid store", () => {
       const store = createDocumentStore();
       expect(isDocumentStore(store)).toBe(true);
     });
 
-    it('should return false for invalid values', () => {
+    it("should return false for invalid values", () => {
       expect(isDocumentStore(null)).toBe(false);
       expect(isDocumentStore(undefined)).toBe(false);
       expect(isDocumentStore({})).toBe(false);
@@ -945,8 +946,8 @@ describe('Type Guards', () => {
 // Immutability Tests
 // =============================================================================
 
-describe('Immutability', () => {
-  it('should not allow direct state mutation', () => {
+describe("Immutability", () => {
+  it("should not allow direct state mutation", () => {
     const state = createInitialState();
 
     expect(() => {
@@ -954,7 +955,7 @@ describe('Immutability', () => {
     }).toThrow();
   });
 
-  it('should not allow metadata mutation', () => {
+  it("should not allow metadata mutation", () => {
     const state = createInitialState();
 
     expect(() => {
@@ -962,15 +963,18 @@ describe('Immutability', () => {
     }).toThrow();
   });
 
-  it('should not allow selection mutation', () => {
+  it("should not allow selection mutation", () => {
     const state = createInitialState();
 
     expect(() => {
-      (state.selection.ranges as unknown as { anchor: ByteOffset; head: ByteOffset }[]).push({ anchor: byteOffset(5), head: byteOffset(5) });
+      (state.selection.ranges as unknown as { anchor: ByteOffset; head: ByteOffset }[]).push({
+        anchor: byteOffset(5),
+        head: byteOffset(5),
+      });
     }).toThrow();
   });
 
-  it('should not allow history stack mutation', () => {
+  it("should not allow history stack mutation", () => {
     const state = createInitialState();
 
     expect(() => {
@@ -983,8 +987,8 @@ describe('Immutability', () => {
 // Store getSnapshot Identity Tests
 // =============================================================================
 
-describe('Store getSnapshot Identity', () => {
-  it('should return same reference when state unchanged', () => {
+describe("Store getSnapshot Identity", () => {
+  it("should return same reference when state unchanged", () => {
     const store = createDocumentStore();
 
     const snapshot1 = store.getSnapshot();
@@ -993,17 +997,17 @@ describe('Store getSnapshot Identity', () => {
     expect(snapshot1).toBe(snapshot2);
   });
 
-  it('should return different reference after state change', () => {
+  it("should return different reference after state change", () => {
     const store = createDocumentStore();
 
     const snapshot1 = store.getSnapshot();
-    store.dispatch(DocumentActions.insert(byteOffset(0), 'A'));
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
     const snapshot2 = store.getSnapshot();
 
     expect(snapshot1).not.toBe(snapshot2);
   });
 
-  it('should return same reference for no-op actions', () => {
+  it("should return same reference for no-op actions", () => {
     const store = createDocumentStore();
 
     const snapshot1 = store.getSnapshot();
@@ -1013,8 +1017,8 @@ describe('Store getSnapshot Identity', () => {
     expect(snapshot1).toBe(snapshot2);
   });
 
-  it('getServerSnapshot should return same as getSnapshot', () => {
-    const store = createDocumentStore({ content: 'Test' });
+  it("getServerSnapshot should return same as getSnapshot", () => {
+    const store = createDocumentStore({ content: "Test" });
 
     expect(store.getServerSnapshot!()).toBe(store.getSnapshot());
   });
@@ -1024,21 +1028,21 @@ describe('Store getSnapshot Identity', () => {
 // Chunk Loading Tests (Phase 3)
 // =============================================================================
 
-import { textEncoder } from '../core/encoding.ts';
-import { getText } from '../core/piece-table.ts';
-import { reconcileFull } from '../core/line-index.ts';
+import { textEncoder } from "../core/encoding.ts";
+import { getText } from "../core/piece-table.ts";
+import { reconcileFull } from "../core/line-index.ts";
 
-describe('LOAD_CHUNK', () => {
-  it('is a no-op when chunkSize is 0 (non-chunked mode)', () => {
-    const state = createInitialState({ content: 'hello' }); // no chunkSize → 0
-    const next = documentReducer(state, DocumentActions.loadChunk(0, textEncoder.encode('world')));
+describe("LOAD_CHUNK", () => {
+  it("is a no-op when chunkSize is 0 (non-chunked mode)", () => {
+    const state = createInitialState({ content: "hello" }); // no chunkSize → 0
+    const next = documentReducer(state, DocumentActions.loadChunk(0, textEncoder.encode("world")));
     expect(next).toBe(state);
   });
 
-  it('accepts out-of-order chunk loads (random-access support)', () => {
+  it("accepts out-of-order chunk loads (random-access support)", () => {
     const state = createInitialState({ chunkSize: 64 });
     // Out-of-order first load: chunk 1 before chunk 0 — must be accepted.
-    const bytes = textEncoder.encode('hello');
+    const bytes = textEncoder.encode("hello");
     const next = documentReducer(state, DocumentActions.loadChunk(1, bytes));
     expect(next).not.toBe(state);
     expect(next.pieceTable.chunkMap.has(1)).toBe(true);
@@ -1047,123 +1051,139 @@ describe('LOAD_CHUNK', () => {
     expect(next.pieceTable.nextExpectedChunk).toBe(2);
   });
 
-  it('is a no-op for a duplicate load of the same chunk', () => {
+  it("is a no-op for a duplicate load of the same chunk", () => {
     const state0 = createInitialState({ chunkSize: 64 });
-    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, textEncoder.encode('hello')));
+    const state1 = documentReducer(
+      state0,
+      DocumentActions.loadChunk(0, textEncoder.encode("hello")),
+    );
     // Loading chunk 0 again should be rejected
-    const state2 = documentReducer(state1, DocumentActions.loadChunk(0, textEncoder.encode('hello')));
+    const state2 = documentReducer(
+      state1,
+      DocumentActions.loadChunk(0, textEncoder.encode("hello")),
+    );
     expect(state2).toBe(state1);
   });
 
-  it('is a no-op when data is empty', () => {
+  it("is a no-op when data is empty", () => {
     const state = createInitialState({ chunkSize: 64 });
     const next = documentReducer(state, DocumentActions.loadChunk(0, new Uint8Array(0)));
     expect(next).toBe(state);
   });
 
-  it('increases totalLength by the chunk byte length', () => {
+  it("increases totalLength by the chunk byte length", () => {
     const state0 = createInitialState({ chunkSize: 64 });
-    const bytes = textEncoder.encode('Hello\nWorld\n');
+    const bytes = textEncoder.encode("Hello\nWorld\n");
     const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
     expect(state1.pieceTable.totalLength).toBe(bytes.length);
   });
 
-  it('makes chunk content readable via getText', () => {
+  it("makes chunk content readable via getText", () => {
     const state0 = createInitialState({ chunkSize: 64 });
-    const content = 'Hello\nWorld\n';
+    const content = "Hello\nWorld\n";
     const bytes = textEncoder.encode(content);
     const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
     const read = getText(state1.pieceTable, byteOffset(0), byteOffset(bytes.length));
     expect(read).toBe(content);
   });
 
-  it('advances nextExpectedChunk after a successful load', () => {
+  it("advances nextExpectedChunk after a successful load", () => {
     const state0 = createInitialState({ chunkSize: 64 });
-    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, textEncoder.encode('chunk0')));
+    const state1 = documentReducer(
+      state0,
+      DocumentActions.loadChunk(0, textEncoder.encode("chunk0")),
+    );
     expect(state1.pieceTable.nextExpectedChunk).toBe(1);
   });
 
-  it('loads two sequential chunks and concatenates their content', () => {
+  it("loads two sequential chunks and concatenates their content", () => {
     const state0 = createInitialState({ chunkSize: 8 });
-    const bytes0 = textEncoder.encode('Hello\n');
-    const bytes1 = textEncoder.encode('World\n');
+    const bytes0 = textEncoder.encode("Hello\n");
+    const bytes1 = textEncoder.encode("World\n");
     const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes0));
     const state2 = documentReducer(state1, DocumentActions.loadChunk(1, bytes1));
 
     expect(state2.pieceTable.totalLength).toBe(bytes0.length + bytes1.length);
-    const read = getText(state2.pieceTable, byteOffset(0), byteOffset(state2.pieceTable.totalLength));
-    expect(read).toBe('Hello\nWorld\n');
+    const read = getText(
+      state2.pieceTable,
+      byteOffset(0),
+      byteOffset(state2.pieceTable.totalLength),
+    );
+    expect(read).toBe("Hello\nWorld\n");
   });
 
-  it('updates the line index with the new chunk lines', () => {
+  it("updates the line index with the new chunk lines", () => {
     const state0 = createInitialState({ chunkSize: 64 });
-    const bytes = textEncoder.encode('line1\nline2\nline3\n');
+    const bytes = textEncoder.encode("line1\nline2\nline3\n");
     const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
     // After reconciliation, line count should include the new lines (4: 3 + trailing empty)
     const eager = reconcileFull(state1.lineIndex, state1.version);
     expect(eager.lineCount).toBeGreaterThanOrEqual(3);
   });
 
-  it('bumps the version on a successful load', () => {
+  it("bumps the version on a successful load", () => {
     const state0 = createInitialState({ chunkSize: 64 });
-    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, textEncoder.encode('data')));
+    const state1 = documentReducer(
+      state0,
+      DocumentActions.loadChunk(0, textEncoder.encode("data")),
+    );
     expect(state1.version).toBe(state0.version + 1);
   });
 });
 
-describe('EVICT_CHUNK', () => {
-  it('is a no-op when the chunk is not loaded', () => {
+describe("EVICT_CHUNK", () => {
+  it("is a no-op when the chunk is not loaded", () => {
     const state0 = createInitialState({ chunkSize: 64 });
     const next = documentReducer(state0, DocumentActions.evictChunk(0));
     expect(next).toBe(state0);
   });
 
-  it('decreases totalLength after eviction', () => {
+  it("decreases totalLength after eviction", () => {
     const state0 = createInitialState({ chunkSize: 64 });
-    const bytes = textEncoder.encode('Hello World');
+    const bytes = textEncoder.encode("Hello World");
     const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
     const state2 = documentReducer(state1, DocumentActions.evictChunk(0));
     expect(state2.pieceTable.totalLength).toBe(0);
   });
 
-  it('removes chunk from chunkMap after eviction', () => {
+  it("removes chunk from chunkMap after eviction", () => {
     const state0 = createInitialState({ chunkSize: 64 });
-    const bytes = textEncoder.encode('Hello World');
+    const bytes = textEncoder.encode("Hello World");
     const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
     const state2 = documentReducer(state1, DocumentActions.evictChunk(0));
     expect(state2.pieceTable.chunkMap.has(0)).toBe(false);
   });
 
-  it('makes evicted content unreadable (tree empty after clean eviction)', () => {
+  it("makes evicted content unreadable (tree empty after clean eviction)", () => {
     const state0 = createInitialState({ chunkSize: 64 });
-    const bytes = textEncoder.encode('Hello World');
+    const bytes = textEncoder.encode("Hello World");
     const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
     const state2 = documentReducer(state1, DocumentActions.evictChunk(0));
     expect(state2.pieceTable.root).toBeNull();
   });
 
-  it('is blocked when user edits exist in the chunk range', () => {
+  it("is blocked when user edits exist in the chunk range", () => {
     const state0 = createInitialState({ chunkSize: 64 });
-    const bytes = textEncoder.encode('Hello World');
+    const bytes = textEncoder.encode("Hello World");
     const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
     // Insert a user edit within the loaded chunk
-    const state2 = documentReducer(state1, DocumentActions.insert(byteOffset(0), 'EDIT'));
+    const state2 = documentReducer(state1, DocumentActions.insert(byteOffset(0), "EDIT"));
     // Eviction should be blocked
     const state3 = documentReducer(state2, DocumentActions.evictChunk(0));
     expect(state3).toBe(state2);
   });
 
-  it('bumps the version on a successful eviction', () => {
+  it("bumps the version on a successful eviction", () => {
     const state0 = createInitialState({ chunkSize: 64 });
-    const bytes = textEncoder.encode('data');
+    const bytes = textEncoder.encode("data");
     const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
     const state2 = documentReducer(state1, DocumentActions.evictChunk(0));
     expect(state2.version).toBe(state1.version + 1);
   });
 
-  it('evicting chunk 0 then loading chunk 0 again is allowed (re-load of evicted chunk)', () => {
+  it("evicting chunk 0 then loading chunk 0 again is allowed (re-load of evicted chunk)", () => {
     const state0 = createInitialState({ chunkSize: 64 });
-    const bytes = textEncoder.encode('data');
+    const bytes = textEncoder.encode("data");
     const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
     const state2 = documentReducer(state1, DocumentActions.evictChunk(0));
     // Re-loading a previously evicted chunk is now supported.
@@ -1173,11 +1193,11 @@ describe('EVICT_CHUNK', () => {
     expect(state3.pieceTable.totalLength).toBe(bytes.length);
   });
 
-  it('accepts gap-then-fill out-of-order loading (chunk 0, chunk 2, then chunk 1)', () => {
+  it("accepts gap-then-fill out-of-order loading (chunk 0, chunk 2, then chunk 1)", () => {
     const state0 = createInitialState({ chunkSize: 8 });
-    const b0 = textEncoder.encode('aaaa');
-    const b1 = textEncoder.encode('bbbb');
-    const b2 = textEncoder.encode('cccc');
+    const b0 = textEncoder.encode("aaaa");
+    const b1 = textEncoder.encode("bbbb");
+    const b2 = textEncoder.encode("cccc");
     const state1 = documentReducer(state0, DocumentActions.loadChunk(0, b0));
     const state2 = documentReducer(state1, DocumentActions.loadChunk(2, b2));
     const state3 = documentReducer(state2, DocumentActions.loadChunk(1, b1));
@@ -1188,16 +1208,20 @@ describe('EVICT_CHUNK', () => {
     expect(state3.pieceTable.totalLength).toBe(b0.length + b1.length + b2.length);
   });
 
-  it('re-loaded chunk content appears at the correct document position', () => {
+  it("re-loaded chunk content appears at the correct document position", () => {
     const state0 = createInitialState({ chunkSize: 64 });
-    const bytes0 = textEncoder.encode('AAA');
-    const bytes1 = textEncoder.encode('BBB');
+    const bytes0 = textEncoder.encode("AAA");
+    const bytes1 = textEncoder.encode("BBB");
     const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes0));
     const state2 = documentReducer(state1, DocumentActions.loadChunk(1, bytes1));
     const state3 = documentReducer(state2, DocumentActions.evictChunk(0));
     const state4 = documentReducer(state3, DocumentActions.loadChunk(0, bytes0));
     // After re-loading chunk 0, the document should read 'AAABBB' in full.
-    const text = getText(state4.pieceTable, byteOffset(0), byteOffset(state4.pieceTable.totalLength));
-    expect(text).toBe('AAABBB');
+    const text = getText(
+      state4.pieceTable,
+      byteOffset(0),
+      byteOffset(state4.pieceTable.totalLength),
+    );
+    expect(text).toBe("AAABBB");
   });
 });

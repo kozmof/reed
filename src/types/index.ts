@@ -35,10 +35,10 @@ export type {
   DocumentState,
   DocumentStoreConfig,
   ChunkMetadata,
-} from './state.ts';
+} from "./state.ts";
 
-export type { NonEmptyReadonlyArray } from './utils.ts';
-export type { ReadTextFn, DeleteBoundaryContext } from './operations.ts';
+export type { NonEmptyReadonlyArray } from "./utils.ts";
+export type { ReadTextFn, DeleteBoundaryContext } from "./operations.ts";
 
 export {
   END_OF_DOCUMENT,
@@ -50,7 +50,7 @@ export {
   pstackToArray,
   pstackFromArray,
   pstackTrimToSize,
-} from './state.ts';
+} from "./state.ts";
 
 // Action types
 export type {
@@ -73,7 +73,7 @@ export type {
   DocumentActionType,
   ContentChangeAction,
   ActionValidationResult,
-} from './actions.ts';
+} from "./actions.ts";
 
 export {
   DocumentActionTypes,
@@ -82,7 +82,7 @@ export {
   isTransactionAction,
   isDocumentAction,
   validateAction,
-} from './actions.ts';
+} from "./actions.ts";
 
 // Store types
 export type {
@@ -93,7 +93,7 @@ export type {
   DocumentStoreWithEvents,
   ReadonlyDocumentStore,
   DocumentReducer,
-} from './store.ts';
+} from "./store.ts";
 
 // Branded position types
 export type {
@@ -103,7 +103,7 @@ export type {
   LineNumber,
   ColumnNumber,
   ReadonlyUint8Array,
-} from './branded.ts';
+} from "./branded.ts";
 
 export type {
   Nat,
@@ -128,7 +128,7 @@ export type {
   LinearCost,
   NLogNCost,
   QuadCost,
-} from './cost-doc.ts';
+} from "./cost-doc.ts";
 
 export {
   byteOffset,
@@ -153,7 +153,7 @@ export {
   ZERO_CHAR_OFFSET,
   LINE_ZERO,
   COLUMN_ZERO,
-} from './branded.ts';
+} from "./branded.ts";
 
 export {
   $declare,
@@ -175,4 +175,4 @@ export {
   $linearScan,
   $forEachN,
   $mapN,
-} from './cost-doc.ts';
+} from "./cost-doc.ts";

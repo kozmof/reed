@@ -4,14 +4,10 @@
  * historyUndo / historyRedo operations that apply stored changes.
  */
 
-import type { DocumentState, HistoryState } from '../../types/state.ts';
-import { pstackSize, pstackPush, pstackPop } from '../../types/state.ts';
-import { withState } from '../core/state.ts';
-import {
-  applyChange,
-  applyInverseChange,
-  reconcileRangeForChanges,
-} from './edit.ts';
+import type { DocumentState, HistoryState } from "../../types/state.ts";
+import { pstackSize, pstackPush, pstackPop } from "../../types/state.ts";
+import { withState } from "../core/state.ts";
+import { applyChange, applyInverseChange, reconcileRangeForChanges } from "./edit.ts";
 
 /**
  * Check if undo is available.
@@ -19,7 +15,7 @@ import {
  * @returns true if there are entries in the undo stack
  */
 export function canUndo(state: DocumentState | HistoryState): boolean {
-  const history = 'history' in state ? state.history : state;
+  const history = "history" in state ? state.history : state;
   return history.undoStack !== null;
 }
 
@@ -29,7 +25,7 @@ export function canUndo(state: DocumentState | HistoryState): boolean {
  * @returns true if there are entries in the redo stack
  */
 export function canRedo(state: DocumentState | HistoryState): boolean {
-  const history = 'history' in state ? state.history : state;
+  const history = "history" in state ? state.history : state;
   return history.redoStack !== null;
 }
 
@@ -39,7 +35,7 @@ export function canRedo(state: DocumentState | HistoryState): boolean {
  * @returns number of entries in the undo stack
  */
 export function getUndoCount(state: DocumentState | HistoryState): number {
-  const history = 'history' in state ? state.history : state;
+  const history = "history" in state ? state.history : state;
   return pstackSize(history.undoStack);
 }
 
@@ -49,7 +45,7 @@ export function getUndoCount(state: DocumentState | HistoryState): number {
  * @returns number of entries in the redo stack
  */
 export function getRedoCount(state: DocumentState | HistoryState): number {
-  const history = 'history' in state ? state.history : state;
+  const history = "history" in state ? state.history : state;
   return pstackSize(history.redoStack);
 }
 
@@ -59,7 +55,7 @@ export function getRedoCount(state: DocumentState | HistoryState): number {
  * @returns true if both stacks are empty
  */
 export function isHistoryEmpty(state: DocumentState | HistoryState): boolean {
-  const history = 'history' in state ? state.history : state;
+  const history = "history" in state ? state.history : state;
   return history.undoStack === null && history.redoStack === null;
 }
 

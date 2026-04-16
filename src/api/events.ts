@@ -10,7 +10,7 @@ import {
   createSaveEvent,
   createDirtyChangeEvent,
   getAffectedRanges,
-} from '../store/features/events.ts';
+} from "../store/features/events.ts";
 
 export const events = {
   createEventEmitter,

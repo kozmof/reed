@@ -3,6 +3,7 @@
 ## 1. Entry Points
 
 Current public runtime surface is exported from `src/index.ts` as namespaces:
+
 - `store`
 - `query`
 - `scan`
@@ -16,6 +17,7 @@ Current public runtime surface is exported from `src/index.ts` as namespaces:
 Types are exported flat from the same entry file.
 
 Not present in current codebase:
+
 - `reed/read` subpath
 - `reed/write` subpath
 - `reed/view` subpath
@@ -26,6 +28,7 @@ Not present in current codebase:
 ### 2.1 `store.createDocumentStore(config?)`
 
 Returns `ReconcilableDocumentStore` with:
+
 - `subscribe(listener)`
 - `getSnapshot()`
 - `getServerSnapshot()`
@@ -38,6 +41,7 @@ Returns `ReconcilableDocumentStore` with:
 - `emergencyReset()`
 
 Supported config fields (`DocumentStoreConfig`):
+
 - `content`
 - `historyLimit`
 - `chunkSize` (reserved; chunk runtime is not implemented)
@@ -48,6 +52,7 @@ Supported config fields (`DocumentStoreConfig`):
 ### 2.2 `store.createDocumentStoreWithEvents(config?)`
 
 Wraps the base store and adds:
+
 - `addEventListener(type, handler)`
 - `removeEventListener(type, handler)`
 - `events` emitter handle
@@ -67,6 +72,7 @@ Wraps the base store and adds:
 ## 3. Event Semantics
 
 Supported event types:
+
 - `content-change`
 - `selection-change`
 - `history-change`
@@ -74,12 +80,14 @@ Supported event types:
 - `dirty-change`
 
 Auto-emitted by `store.createDocumentStoreWithEvents`:
+
 - `content-change` (`INSERT/DELETE/REPLACE/APPLY_REMOTE`)
 - `selection-change` (`SET_SELECTION`)
 - `history-change` (`UNDO/REDO`)
 - `dirty-change` (when dirty flag changes)
 
 Note:
+
 - `save` exists as an event type/factory, but is not auto-emitted by reducer/store actions.
 
 ## 4. Read APIs
@@ -87,6 +95,7 @@ Note:
 ### 4.1 Query namespace (`query`)
 
 Primary selector namespace for O(1)/O(log n)/bounded operations:
+
 - `getText`, `getLength`, `getBufferStats`
 - `findPieceAtPosition`
 - `isReconciledState`
@@ -101,6 +110,7 @@ Primary selector namespace for O(1)/O(log n)/bounded operations:
 ### 4.2 Scan namespace (`scan`)
 
 Traversal namespace for O(n) operations:
+
 - `getValue`, `getValueStream`
 - `collectPieces`, `collectLines`
 - `rebuildLineIndex`
@@ -118,6 +128,7 @@ Traversal namespace for O(n) operations:
 - `diff.computeSetValueActions*` helpers return action lists/diff metadata.
 
 Important behavior:
+
 - `setValue` operates on `DocumentState`, not directly on a store instance.
 - For listener/event/transaction semantics, dispatch actions through store methods.
 

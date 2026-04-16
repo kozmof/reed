@@ -10,7 +10,7 @@ used by Reed's history system to restore the cursor on undo/redo.
 Reed records a `selectionBefore` and `selectionAfter` per history entry:
 
 - `selectionBefore` — `state.selection` at the moment the edit was dispatched
-- `selectionAfter`  — `state.selection` after the edit was applied
+- `selectionAfter` — `state.selection` after the edit was applied
 
 On `undo()`, Reed restores `state.selection` to `selectionBefore`.
 On `redo()`, Reed restores `state.selection` to `selectionAfter`.
@@ -52,7 +52,7 @@ const setSel = (t: string, off: number) =>
     store.DocumentActions.setSelection([
       { anchor: toByteOffset(t, off), head: toByteOffset(t, off) },
     ]),
-  )
+  );
 ```
 
 `setSel(t, cursor)` was called immediately before every `insert` or `delete`
@@ -79,6 +79,7 @@ case 'u':
 ```
 
 Problems with the workaround:
+
 - Two dispatches per edit (`setSelection` + the actual edit)
 - `as unknown as number` double cast to extract a branded `ByteOffset`
 - `getSnapshot()` called redundantly after `dispatch` (which already returns the new state)
@@ -97,8 +98,8 @@ field. The reducer applies it to `state.selection` before `historyPush`, so
 
 ```tsx
 // One dispatch per edit
-dispatch(DocumentActions.insert(pos, text, [{ anchor: pos, head: pos }]))
-dispatch(DocumentActions.delete(start, end, [{ anchor: start, head: start }]))
+dispatch(DocumentActions.insert(pos, text, [{ anchor: pos, head: pos }]));
+dispatch(DocumentActions.delete(start, end, [{ anchor: start, head: start }]));
 ```
 
 ### Part 2: Event-driven cursor sync for undo/redo
@@ -131,11 +132,11 @@ that replace the `as unknown as number` cast:
 
 ```ts
 // Old
-const headByte = snap.selection.ranges[0]?.head as unknown as number | undefined
+const headByte = snap.selection.ranges[0]?.head as unknown as number | undefined;
 
 // New
-const head = query.getSelectionHead(snap)                 // ByteOffset | undefined
-const headNum = position.rawByteOffset(head ?? position.ZERO_BYTE_OFFSET)
+const head = query.getSelectionHead(snap); // ByteOffset | undefined
+const headNum = position.rawByteOffset(head ?? position.ZERO_BYTE_OFFSET);
 ```
 
 ---
@@ -151,9 +152,9 @@ the position before the IME session started.
 
 ## Summary
 
-| Problem | Original workaround | Current approach |
-|---|---|---|
-| Reed's `state.selection` always at byte 0 | Call `setSel(t, cursor)` before every edit (10+ sites) | Pass `selection` inline on `insert`/`delete`/`replace` |
-| Unsafe `ByteOffset` → `number` cast | `as unknown as number` double cast | `position.rawByteOffset(query.getSelectionHead(snap))` |
-| Redundant `getSnapshot()` after undo/redo | Ignored `dispatch` return value | Use `dispatch` return value directly, or subscribe to `history-change` |
-| Cursor-sync scattered at every undo/redo site | Copy-pasted `readCursorFromSnapshot` calls | Single `addEventListener('history-change', ...)` handler |
+| Problem                                       | Original workaround                                    | Current approach                                                       |
+| --------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------- |
+| Reed's `state.selection` always at byte 0     | Call `setSel(t, cursor)` before every edit (10+ sites) | Pass `selection` inline on `insert`/`delete`/`replace`                 |
+| Unsafe `ByteOffset` → `number` cast           | `as unknown as number` double cast                     | `position.rawByteOffset(query.getSelectionHead(snap))`                 |
+| Redundant `getSnapshot()` after undo/redo     | Ignored `dispatch` return value                        | Use `dispatch` return value directly, or subscribe to `history-change` |
+| Cursor-sync scattered at every undo/redo site | Copy-pasted `readCursorFromSnapshot` calls             | Single `addEventListener('history-change', ...)` handler               |

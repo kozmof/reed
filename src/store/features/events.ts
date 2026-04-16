@@ -3,9 +3,9 @@
  * Provides a pub/sub mechanism for document changes and editor events.
  */
 
-import type { DocumentState } from '../../types/state.ts';
-import type { ContentChangeAction, DocumentAction } from '../../types/actions.ts';
-import { byteOffset, type ByteOffset } from '../../types/branded.ts';
+import type { DocumentState } from "../../types/state.ts";
+import type { ContentChangeAction, DocumentAction } from "../../types/actions.ts";
+import { byteOffset, type ByteOffset } from "../../types/branded.ts";
 
 /**
  * Count UTF-8 byte length of a JavaScript string without allocating a Uint8Array.
@@ -17,7 +17,10 @@ function utf8ByteLength(str: string): number {
     const c = str.charCodeAt(i);
     if (c < 0x80) len += 1;
     else if (c < 0x800) len += 2;
-    else if (c >= 0xD800 && c <= 0xDBFF) { len += 4; i++; } // surrogate pair → 4 bytes
+    else if (c >= 0xd800 && c <= 0xdbff) {
+      len += 4;
+      i++;
+    } // surrogate pair → 4 bytes
     else len += 3;
   }
   return len;
@@ -39,7 +42,7 @@ export interface DocumentEvent {
  * Fired when document content changes.
  */
 export interface ContentChangeEvent extends DocumentEvent {
-  readonly type: 'content-change';
+  readonly type: "content-change";
   /** The action that caused the change */
   readonly action: ContentChangeAction;
   /** Document state before the change */
@@ -59,7 +62,7 @@ export interface ContentChangeEvent extends DocumentEvent {
  * Fired when selection changes.
  */
 export interface SelectionChangeEvent extends DocumentEvent {
-  readonly type: 'selection-change';
+  readonly type: "selection-change";
   readonly prevState: DocumentState;
   readonly nextState: DocumentState;
 }
@@ -85,8 +88,8 @@ export interface SelectionChangeEvent extends DocumentEvent {
  * ```
  */
 export interface HistoryChangeEvent extends DocumentEvent {
-  readonly type: 'history-change';
-  readonly direction: 'undo' | 'redo';
+  readonly type: "history-change";
+  readonly direction: "undo" | "redo";
   readonly prevState: DocumentState;
   readonly nextState: DocumentState;
 }
@@ -95,7 +98,7 @@ export interface HistoryChangeEvent extends DocumentEvent {
  * Fired when document is saved.
  */
 export interface SaveEvent extends DocumentEvent {
-  readonly type: 'save';
+  readonly type: "save";
   readonly state: DocumentState;
 }
 
@@ -103,7 +106,7 @@ export interface SaveEvent extends DocumentEvent {
  * Fired when document dirty state changes.
  */
 export interface DirtyChangeEvent extends DocumentEvent {
-  readonly type: 'dirty-change';
+  readonly type: "dirty-change";
   readonly isDirty: boolean;
   readonly state: DocumentState;
 }
@@ -122,11 +125,11 @@ export type AnyDocumentEvent =
  * Event type to handler mapping.
  */
 export interface DocumentEventMap {
-  'content-change': ContentChangeEvent;
-  'selection-change': SelectionChangeEvent;
-  'history-change': HistoryChangeEvent;
-  'save': SaveEvent;
-  'dirty-change': DirtyChangeEvent;
+  "content-change": ContentChangeEvent;
+  "selection-change": SelectionChangeEvent;
+  "history-change": HistoryChangeEvent;
+  save: SaveEvent;
+  "dirty-change": DirtyChangeEvent;
 }
 
 // =============================================================================
@@ -158,7 +161,7 @@ export interface DocumentEventEmitter {
    */
   addEventListener<K extends keyof DocumentEventMap>(
     type: K,
-    handler: EventHandler<DocumentEventMap[K]>
+    handler: EventHandler<DocumentEventMap[K]>,
   ): Unsubscribe;
 
   /**
@@ -166,16 +169,13 @@ export interface DocumentEventEmitter {
    */
   removeEventListener<K extends keyof DocumentEventMap>(
     type: K,
-    handler: EventHandler<DocumentEventMap[K]>
+    handler: EventHandler<DocumentEventMap[K]>,
   ): void;
 
   /**
    * Emit an event to all registered handlers.
    */
-  emit<K extends keyof DocumentEventMap>(
-    type: K,
-    event: DocumentEventMap[K]
-  ): void;
+  emit<K extends keyof DocumentEventMap>(type: K, event: DocumentEventMap[K]): void;
 
   /**
    * Remove all event listeners.
@@ -192,7 +192,7 @@ export function createEventEmitter(): DocumentEventEmitter {
   return {
     addEventListener<K extends keyof DocumentEventMap>(
       type: K,
-      handler: EventHandler<DocumentEventMap[K]>
+      handler: EventHandler<DocumentEventMap[K]>,
     ): Unsubscribe {
       let typeHandlers = handlers.get(type);
       if (!typeHandlers) {
@@ -211,7 +211,7 @@ export function createEventEmitter(): DocumentEventEmitter {
 
     removeEventListener<K extends keyof DocumentEventMap>(
       type: K,
-      handler: EventHandler<DocumentEventMap[K]>
+      handler: EventHandler<DocumentEventMap[K]>,
     ): void {
       const typeHandlers = handlers.get(type);
       if (typeHandlers) {
@@ -222,10 +222,7 @@ export function createEventEmitter(): DocumentEventEmitter {
       }
     },
 
-    emit<K extends keyof DocumentEventMap>(
-      type: K,
-      event: DocumentEventMap[K]
-    ): void {
+    emit<K extends keyof DocumentEventMap>(type: K, event: DocumentEventMap[K]): void {
       const typeHandlers = handlers.get(type);
       if (typeHandlers) {
         // Snapshot handlers to guarantee stable delivery under subscribe/unsubscribe churn.
@@ -257,10 +254,10 @@ export function createContentChangeEvent(
   action: ContentChangeAction,
   prevState: DocumentState,
   nextState: DocumentState,
-  affectedRanges: readonly (readonly [ByteOffset, ByteOffset])[]
+  affectedRanges: readonly (readonly [ByteOffset, ByteOffset])[],
 ): ContentChangeEvent {
   return Object.freeze({
-    type: 'content-change' as const,
+    type: "content-change" as const,
     timestamp: Date.now(),
     action,
     prevState,
@@ -274,10 +271,10 @@ export function createContentChangeEvent(
  */
 export function createSelectionChangeEvent(
   prevState: DocumentState,
-  nextState: DocumentState
+  nextState: DocumentState,
 ): SelectionChangeEvent {
   return Object.freeze({
-    type: 'selection-change' as const,
+    type: "selection-change" as const,
     timestamp: Date.now(),
     prevState,
     nextState,
@@ -288,12 +285,12 @@ export function createSelectionChangeEvent(
  * Create a history change event.
  */
 export function createHistoryChangeEvent(
-  direction: 'undo' | 'redo',
+  direction: "undo" | "redo",
   prevState: DocumentState,
-  nextState: DocumentState
+  nextState: DocumentState,
 ): HistoryChangeEvent {
   return Object.freeze({
-    type: 'history-change' as const,
+    type: "history-change" as const,
     timestamp: Date.now(),
     direction,
     prevState,
@@ -306,7 +303,7 @@ export function createHistoryChangeEvent(
  */
 export function createSaveEvent(state: DocumentState): SaveEvent {
   return Object.freeze({
-    type: 'save' as const,
+    type: "save" as const,
     timestamp: Date.now(),
     state,
   });
@@ -315,12 +312,9 @@ export function createSaveEvent(state: DocumentState): SaveEvent {
 /**
  * Create a dirty change event.
  */
-export function createDirtyChangeEvent(
-  isDirty: boolean,
-  state: DocumentState
-): DirtyChangeEvent {
+export function createDirtyChangeEvent(isDirty: boolean, state: DocumentState): DirtyChangeEvent {
   return Object.freeze({
-    type: 'dirty-change' as const,
+    type: "dirty-change" as const,
     timestamp: Date.now(),
     isDirty,
     state,
@@ -336,26 +330,30 @@ export function createDirtyChangeEvent(
  * each change contributes its own [start, end) range.
  */
 export function getAffectedRanges(
-  action: DocumentAction
+  action: DocumentAction,
 ): readonly (readonly [ByteOffset, ByteOffset])[] {
   switch (action.type) {
-    case 'INSERT':
+    case "INSERT":
       return [[action.start, byteOffset(action.start + utf8ByteLength(action.text))]];
-    case 'DELETE':
+    case "DELETE":
       return [[action.start, action.end]];
-    case 'REPLACE': {
+    case "REPLACE": {
       const insertLength = utf8ByteLength(action.text);
       return [[action.start, byteOffset(action.start + insertLength)]];
     }
-    case 'APPLY_REMOTE': {
+    case "APPLY_REMOTE": {
       const ranges: [ByteOffset, ByteOffset][] = [];
       for (const change of action.changes) {
-        if (change.type === 'insert' && change.text) {
+        if (change.type === "insert" && change.text) {
           const insertLength = utf8ByteLength(change.text);
           if (insertLength > 0) {
             ranges.push([byteOffset(change.start), byteOffset(change.start + insertLength)]);
           }
-        } else if (change.type === 'delete' && typeof change.length === 'number' && change.length > 0) {
+        } else if (
+          change.type === "delete" &&
+          typeof change.length === "number" &&
+          change.length > 0
+        ) {
           ranges.push([byteOffset(change.start), byteOffset(change.start + change.length)]);
         }
       }

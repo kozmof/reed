@@ -11,11 +11,8 @@
  * @see https://typescript-jp.gitbook.io/deep-dive/type-system/literal-types
  */
 export function strEnum<T extends string>(o: T[]): { [K in T]: K } {
-  return o.reduce<{ [K in T]: K }>(
-    (res, key) => {
-      res[key] = key;
-      return res;
-    },
-    Object.create(null)
-  );
+  return o.reduce<{ [K in T]: K }>((res, key) => {
+    res[key] = key;
+    return res;
+  }, Object.create(null));
 }

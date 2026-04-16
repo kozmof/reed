@@ -15,25 +15,25 @@ import type {
   HistoryState,
   DocumentMetadata,
   ChunkMetadata,
-} from '../../types/state.ts';
-import { byteOffset, byteLength } from '../../types/branded.ts';
-import type { ByteOffset, ByteLength } from '../../types/branded.ts';
-import { textEncoder } from './encoding.ts';
-import { GrowableBuffer } from './growable-buffer.ts';
+} from "../../types/state.ts";
+import { byteOffset, byteLength } from "../../types/branded.ts";
+import type { ByteOffset, ByteLength } from "../../types/branded.ts";
+import { textEncoder } from "./encoding.ts";
+import { GrowableBuffer } from "./growable-buffer.ts";
 
 /**
  * Default configuration values.
  */
 const DEFAULT_CONFIG: Required<DocumentStoreConfig> = {
-  content: '',
+  content: "",
   historyLimit: 1000,
   chunkSize: 65536,
-  encoding: 'utf-8',
-  lineEnding: 'lf',
+  encoding: "utf-8",
+  lineEnding: "lf",
   undoGroupTimeout: 0,
   totalFileSize: 0,
   maxDirtyRanges: 32,
-  reconcileMode: 'idle',
+  reconcileMode: "idle",
   normalizeInsertedLineEndings: false,
 };
 
@@ -42,7 +42,10 @@ const DEFAULT_CONFIG: Required<DocumentStoreConfig> = {
  * @param chunkSize - Bytes per chunk for large-file streaming. 0 = non-chunked (default).
  * @param totalFileSize - Known total byte length of the file. 0 = unknown.
  */
-export function createEmptyPieceTableState(chunkSize: number = 0, totalFileSize: number = 0): PieceTableState {
+export function createEmptyPieceTableState(
+  chunkSize: number = 0,
+  totalFileSize: number = 0,
+): PieceTableState {
   return Object.freeze({
     root: null,
     originalBuffer: new Uint8Array(0),
@@ -65,21 +68,21 @@ export function createEmptyPieceTableState(chunkSize: number = 0, totalFileSize:
  * For 'chunk' pieces use createChunkPieceNode instead.
  */
 export function createPieceNode(
-  bufferType: 'original' | 'add',
+  bufferType: "original" | "add",
   start: ByteOffset,
   length: ByteLength,
-  color: 'red' | 'black' = 'black',
+  color: "red" | "black" = "black",
   left: PieceNode | null = null,
-  right: PieceNode | null = null
+  right: PieceNode | null = null,
 ): PieceNode {
   const leftLength = left?.subtreeLength ?? 0;
   const rightLength = right?.subtreeLength ?? 0;
-  const selfAddLength = bufferType === 'add' ? length : 0;
+  const selfAddLength = bufferType === "add" ? length : 0;
   const leftAddLength = left?.subtreeAddLength ?? 0;
   const rightAddLength = right?.subtreeAddLength ?? 0;
 
   return Object.freeze({
-    _nodeKind: 'piece' as const,
+    _nodeKind: "piece" as const,
     color,
     left,
     right,
@@ -102,9 +105,9 @@ export function createChunkPieceNode(
   chunkIndex: number,
   offsetInChunk: ByteOffset,
   length: ByteLength,
-  color: 'red' | 'black' = 'black',
+  color: "red" | "black" = "black",
   left: PieceNode | null = null,
-  right: PieceNode | null = null
+  right: PieceNode | null = null,
 ): PieceNode {
   const leftLength = left?.subtreeLength ?? 0;
   const rightLength = right?.subtreeLength ?? 0;
@@ -112,11 +115,11 @@ export function createChunkPieceNode(
   const rightAddLength = right?.subtreeAddLength ?? 0;
 
   return Object.freeze({
-    _nodeKind: 'piece' as const,
+    _nodeKind: "piece" as const,
     color,
     left,
     right,
-    bufferType: 'chunk' as const,
+    bufferType: "chunk" as const,
     chunkIndex,
     start: offsetInChunk,
     length,
@@ -138,7 +141,7 @@ export function createPieceTableState(content: string): PieceTableState {
   const originalBuffer = textEncoder.encode(content);
 
   // Create single piece spanning entire original buffer
-  const root = createPieceNode('original', byteOffset(0), byteLength(originalBuffer.length));
+  const root = createPieceNode("original", byteOffset(0), byteLength(originalBuffer.length));
 
   return Object.freeze({
     root,
@@ -161,7 +164,7 @@ export function createPieceTableState(content: string): PieceTableState {
  */
 export function createEmptyLineIndexState(maxDirtyRanges: number = 32): LineIndexState {
   return Object.freeze({
-    root: createLineIndexNode(0, 0, 'black'),
+    root: createLineIndexNode(0, 0, "black"),
     lineCount: 1, // Empty document has 1 line
     dirtyRanges: Object.freeze([]),
     lastReconciledVersion: 0,
@@ -177,10 +180,10 @@ export function createEmptyLineIndexState(maxDirtyRanges: number = 32): LineInde
 export function createLineIndexNode(
   documentOffset: number | null,
   lineLength: number,
-  color: 'red' | 'black' = 'black',
+  color: "red" | "black" = "black",
   left: LineIndexNode | null = null,
   right: LineIndexNode | null = null,
-  charLength: number = 0
+  charLength: number = 0,
 ): LineIndexNode {
   const leftLineCount = left?.subtreeLineCount ?? 0;
   const leftByteLength = left?.subtreeByteLength ?? 0;
@@ -190,7 +193,7 @@ export function createLineIndexNode(
   const rightCharLength = right?.subtreeCharLength ?? 0;
 
   return Object.freeze({
-    _nodeKind: 'lineIndex' as const,
+    _nodeKind: "lineIndex" as const,
     color,
     left,
     right,
@@ -224,18 +227,19 @@ export function createLineIndexState(content: string, maxDirtyRanges: number = 3
   const lineStarts: { offset: number; length: number; charLength: number }[] = [];
   let lineStart = 0;
   let lineCharStart = 0; // UTF-16 code unit index of the current line's start in `content`
-  let charI = 0;         // UTF-16 code unit index, stays in sync with byte index i
+  let charI = 0; // UTF-16 code unit index, stays in sync with byte index i
 
   for (let i = 0; i < bytes.length; ) {
     // Advance charI by one code point, tracking the UTF-8 byte width.
     const cp = content.codePointAt(charI)!;
-    const charStep = cp > 0xFFFF ? 2 : 1;   // surrogate pair = 2 UTF-16 units
+    const charStep = cp > 0xffff ? 2 : 1; // surrogate pair = 2 UTF-16 units
     const byteStep = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
 
     i += byteStep;
     charI += charStep;
 
-    if (bytes[i - byteStep] === 0x0A) { // '\n' — single byte in UTF-8
+    if (bytes[i - byteStep] === 0x0a) {
+      // '\n' — single byte in UTF-8
       lineStarts.push({
         offset: lineStart,
         length: i - lineStart,
@@ -243,9 +247,10 @@ export function createLineIndexState(content: string, maxDirtyRanges: number = 3
       });
       lineStart = i;
       lineCharStart = charI;
-    } else if (bytes[i - byteStep] === 0x0D) { // '\r' — single byte in UTF-8
+    } else if (bytes[i - byteStep] === 0x0d) {
+      // '\r' — single byte in UTF-8
       // Handle CRLF: peek ahead
-      if (i < bytes.length && bytes[i] === 0x0A) {
+      if (i < bytes.length && bytes[i] === 0x0a) {
         // Advance past the '\n'
         i++;
         charI++;
@@ -306,7 +311,7 @@ export function createLineIndexState(content: string, maxDirtyRanges: number = 3
 function buildLineIndexTree(
   lines: { offset: number; length: number; charLength: number }[],
   start: number,
-  end: number
+  end: number,
 ): LineIndexNode | null {
   if (start > end) {
     return null;
@@ -319,7 +324,7 @@ function buildLineIndexTree(
   const left = buildLineIndexTree(lines, start, mid - 1);
   const right = buildLineIndexTree(lines, mid + 1, end);
 
-  return createLineIndexNode(line.offset, line.length, 'black', left, right, line.charLength);
+  return createLineIndexNode(line.offset, line.length, "black", left, right, line.charLength);
 }
 
 /**
@@ -336,7 +341,10 @@ export function createInitialSelectionState(): SelectionState {
 /**
  * Create initial history state.
  */
-export function createInitialHistoryState(limit: number = 1000, coalesceTimeout: number = 0): HistoryState {
+export function createInitialHistoryState(
+  limit: number = 1000,
+  coalesceTimeout: number = 0,
+): HistoryState {
   return Object.freeze({
     undoStack: null,
     redoStack: null,
@@ -348,16 +356,15 @@ export function createInitialHistoryState(limit: number = 1000, coalesceTimeout:
 /**
  * Create initial document metadata.
  */
-export function createInitialMetadata(
-  config: Partial<DocumentStoreConfig> = {}
-): DocumentMetadata {
+export function createInitialMetadata(config: Partial<DocumentStoreConfig> = {}): DocumentMetadata {
   return Object.freeze({
     filePath: undefined,
     encoding: config.encoding ?? DEFAULT_CONFIG.encoding,
     lineEnding: config.lineEnding ?? DEFAULT_CONFIG.lineEnding,
     isDirty: false,
     lastSaved: undefined,
-    normalizeInsertedLineEndings: config.normalizeInsertedLineEndings ?? DEFAULT_CONFIG.normalizeInsertedLineEndings,
+    normalizeInsertedLineEndings:
+      config.normalizeInsertedLineEndings ?? DEFAULT_CONFIG.normalizeInsertedLineEndings,
   });
 }
 
@@ -368,26 +375,24 @@ export function createInitialMetadata(
  * initialized in chunked mode: `chunkSize` is set and `chunkMap` starts empty.
  * The caller then populates the document by dispatching `LOAD_CHUNK` actions.
  */
-export function createInitialState(
-  config: Partial<DocumentStoreConfig> = {}
-): DocumentState {
+export function createInitialState(config: Partial<DocumentStoreConfig> = {}): DocumentState {
   const mergedConfig = { ...DEFAULT_CONFIG, ...config };
   const content = mergedConfig.content;
 
   // Use chunked mode when content is empty and a chunkSize is explicitly provided.
   // Non-zero DEFAULT_CONFIG.chunkSize alone does not enable chunked mode — the
   // caller must explicitly pass chunkSize to opt in.
-  const chunkSize = (content.length === 0 && config.chunkSize !== undefined)
-    ? mergedConfig.chunkSize
-    : 0;
+  const chunkSize =
+    content.length === 0 && config.chunkSize !== undefined ? mergedConfig.chunkSize : 0;
 
   const totalFileSize = mergedConfig.totalFileSize ?? 0;
 
   return Object.freeze({
     version: 0,
-    pieceTable: content.length > 0
-      ? createPieceTableState(content)
-      : createEmptyPieceTableState(chunkSize, totalFileSize),
+    pieceTable:
+      content.length > 0
+        ? createPieceTableState(content)
+        : createEmptyPieceTableState(chunkSize, totalFileSize),
     lineIndex: createLineIndexState(content, mergedConfig.maxDirtyRanges),
     selection: createInitialSelectionState(),
     history: createInitialHistoryState(mergedConfig.historyLimit, mergedConfig.undoGroupTimeout),
@@ -399,10 +404,7 @@ export function createInitialState(
  * Helper to create modified state with structural sharing.
  * Only creates new objects for changed properties.
  */
-export function withState(
-  state: DocumentState,
-  changes: Partial<DocumentState>
-): DocumentState {
+export function withState(state: DocumentState, changes: Partial<DocumentState>): DocumentState {
   return Object.freeze({ ...state, ...changes });
 }
 
@@ -420,7 +422,7 @@ export function withState(
  */
 export function withLineIndexState<M extends EvaluationMode = EvaluationMode>(
   state: LineIndexState<M>,
-  changes: Partial<LineIndexState<M>>
+  changes: Partial<LineIndexState<M>>,
 ): LineIndexState<M> {
   return Object.freeze({ ...state, ...changes }) as LineIndexState<M>;
 }
@@ -430,11 +432,11 @@ export function withLineIndexState<M extends EvaluationMode = EvaluationMode>(
  * Throws if the state has dirty ranges or a pending rebuild.
  * Use at mode boundaries (e.g., undo/redo) where eager state is required.
  */
-export function asEagerLineIndex(state: LineIndexState): LineIndexState<'eager'> {
+export function asEagerLineIndex(state: LineIndexState): LineIndexState<"eager"> {
   if (state.dirtyRanges.length !== 0 || state.rebuildPending) {
-    throw new Error('Expected eager LineIndexState but found dirty ranges or pending rebuild');
+    throw new Error("Expected eager LineIndexState but found dirty ranges or pending rebuild");
   }
-  return state as LineIndexState<'eager'>;
+  return state as LineIndexState<"eager">;
 }
 
 /**
@@ -443,7 +445,9 @@ export function asEagerLineIndex(state: LineIndexState): LineIndexState<'eager'>
  * and must never change, and `chunkIndex` only exists on ChunkPieceNode.
  * subtreeLength and subtreeAddLength are recomputed automatically.
  */
-export type PieceNodeUpdates = Partial<Pick<PieceNode, 'color' | 'left' | 'right' | 'start' | 'length'>>;
+export type PieceNodeUpdates = Partial<
+  Pick<PieceNode, "color" | "left" | "right" | "start" | "length">
+>;
 
 /**
  * Helper to create modified piece node with structural sharing.
@@ -453,17 +457,14 @@ export type PieceNodeUpdates = Partial<Pick<PieceNode, 'color' | 'left' | 'right
  * so subtreeAddLength is automatically maintained without changes to
  * rbInsertPiece, deleteRange, rotateLeft/rotateRight, or fixup logic.
  */
-export function withPieceNode<T extends PieceNode>(
-  node: T,
-  changes: PieceNodeUpdates
-): T {
+export function withPieceNode<T extends PieceNode>(node: T, changes: PieceNodeUpdates): T {
   const base = { ...node, ...changes };
 
-  if ('left' in changes || 'right' in changes || 'length' in changes) {
+  if ("left" in changes || "right" in changes || "length" in changes) {
     const leftLength = base.left?.subtreeLength ?? 0;
     const rightLength = base.right?.subtreeLength ?? 0;
     const subtreeLength = base.length + leftLength + rightLength;
-    const selfAddLength = base.bufferType === 'add' ? base.length : 0;
+    const selfAddLength = base.bufferType === "add" ? base.length : 0;
     const leftAddLength = base.left?.subtreeAddLength ?? 0;
     const rightAddLength = base.right?.subtreeAddLength ?? 0;
     const subtreeAddLength = selfAddLength + leftAddLength + rightAddLength;
@@ -485,7 +486,12 @@ export function withPieceNode<T extends PieceNode>(
  * subtreeLineCount, subtreeByteLength, and subtreeCharLength are always recomputed
  * from children and lineLength, so they cannot be set directly.
  */
-export type LineIndexNodeUpdates<M extends EvaluationMode = EvaluationMode> = Partial<Pick<LineIndexNode<M>, 'color' | 'left' | 'right' | 'documentOffset' | 'lineLength' | 'charLength'>>;
+export type LineIndexNodeUpdates<M extends EvaluationMode = EvaluationMode> = Partial<
+  Pick<
+    LineIndexNode<M>,
+    "color" | "left" | "right" | "documentOffset" | "lineLength" | "charLength"
+  >
+>;
 
 /**
  * Helper to create modified line index node with structural sharing.
@@ -496,12 +502,17 @@ export type LineIndexNodeUpdates<M extends EvaluationMode = EvaluationMode> = Pa
  */
 export function withLineIndexNode<M extends EvaluationMode = EvaluationMode>(
   node: LineIndexNode<M>,
-  changes: LineIndexNodeUpdates<M>
+  changes: LineIndexNodeUpdates<M>,
 ): LineIndexNode<M> {
   const newNode = { ...node, ...changes };
 
   // Recalculate subtree metadata if children or per-node lengths changed
-  if ('left' in changes || 'right' in changes || 'lineLength' in changes || 'charLength' in changes) {
+  if (
+    "left" in changes ||
+    "right" in changes ||
+    "lineLength" in changes ||
+    "charLength" in changes
+  ) {
     const leftLineCount = newNode.left?.subtreeLineCount ?? 0;
     const leftByteLength = newNode.left?.subtreeByteLength ?? 0;
     const leftCharLength = newNode.left?.subtreeCharLength ?? 0;

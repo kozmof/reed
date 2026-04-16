@@ -3,11 +3,11 @@
  * All state structures are read-only and use structural sharing for efficiency.
  */
 
-import type { ByteOffset, ByteLength, CharOffset } from './branded.ts';
-import type { GrowableBuffer } from '../store/core/growable-buffer.ts';
-import type { NonEmptyReadonlyArray } from './utils.ts';
-export type { NonEmptyReadonlyArray } from './utils.ts';
-export type { ReadTextFn, DeleteBoundaryContext } from './operations.ts';
+import type { ByteOffset, ByteLength, CharOffset } from "./branded.ts";
+import type { GrowableBuffer } from "../store/core/growable-buffer.ts";
+import type { NonEmptyReadonlyArray } from "./utils.ts";
+export type { NonEmptyReadonlyArray } from "./utils.ts";
+export type { ReadTextFn, DeleteBoundaryContext } from "./operations.ts";
 
 // =============================================================================
 // Piece Table Types
@@ -19,7 +19,7 @@ export type { ReadTextFn, DeleteBoundaryContext } from './operations.ts';
  * - 'add': the append-only buffer for user edits
  * - 'chunk': a lazily-loaded chunk buffer for large-file streaming (Phase 3+)
  */
-export type BufferType = 'original' | 'add' | 'chunk';
+export type BufferType = "original" | "add" | "chunk";
 
 // =============================================================================
 // Chunk Metadata Types
@@ -47,7 +47,7 @@ export interface ChunkMetadata {
  * Part of the BufferReference discriminated union.
  */
 export interface OriginalBufferRef {
-  readonly bufferType: 'original';
+  readonly bufferType: "original";
   readonly start: ByteOffset;
   readonly length: ByteLength;
 }
@@ -57,7 +57,7 @@ export interface OriginalBufferRef {
  * Part of the BufferReference discriminated union.
  */
 export interface AddBufferRef {
-  readonly bufferType: 'add';
+  readonly bufferType: "add";
   readonly start: ByteOffset;
   readonly length: ByteLength;
 }
@@ -68,7 +68,7 @@ export interface AddBufferRef {
  * `start` is the byte offset *within* that chunk (not an absolute file offset).
  */
 export interface ChunkBufferRef {
-  readonly bufferType: 'chunk';
+  readonly bufferType: "chunk";
   readonly chunkIndex: number;
   readonly start: ByteOffset;
   readonly length: ByteLength;
@@ -83,7 +83,7 @@ export type BufferReference = OriginalBufferRef | AddBufferRef | ChunkBufferRef;
 /**
  * Red-Black tree node color.
  */
-export type NodeColor = 'red' | 'black';
+export type NodeColor = "red" | "black";
 
 /**
  * Generic base interface for Red-Black tree nodes.
@@ -104,7 +104,7 @@ export interface RBNode<T extends RBNode<T>> {
  */
 interface PieceNodeBase extends RBNode<PieceNode> {
   /** Structural discriminant — distinguishes PieceNode from LineIndexNode in generic RB-tree contexts. */
-  readonly _nodeKind: 'piece';
+  readonly _nodeKind: "piece";
   /** Start offset in the buffer (for 'chunk': offset within the chunk, not absolute file offset) */
   readonly start: ByteOffset;
   /** Length of this piece */
@@ -117,17 +117,17 @@ interface PieceNodeBase extends RBNode<PieceNode> {
 
 /** Piece node backed by the immutable original buffer. */
 export interface OriginalPieceNode extends PieceNodeBase {
-  readonly bufferType: 'original';
+  readonly bufferType: "original";
 }
 
 /** Piece node backed by the append-only add buffer. */
 export interface AddPieceNode extends PieceNodeBase {
-  readonly bufferType: 'add';
+  readonly bufferType: "add";
 }
 
 /** Piece node backed by a loaded chunk buffer. */
 export interface ChunkPieceNode extends PieceNodeBase {
-  readonly bufferType: 'chunk';
+  readonly bufferType: "chunk";
   /** Index into `PieceTableState.chunkMap`. Always >= 0. */
   readonly chunkIndex: number;
 }
@@ -209,11 +209,13 @@ export interface PieceTableState {
  * - `'lazy'`: `documentOffset` is `number | null` (`null` means pending reconciliation)
  * - Default (union): `number | null` for backward compatibility
  */
-export interface LineIndexNode<M extends EvaluationMode = EvaluationMode> extends RBNode<LineIndexNode<M>> {
+export interface LineIndexNode<M extends EvaluationMode = EvaluationMode> extends RBNode<
+  LineIndexNode<M>
+> {
   /** Structural discriminant — distinguishes LineIndexNode from PieceNode in generic RB-tree contexts. */
-  readonly _nodeKind: 'lineIndex';
+  readonly _nodeKind: "lineIndex";
   /** Byte offset in document where this line starts. null when using lazy mode before reconciliation. */
-  readonly documentOffset: M extends 'eager' ? number : number | null;
+  readonly documentOffset: M extends "eager" ? number : number | null;
   /** Length of this line including newline character(s) in bytes */
   readonly lineLength: number;
   /** Length of this line in UTF-16 code units (JavaScript string length) */
@@ -232,7 +234,7 @@ export interface LineIndexNode<M extends EvaluationMode = EvaluationMode> extend
  * Used for lazy line index maintenance to defer expensive O(n) offset recalculations.
  */
 export interface DirtyLineRangeEntry {
-  readonly kind: 'range';
+  readonly kind: "range";
   /** First line affected (inclusive, 0-indexed) */
   readonly startLine: number;
   /** Last line affected (inclusive). Use Number.MAX_SAFE_INTEGER for "to end of document" */
@@ -248,7 +250,7 @@ export interface DirtyLineRangeEntry {
  * silently drop or create a sentinel.
  */
 export interface DirtyLineRangeSentinel {
-  readonly kind: 'sentinel';
+  readonly kind: "sentinel";
 }
 
 /**
@@ -272,7 +274,7 @@ export const END_OF_DOCUMENT = Number.MAX_SAFE_INTEGER;
 export type EndOfDocument = typeof END_OF_DOCUMENT;
 
 /** Evaluation mode for the line index: eager has no dirty ranges, lazy may. */
-export type EvaluationMode = 'eager' | 'lazy';
+export type EvaluationMode = "eager" | "lazy";
 
 /**
  * Immutable line index state, parameterized by evaluation mode.
@@ -286,11 +288,11 @@ export interface LineIndexState<M extends EvaluationMode = EvaluationMode> {
   /** Total line count (cached for O(1) access) */
   readonly lineCount: number;
   /** Dirty ranges awaiting background reconciliation */
-  readonly dirtyRanges: M extends 'eager' ? readonly [] : readonly DirtyLineRange[];
+  readonly dirtyRanges: M extends "eager" ? readonly [] : readonly DirtyLineRange[];
   /** Version number of last full reconciliation */
   readonly lastReconciledVersion: number;
   /** Whether a background rebuild is pending */
-  readonly rebuildPending: M extends 'eager' ? false : boolean;
+  readonly rebuildPending: M extends "eager" ? false : boolean;
   /**
    * Maximum number of dirty ranges before `mergeDirtyRanges` collapses them
    * into a full-rebuild sentinel. Defaults to 32. Configurable via
@@ -313,13 +315,13 @@ export interface LineIndexState<M extends EvaluationMode = EvaluationMode> {
  * Fully-resolved line index state: no dirty ranges, no pending rebuild.
  * Use this instead of `LineIndexState<'eager'>` to make mode changes visible at call sites.
  */
-export type EagerLineIndexState = LineIndexState<'eager'>;
+export type EagerLineIndexState = LineIndexState<"eager">;
 
 /**
  * Lazily-maintained line index state: may have dirty ranges and a pending rebuild.
  * Use this instead of `LineIndexState<'lazy'>` to make mode changes visible at call sites.
  */
-export type LazyLineIndexState = LineIndexState<'lazy'>;
+export type LazyLineIndexState = LineIndexState<"lazy">;
 
 // =============================================================================
 // Selection Types
@@ -365,7 +367,7 @@ export interface SelectionState {
  * A single insert change record for undo/redo.
  */
 export interface HistoryInsertChange {
-  readonly type: 'insert';
+  readonly type: "insert";
   /** Position where the change occurred (byte offset) */
   readonly position: ByteOffset;
   /** Text that was inserted */
@@ -378,7 +380,7 @@ export interface HistoryInsertChange {
  * A single delete change record for undo/redo.
  */
 export interface HistoryDeleteChange {
-  readonly type: 'delete';
+  readonly type: "delete";
   /** Position where the change occurred (byte offset) */
   readonly position: ByteOffset;
   /** Text that was deleted */
@@ -391,7 +393,7 @@ export interface HistoryDeleteChange {
  * A single replace change record for undo/redo.
  */
 export interface HistoryReplaceChange {
-  readonly type: 'replace';
+  readonly type: "replace";
   /** Position where the change occurred (byte offset) */
   readonly position: ByteOffset;
   /** Text that was inserted */
@@ -436,7 +438,7 @@ export interface HistoryEntry {
  * object literals from being structurally assignable to `PStack<T>`.
  */
 class PStackCons<T> {
-  private declare readonly _brand: never;
+  declare private readonly _brand: never;
   readonly top: T;
   readonly rest: PStack<T>;
   readonly size: number;
@@ -466,7 +468,10 @@ export const pstackToArray = <T>(s: PStack<T>): T[] => {
   const arr = new Array<T>(s?.size ?? 0);
   let i = arr.length - 1;
   let cur = s;
-  while (cur !== null) { arr[i--] = cur.top; cur = cur.rest; }
+  while (cur !== null) {
+    arr[i--] = cur.top;
+    cur = cur.rest;
+  }
   return arr;
 };
 export const pstackFromArray = <T>(arr: readonly T[]): PStack<T> =>
@@ -533,7 +538,7 @@ export interface DocumentMetadata {
   /** File encoding (default: utf-8) */
   readonly encoding: string;
   /** Line ending style */
-  readonly lineEnding: 'lf' | 'crlf' | 'cr';
+  readonly lineEnding: "lf" | "crlf" | "cr";
   /** When true, inserted text is normalized to match `lineEnding` */
   readonly normalizeInsertedLineEndings: boolean;
   /** Whether document has unsaved changes */
@@ -582,7 +587,7 @@ export interface DocumentStoreConfig {
   /** File encoding (default: 'utf-8') */
   encoding?: string;
   /** Line ending style (default: 'lf') */
-  lineEnding?: 'lf' | 'crlf' | 'cr';
+  lineEnding?: "lf" | "crlf" | "cr";
   /**
    * When `true`, text inserted via INSERT or REPLACE actions is normalized to
    * match `lineEnding` before being applied. Default: `false` (no coercion).
@@ -620,5 +625,5 @@ export interface DocumentStoreConfig {
    * - `'none'` — disables background reconciliation entirely. Callers must
    *   trigger reconciliation explicitly via `reconcileNow()` or `getEagerSnapshot()`.
    */
-  reconcileMode?: 'idle' | 'sync' | 'none';
+  reconcileMode?: "idle" | "sync" | "none";
 }

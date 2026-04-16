@@ -16,9 +16,9 @@
  *   npx tsx scripts/gen-fixture.ts --lines 200000 --pattern code --out tmp/code.txt
  */
 
-import { writeFileSync, mkdirSync } from 'fs';
-import { dirname } from 'path';
-import { generateLargeContent, approximateByteSize } from '../src/test-utils/large-content.ts';
+import { writeFileSync, mkdirSync } from "fs";
+import { dirname } from "path";
+import { generateLargeContent, approximateByteSize } from "../src/test-utils/large-content.ts";
 
 // ---------------------------------------------------------------------------
 // Arg parsing (no dependencies — keep this script zero-dep)
@@ -33,11 +33,11 @@ function parseArgs(argv: string[]) {
   const has = (flag: string) => args.includes(flag);
 
   return {
-    lines: parseInt(get('--lines') ?? '100000', 10),
-    pattern: (get('--pattern') ?? 'prose') as 'prose' | 'code' | 'uniform' | 'random',
-    seed: parseInt(get('--seed') ?? '42', 10),
-    crlf: has('--crlf'),
-    out: get('--out') ?? 'tmp/large.txt',
+    lines: parseInt(get("--lines") ?? "100000", 10),
+    pattern: (get("--pattern") ?? "prose") as "prose" | "code" | "uniform" | "random",
+    seed: parseInt(get("--seed") ?? "42", 10),
+    crlf: has("--crlf"),
+    out: get("--out") ?? "tmp/large.txt",
   };
 }
 
@@ -47,14 +47,16 @@ function parseArgs(argv: string[]) {
 
 const opts = parseArgs(process.argv);
 
-console.log(`Generating ${opts.lines.toLocaleString()} lines [pattern=${opts.pattern} seed=${opts.seed}]...`);
+console.log(
+  `Generating ${opts.lines.toLocaleString()} lines [pattern=${opts.pattern} seed=${opts.seed}]...`,
+);
 
 const start = performance.now();
 const content = generateLargeContent({
   lineCount: opts.lines,
   pattern: opts.pattern,
   seed: opts.seed,
-  lineEnding: opts.crlf ? '\r\n' : '\n',
+  lineEnding: opts.crlf ? "\r\n" : "\n",
 });
 const genMs = (performance.now() - start).toFixed(1);
 
@@ -65,7 +67,7 @@ const mb = (bytes / 1024 / 1024).toFixed(2);
 // Write
 mkdirSync(dirname(opts.out), { recursive: true });
 const writeStart = performance.now();
-writeFileSync(opts.out, content, 'utf-8');
+writeFileSync(opts.out, content, "utf-8");
 const writeMs = (performance.now() - writeStart).toFixed(1);
 
 console.log(`  Generated : ${genMs} ms`);

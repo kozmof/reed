@@ -22,7 +22,7 @@ import {
   $linearScan,
   $forEachN,
   $mapN,
-} from '../types/cost-doc.ts';
+} from "../types/cost-doc.ts";
 
 export const cost = {
   $declare,

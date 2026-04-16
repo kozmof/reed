@@ -148,13 +148,13 @@ Reed normally.
 
 ## Final Architecture Summary
 
-| Event | Role |
-|---|---|
-| `onKeyDown` | Handles all keys. Records speculative inserts in `lastInsert`. Returns early if `isComposing`. |
-| `onCompositionStart` | Sets `isComposing = true`. Saves rollback info from `lastInsert`; does **not** dispatch a delete. |
-| `onCompositionEnd` | Sets `isComposing = false`. Dispatches `insertComposed(rollback, composed, selection)` — one atomic history entry. |
-| `onBeforeInput` | Allows all events during composition. Blocks all other browser mutations. |
-| `useLayoutEffect` | Rebuilds `innerHTML` from Reed state after every change, **skipping** during composition. In insert mode, calls `placeInsertCursor` to keep browser Selection in sync with the logical cursor. |
+| Event                | Role                                                                                                                                                                                           |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `onKeyDown`          | Handles all keys. Records speculative inserts in `lastInsert`. Returns early if `isComposing`.                                                                                                 |
+| `onCompositionStart` | Sets `isComposing = true`. Saves rollback info from `lastInsert`; does **not** dispatch a delete.                                                                                              |
+| `onCompositionEnd`   | Sets `isComposing = false`. Dispatches `insertComposed(rollback, composed, selection)` — one atomic history entry.                                                                             |
+| `onBeforeInput`      | Allows all events during composition. Blocks all other browser mutations.                                                                                                                      |
+| `useLayoutEffect`    | Rebuilds `innerHTML` from Reed state after every change, **skipping** during composition. In insert mode, calls `placeInsertCursor` to keep browser Selection in sync with the logical cursor. |
 
 ### Key design constraints
 

@@ -17,23 +17,27 @@ The piece table and line index remain independent structures. Piece nodes do not
 ### 2.1 Piece Table
 
 `PieceTableState` contains:
+
 - `root: PieceNode | null`
 - `originalBuffer: Uint8Array` (immutable)
 - `addBuffer: GrowableBuffer` (append-only, structural sharing)
 - `totalLength: number`
 
 `PieceNode` is immutable and stores:
+
 - `bufferType`, `start`, `length`
 - `left`, `right`, `color`
 - cached subtree metadata (`subtreeLength`, `subtreeAddLength`)
 
 Notes:
+
 - Parent pointers are intentionally not used.
 - Updates are path-copy operations with structural sharing.
 
 ### 2.2 Line Index
 
 `LineIndexState<M extends 'eager' | 'lazy'>` contains:
+
 - `root: LineIndexNode<M> | null`
 - `lineCount`
 - `dirtyRanges` (guaranteed empty in eager mode)
@@ -41,6 +45,7 @@ Notes:
 - `rebuildPending`
 
 `LineIndexNode` stores:
+
 - `documentOffset` (`number` in eager mode, `number | null` in lazy mode)
 - `lineLength`, `charLength`
 - subtree metadata (`subtreeLineCount`, `subtreeByteLength`, `subtreeCharLength`)
@@ -50,6 +55,7 @@ Notes:
 ### 3.1 Local edits
 
 `INSERT` / `DELETE` / `REPLACE` flow:
+
 1. Validate/clamp positions in reducer.
 2. Update piece table.
 3. Update line index via lazy strategy for normal editing.
@@ -68,6 +74,7 @@ Notes:
 ## 4. Store Runtime
 
 `store.createDocumentStore()` provides:
+
 - `subscribe`, `getSnapshot`, `getServerSnapshot`
 - `isCurrentSnapshot`
 - `dispatch`, `batch`
@@ -83,6 +90,7 @@ Transaction control actions (`TRANSACTION_START/COMMIT/ROLLBACK`) are handled at
 ## 5. Implemented vs Not Implemented
 
 Implemented:
+
 - Immutable core state factories
 - Piece table insert/delete/read operations
 - Separate line-index tree with lazy/eager reconciliation
@@ -91,6 +99,7 @@ Implemented:
 - Snapshot-gated reconciliation (`isCurrentSnapshot` + `reconcileNow(snapshot)`)
 
 Not implemented in current codebase:
+
 - File I/O layer
 - Real chunk loader/eviction runtime
 - Framework adapters (React/Vue/Svelte/Redux/Zustand)

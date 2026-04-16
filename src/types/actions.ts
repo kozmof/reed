@@ -4,9 +4,9 @@
  * Actions are serializable for debugging, time-travel, and collaboration.
  */
 
-import type { SelectionRange, ChunkMetadata } from './state.ts';
-import type { ByteOffset, ByteLength, ReadonlyUint8Array } from './branded.ts';
-import { strEnum } from './str-enum.ts';
+import type { SelectionRange, ChunkMetadata } from "./state.ts";
+import type { ByteOffset, ByteLength, ReadonlyUint8Array } from "./branded.ts";
+import { strEnum } from "./str-enum.ts";
 
 // =============================================================================
 // Text Editing Actions
@@ -16,7 +16,7 @@ import { strEnum } from './str-enum.ts';
  * Insert text at a position.
  */
 export interface InsertAction {
-  readonly type: 'INSERT';
+  readonly type: "INSERT";
   /** Start position to insert at (0-based byte offset) */
   readonly start: ByteOffset;
   /** Text to insert */
@@ -35,7 +35,7 @@ export interface InsertAction {
  * Delete a range of text.
  */
 export interface DeleteAction {
-  readonly type: 'DELETE';
+  readonly type: "DELETE";
   /** Start position of deletion (inclusive, byte offset) */
   readonly start: ByteOffset;
   /** End position of deletion (exclusive, byte offset) */
@@ -54,7 +54,7 @@ export interface DeleteAction {
  * Replace a range of text with new text.
  */
 export interface ReplaceAction {
-  readonly type: 'REPLACE';
+  readonly type: "REPLACE";
   /** Start position of replacement (inclusive, byte offset) */
   readonly start: ByteOffset;
   /** End position of replacement (exclusive, byte offset) */
@@ -79,7 +79,7 @@ export interface ReplaceAction {
  * Set the selection state.
  */
 export interface SetSelectionAction {
-  readonly type: 'SET_SELECTION';
+  readonly type: "SET_SELECTION";
   /** New selection ranges */
   readonly ranges: readonly SelectionRange[];
 }
@@ -92,21 +92,21 @@ export interface SetSelectionAction {
  * Undo the last change.
  */
 export interface UndoAction {
-  readonly type: 'UNDO';
+  readonly type: "UNDO";
 }
 
 /**
  * Redo a previously undone change.
  */
 export interface RedoAction {
-  readonly type: 'REDO';
+  readonly type: "REDO";
 }
 
 /**
  * Clear all history (both undo and redo stacks).
  */
 export interface HistoryClearAction {
-  readonly type: 'HISTORY_CLEAR';
+  readonly type: "HISTORY_CLEAR";
 }
 
 // =============================================================================
@@ -118,7 +118,7 @@ export interface HistoryClearAction {
  * Actions still apply immediately and record history per action.
  */
 export interface TransactionStartAction {
-  readonly type: 'TRANSACTION_START';
+  readonly type: "TRANSACTION_START";
 }
 
 /**
@@ -126,7 +126,7 @@ export interface TransactionStartAction {
  * Notifies listeners when the outermost transaction completes.
  */
 export interface TransactionCommitAction {
-  readonly type: 'TRANSACTION_COMMIT';
+  readonly type: "TRANSACTION_COMMIT";
 }
 
 /**
@@ -134,7 +134,7 @@ export interface TransactionCommitAction {
  * Discards all changes since TRANSACTION_START.
  */
 export interface TransactionRollbackAction {
-  readonly type: 'TRANSACTION_ROLLBACK';
+  readonly type: "TRANSACTION_ROLLBACK";
 }
 
 // =============================================================================
@@ -146,14 +146,14 @@ export interface TransactionRollbackAction {
  * Discriminated union on `type` — `text` is required for inserts, `length` for deletes.
  */
 export type RemoteChange =
-  | { readonly type: 'insert'; readonly start: ByteOffset; readonly text: string }
-  | { readonly type: 'delete'; readonly start: ByteOffset; readonly length: ByteLength };
+  | { readonly type: "insert"; readonly start: ByteOffset; readonly text: string }
+  | { readonly type: "delete"; readonly start: ByteOffset; readonly length: ByteLength };
 
 /**
  * Apply remote changes from collaboration.
  */
 export interface ApplyRemoteAction {
-  readonly type: 'APPLY_REMOTE';
+  readonly type: "APPLY_REMOTE";
   /** Remote changes to apply */
   readonly changes: readonly RemoteChange[];
 }
@@ -166,7 +166,7 @@ export interface ApplyRemoteAction {
  * Load a chunk of data for large files.
  */
 export interface LoadChunkAction {
-  readonly type: 'LOAD_CHUNK';
+  readonly type: "LOAD_CHUNK";
   /** Index of the chunk */
   readonly chunkIndex: number;
   /** Chunk data (readonly — callers must not mutate the buffer after dispatch) */
@@ -198,7 +198,7 @@ export interface LoadChunkAction {
  *   that must remain resident rather than evicting them manually.
  */
 export interface EvictChunkAction {
-  readonly type: 'EVICT_CHUNK';
+  readonly type: "EVICT_CHUNK";
   /** Index of the chunk to evict */
   readonly chunkIndex: number;
 }
@@ -209,7 +209,7 @@ export interface EvictChunkAction {
  * Does NOT bump state.version and does NOT emit a content-change event.
  */
 export interface DeclareChunkMetadataAction {
-  readonly type: 'DECLARE_CHUNK_METADATA';
+  readonly type: "DECLARE_CHUNK_METADATA";
   /** Metadata entries to register. One entry per chunk; duplicates for already-loaded chunks are ignored. */
   readonly metadata: readonly ChunkMetadata[];
 }
@@ -247,20 +247,20 @@ export type DocumentAction =
  * new key is added here but its case is not yet handled.
  */
 export const DocumentActionTypes = strEnum([
-  'INSERT',
-  'DELETE',
-  'REPLACE',
-  'SET_SELECTION',
-  'UNDO',
-  'REDO',
-  'HISTORY_CLEAR',
-  'TRANSACTION_START',
-  'TRANSACTION_COMMIT',
-  'TRANSACTION_ROLLBACK',
-  'APPLY_REMOTE',
-  'LOAD_CHUNK',
-  'EVICT_CHUNK',
-  'DECLARE_CHUNK_METADATA',
+  "INSERT",
+  "DELETE",
+  "REPLACE",
+  "SET_SELECTION",
+  "UNDO",
+  "REDO",
+  "HISTORY_CLEAR",
+  "TRANSACTION_START",
+  "TRANSACTION_COMMIT",
+  "TRANSACTION_ROLLBACK",
+  "APPLY_REMOTE",
+  "LOAD_CHUNK",
+  "EVICT_CHUNK",
+  "DECLARE_CHUNK_METADATA",
 ]);
 
 /** Union of all valid action type strings, derived from DocumentActionTypes. */
@@ -271,11 +271,7 @@ export type DocumentActionType = keyof typeof DocumentActionTypes;
  * ContentChangeEvent.action is narrowed to this type so listeners
  * never receive a non-content action in that payload.
  */
-export type ContentChangeAction =
-  | InsertAction
-  | DeleteAction
-  | ReplaceAction
-  | ApplyRemoteAction;
+export type ContentChangeAction = InsertAction | DeleteAction | ReplaceAction | ApplyRemoteAction;
 
 // =============================================================================
 // Action Type Guards
@@ -285,37 +281,30 @@ export type ContentChangeAction =
  * Check if an action is a text editing action.
  */
 export function isTextEditAction(
-  action: DocumentAction
+  action: DocumentAction,
 ): action is InsertAction | DeleteAction | ReplaceAction {
-  return (
-    action.type === 'INSERT' ||
-    action.type === 'DELETE' ||
-    action.type === 'REPLACE'
-  );
+  return action.type === "INSERT" || action.type === "DELETE" || action.type === "REPLACE";
 }
 
 /**
  * Check if an action is a history action.
  */
 export function isHistoryAction(
-  action: DocumentAction
+  action: DocumentAction,
 ): action is UndoAction | RedoAction | HistoryClearAction {
-  return action.type === 'UNDO' || action.type === 'REDO' || action.type === 'HISTORY_CLEAR';
+  return action.type === "UNDO" || action.type === "REDO" || action.type === "HISTORY_CLEAR";
 }
 
 /**
  * Check if an action is a transaction action.
  */
 export function isTransactionAction(
-  action: DocumentAction
-): action is
-  | TransactionStartAction
-  | TransactionCommitAction
-  | TransactionRollbackAction {
+  action: DocumentAction,
+): action is TransactionStartAction | TransactionCommitAction | TransactionRollbackAction {
   return (
-    action.type === 'TRANSACTION_START' ||
-    action.type === 'TRANSACTION_COMMIT' ||
-    action.type === 'TRANSACTION_ROLLBACK'
+    action.type === "TRANSACTION_START" ||
+    action.type === "TRANSACTION_COMMIT" ||
+    action.type === "TRANSACTION_ROLLBACK"
   );
 }
 
@@ -324,68 +313,70 @@ export function isTransactionAction(
  * Useful for validating actions from external sources.
  */
 export function isDocumentAction(value: unknown): value is DocumentAction {
-  if (typeof value !== 'object' || value === null) {
+  if (typeof value !== "object" || value === null) {
     return false;
   }
 
   const action = value as { type?: unknown };
 
-  if (typeof action.type !== 'string' || !(action.type in DocumentActionTypes)) {
+  if (typeof action.type !== "string" || !(action.type in DocumentActionTypes)) {
     return false;
   }
 
   const type = action.type as DocumentActionType;
 
   switch (type) {
-    case 'INSERT':
+    case "INSERT":
       return (
-        typeof (action as InsertAction).start === 'number' &&
-        typeof (action as InsertAction).text === 'string'
+        typeof (action as InsertAction).start === "number" &&
+        typeof (action as InsertAction).text === "string"
       );
-    case 'DELETE':
+    case "DELETE":
       return (
-        typeof (action as DeleteAction).start === 'number' &&
-        typeof (action as DeleteAction).end === 'number'
+        typeof (action as DeleteAction).start === "number" &&
+        typeof (action as DeleteAction).end === "number"
       );
-    case 'REPLACE':
+    case "REPLACE":
       return (
-        typeof (action as ReplaceAction).start === 'number' &&
-        typeof (action as ReplaceAction).end === 'number' &&
-        typeof (action as ReplaceAction).text === 'string'
+        typeof (action as ReplaceAction).start === "number" &&
+        typeof (action as ReplaceAction).end === "number" &&
+        typeof (action as ReplaceAction).text === "string"
       );
-    case 'SET_SELECTION':
+    case "SET_SELECTION":
       return Array.isArray((action as SetSelectionAction).ranges);
-    case 'UNDO':
-    case 'REDO':
-    case 'HISTORY_CLEAR':
-    case 'TRANSACTION_START':
-    case 'TRANSACTION_COMMIT':
-    case 'TRANSACTION_ROLLBACK':
+    case "UNDO":
+    case "REDO":
+    case "HISTORY_CLEAR":
+    case "TRANSACTION_START":
+    case "TRANSACTION_COMMIT":
+    case "TRANSACTION_ROLLBACK":
       return true;
-    case 'APPLY_REMOTE': {
+    case "APPLY_REMOTE": {
       const remote = action as ApplyRemoteAction;
       if (!Array.isArray(remote.changes)) return false;
       return remote.changes.every(
-        c => (c.type === 'insert' || c.type === 'delete') &&
-             typeof c.start === 'number' &&
-             (c.type !== 'insert' || typeof c.text === 'string') &&
-             (c.type !== 'delete' || typeof c.length === 'number')
+        (c) =>
+          (c.type === "insert" || c.type === "delete") &&
+          typeof c.start === "number" &&
+          (c.type !== "insert" || typeof c.text === "string") &&
+          (c.type !== "delete" || typeof c.length === "number"),
       );
     }
-    case 'LOAD_CHUNK':
+    case "LOAD_CHUNK":
       return (
-        typeof (action as LoadChunkAction).chunkIndex === 'number' &&
+        typeof (action as LoadChunkAction).chunkIndex === "number" &&
         (action as LoadChunkAction).data instanceof Uint8Array
       );
-    case 'EVICT_CHUNK':
-      return typeof (action as EvictChunkAction).chunkIndex === 'number';
-    case 'DECLARE_CHUNK_METADATA': {
+    case "EVICT_CHUNK":
+      return typeof (action as EvictChunkAction).chunkIndex === "number";
+    case "DECLARE_CHUNK_METADATA": {
       const decl = action as DeclareChunkMetadataAction;
       if (!Array.isArray(decl.metadata)) return false;
       return decl.metadata.every(
-        m => typeof m.chunkIndex === 'number' &&
-             typeof m.byteLength === 'number' &&
-             typeof m.lineCount === 'number'
+        (m) =>
+          typeof m.chunkIndex === "number" &&
+          typeof m.byteLength === "number" &&
+          typeof m.lineCount === "number",
       );
     }
     default:
@@ -423,21 +414,18 @@ export interface ActionValidationResult {
  * @param documentLength - Optional document length for bounds checking
  * @returns Validation result with errors array
  */
-export function validateAction(
-  value: unknown,
-  documentLength?: number
-): ActionValidationResult {
+export function validateAction(value: unknown, documentLength?: number): ActionValidationResult {
   const errors: string[] = [];
 
   // Basic type check
-  if (typeof value !== 'object' || value === null) {
-    errors.push('Action must be a non-null object');
+  if (typeof value !== "object" || value === null) {
+    errors.push("Action must be a non-null object");
     return { valid: false, errors };
   }
 
   const action = value as { type?: unknown };
 
-  if (typeof action.type !== 'string') {
+  if (typeof action.type !== "string") {
     errors.push('Action must have a string "type" property');
     return { valid: false, errors };
   }
@@ -451,93 +439,83 @@ export function validateAction(
 
   // Validate action structure
   switch (type) {
-    case 'INSERT': {
+    case "INSERT": {
       const insertAction = action as Partial<InsertAction>;
-      if (typeof insertAction.start !== 'number') {
+      if (typeof insertAction.start !== "number") {
         errors.push('INSERT action requires a numeric "start" property');
       } else if (insertAction.start < 0) {
         errors.push(`INSERT start cannot be negative: ${insertAction.start}`);
       } else if (documentLength !== undefined && insertAction.start > documentLength) {
-        errors.push(
-          `INSERT start ${insertAction.start} exceeds document length ${documentLength}`
-        );
+        errors.push(`INSERT start ${insertAction.start} exceeds document length ${documentLength}`);
       }
-      if (typeof insertAction.text !== 'string') {
+      if (typeof insertAction.text !== "string") {
         errors.push('INSERT action requires a string "text" property');
       }
       break;
     }
 
-    case 'DELETE': {
+    case "DELETE": {
       const deleteAction = action as Partial<DeleteAction>;
-      if (typeof deleteAction.start !== 'number') {
+      if (typeof deleteAction.start !== "number") {
         errors.push('DELETE action requires a numeric "start" property');
       } else if (deleteAction.start < 0) {
         errors.push(`DELETE start cannot be negative: ${deleteAction.start}`);
       }
-      if (typeof deleteAction.end !== 'number') {
+      if (typeof deleteAction.end !== "number") {
         errors.push('DELETE action requires a numeric "end" property');
       } else if (deleteAction.end < 0) {
         errors.push(`DELETE end cannot be negative: ${deleteAction.end}`);
       }
-      if (
-        typeof deleteAction.start === 'number' &&
-        typeof deleteAction.end === 'number'
-      ) {
+      if (typeof deleteAction.start === "number" && typeof deleteAction.end === "number") {
         if (deleteAction.start > deleteAction.end) {
           errors.push(
-            `DELETE start (${deleteAction.start}) cannot be greater than end (${deleteAction.end})`
+            `DELETE start (${deleteAction.start}) cannot be greater than end (${deleteAction.end})`,
           );
         }
         if (documentLength !== undefined) {
           if (deleteAction.start > documentLength) {
             errors.push(
-              `DELETE start ${deleteAction.start} exceeds document length ${documentLength}`
+              `DELETE start ${deleteAction.start} exceeds document length ${documentLength}`,
             );
           }
           if (deleteAction.end > documentLength) {
-            errors.push(
-              `DELETE end ${deleteAction.end} exceeds document length ${documentLength}`
-            );
+            errors.push(`DELETE end ${deleteAction.end} exceeds document length ${documentLength}`);
           }
         }
       }
       break;
     }
 
-    case 'REPLACE': {
+    case "REPLACE": {
       const replaceAction = action as Partial<ReplaceAction>;
-      if (typeof replaceAction.start !== 'number') {
+      if (typeof replaceAction.start !== "number") {
         errors.push('REPLACE action requires a numeric "start" property');
       } else if (replaceAction.start < 0) {
         errors.push(`REPLACE start cannot be negative: ${replaceAction.start}`);
       }
-      if (typeof replaceAction.end !== 'number') {
+      if (typeof replaceAction.end !== "number") {
         errors.push('REPLACE action requires a numeric "end" property');
       } else if (replaceAction.end < 0) {
         errors.push(`REPLACE end cannot be negative: ${replaceAction.end}`);
       }
-      if (typeof replaceAction.text !== 'string') {
+      if (typeof replaceAction.text !== "string") {
         errors.push('REPLACE action requires a string "text" property');
       }
-      if (
-        typeof replaceAction.start === 'number' &&
-        typeof replaceAction.end === 'number'
-      ) {
+      if (typeof replaceAction.start === "number" && typeof replaceAction.end === "number") {
         if (replaceAction.start > replaceAction.end) {
           errors.push(
-            `REPLACE start (${replaceAction.start}) cannot be greater than end (${replaceAction.end})`
+            `REPLACE start (${replaceAction.start}) cannot be greater than end (${replaceAction.end})`,
           );
         }
         if (documentLength !== undefined) {
           if (replaceAction.start > documentLength) {
             errors.push(
-              `REPLACE start ${replaceAction.start} exceeds document length ${documentLength}`
+              `REPLACE start ${replaceAction.start} exceeds document length ${documentLength}`,
             );
           }
           if (replaceAction.end > documentLength) {
             errors.push(
-              `REPLACE end ${replaceAction.end} exceeds document length ${documentLength}`
+              `REPLACE end ${replaceAction.end} exceeds document length ${documentLength}`,
             );
           }
         }
@@ -545,7 +523,7 @@ export function validateAction(
       break;
     }
 
-    case 'SET_SELECTION': {
+    case "SET_SELECTION": {
       const selectionAction = action as Partial<SetSelectionAction>;
       if (!Array.isArray(selectionAction.ranges)) {
         errors.push('SET_SELECTION action requires an array "ranges" property');
@@ -553,32 +531,32 @@ export function validateAction(
       break;
     }
 
-    case 'UNDO':
-    case 'REDO':
-    case 'HISTORY_CLEAR':
-    case 'TRANSACTION_START':
-    case 'TRANSACTION_COMMIT':
-    case 'TRANSACTION_ROLLBACK':
+    case "UNDO":
+    case "REDO":
+    case "HISTORY_CLEAR":
+    case "TRANSACTION_START":
+    case "TRANSACTION_COMMIT":
+    case "TRANSACTION_ROLLBACK":
       // These actions have no additional properties to validate
       break;
 
-    case 'APPLY_REMOTE': {
+    case "APPLY_REMOTE": {
       const remoteAction = action as Partial<ApplyRemoteAction>;
       if (!Array.isArray(remoteAction.changes)) {
         errors.push('APPLY_REMOTE action requires an array "changes" property');
       } else {
         for (let i = 0; i < remoteAction.changes.length; i++) {
           const c = remoteAction.changes[i] as Partial<RemoteChange>;
-          if (c.type !== 'insert' && c.type !== 'delete') {
+          if (c.type !== "insert" && c.type !== "delete") {
             errors.push(`APPLY_REMOTE changes[${i}].type must be 'insert' or 'delete'`);
           }
-          if (typeof c.start !== 'number') {
+          if (typeof c.start !== "number") {
             errors.push(`APPLY_REMOTE changes[${i}].start must be a number`);
           }
-          if (c.type === 'insert' && typeof c.text !== 'string') {
+          if (c.type === "insert" && typeof c.text !== "string") {
             errors.push(`APPLY_REMOTE changes[${i}].text must be a string for insert changes`);
           }
-          if (c.type === 'delete' && typeof c.length !== 'number') {
+          if (c.type === "delete" && typeof c.length !== "number") {
             errors.push(`APPLY_REMOTE changes[${i}].length must be a number for delete changes`);
           }
         }
@@ -586,9 +564,9 @@ export function validateAction(
       break;
     }
 
-    case 'LOAD_CHUNK': {
+    case "LOAD_CHUNK": {
       const loadAction = action as Partial<LoadChunkAction>;
-      if (typeof loadAction.chunkIndex !== 'number') {
+      if (typeof loadAction.chunkIndex !== "number") {
         errors.push('LOAD_CHUNK action requires a numeric "chunkIndex" property');
       }
       if (!(loadAction.data instanceof Uint8Array)) {
@@ -597,28 +575,28 @@ export function validateAction(
       break;
     }
 
-    case 'EVICT_CHUNK': {
+    case "EVICT_CHUNK": {
       const evictAction = action as Partial<EvictChunkAction>;
-      if (typeof evictAction.chunkIndex !== 'number') {
+      if (typeof evictAction.chunkIndex !== "number") {
         errors.push('EVICT_CHUNK action requires a numeric "chunkIndex" property');
       }
       break;
     }
 
-    case 'DECLARE_CHUNK_METADATA': {
+    case "DECLARE_CHUNK_METADATA": {
       const declAction = action as Partial<DeclareChunkMetadataAction>;
       if (!Array.isArray(declAction.metadata)) {
         errors.push('DECLARE_CHUNK_METADATA action requires an array "metadata" property');
       } else {
         for (let i = 0; i < declAction.metadata.length; i++) {
           const m = declAction.metadata[i] as Partial<ChunkMetadata>;
-          if (typeof m.chunkIndex !== 'number') {
+          if (typeof m.chunkIndex !== "number") {
             errors.push(`DECLARE_CHUNK_METADATA metadata[${i}].chunkIndex must be a number`);
           }
-          if (typeof m.byteLength !== 'number') {
+          if (typeof m.byteLength !== "number") {
             errors.push(`DECLARE_CHUNK_METADATA metadata[${i}].byteLength must be a number`);
           }
-          if (typeof m.lineCount !== 'number') {
+          if (typeof m.lineCount !== "number") {
             errors.push(`DECLARE_CHUNK_METADATA metadata[${i}].lineCount must be a number`);
           }
         }

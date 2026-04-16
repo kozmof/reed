@@ -7,8 +7,8 @@ import {
   createDocumentStoreWithEvents,
   isDocumentStore,
   withTransaction,
-} from '../store/features/store.ts';
-import { DocumentActions, serializeAction, deserializeAction } from '../store/features/actions.ts';
+} from "../store/features/store.ts";
+import { DocumentActions, serializeAction, deserializeAction } from "../store/features/actions.ts";
 import {
   createInitialState,
   createEmptyPieceTableState,
@@ -23,8 +23,8 @@ import {
   withState,
   withPieceNode,
   withLineIndexNode,
-} from '../store/core/state.ts';
-import { documentReducer } from '../store/features/reducer.ts';
+} from "../store/core/state.ts";
+import { documentReducer } from "../store/features/reducer.ts";
 import {
   pieceTableInsert,
   pieceTableDelete,
@@ -34,7 +34,7 @@ import {
   getBuffer,
   getBufferSlice,
   getPieceBuffer,
-} from '../store/core/piece-table.ts';
+} from "../store/core/piece-table.ts";
 import {
   lineIndexInsert,
   lineIndexDelete,
@@ -43,14 +43,14 @@ import {
   reconcileRange,
   reconcileFull,
   reconcileViewport,
-} from '../store/core/line-index.ts';
+} from "../store/core/line-index.ts";
 import {
   isTextEditAction,
   isHistoryAction,
   isTransactionAction,
   isDocumentAction,
   validateAction,
-} from '../types/actions.ts';
+} from "../types/actions.ts";
 
 export const store = {
   // Store lifecycle

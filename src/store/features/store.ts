@@ -3,13 +3,19 @@
  * Factory function that creates a DocumentStore with encapsulated state.
  */
 
-import type { DocumentState, DocumentStoreConfig } from '../../types/state.ts';
-import type { DocumentAction } from '../../types/actions.ts';
-import type { DocumentStore, ReconcilableDocumentStore, DocumentStoreWithEvents, StoreListener, Unsubscribe } from '../../types/store.ts';
-import { createInitialState } from '../core/state.ts';
-import { documentReducer } from './reducer.ts';
-import { reconcileFull, reconcileViewport } from '../core/line-index.ts';
-import { createTransactionManager } from './transaction.ts';
+import type { DocumentState, DocumentStoreConfig } from "../../types/state.ts";
+import type { DocumentAction } from "../../types/actions.ts";
+import type {
+  DocumentStore,
+  ReconcilableDocumentStore,
+  DocumentStoreWithEvents,
+  StoreListener,
+  Unsubscribe,
+} from "../../types/store.ts";
+import { createInitialState } from "../core/state.ts";
+import { documentReducer } from "./reducer.ts";
+import { reconcileFull, reconcileViewport } from "../core/line-index.ts";
+import { createTransactionManager } from "./transaction.ts";
 import {
   createEventEmitter,
   createContentChangeEvent,
@@ -17,8 +23,8 @@ import {
   createHistoryChangeEvent,
   createDirtyChangeEvent,
   getAffectedRanges,
-} from './events.ts';
-import { isTextEditAction } from '../../types/actions.ts';
+} from "./events.ts";
+import { isTextEditAction } from "../../types/actions.ts";
 
 /**
  * Background reconciliation state.
@@ -42,9 +48,9 @@ function withTransactionBatch(
   txDispatch: (action: DocumentAction) => DocumentState,
   actionDispatch: (action: DocumentAction) => DocumentState,
   emergencyReset: () => DocumentState | null,
-  actions: readonly DocumentAction[]
+  actions: readonly DocumentAction[],
 ): void {
-  txDispatch({ type: 'TRANSACTION_START' });
+  txDispatch({ type: "TRANSACTION_START" });
   let success = false;
   try {
     for (const action of actions) {
@@ -53,11 +59,11 @@ function withTransactionBatch(
     // Set success before COMMIT: if COMMIT itself throws, the finally block must not
     // attempt ROLLBACK on half-committed state (depth already decremented).
     success = true;
-    txDispatch({ type: 'TRANSACTION_COMMIT' });
+    txDispatch({ type: "TRANSACTION_COMMIT" });
   } finally {
     if (!success) {
       try {
-        txDispatch({ type: 'TRANSACTION_ROLLBACK' });
+        txDispatch({ type: "TRANSACTION_ROLLBACK" });
       } catch {
         emergencyReset();
       }
@@ -76,11 +82,11 @@ function withTransactionBatch(
  * @returns A new DocumentStore instance
  */
 export function createDocumentStore(
-  config: Partial<DocumentStoreConfig> = {}
+  config: Partial<DocumentStoreConfig> = {},
 ): ReconcilableDocumentStore {
   // Internal mutable state
   let state = createInitialState(config);
-  const reconcileMode = config.reconcileMode ?? 'idle';
+  const reconcileMode = config.reconcileMode ?? "idle";
   // Copy-on-write listeners array. Mutations (add/remove) during notification clone the
   // array first so the in-progress iteration is not affected. In the common case (no
   // mutation during notify) no copy is made, eliminating the Array.from allocation that
@@ -123,7 +129,7 @@ export function createDocumentStore(
           listener();
         } catch (error) {
           // Don't let one listener's error affect others
-          console.error('Store listener threw an error:', error);
+          console.error("Store listener threw an error:", error);
         }
       }
     } finally {
@@ -142,7 +148,7 @@ export function createDocumentStore(
     // `listeners`) is not disturbed.
     listeners = [...listeners, listener];
     return () => {
-      listeners = listeners.filter(l => l !== listener);
+      listeners = listeners.filter((l) => l !== listener);
     };
   }
 
@@ -179,12 +185,12 @@ export function createDocumentStore(
    */
   function dispatch(action: DocumentAction): DocumentState {
     // Handle transaction control actions
-    if (action.type === 'TRANSACTION_START') {
+    if (action.type === "TRANSACTION_START") {
       transaction.begin(state);
       return state;
     }
 
-    if (action.type === 'TRANSACTION_COMMIT') {
+    if (action.type === "TRANSACTION_COMMIT") {
       const result = transaction.commit();
       if (result.isOutermost) {
         notifyListeners();
@@ -195,7 +201,7 @@ export function createDocumentStore(
       return state;
     }
 
-    if (action.type === 'TRANSACTION_ROLLBACK') {
+    if (action.type === "TRANSACTION_ROLLBACK") {
       const result = transaction.rollback();
       if (result.snapshot) {
         setState(result.snapshot);
@@ -270,9 +276,9 @@ export function createDocumentStore(
     if (reconciliation.idleCallbackId !== null) return;
     if (!state.lineIndex.rebuildPending) return;
 
-    if (reconcileMode === 'none') return;
+    if (reconcileMode === "none") return;
 
-    if (reconcileMode === 'sync') {
+    if (reconcileMode === "sync") {
       // Reconcile inline — skip scheduling, run immediately
       if (transaction.isActive) return; // defer until transaction commits
       reconciliation.isReconciling = true;
@@ -312,12 +318,14 @@ export function createDocumentStore(
         // version-neutral and does not change visible content.
         const newLineIndex = reconcileFull(state.lineIndex, state.version);
         if (newLineIndex !== state.lineIndex) {
-          setState(Object.freeze({
-            ...state,
-            lineIndex: newLineIndex,
-            // state.version is intentionally unchanged — background reconciliation
-            // is invisible to listeners and should not produce a version bump.
-          }));
+          setState(
+            Object.freeze({
+              ...state,
+              lineIndex: newLineIndex,
+              // state.version is intentionally unchanged — background reconciliation
+              // is invisible to listeners and should not produce a version bump.
+            }),
+          );
           // Notify consumers so they can re-read getSnapshot() with accurate offsets.
           // Previously-null documentOffset values are now resolved; without this call,
           // consumers relying on getSnapshot() would silently see stale nulls until the
@@ -329,7 +337,7 @@ export function createDocumentStore(
       }
     };
 
-    if (typeof requestIdleCallback !== 'undefined') {
+    if (typeof requestIdleCallback !== "undefined") {
       reconciliation.idleCallbackId = requestIdleCallback(callback, {
         timeout: 1000, // Max 1 second delay
       });
@@ -345,18 +353,20 @@ export function createDocumentStore(
    * Reconciles in-place without bumping the version number (offset resolution
    * does not change visible content, so no version increment is warranted).
    */
-  function getEagerSnapshot(): DocumentState<'eager'> {
+  function getEagerSnapshot(): DocumentState<"eager"> {
     if (!state.lineIndex.rebuildPending) {
-      return state as DocumentState<'eager'>;
+      return state as DocumentState<"eager">;
     }
     const newLineIndex = reconcileFull(state.lineIndex, state.version);
     if (newLineIndex !== state.lineIndex) {
-      setState(Object.freeze({
-        ...state,
-        lineIndex: newLineIndex,
-      }));
+      setState(
+        Object.freeze({
+          ...state,
+          lineIndex: newLineIndex,
+        }),
+      );
     }
-    return state as DocumentState<'eager'>;
+    return state as DocumentState<"eager">;
   }
 
   /**
@@ -368,10 +378,10 @@ export function createDocumentStore(
    * Callers that need to detect whether lines are ready should inspect
    * `lineIndex.rebuildPending`, not compare version numbers.
    */
-  function reconcileNow(): DocumentState<'eager'> {
+  function reconcileNow(): DocumentState<"eager"> {
     // Cancel any pending idle callback
     if (reconciliation.idleCallbackId !== null) {
-      if (typeof cancelIdleCallback !== 'undefined') {
+      if (typeof cancelIdleCallback !== "undefined") {
         cancelIdleCallback(reconciliation.idleCallbackId);
       } else {
         clearTimeout(reconciliation.idleCallbackId);
@@ -380,19 +390,21 @@ export function createDocumentStore(
     }
 
     if (!state.lineIndex.rebuildPending) {
-      return state as DocumentState<'eager'>;
+      return state as DocumentState<"eager">;
     }
 
     const newLineIndex = reconcileFull(state.lineIndex, state.version);
     if (newLineIndex !== state.lineIndex) {
-      setState(Object.freeze({
-        ...state,
-        lineIndex: newLineIndex,
-        // state.version is intentionally unchanged — reconciliation is
-        // content-neutral and must not produce spurious version bumps.
-      }));
+      setState(
+        Object.freeze({
+          ...state,
+          lineIndex: newLineIndex,
+          // state.version is intentionally unchanged — reconciliation is
+          // content-neutral and must not produce spurious version bumps.
+        }),
+      );
     }
-    return state as DocumentState<'eager'>;
+    return state as DocumentState<"eager">;
   }
 
   /**
@@ -400,7 +412,7 @@ export function createDocumentStore(
    * Returns null when `snapshot` is stale (a newer dispatch has occurred),
    * preventing a reconciled state from being applied to an out-of-date view.
    */
-  function reconcileIfCurrent(snapshot: DocumentState): DocumentState<'eager'> | null {
+  function reconcileIfCurrent(snapshot: DocumentState): DocumentState<"eager"> | null {
     if (!isCurrentSnapshot(snapshot)) return null;
     return reconcileNow();
   }
@@ -411,10 +423,12 @@ export function createDocumentStore(
   function setViewport(startLine: number, endLine: number): void {
     const newLineIndex = reconcileViewport(state.lineIndex, startLine, endLine, state.version);
     if (newLineIndex !== state.lineIndex) {
-      setState(Object.freeze({
-        ...state,
-        lineIndex: newLineIndex,
-      }));
+      setState(
+        Object.freeze({
+          ...state,
+          lineIndex: newLineIndex,
+        }),
+      );
     }
 
     // Schedule background reconciliation for remaining dirty ranges
@@ -464,7 +478,7 @@ export function createDocumentStore(
  * @returns A DocumentStoreWithEvents instance
  */
 export function createDocumentStoreWithEvents(
-  config: Partial<DocumentStoreConfig> = {}
+  config: Partial<DocumentStoreConfig> = {},
 ): DocumentStoreWithEvents {
   const baseStore = createDocumentStore(config);
   const emitter = createEventEmitter();
@@ -475,42 +489,32 @@ export function createDocumentStoreWithEvents(
   function emitEventsForAction(
     action: DocumentAction,
     prevState: DocumentState,
-    nextState: DocumentState
+    nextState: DocumentState,
   ): void {
     // Content change events for local text edits and remote content updates
-    if (isTextEditAction(action) || action.type === 'APPLY_REMOTE') {
+    if (isTextEditAction(action) || action.type === "APPLY_REMOTE") {
       emitter.emit(
-        'content-change',
-        createContentChangeEvent(action, prevState, nextState, getAffectedRanges(action))
+        "content-change",
+        createContentChangeEvent(action, prevState, nextState, getAffectedRanges(action)),
       );
     }
 
     // Selection change events
-    if (action.type === 'SET_SELECTION') {
-      emitter.emit(
-        'selection-change',
-        createSelectionChangeEvent(prevState, nextState)
-      );
+    if (action.type === "SET_SELECTION") {
+      emitter.emit("selection-change", createSelectionChangeEvent(prevState, nextState));
     }
 
     // History change events
-    if (action.type === 'UNDO' || action.type === 'REDO') {
+    if (action.type === "UNDO" || action.type === "REDO") {
       emitter.emit(
-        'history-change',
-        createHistoryChangeEvent(
-          action.type === 'UNDO' ? 'undo' : 'redo',
-          prevState,
-          nextState
-        )
+        "history-change",
+        createHistoryChangeEvent(action.type === "UNDO" ? "undo" : "redo", prevState, nextState),
       );
     }
 
     // Dirty state change events
     if (prevState.metadata.isDirty !== nextState.metadata.isDirty) {
-      emitter.emit(
-        'dirty-change',
-        createDirtyChangeEvent(nextState.metadata.isDirty, nextState)
-      );
+      emitter.emit("dirty-change", createDirtyChangeEvent(nextState.metadata.isDirty, nextState));
     }
   }
 
@@ -594,19 +598,19 @@ export function createDocumentStoreWithEvents(
  */
 export function withTransaction<T>(
   store: ReconcilableDocumentStore,
-  fn: (store: ReconcilableDocumentStore) => T
+  fn: (store: ReconcilableDocumentStore) => T,
 ): T {
-  store.dispatch({ type: 'TRANSACTION_START' });
+  store.dispatch({ type: "TRANSACTION_START" });
   let success = false;
   try {
     const result = fn(store);
     success = true;
-    store.dispatch({ type: 'TRANSACTION_COMMIT' });
+    store.dispatch({ type: "TRANSACTION_COMMIT" });
     return result;
   } finally {
     if (!success) {
       try {
-        store.dispatch({ type: 'TRANSACTION_ROLLBACK' });
+        store.dispatch({ type: "TRANSACTION_ROLLBACK" });
       } catch {
         store.emergencyReset();
       }
@@ -619,16 +623,16 @@ export function withTransaction<T>(
  * Useful for type narrowing.
  */
 export function isDocumentStore(value: unknown): value is DocumentStore {
-  if (typeof value !== 'object' || value === null) {
+  if (typeof value !== "object" || value === null) {
     return false;
   }
 
   const store = value as Partial<DocumentStore>;
   return (
-    typeof store.subscribe === 'function' &&
-    typeof store.getSnapshot === 'function' &&
-    typeof store.isCurrentSnapshot === 'function' &&
-    typeof store.dispatch === 'function' &&
-    typeof store.batch === 'function'
+    typeof store.subscribe === "function" &&
+    typeof store.getSnapshot === "function" &&
+    typeof store.isCurrentSnapshot === "function" &&
+    typeof store.dispatch === "function" &&
+    typeof store.batch === "function"
   );
 }

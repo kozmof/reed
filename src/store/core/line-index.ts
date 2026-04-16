@@ -13,10 +13,15 @@ import type {
   DirtyLineRange,
   DirtyLineRangeEntry,
   EvaluationMode,
-} from '../../types/state.ts';
-import { END_OF_DOCUMENT } from '../../types/state.ts';
-import { byteOffset, byteLength as toByteLengthBrand, type ByteOffset, type ByteLength } from '../../types/branded.ts';
-import type { ReadTextFn, DeleteBoundaryContext } from '../../types/operations.ts';
+} from "../../types/state.ts";
+import { END_OF_DOCUMENT } from "../../types/state.ts";
+import {
+  byteOffset,
+  byteLength as toByteLengthBrand,
+  type ByteOffset,
+  type ByteLength,
+} from "../../types/branded.ts";
+import type { ReadTextFn, DeleteBoundaryContext } from "../../types/operations.ts";
 import {
   $prove,
   $proveCtx,
@@ -31,16 +36,23 @@ import {
   type LinearCost,
   type LogCost,
   type NLogNCost,
-} from '../../types/cost-doc.ts';
-import { createLineIndexNode, withLineIndexNode, withLineIndexState } from './state.ts';
-import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry, type RootToLeafInsertPath } from './rb-tree.ts';
+} from "../../types/cost-doc.ts";
+import { createLineIndexNode, withLineIndexNode, withLineIndexState } from "./state.ts";
+import {
+  fixInsertWithPath,
+  fixRedViolations,
+  isRed,
+  type WithNodeFn,
+  type InsertionPathEntry,
+  type RootToLeafInsertPath,
+} from "./rb-tree.ts";
 import {
   mergeDirtyRanges,
   reconcileRange,
   reconcileFull,
   reconcileViewport,
   type ReconciliationConfig,
-} from './reconcile.ts';
+} from "./reconcile.ts";
 
 const withLine: WithNodeFn<LineIndexNode> = withLineIndexNode;
 
@@ -67,9 +79,9 @@ function findNewlineBytePositions(text: string): { positions: number[]; byteLeng
   let byteLen = 0;
   for (let i = 0; i < text.length; i++) {
     const c = text.charCodeAt(i);
-    if (c === 0x0D) {
+    if (c === 0x0d) {
       const next = text.charCodeAt(i + 1);
-      if (next === 0x0A) {
+      if (next === 0x0a) {
         // CRLF: record position of the '\n' byte (byteLen + 1)
         positions.push(byteLen + 1);
         byteLen += 2;
@@ -78,14 +90,14 @@ function findNewlineBytePositions(text: string): { positions: number[]; byteLeng
         positions.push(byteLen);
         byteLen += 1;
       }
-    } else if (c === 0x0A) {
+    } else if (c === 0x0a) {
       positions.push(byteLen);
       byteLen += 1;
     } else if (c < 0x80) {
       byteLen += 1;
     } else if (c < 0x800) {
       byteLen += 2;
-    } else if (c >= 0xD800 && c <= 0xDBFF) {
+    } else if (c >= 0xd800 && c <= 0xdbff) {
       // High surrogate — paired with the following low surrogate: 4 bytes total
       byteLen += 4;
       i++;
@@ -104,12 +116,12 @@ function findNewlineBytePositions(text: string): { positions: number[]; byteLeng
 function countNewlines(text: string): number {
   let count = 0;
   for (let i = 0; i < text.length; i++) {
-    if (text[i] === '\r') {
+    if (text[i] === "\r") {
       count++;
-      if (i + 1 < text.length && text[i + 1] === '\n') {
+      if (i + 1 < text.length && text[i + 1] === "\n") {
         i++;
       }
-    } else if (text[i] === '\n') {
+    } else if (text[i] === "\n") {
       count++;
     }
   }
@@ -126,16 +138,13 @@ function countNewlines(text: string): number {
  * CRLF becomes a lone LF, which is still 1 line break). The before/after string
  * approach handles all such boundary effects correctly without special-casing.
  */
-function countDeletedLineBreaks(
-  deletedText: string,
-  context?: DeleteBoundaryContext
-): number {
+function countDeletedLineBreaks(deletedText: string, context?: DeleteBoundaryContext): number {
   if (context === undefined || (context.prevChar === undefined && context.nextChar === undefined)) {
     return countNewlines(deletedText);
   }
 
-  const before = `${context.prevChar ?? ''}${deletedText}${context.nextChar ?? ''}`;
-  const after = `${context.prevChar ?? ''}${context.nextChar ?? ''}`;
+  const before = `${context.prevChar ?? ""}${deletedText}${context.nextChar ?? ""}`;
+  const after = `${context.prevChar ?? ""}${context.nextChar ?? ""}`;
   return Math.max(0, countNewlines(before) - countNewlines(after));
 }
 
@@ -146,14 +155,14 @@ function countDeletedLineBreaks(
 function findNewlineCharPositions(text: string): number[] {
   const positions: number[] = [];
   for (let i = 0; i < text.length; i++) {
-    if (text[i] === '\r') {
-      if (i + 1 < text.length && text[i + 1] === '\n') {
+    if (text[i] === "\r") {
+      if (i + 1 < text.length && text[i + 1] === "\n") {
         positions.push(i + 1);
         i++;
       } else {
         positions.push(i);
       }
-    } else if (text[i] === '\n') {
+    } else if (text[i] === "\n") {
       positions.push(i);
     }
   }
@@ -168,7 +177,7 @@ interface InsertBoundaryContext {
 function getInsertBoundaryContext(
   position: ByteOffset,
   insertedByteLength: number,
-  readText?: ReadTextFn
+  readText?: ReadTextFn,
 ): InsertBoundaryContext {
   if (!readText) return {};
 
@@ -177,12 +186,10 @@ function getInsertBoundaryContext(
   // Reading pos-1 is safe here: only '\r' (0x0D, single-byte ASCII) is ever
   // checked against prevChar, and ASCII bytes never appear as UTF-8 continuation
   // bytes, so pos-1 is always a valid character boundary for our purposes.
-  const prevChar = pos > 0
-    ? readText(byteOffset(pos - 1), position)
-    : '';
+  const prevChar = pos > 0 ? readText(byteOffset(pos - 1), position) : "";
   const nextChar = readText(
     byteOffset(pos + insertedByteLength),
-    byteOffset(pos + insertedByteLength + 1)
+    byteOffset(pos + insertedByteLength + 1),
   );
 
   return {
@@ -193,18 +200,18 @@ function getInsertBoundaryContext(
 
 function hasCrossBoundaryCRLFMerge(text: string, context: InsertBoundaryContext): boolean {
   if (text.length === 0) return false;
-  const mergesWithPrev = text[0] === '\n' && context.prevChar === '\r';
-  const mergesWithNext = text[text.length - 1] === '\r' && context.nextChar === '\n';
+  const mergesWithPrev = text[0] === "\n" && context.prevChar === "\r";
+  const mergesWithNext = text[text.length - 1] === "\r" && context.nextChar === "\n";
   // Inserting between an existing CRLF pair breaks one logical separator into two
   // independent separators, which changes line count outside inserted text.
-  const splitsExistingCRLF = context.prevChar === '\r' && context.nextChar === '\n';
+  const splitsExistingCRLF = context.prevChar === "\r" && context.nextChar === "\n";
   return mergesWithPrev || mergesWithNext || splitsExistingCRLF;
 }
 
 function rebuildFromReadText(
   state: LineIndexState,
   readText: ReadTextFn,
-  reconciledVersion: number
+  reconciledVersion: number,
 ): LineIndexState {
   const content = readText(byteOffset(0), byteOffset(END_OF_DOCUMENT));
   const rebuilt = buildLineIndexFromText(content, 0);
@@ -243,7 +250,7 @@ export interface LineLocation {
  */
 export function findLineAtPosition(
   root: LineIndexNode | null,
-  position: ByteOffset
+  position: ByteOffset,
 ): LogCost<LineLocation> | null {
   if (root === null) return null;
   if (position < 0) return null;
@@ -272,12 +279,12 @@ export function findLineAtPosition(
       // Position is in this line (or at end and no right subtree)
       const node = current;
       const location = $proveCtx(
-        'O(log n)',
-        $lift('O(log n)', {
+        "O(log n)",
+        $lift("O(log n)", {
           node,
           lineNumber: lineNumber + leftLineCount,
           offsetInLine: pos - lineStart,
-        })
+        }),
       );
       return location;
     }
@@ -291,7 +298,7 @@ export function findLineAtPosition(
  */
 export function findLineByNumber(
   root: LineIndexNode | null,
-  lineNumber: number
+  lineNumber: number,
 ): LogCost<LineIndexNode> | null {
   if (root === null) return null;
   if (lineNumber < 0) return null;
@@ -310,7 +317,7 @@ export function findLineByNumber(
       current = current.right;
     } else {
       // This is the target line
-      const line = $proveCtx('O(log n)', $lift('O(log n)', current));
+      const line = $proveCtx("O(log n)", $lift("O(log n)", current));
       return line;
     }
   }
@@ -323,14 +330,14 @@ export function findLineByNumber(
  */
 export function getLineStartOffset(
   root: LineIndexNode | null,
-  lineNumber: number
+  lineNumber: number,
 ): LogCost<number> {
   if (root === null) {
-    const emptyOffset = $proveCtx('O(log n)', $lift('O(1)', 0));
+    const emptyOffset = $proveCtx("O(log n)", $lift("O(1)", 0));
     return emptyOffset;
   }
   if (lineNumber < 0) {
-    const invalidOffset = $proveCtx('O(log n)', $lift('O(1)', 0));
+    const invalidOffset = $proveCtx("O(log n)", $lift("O(1)", 0));
     return invalidOffset;
   }
 
@@ -358,7 +365,7 @@ export function getLineStartOffset(
     }
   }
 
-  const startOffset = $proveCtx('O(log n)', $lift('O(log n)', foundOffset ?? offset));
+  const startOffset = $proveCtx("O(log n)", $lift("O(log n)", foundOffset ?? offset));
   return startOffset;
 }
 
@@ -368,14 +375,14 @@ export function getLineStartOffset(
  */
 export function getCharStartOffset(
   root: LineIndexNode | null,
-  lineNumber: number
+  lineNumber: number,
 ): LogCost<number> {
   if (root === null) {
-    const emptyOffset = $proveCtx('O(log n)', $lift('O(1)', 0));
+    const emptyOffset = $proveCtx("O(log n)", $lift("O(1)", 0));
     return emptyOffset;
   }
   if (lineNumber < 0) {
-    const invalidOffset = $proveCtx('O(log n)', $lift('O(1)', 0));
+    const invalidOffset = $proveCtx("O(log n)", $lift("O(1)", 0));
     return invalidOffset;
   }
 
@@ -400,7 +407,7 @@ export function getCharStartOffset(
     }
   }
 
-  const startOffset = $proveCtx('O(log n)', $lift('O(log n)', foundOffset ?? offset));
+  const startOffset = $proveCtx("O(log n)", $lift("O(log n)", foundOffset ?? offset));
   return startOffset;
 }
 
@@ -410,7 +417,7 @@ export function getCharStartOffset(
  */
 export function findLineAtCharPosition(
   root: LineIndexNode | null,
-  charPosition: number
+  charPosition: number,
 ): LogCost<{ lineNumber: number; charOffsetInLine: number }> | null {
   if (root === null) return null;
   if (charPosition < 0) return null;
@@ -434,11 +441,11 @@ export function findLineAtCharPosition(
       current = current.right;
     } else {
       const location = $proveCtx(
-        'O(log n)',
-        $lift('O(log n)', {
+        "O(log n)",
+        $lift("O(log n)", {
           lineNumber: lineNumber + leftLineCount,
           charOffsetInLine: pos - lineStart,
-        })
+        }),
       );
       return location;
     }
@@ -461,7 +468,7 @@ export function collectLines(root: LineIndexNode | null): LinearCost<readonly Li
   }
 
   inOrder(root);
-  return $proveCtx('O(n)', $lift('O(n)', result));
+  return $proveCtx("O(n)", $lift("O(n)", result));
 }
 
 // =============================================================================
@@ -476,12 +483,12 @@ function rbInsertLine(
   lineNumber: number,
   documentOffset: number | null,
   lineLength: number,
-  charLength: number = 0
+  charLength: number = 0,
 ): LineIndexNode {
-  const newNode = createLineIndexNode(documentOffset, lineLength, 'red', null, null, charLength);
+  const newNode = createLineIndexNode(documentOffset, lineLength, "red", null, null, charLength);
 
   if (root === null) {
-    return withLineIndexNode(newNode, { color: 'black' });
+    return withLineIndexNode(newNode, { color: "black" });
   }
 
   // Insert using BST, collecting new nodes along insertion path
@@ -497,7 +504,7 @@ function rbInsertLine(
 function bstInsertLine(
   root: LineIndexNode,
   lineNumber: number,
-  newNode: LineIndexNode
+  newNode: LineIndexNode,
 ): RootToLeafInsertPath<LineIndexNode> {
   const insertPath: InsertionPathEntry<LineIndexNode>[] = [];
 
@@ -505,9 +512,9 @@ function bstInsertLine(
     const leftLineCount = node.left?.subtreeLineCount ?? 0;
 
     let result: LineIndexNode;
-    let direction: 'left' | 'right';
+    let direction: "left" | "right";
     if (lineNum <= leftLineCount) {
-      direction = 'left';
+      direction = "left";
       if (node.left === null) {
         result = withLineIndexNode(node, { left: newNode });
       } else {
@@ -516,7 +523,7 @@ function bstInsertLine(
         });
       }
     } else {
-      direction = 'right';
+      direction = "right";
       const rightLineNumber = lineNum - leftLineCount - 1;
       if (node.right === null) {
         result = withLineIndexNode(node, { right: newNode });
@@ -551,9 +558,9 @@ export function lineIndexInsert(
   state: LineIndexState,
   position: ByteOffset,
   text: string,
-  readText?: ReadTextFn
+  readText?: ReadTextFn,
 ): LinearCost<LineIndexState> {
-  if (text.length === 0) return $proveCtx('O(n)', $lift('O(n)', state));
+  if (text.length === 0) return $proveCtx("O(n)", $lift("O(n)", state));
 
   const { positions: newlinePositions, byteLength } = findNewlineBytePositions(text);
   const insertContext = getInsertBoundaryContext(position, byteLength, readText);
@@ -562,29 +569,47 @@ export function lineIndexInsert(
   // Structural incremental logic assumes inserted line breaks are self-contained;
   // cross-boundary CRLF composition violates that assumption. Rebuild for correctness.
   if (readText && hasCrossBoundaryCRLFMerge(text, insertContext)) {
-    return $proveCtx('O(n)', $lift('O(n)', rebuildFromReadText(state, readText, state.lastReconciledVersion)));
+    return $proveCtx(
+      "O(n)",
+      $lift("O(n)", rebuildFromReadText(state, readText, state.lastReconciledVersion)),
+    );
   }
 
   // If no newlines, just update the length of the affected line
   if (newlinePositions.length === 0) {
-    return $proveCtx('O(n)', $lift('O(n)', updateLineLength(state, position, byteLength, text.length)));
+    return $proveCtx(
+      "O(n)",
+      $lift("O(n)", updateLineLength(state, position, byteLength, text.length)),
+    );
   }
 
   const location: LogCost<LineLocation | null> =
-    findLineAtPosition(state.root, position) ?? $proveCtx('O(log n)', $lift('O(log n)', null));
+    findLineAtPosition(state.root, position) ?? $proveCtx("O(log n)", $lift("O(log n)", null));
 
-  return $prove('O(n)', $checked(() => $pipe(
-    $from(location),
-    $map((resolvedLocation) => {
-      if (resolvedLocation === null) {
-        // Position is at or past end - append to last line or create new
-        return appendLines(state, position, text, newlinePositions, byteLength);
-      }
+  return $prove(
+    "O(n)",
+    $checked(() =>
+      $pipe(
+        $from(location),
+        $map((resolvedLocation) => {
+          if (resolvedLocation === null) {
+            // Position is at or past end - append to last line or create new
+            return appendLines(state, position, text, newlinePositions, byteLength);
+          }
 
-      // Split the current line and insert new lines
-      return insertLinesAtPosition(state, resolvedLocation, text, newlinePositions, byteLength, readText);
-    }),
-  )));
+          // Split the current line and insert new lines
+          return insertLinesAtPosition(
+            state,
+            resolvedLocation,
+            text,
+            newlinePositions,
+            byteLength,
+            readText,
+          );
+        }),
+      ),
+    ),
+  );
 }
 
 /**
@@ -594,11 +619,11 @@ function updateLineLength(
   state: LineIndexState,
   position: ByteOffset,
   lengthDelta: number,
-  charLengthDelta: number = 0
+  charLengthDelta: number = 0,
 ): LineIndexState {
   if (state.root === null) {
     // Create first line
-    const root = createLineIndexNode(0, lengthDelta, 'black', null, null, charLengthDelta);
+    const root = createLineIndexNode(0, lengthDelta, "black", null, null, charLengthDelta);
     return withLineIndexState(state, {
       root,
       lineCount: 1,
@@ -620,7 +645,7 @@ function updateLineLengthInTree(
   node: LineIndexNode,
   position: number,
   lengthDelta: number,
-  charLengthDelta: number = 0
+  charLengthDelta: number = 0,
 ): LineIndexNode {
   const leftByteLength = node.left?.subtreeByteLength ?? 0;
   const lineStart = leftByteLength;
@@ -656,7 +681,7 @@ function appendLinesStructural(
   position: number,
   newlinePositions: number[],
   byteLength: number,
-  text?: string
+  text?: string,
 ): { root: LineIndexNode; lineCount: number } {
   const totalLength = root.subtreeByteLength;
 
@@ -690,7 +715,9 @@ function appendLinesStructural(
 
   // Insert final line (text after last newline)
   const textAfterLastNewline = byteLength - newlinePositions[newlinePositions.length - 1] - 1;
-  const lastCharLength = hasCharInfo ? (text!.length - charPositions[charPositions.length - 1] - 1) : 0;
+  const lastCharLength = hasCharInfo
+    ? text!.length - charPositions[charPositions.length - 1] - 1
+    : 0;
   if (textAfterLastNewline > 0 || newlinePositions.length > 0) {
     newRoot = rbInsertLine(newRoot, lineCount, currentOffset, textAfterLastNewline, lastCharLength);
     lineCount++;
@@ -707,13 +734,20 @@ function appendLines(
   position: number,
   text: string,
   newlinePositions: number[],
-  byteLength: number
+  byteLength: number,
 ): LineIndexState {
   if (state.root === null) {
     return withLineIndexState(state, buildLineIndexFromText(text, 0));
   }
 
-  const result = appendLinesStructural(state.root, state.lineCount, position, newlinePositions, byteLength, text);
+  const result = appendLinesStructural(
+    state.root,
+    state.lineCount,
+    position,
+    newlinePositions,
+    byteLength,
+    text,
+  );
 
   return withLineIndexState(state, {
     root: result.root,
@@ -724,7 +758,11 @@ function appendLines(
 /**
  * Add length to the last line in the tree.
  */
-function addToLastLine(node: LineIndexNode, lengthDelta: number, charLengthDelta: number = 0): LineIndexNode {
+function addToLastLine(
+  node: LineIndexNode,
+  lengthDelta: number,
+  charLengthDelta: number = 0,
+): LineIndexNode {
   if (node.right !== null) {
     return withLineIndexNode(node, {
       right: addToLastLine(node.right, lengthDelta, charLengthDelta),
@@ -748,13 +786,16 @@ function insertLinesStructural(
   byteLength: number,
   computeOffset: (lineNumber: number, prevOffset: number) => number | null,
   text?: string,
-  charsBefore?: number
+  charsBefore?: number,
 ): { root: LineIndexNode; lineCount: number } {
   const { lineNumber, offsetInLine, node } = location;
 
   // Compute char positions from text if available
   const charPositions = text ? findNewlineCharPositions(text) : [];
-  const hasCharInfo = text !== undefined && charsBefore !== undefined && charPositions.length === newlinePositions.length;
+  const hasCharInfo =
+    text !== undefined &&
+    charsBefore !== undefined &&
+    charPositions.length === newlinePositions.length;
 
   // Calculate the parts of the split line
   const originalLineLength = node.lineLength;
@@ -786,7 +827,7 @@ function insertLinesStructural(
   const textAfterLastNewline = byteLength - newlinePositions[newlinePositions.length - 1] - 1;
   const lastLineLength = textAfterLastNewline + afterInsert;
   const lastCharLength = hasCharInfo
-    ? (text!.length - charPositions[charPositions.length - 1] - 1) + (node.charLength - charsBefore!)
+    ? text!.length - charPositions[charPositions.length - 1] - 1 + (node.charLength - charsBefore!)
     : 0;
 
   const lastOffset = computeOffset(lineNumber + newlinePositions.length, prevOffset);
@@ -795,7 +836,7 @@ function insertLinesStructural(
     lineNumber + newlinePositions.length,
     lastOffset,
     lastLineLength,
-    lastCharLength
+    lastCharLength,
   );
   lineCount++;
 
@@ -811,7 +852,7 @@ function insertLinesAtPosition(
   text: string,
   newlinePositions: number[],
   byteLength: number,
-  readText?: ReadTextFn
+  readText?: ReadTextFn,
 ): LineIndexState {
   // Eager: compute real offsets relative to line start
   const lineStart = getLineStartOffset(state.root, location.lineNumber);
@@ -819,7 +860,10 @@ function insertLinesAtPosition(
   // Compute charsBefore using readText if available
   let charsBefore: number | undefined;
   if (readText && location.offsetInLine > 0) {
-    const prefixText = readText(byteOffset(lineStart), byteOffset(lineStart + location.offsetInLine));
+    const prefixText = readText(
+      byteOffset(lineStart),
+      byteOffset(lineStart + location.offsetInLine),
+    );
     charsBefore = prefixText.length;
   } else if (location.offsetInLine === 0) {
     charsBefore = 0;
@@ -833,14 +877,14 @@ function insertLinesAtPosition(
     byteLength,
     (_lineNumber, cumulativeFromFirstLine) => lineStart + cumulativeFromFirstLine,
     text,
-    charsBefore
+    charsBefore,
   );
 
   // Update offsets for all lines after the inserted ones
   const newRoot = updateOffsetsAfterLine(
     result.root,
     location.lineNumber + newlinePositions.length,
-    byteLength
+    byteLength,
   );
 
   return withLineIndexState(state, {
@@ -856,7 +900,7 @@ function updateLineAtNumber(
   node: LineIndexNode,
   lineNumber: number,
   newLength: number,
-  newCharLength?: number
+  newCharLength?: number,
 ): LineIndexNode {
   const leftLineCount = node.left?.subtreeLineCount ?? 0;
 
@@ -866,7 +910,12 @@ function updateLineAtNumber(
     });
   } else if (lineNumber > leftLineCount && node.right !== null) {
     return withLineIndexNode(node, {
-      right: updateLineAtNumber(node.right, lineNumber - leftLineCount - 1, newLength, newCharLength),
+      right: updateLineAtNumber(
+        node.right,
+        lineNumber - leftLineCount - 1,
+        newLength,
+        newCharLength,
+      ),
     });
   } else {
     const updates: { lineLength: number; charLength?: number } = { lineLength: newLength };
@@ -881,7 +930,7 @@ function updateLineAtNumber(
 function updateOffsetsAfterLine(
   node: LineIndexNode,
   afterLineNumber: number,
-  offsetDelta: number
+  offsetDelta: number,
 ): LineIndexNode {
   const leftLineCount = node.left?.subtreeLineCount ?? 0;
   const currentLineNumber = leftLineCount;
@@ -901,8 +950,15 @@ function updateOffsetsAfterLine(
   }
 
   // Update right subtree (all lines in right are after current)
-  if (node.right !== null && afterLineNumber <= currentLineNumber + (node.right.subtreeLineCount ?? 0)) {
-    newRight = updateOffsetsAfterLine(node.right, afterLineNumber - currentLineNumber - 1, offsetDelta);
+  if (
+    node.right !== null &&
+    afterLineNumber <= currentLineNumber + (node.right.subtreeLineCount ?? 0)
+  ) {
+    newRight = updateOffsetsAfterLine(
+      node.right,
+      afterLineNumber - currentLineNumber - 1,
+      offsetDelta,
+    );
   }
 
   if (newLeft !== node.left || newRight !== node.right || newOffset !== node.documentOffset) {
@@ -976,7 +1032,7 @@ function buildLineIndexFromText(text: string, startOffset: number): LineIndexSta
 function buildBalancedTreeWithChars(
   lines: { offset: number; length: number; charLength: number }[],
   start: number,
-  end: number
+  end: number,
 ): LineIndexNode | null {
   if (start > end) return null;
 
@@ -986,7 +1042,7 @@ function buildBalancedTreeWithChars(
   const left = buildBalancedTreeWithChars(lines, start, mid - 1);
   const right = buildBalancedTreeWithChars(lines, mid + 1, end);
 
-  return createLineIndexNode(line.offset, line.length, 'black', left, right, line.charLength);
+  return createLineIndexNode(line.offset, line.length, "black", left, right, line.charLength);
 }
 
 // =============================================================================
@@ -1007,30 +1063,44 @@ export function lineIndexDelete(
   start: ByteOffset,
   end: ByteOffset,
   deletedText: string,
-  deleteContext?: DeleteBoundaryContext
+  deleteContext?: DeleteBoundaryContext,
 ): NLogNCost<LineIndexState> {
-  if (start >= end) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
-  if (state.root === null) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
+  if (start >= end) return $proveCtx("O(n log n)", $lift("O(n log n)", state));
+  if (state.root === null) return $proveCtx("O(n log n)", $lift("O(n log n)", state));
 
   const deleteLength = end - start;
   const deletedNewlines = countDeletedLineBreaks(deletedText, deleteContext);
 
   // If no newlines deleted, just update line length
   if (deletedNewlines === 0) {
-    return $proveCtx('O(n log n)', $lift('O(n log n)', updateLineLength(state, start, -deleteLength, -deletedText.length)));
+    return $proveCtx(
+      "O(n log n)",
+      $lift("O(n log n)", updateLineLength(state, start, -deleteLength, -deletedText.length)),
+    );
   }
 
   const startLocation: LogCost<LineLocation | null> =
-    findLineAtPosition(state.root, start) ?? $proveCtx('O(log n)', $lift('O(log n)', null));
+    findLineAtPosition(state.root, start) ?? $proveCtx("O(log n)", $lift("O(log n)", null));
 
-  return $prove('O(n log n)', $checked(() => $pipe(
-    $from(startLocation),
-    $map((resolvedLocation) => {
-      if (resolvedLocation === null) return state;
-      // Merge lines and remove deleted lines
-      return deleteLineRange(state, resolvedLocation, deletedNewlines, deleteLength, deletedText.length);
-    }),
-  )));
+  return $prove(
+    "O(n log n)",
+    $checked(() =>
+      $pipe(
+        $from(startLocation),
+        $map((resolvedLocation) => {
+          if (resolvedLocation === null) return state;
+          // Merge lines and remove deleted lines
+          return deleteLineRange(
+            state,
+            resolvedLocation,
+            deletedNewlines,
+            deleteLength,
+            deletedText.length,
+          );
+        }),
+      ),
+    ),
+  );
 }
 
 /**
@@ -1042,7 +1112,7 @@ function deleteLineRange(
   startLocation: LineLocation,
   deletedNewlines: number,
   deleteLength: number,
-  deletedCharLength: number
+  deletedCharLength: number,
 ): LineIndexState {
   const { lineNumber: startLine, offsetInLine: startOffset } = startLocation;
   const endLine = startLine + deletedNewlines;
@@ -1088,10 +1158,17 @@ function deleteLineRange(
   } else {
     endBound = state.root!.subtreeCharLength;
   }
-  const mergedCharLength = Math.max(0, (endBound - startLineCharStart) - deletedCharLength);
+  const mergedCharLength = Math.max(0, endBound - startLineCharStart - deletedCharLength);
 
   // Single-pass reconstruction: collect lines, skip deleted range, merge start/end
-  return rebuildWithDeletedRange(state, state.root!, startLine, endLine, mergedLength, mergedCharLength);
+  return rebuildWithDeletedRange(
+    state,
+    state.root!,
+    startLine,
+    endLine,
+    mergedLength,
+    mergedCharLength,
+  );
 }
 
 /**
@@ -1109,7 +1186,7 @@ function rebuildWithDeletedRange(
   startLine: number,
   endLine: number,
   mergedLength: number,
-  mergedCharLength: number = 0
+  mergedCharLength: number = 0,
 ): LineIndexState {
   const totalLines = root.subtreeLineCount;
   const deletedCount = endLine - startLine; // Lines being merged/removed
@@ -1127,7 +1204,12 @@ function rebuildWithDeletedRange(
 
   // Use incremental deletion: O(k * log n) where k = deletedCount
   // 1. Update the start line's length to the merged length
-  let newRoot: LineIndexNode | null = updateLineAtNumber(root, startLine, mergedLength, mergedCharLength);
+  let newRoot: LineIndexNode | null = updateLineAtNumber(
+    root,
+    startLine,
+    mergedLength,
+    mergedCharLength,
+  );
 
   // 2. Remove deleted lines from endLine down to startLine+1
   //    (delete in reverse to keep line numbers stable)
@@ -1147,8 +1229,8 @@ function rebuildWithDeletedRange(
   }
 
   // Ensure root is black
-  if (newRoot.color !== 'black') {
-    newRoot = withLineIndexNode(newRoot, { color: 'black' });
+  if (newRoot.color !== "black") {
+    newRoot = withLineIndexNode(newRoot, { color: "black" });
   }
 
   return withLineIndexState(state, {
@@ -1169,15 +1251,12 @@ function rebuildWithDeletedRange(
  * Returns the new root, or null if the tree becomes empty.
  * Uses immutable path-copying approach.
  */
-function rbDeleteLineByNumber(
-  root: LineIndexNode,
-  lineNumber: number
-): LineIndexNode | null {
+function rbDeleteLineByNumber(root: LineIndexNode, lineNumber: number): LineIndexNode | null {
   const result = deleteNode(root, lineNumber);
   if (result === null) return null;
   // Ensure root is black
-  if (result.color === 'red') {
-    return withLineIndexNode(result, { color: 'black' });
+  if (result.color === "red") {
+    return withLineIndexNode(result, { color: "black" });
   }
   return result;
 }
@@ -1186,10 +1265,7 @@ function rbDeleteLineByNumber(
  * Recursively delete a node by line number.
  * Returns { node, needsFixup } where needsFixup indicates a double-black case.
  */
-function deleteNode(
-  node: LineIndexNode | null,
-  lineNumber: number
-): LineIndexNode | null {
+function deleteNode(node: LineIndexNode | null, lineNumber: number): LineIndexNode | null {
   if (node === null) return null;
 
   const leftLineCount = node.left?.subtreeLineCount ?? 0;
@@ -1223,11 +1299,11 @@ function removeNode(node: LineIndexNode): LineIndexNode | null {
   // Case 2: One child
   if (node.left === null) {
     // Replace with right child, make it black
-    return withLineIndexNode(node.right!, { color: 'black' });
+    return withLineIndexNode(node.right!, { color: "black" });
   }
   if (node.right === null) {
     // Replace with left child, make it black
-    return withLineIndexNode(node.left!, { color: 'black' });
+    return withLineIndexNode(node.left!, { color: "black" });
   }
 
   // Case 3: Two children - replace with in-order successor (leftmost of right subtree)
@@ -1240,7 +1316,7 @@ function removeNode(node: LineIndexNode): LineIndexNode | null {
     node.color,
     node.left,
     newRight,
-    successor.charLength
+    successor.charLength,
   );
 
   return fixDeleteViolations(replacement);
@@ -1250,9 +1326,10 @@ function removeNode(node: LineIndexNode): LineIndexNode | null {
  * Extract the minimum (leftmost) node from a subtree.
  * Returns the extracted node and the remaining tree.
  */
-function extractMin(
-  node: LineIndexNode
-): { successor: LineIndexNode; newRight: LineIndexNode | null } {
+function extractMin(node: LineIndexNode): {
+  successor: LineIndexNode;
+  newRight: LineIndexNode | null;
+} {
   if (node.left === null) {
     // This is the minimum
     return { successor: node, newRight: node.right };
@@ -1295,14 +1372,18 @@ function removeLinesToEnd(
   state: LineIndexState,
   startLine: number,
   startOffset: number,
-  deletedCharLength?: number
+  deletedCharLength?: number,
 ): LineIndexState {
   const lines = collectLines(state.root);
   const newLines: { offset: number; length: number; charLength: number }[] = [];
 
   let currentOffset = 0;
   for (let i = 0; i < startLine && i < lines.length; i++) {
-    newLines.push({ offset: currentOffset, length: lines[i].lineLength, charLength: lines[i].charLength });
+    newLines.push({
+      offset: currentOffset,
+      length: lines[i].lineLength,
+      charLength: lines[i].charLength,
+    });
     currentOffset += lines[i].lineLength;
   }
 
@@ -1313,10 +1394,13 @@ function removeLinesToEnd(
     for (let i = startLine; i < lines.length; i++) {
       totalCharsFromStartToEnd += lines[i].charLength;
     }
-    const truncatedCharLength = deletedCharLength !== undefined
-      ? totalCharsFromStartToEnd - deletedCharLength
-      : 0;
-    newLines.push({ offset: currentOffset, length: startOffset, charLength: Math.max(0, truncatedCharLength) });
+    const truncatedCharLength =
+      deletedCharLength !== undefined ? totalCharsFromStartToEnd - deletedCharLength : 0;
+    newLines.push({
+      offset: currentOffset,
+      length: startOffset,
+      charLength: Math.max(0, truncatedCharLength),
+    });
   }
 
   if (newLines.length === 0) {
@@ -1348,7 +1432,7 @@ function removeLinesToEnd(
  * Use this when the line index gets out of sync.
  */
 export function rebuildLineIndex(content: string): LinearCost<LineIndexState> {
-  return $proveCtx('O(n)', $lift('O(n)', buildLineIndexFromText(content, 0)));
+  return $proveCtx("O(n)", $lift("O(n)", buildLineIndexFromText(content, 0)));
 }
 
 /**
@@ -1365,7 +1449,7 @@ export function getLineCountFromIndex(state: LineIndexState): ConstCost<number> 
     total += count;
   }
   // k (declared chunks) is document-size-independent; treat as O(1) per policy.
-  return $declare('O(1)', total);
+  return $declare("O(1)", total);
 }
 
 /**
@@ -1374,19 +1458,29 @@ export function getLineCountFromIndex(state: LineIndexState): ConstCost<number> 
  * Use `getLineRangePrecise` for state that may have dirty ranges.
  */
 export function getLineRange(
-  state: LineIndexState<'eager'>,
-  lineNumber: number
+  state: LineIndexState<"eager">,
+  lineNumber: number,
 ): LogCost<{ start: ByteOffset; length: ByteLength }> | null {
   const node = findLineByNumber(state.root, lineNumber);
   if (node === null) return null;
 
-  return $prove('O(log n)', $checked(() => $pipe(
-    $from(node),
-    $andThen((resolvedNode) => $pipe(
-      $from(getLineStartOffset(state.root, lineNumber)),
-      $map((start) => ({ start: byteOffset(start), length: toByteLengthBrand(resolvedNode.lineLength) })),
-    )),
-  )));
+  return $prove(
+    "O(log n)",
+    $checked(() =>
+      $pipe(
+        $from(node),
+        $andThen((resolvedNode) =>
+          $pipe(
+            $from(getLineStartOffset(state.root, lineNumber)),
+            $map((start) => ({
+              start: byteOffset(start),
+              length: toByteLengthBrand(resolvedNode.lineLength),
+            })),
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 // =============================================================================
@@ -1401,11 +1495,17 @@ export function getLineRange(
  */
 export function isLineDirty(
   dirtyRanges: readonly DirtyLineRange[],
-  lineNumber: number
+  lineNumber: number,
 ): LinearCost<boolean> {
-  return $proveCtx('O(n)', $lift('O(n)', dirtyRanges.some(
-    r => r.kind === 'sentinel' || (lineNumber >= r.startLine && lineNumber <= r.endLine)
-  )));
+  return $proveCtx(
+    "O(n)",
+    $lift(
+      "O(n)",
+      dirtyRanges.some(
+        (r) => r.kind === "sentinel" || (lineNumber >= r.startLine && lineNumber <= r.endLine),
+      ),
+    ),
+  );
 }
 
 /**
@@ -1413,16 +1513,16 @@ export function isLineDirty(
  */
 export function getOffsetDeltaForLine(
   dirtyRanges: readonly DirtyLineRange[],
-  lineNumber: number
+  lineNumber: number,
 ): LinearCost<number> {
   let delta = 0;
   for (const range of dirtyRanges) {
-    if (range.kind === 'sentinel') continue; // Sentinel has no delta info; handled by reconcileFull slow path
+    if (range.kind === "sentinel") continue; // Sentinel has no delta info; handled by reconcileFull slow path
     if (lineNumber >= range.startLine && lineNumber <= range.endLine) {
       delta += range.offsetDelta;
     }
   }
-  return $proveCtx('O(n)', $lift('O(n)', delta));
+  return $proveCtx("O(n)", $lift("O(n)", delta));
 }
 
 /**
@@ -1431,10 +1531,10 @@ export function getOffsetDeltaForLine(
 function createDirtyRange(
   startLine: number,
   endLine: number,
-  offsetDelta: number
+  offsetDelta: number,
 ): DirtyLineRangeEntry {
   return Object.freeze({
-    kind: 'range' as const,
+    kind: "range" as const,
     startLine,
     endLine,
     offsetDelta,
@@ -1449,35 +1549,49 @@ function createDirtyRange(
 function remapDirtyRangesForInsert(
   ranges: readonly DirtyLineRange[],
   insertionLine: number,
-  insertedCount: number
+  insertedCount: number,
 ): readonly DirtyLineRange[] {
   if (ranges.length === 0 || insertedCount === 0) return ranges;
   const result: DirtyLineRange[] = [];
   for (const range of ranges) {
-    if (range.kind === 'sentinel') { result.push(range); continue; }
+    if (range.kind === "sentinel") {
+      result.push(range);
+      continue;
+    }
     const { startLine: s, endLine: e, offsetDelta: d } = range;
     if (e < insertionLine + 1) {
       // Entirely at or before insertionLine — indices unchanged
       result.push(range);
     } else if (s > insertionLine) {
       // Entirely after insertionLine — shift both bounds up
-      result.push(Object.freeze({
-        kind: 'range' as const,
-        startLine: s + insertedCount,
-        endLine: e === END_OF_DOCUMENT ? e : e + insertedCount,
-        offsetDelta: d,
-      }));
+      result.push(
+        Object.freeze({
+          kind: "range" as const,
+          startLine: s + insertedCount,
+          endLine: e === END_OF_DOCUMENT ? e : e + insertedCount,
+          offsetDelta: d,
+        }),
+      );
     } else {
       // Spans the insertion: s <= insertionLine < insertionLine+1 <= e
       // Before part: s..insertionLine — indices unchanged
-      result.push(Object.freeze({ kind: 'range' as const, startLine: s, endLine: insertionLine, offsetDelta: d }));
+      result.push(
+        Object.freeze({
+          kind: "range" as const,
+          startLine: s,
+          endLine: insertionLine,
+          offsetDelta: d,
+        }),
+      );
       // After part: old insertionLine+1..e → new insertionLine+insertedCount+1..e+insertedCount
-      result.push(Object.freeze({
-        kind: 'range' as const,
-        startLine: insertionLine + 1 + insertedCount,
-        endLine: e === END_OF_DOCUMENT ? e : e + insertedCount,
-        offsetDelta: d,
-      }));
+      result.push(
+        Object.freeze({
+          kind: "range" as const,
+          startLine: insertionLine + 1 + insertedCount,
+          endLine: e === END_OF_DOCUMENT ? e : e + insertedCount,
+          offsetDelta: d,
+        }),
+      );
     }
   }
   return result;
@@ -1497,26 +1611,33 @@ function remapDirtyRangesForDelete(
   if (ranges.length === 0 || deletedCount <= 0) return ranges;
   const result: DirtyLineRange[] = [];
   for (const range of ranges) {
-    if (range.kind === 'sentinel') { result.push(range); continue; }
+    if (range.kind === "sentinel") {
+      result.push(range);
+      continue;
+    }
     const { startLine: s, endLine: e, offsetDelta: d } = range;
     // Before zone: keep s..min(e, deleteZoneStart-1) unchanged
     if (s < deleteZoneStart) {
-      result.push(Object.freeze({
-        kind: 'range' as const,
-        startLine: s,
-        endLine: Math.min(e, deleteZoneStart - 1),
-        offsetDelta: d,
-      }));
+      result.push(
+        Object.freeze({
+          kind: "range" as const,
+          startLine: s,
+          endLine: Math.min(e, deleteZoneStart - 1),
+          offsetDelta: d,
+        }),
+      );
     }
     // After zone: shift max(s, deleteZoneEnd+1)..e down by deletedCount
     const postStart = Math.max(s, deleteZoneEnd + 1);
     if (postStart <= e) {
-      result.push(Object.freeze({
-        kind: 'range' as const,
-        startLine: postStart - deletedCount,
-        endLine: e === END_OF_DOCUMENT ? e : e - deletedCount,
-        offsetDelta: d,
-      }));
+      result.push(
+        Object.freeze({
+          kind: "range" as const,
+          startLine: postStart - deletedCount,
+          endLine: e === END_OF_DOCUMENT ? e : e - deletedCount,
+          offsetDelta: d,
+        }),
+      );
     }
   }
   return result;
@@ -1536,38 +1657,61 @@ export function lineIndexInsertLazy(
   position: ByteOffset,
   text: string,
   currentVersion: number,
-  readText?: ReadTextFn
+  readText?: ReadTextFn,
 ): LinearCost<LineIndexState> {
-  if (text.length === 0) return $proveCtx('O(n)', $lift('O(n)', state));
+  if (text.length === 0) return $proveCtx("O(n)", $lift("O(n)", state));
 
   const { positions: newlinePositions, byteLength } = findNewlineBytePositions(text);
   const insertContext = getInsertBoundaryContext(position, byteLength, readText);
 
   // Same cross-boundary CRLF case as eager insert; rebuild to guarantee correctness.
   if (readText && hasCrossBoundaryCRLFMerge(text, insertContext)) {
-    return $proveCtx('O(n)', $lift('O(n)', rebuildFromReadText(state, readText, currentVersion)));
+    return $proveCtx("O(n)", $lift("O(n)", rebuildFromReadText(state, readText, currentVersion)));
   }
 
   // No newlines: simple length update (O(log n), no lazy needed)
   if (newlinePositions.length === 0) {
-    return $proveCtx('O(n)', $lift('O(n)', updateLineLengthLazy(state, position, byteLength, text.length)));
+    return $proveCtx(
+      "O(n)",
+      $lift("O(n)", updateLineLengthLazy(state, position, byteLength, text.length)),
+    );
   }
 
   const location: LogCost<LineLocation | null> =
-    findLineAtPosition(state.root, position) ?? $proveCtx('O(log n)', $lift('O(log n)', null));
+    findLineAtPosition(state.root, position) ?? $proveCtx("O(log n)", $lift("O(log n)", null));
 
-  return $prove('O(n)', $checked(() => $pipe(
-    $from(location),
-    $map((resolvedLocation) => {
-      if (resolvedLocation === null) {
-        // Position at or past end - use eager approach for simplicity
-        return appendLinesLazy(state, position, text, newlinePositions, byteLength, currentVersion);
-      }
+  return $prove(
+    "O(n)",
+    $checked(() =>
+      $pipe(
+        $from(location),
+        $map((resolvedLocation) => {
+          if (resolvedLocation === null) {
+            // Position at or past end - use eager approach for simplicity
+            return appendLinesLazy(
+              state,
+              position,
+              text,
+              newlinePositions,
+              byteLength,
+              currentVersion,
+            );
+          }
 
-      // Insert new lines and mark downstream as dirty
-      return insertLinesAtPositionLazy(state, resolvedLocation, text, newlinePositions, byteLength, currentVersion, readText);
-    }),
-  )));
+          // Insert new lines and mark downstream as dirty
+          return insertLinesAtPositionLazy(
+            state,
+            resolvedLocation,
+            text,
+            newlinePositions,
+            byteLength,
+            currentVersion,
+            readText,
+          );
+        }),
+      ),
+    ),
+  );
 }
 
 // updateLineLengthLazy is identical to updateLineLength - reuse it directly
@@ -1582,7 +1726,7 @@ function appendLinesLazy(
   text: string,
   newlinePositions: number[],
   byteLength: number,
-  currentVersion: number
+  currentVersion: number,
 ): LineIndexState {
   if (state.root === null) {
     const newState = buildLineIndexFromText(text, 0);
@@ -1596,7 +1740,14 @@ function appendLinesLazy(
   }
 
   // For appending at end, offsets are naturally correct (no dirty ranges needed)
-  const result = appendLinesStructural(state.root, state.lineCount, position, newlinePositions, byteLength, text);
+  const result = appendLinesStructural(
+    state.root,
+    state.lineCount,
+    position,
+    newlinePositions,
+    byteLength,
+    text,
+  );
 
   return withLineIndexState(state, {
     root: result.root,
@@ -1614,13 +1765,16 @@ function insertLinesAtPositionLazy(
   newlinePositions: number[],
   byteLength: number,
   _currentVersion: number,
-  readText?: ReadTextFn
+  readText?: ReadTextFn,
 ): LineIndexState {
   // Compute charsBefore using readText if available
   let charsBefore: number | undefined;
   if (readText && location.offsetInLine > 0) {
     const lineStart = getLineStartOffset(state.root, location.lineNumber);
-    const prefixText = readText(byteOffset(lineStart), byteOffset(lineStart + location.offsetInLine));
+    const prefixText = readText(
+      byteOffset(lineStart),
+      byteOffset(lineStart + location.offsetInLine),
+    );
     charsBefore = prefixText.length;
   } else if (location.offsetInLine === 0) {
     charsBefore = 0;
@@ -1635,17 +1789,21 @@ function insertLinesAtPositionLazy(
     byteLength,
     () => null,
     text,
-    charsBefore
+    charsBefore,
   );
 
   // Remap existing dirty ranges to new tree line numbering before merging
-  const remappedRanges = remapDirtyRangesForInsert(state.dirtyRanges, location.lineNumber, newlinePositions.length);
+  const remappedRanges = remapDirtyRangesForInsert(
+    state.dirtyRanges,
+    location.lineNumber,
+    newlinePositions.length,
+  );
 
   // Mark all lines after the insertion as dirty (they have stale offsets)
   const newDirtyRange = createDirtyRange(
     location.lineNumber + 1, // First inserted line and all after
     END_OF_DOCUMENT, // To end of document
-    byteLength // Offset delta
+    byteLength, // Offset delta
   );
 
   const mergedRanges = mergeDirtyRanges([...remappedRanges, newDirtyRange], state.maxDirtyRanges);
@@ -1667,37 +1825,45 @@ export function lineIndexDeleteLazy(
   end: ByteOffset,
   deletedText: string,
   currentVersion: number,
-  deleteContext?: DeleteBoundaryContext
+  deleteContext?: DeleteBoundaryContext,
 ): NLogNCost<LineIndexState> {
-  if (start >= end) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
-  if (state.root === null) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
+  if (start >= end) return $proveCtx("O(n log n)", $lift("O(n log n)", state));
+  if (state.root === null) return $proveCtx("O(n log n)", $lift("O(n log n)", state));
 
   const deleteLength = end - start;
   const deletedNewlines = countDeletedLineBreaks(deletedText, deleteContext);
 
   // No newlines: just update line length
   if (deletedNewlines === 0) {
-    return $proveCtx('O(n log n)', $lift('O(n log n)', updateLineLengthLazy(state, start, -deleteLength, -deletedText.length)));
+    return $proveCtx(
+      "O(n log n)",
+      $lift("O(n log n)", updateLineLengthLazy(state, start, -deleteLength, -deletedText.length)),
+    );
   }
 
   const startLocation: LogCost<LineLocation | null> =
-    findLineAtPosition(state.root, start) ?? $proveCtx('O(log n)', $lift('O(log n)', null));
+    findLineAtPosition(state.root, start) ?? $proveCtx("O(log n)", $lift("O(log n)", null));
 
-  return $prove('O(n log n)', $checked(() => $pipe(
-    $from(startLocation),
-    $map((resolvedLocation) => {
-      if (resolvedLocation === null) return state;
-      // Delete lines and mark remaining as dirty
-      return deleteLineRangeLazy(
-        state,
-        resolvedLocation,
-        deletedNewlines,
-        deleteLength,
-        currentVersion,
-        deletedText.length
-      );
-    }),
-  )));
+  return $prove(
+    "O(n log n)",
+    $checked(() =>
+      $pipe(
+        $from(startLocation),
+        $map((resolvedLocation) => {
+          if (resolvedLocation === null) return state;
+          // Delete lines and mark remaining as dirty
+          return deleteLineRangeLazy(
+            state,
+            resolvedLocation,
+            deletedNewlines,
+            deleteLength,
+            currentVersion,
+            deletedText.length,
+          );
+        }),
+      ),
+    ),
+  );
 }
 
 /**
@@ -1709,7 +1875,7 @@ function deleteLineRangeLazy(
   deletedNewlines: number,
   deleteLength: number,
   currentVersion: number,
-  deletedCharLength: number
+  deletedCharLength: number,
 ): LineIndexState {
   const { lineNumber: startLine, offsetInLine: startOffset } = startLocation;
   const endLine = startLine + deletedNewlines;
@@ -1745,21 +1911,24 @@ function deleteLineRangeLazy(
   } else {
     endBound = state.root!.subtreeCharLength;
   }
-  const mergedCharLength = Math.max(0, (endBound - startLineCharStart) - deletedCharLength);
+  const mergedCharLength = Math.max(0, endBound - startLineCharStart - deletedCharLength);
 
   // Rebuild with deleted range (this is still O(n) for deletions with newlines)
   // Future optimization: track deleted ranges for lazy reconciliation
-  const newState = rebuildWithDeletedRange(state, state.root!, startLine, endLine, mergedLength, mergedCharLength);
+  const newState = rebuildWithDeletedRange(
+    state,
+    state.root!,
+    startLine,
+    endLine,
+    mergedLength,
+    mergedCharLength,
+  );
 
   // Remap existing dirty ranges to new tree line numbering before merging
   const remappedRanges = remapDirtyRangesForDelete(state.dirtyRanges, startLine + 1, endLine);
 
   // Mark lines after deletion as dirty
-  const newDirtyRange = createDirtyRange(
-    startLine + 1,
-    END_OF_DOCUMENT,
-    -deleteLength
-  );
+  const newDirtyRange = createDirtyRange(startLine + 1, END_OF_DOCUMENT, -deleteLength);
 
   const mergedRanges = mergeDirtyRanges([...remappedRanges, newDirtyRange], state.maxDirtyRanges);
 
@@ -1779,7 +1948,7 @@ function removeLinesToEndLazy(
   startLine: number,
   startOffset: number,
   currentVersion: number,
-  deletedCharLength?: number
+  deletedCharLength?: number,
 ): LineIndexState {
   const newState = removeLinesToEnd(state, startLine, startOffset, deletedCharLength);
   return withLineIndexState(state, {
@@ -1800,16 +1969,16 @@ function removeLinesToEndLazy(
  * If the line is dirty, computes correct offset before returning.
  */
 export function getLineRangePrecise(
-  state: LineIndexState<'eager'>,
-  lineNumber: number
+  state: LineIndexState<"eager">,
+  lineNumber: number,
 ): LogCost<{ start: ByteOffset; length: ByteLength }> | null;
 export function getLineRangePrecise<M extends EvaluationMode>(
   state: LineIndexState<M>,
-  lineNumber: number
+  lineNumber: number,
 ): LogCost<{ start: ByteOffset; length: ByteLength }> | null;
 export function getLineRangePrecise(
   state: LineIndexState,
-  lineNumber: number
+  lineNumber: number,
 ): LogCost<{ start: ByteOffset; length: ByteLength }> | null {
   const node = findLineByNumber(state.root, lineNumber);
   if (node === null) return null;
@@ -1817,13 +1986,23 @@ export function getLineRangePrecise(
   // getLineStartOffset uses subtreeByteLength aggregates, which withLineIndexNode
   // keeps current on every tree mutation. The offset it returns is correct in both
   // clean (eager) and dirty (lazy) states — no dirty-range delta adjustment needed.
-  return $prove('O(log n)', $checked(() => $pipe(
-    $from(node),
-    $andThen((resolvedNode) => $pipe(
-      $from(getLineStartOffset(state.root, lineNumber)),
-      $map((start) => ({ start: byteOffset(start), length: toByteLengthBrand(resolvedNode.lineLength) })),
-    )),
-  )));
+  return $prove(
+    "O(log n)",
+    $checked(() =>
+      $pipe(
+        $from(node),
+        $andThen((resolvedNode) =>
+          $pipe(
+            $from(getLineStartOffset(state.root, lineNumber)),
+            $map((start) => ({
+              start: byteOffset(start),
+              length: toByteLengthBrand(resolvedNode.lineLength),
+            })),
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 // reconcileRange, reconcileFull, reconcileViewport, ReconciliationConfig, and
@@ -1850,10 +2029,7 @@ export type { ReconciliationConfig };
  * @param state  Eager line index state to verify.
  * @param sampleSize  Number of evenly-distributed lines to check. Defaults to 10.
  */
-export function assertEagerOffsets(
-  state: LineIndexState<'eager'>,
-  sampleSize = 10
-): void {
+export function assertEagerOffsets(state: LineIndexState<"eager">, sampleSize = 10): void {
   if (state.root === null || state.lineCount <= 0) return;
 
   const step = Math.max(1, Math.floor(state.lineCount / sampleSize));
@@ -1865,7 +2041,7 @@ export function assertEagerOffsets(
     if (node.documentOffset !== expectedOffset) {
       throw new Error(
         `assertEagerOffsets: line ${i} has documentOffset=${node.documentOffset} ` +
-        `but expected ${expectedOffset}`
+          `but expected ${expectedOffset}`,
       );
     }
   }

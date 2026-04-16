@@ -49,10 +49,10 @@ export class GrowableBuffer {
    * because the backing array may have uninitialized bytes beyond `length`.
    */
   subarray(start: number, end: number): Uint8Array {
-    if (process.env.NODE_ENV !== 'production') {
+    if (process.env.NODE_ENV !== "production") {
       if (start < 0 || end > this.length) {
         throw new Error(
-          `GrowableBuffer: out-of-bounds read [${start}, ${end}) exceeds valid length ${this.length}`
+          `GrowableBuffer: out-of-bounds read [${start}, ${end}) exceeds valid length ${this.length}`,
         );
       }
     }
