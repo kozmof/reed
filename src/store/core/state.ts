@@ -32,6 +32,9 @@ const DEFAULT_CONFIG: Required<DocumentStoreConfig> = {
   lineEnding: 'lf',
   undoGroupTimeout: 0,
   totalFileSize: 0,
+  maxDirtyRanges: 32,
+  reconcileMode: 'idle',
+  normalizeInsertedLineEndings: false,
 };
 
 /**
@@ -154,14 +157,16 @@ export function createPieceTableState(content: string): PieceTableState {
 /**
  * Create an empty line index state.
  * Uses a zero-length sentinel node so root is never null when lineCount >= 1.
+ * @param maxDirtyRanges - Sentinel collapse threshold for mergeDirtyRanges (default 32)
  */
-export function createEmptyLineIndexState(): LineIndexState {
+export function createEmptyLineIndexState(maxDirtyRanges: number = 32): LineIndexState {
   return Object.freeze({
     root: createLineIndexNode(0, 0, 'black'),
     lineCount: 1, // Empty document has 1 line
     dirtyRanges: Object.freeze([]),
     lastReconciledVersion: 0,
     rebuildPending: false,
+    maxDirtyRanges,
     unloadedLineCountsByChunk: new Map<number, number>(),
   });
 }
@@ -201,10 +206,11 @@ export function createLineIndexNode(
 /**
  * Build line index from content string.
  * Returns the line index state with all line positions.
+ * @param maxDirtyRanges - Sentinel collapse threshold for mergeDirtyRanges (default 32)
  */
-export function createLineIndexState(content: string): LineIndexState {
+export function createLineIndexState(content: string, maxDirtyRanges: number = 32): LineIndexState {
   if (content.length === 0) {
-    return createEmptyLineIndexState();
+    return createEmptyLineIndexState(maxDirtyRanges);
   }
 
   // Encode to UTF-8 bytes and scan for line breaks.
@@ -279,6 +285,7 @@ export function createLineIndexState(content: string): LineIndexState {
     dirtyRanges: Object.freeze([]),
     lastReconciledVersion: 0,
     rebuildPending: false,
+    maxDirtyRanges,
     unloadedLineCountsByChunk: new Map<number, number>(),
   });
 }
@@ -350,6 +357,7 @@ export function createInitialMetadata(
     lineEnding: config.lineEnding ?? DEFAULT_CONFIG.lineEnding,
     isDirty: false,
     lastSaved: undefined,
+    normalizeInsertedLineEndings: config.normalizeInsertedLineEndings ?? DEFAULT_CONFIG.normalizeInsertedLineEndings,
   });
 }
 
@@ -380,7 +388,7 @@ export function createInitialState(
     pieceTable: content.length > 0
       ? createPieceTableState(content)
       : createEmptyPieceTableState(chunkSize, totalFileSize),
-    lineIndex: createLineIndexState(content),
+    lineIndex: createLineIndexState(content, mergedConfig.maxDirtyRanges),
     selection: createInitialSelectionState(),
     history: createInitialHistoryState(mergedConfig.historyLimit, mergedConfig.undoGroupTimeout),
     metadata: createInitialMetadata(config),

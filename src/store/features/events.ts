@@ -46,8 +46,13 @@ export interface ContentChangeEvent extends DocumentEvent {
   readonly prevState: DocumentState;
   /** Document state after the change */
   readonly nextState: DocumentState;
-  /** Byte range affected [start, end) */
-  readonly affectedRange: readonly [ByteOffset, ByteOffset];
+  /**
+   * Disjoint byte ranges affected by this change, each as [start, end).
+   * For INSERT / DELETE / REPLACE, this is always a single-element array.
+   * For APPLY_REMOTE with non-contiguous changes, each changed sub-range is
+   * listed separately so consumers can skip unaffected regions.
+   */
+  readonly affectedRanges: readonly (readonly [ByteOffset, ByteOffset])[];
 }
 
 /**
@@ -252,7 +257,7 @@ export function createContentChangeEvent(
   action: ContentChangeAction,
   prevState: DocumentState,
   nextState: DocumentState,
-  affectedRange: readonly [ByteOffset, ByteOffset]
+  affectedRanges: readonly (readonly [ByteOffset, ByteOffset])[]
 ): ContentChangeEvent {
   return Object.freeze({
     type: 'content-change' as const,
@@ -260,7 +265,7 @@ export function createContentChangeEvent(
     action,
     prevState,
     nextState,
-    affectedRange,
+    affectedRanges,
   });
 }
 
@@ -323,43 +328,40 @@ export function createDirtyChangeEvent(
 }
 
 /**
- * Determine the affected byte range for a document action.
+ * Determine the affected byte ranges for a document action.
+ *
+ * Returns one range per independently changed region so consumers can avoid
+ * re-rendering unaffected regions. For INSERT / DELETE / REPLACE the result is
+ * always a single-element array. For APPLY_REMOTE with non-contiguous changes,
+ * each change contributes its own [start, end) range.
  */
-export function getAffectedRange(action: DocumentAction): readonly [ByteOffset, ByteOffset] {
+export function getAffectedRanges(
+  action: DocumentAction
+): readonly (readonly [ByteOffset, ByteOffset])[] {
   switch (action.type) {
     case 'INSERT':
-      return [action.start, byteOffset(action.start + utf8ByteLength(action.text))];
+      return [[action.start, byteOffset(action.start + utf8ByteLength(action.text))]];
     case 'DELETE':
-      return [action.start, action.end];
+      return [[action.start, action.end]];
     case 'REPLACE': {
       const insertLength = utf8ByteLength(action.text);
-      return [action.start, byteOffset(action.start + insertLength)];
+      return [[action.start, byteOffset(action.start + insertLength)]];
     }
     case 'APPLY_REMOTE': {
-      let minStart = Number.POSITIVE_INFINITY;
-      let maxEnd = Number.NEGATIVE_INFINITY;
-
+      const ranges: [ByteOffset, ByteOffset][] = [];
       for (const change of action.changes) {
         if (change.type === 'insert' && change.text) {
           const insertLength = utf8ByteLength(change.text);
           if (insertLength > 0) {
-            minStart = Math.min(minStart, change.start);
-            maxEnd = Math.max(maxEnd, change.start + insertLength);
+            ranges.push([byteOffset(change.start), byteOffset(change.start + insertLength)]);
           }
-          continue;
-        }
-
-        if (change.type === 'delete' && typeof change.length === 'number' && change.length > 0) {
-          minStart = Math.min(minStart, change.start);
-          maxEnd = Math.max(maxEnd, change.start + change.length);
+        } else if (change.type === 'delete' && typeof change.length === 'number' && change.length > 0) {
+          ranges.push([byteOffset(change.start), byteOffset(change.start + change.length)]);
         }
       }
-
-      return minStart === Number.POSITIVE_INFINITY
-        ? [byteOffset(0), byteOffset(0)]
-        : [byteOffset(minStart), byteOffset(maxEnd)];
+      return ranges.length > 0 ? ranges : [[byteOffset(0), byteOffset(0)]];
     }
     default:
-      return [byteOffset(0), byteOffset(0)];
+      return [[byteOffset(0), byteOffset(0)]];
   }
 }

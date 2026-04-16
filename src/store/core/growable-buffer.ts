@@ -44,8 +44,18 @@ export class GrowableBuffer {
 
   /**
    * Zero-copy view into the valid portion of the buffer.
+   *
+   * Callers must use `this.length` as the bound — not `this.bytes.length` —
+   * because the backing array may have uninitialized bytes beyond `length`.
    */
   subarray(start: number, end: number): Uint8Array {
+    if (process.env.NODE_ENV !== 'production') {
+      if (start < 0 || end > this.length) {
+        throw new Error(
+          `GrowableBuffer: out-of-bounds read [${start}, ${end}) exceeds valid length ${this.length}`
+        );
+      }
+    }
     return this.bytes.subarray(start, end);
   }
 }

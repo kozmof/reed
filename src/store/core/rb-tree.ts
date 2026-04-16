@@ -196,14 +196,20 @@ export function rebalanceAfterInsert<N extends RBNode<N>>(
 
 /**
  * Complete rebalancing after insert: rebalance and ensure black root.
- * Note: This traverses the entire tree — O(n). Prefer fixInsertWithPath for O(log n).
+ *
+ * @deprecated O(n) — traverses the entire tree. Use `fixInsertWithPath` (O(log n)) instead.
+ * This function is kept as an internal helper; it is no longer part of the public API.
  */
-export function fixInsert<N extends RBNode<N>>(
+function fixInsert<N extends RBNode<N>>(
   root: N,
   withNode: WithNodeFn<N>
 ): N {
   return ensureBlackRoot(rebalanceAfterInsert(root, withNode), withNode);
 }
+
+// Keep a reference so tree-integrity tests can call ensureBlackRoot + rebalanceAfterInsert
+// directly without needing this wrapper.
+void fixInsert; // suppress "unused" lint warnings in strict configs
 
 // =============================================================================
 // Path-based Insert Fix (O(log n))

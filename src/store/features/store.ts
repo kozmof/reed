@@ -16,7 +16,7 @@ import {
   createSelectionChangeEvent,
   createHistoryChangeEvent,
   createDirtyChangeEvent,
-  getAffectedRange,
+  getAffectedRanges,
 } from './events.ts';
 import { isTextEditAction } from '../../types/actions.ts';
 
@@ -80,7 +80,12 @@ export function createDocumentStore(
 ): ReconcilableDocumentStore {
   // Internal mutable state
   let state = createInitialState(config);
-  const listeners = new Set<StoreListener>();
+  const reconcileMode = config.reconcileMode ?? 'idle';
+  // Copy-on-write listeners array. Mutations (add/remove) during notification clone the
+  // array first so the in-progress iteration is not affected. In the common case (no
+  // mutation during notify) no copy is made, eliminating the Array.from allocation that
+  // was previously created on every notification event.
+  let listeners: StoreListener[] = [];
   let notifying = false; // Re-entrancy guard for notifyListeners (see 6.4)
   const transaction = createTransactionManager();
   const reconciliation: ReconciliationState = {
@@ -104,17 +109,16 @@ export function createDocumentStore(
    * Re-entrancy guard: if a listener triggers `emergencyReset` (which itself
    * calls `notifyListeners`), the inner call is a no-op, preventing recursive
    * notification.
+   *
+   * The listeners array uses copy-on-write semantics: subscribe/unsubscribe
+   * clone the array before mutating when `notifying` is true, so the
+   * iteration here never sees mid-notify additions or removals.
    */
   function notifyListeners(): void {
     if (notifying) return;
     notifying = true;
     try {
-      // Snapshot listeners before iterating: guarantees delivery to all listeners
-      // that were registered at notification start, even if one unsubscribes mid-notify.
-      // The `notifying` guard (above) handles the orthogonal re-entrancy concern
-      // (e.g. emergencyReset called from within a listener callback).
-      const currentListeners = Array.from(listeners);
-      for (const listener of currentListeners) {
+      for (const listener of listeners) {
         try {
           listener();
         } catch (error) {
@@ -133,9 +137,12 @@ export function createDocumentStore(
    * @returns Unsubscribe function
    */
   function subscribe(listener: StoreListener): Unsubscribe {
-    listeners.add(listener);
+    // Always create a new array reference so any in-progress notifyListeners
+    // iteration (which holds a reference to the old array via closure over
+    // `listeners`) is not disturbed.
+    listeners = [...listeners, listener];
     return () => {
-      listeners.delete(listener);
+      listeners = listeners.filter(l => l !== listener);
     };
   }
 
@@ -252,12 +259,36 @@ export function createDocumentStore(
   /**
    * Schedule background reconciliation using requestIdleCallback.
    * Falls back to setTimeout for environments without rIC.
+   *
+   * Behaviour is controlled by `reconcileMode` (from `DocumentStoreConfig`):
+   * - `'idle'`  — async, via rIC / 200 ms setTimeout fallback (default)
+   * - `'sync'`  — reconcile inline on the same tick (useful in tests)
+   * - `'none'`  — skip entirely; caller must call reconcileNow() explicitly
    */
   function scheduleReconciliation(): void {
     // Don't schedule if already scheduled or no reconciliation needed
     if (reconciliation.idleCallbackId !== null) return;
     if (!state.lineIndex.rebuildPending) return;
 
+    if (reconcileMode === 'none') return;
+
+    if (reconcileMode === 'sync') {
+      // Reconcile inline — skip scheduling, run immediately
+      if (transaction.isActive) return; // defer until transaction commits
+      reconciliation.isReconciling = true;
+      try {
+        const newLineIndex = reconcileFull(state.lineIndex, state.version);
+        if (newLineIndex !== state.lineIndex) {
+          setState(Object.freeze({ ...state, lineIndex: newLineIndex }));
+          notifyListeners();
+        }
+      } finally {
+        reconciliation.isReconciling = false;
+      }
+      return;
+    }
+
+    // reconcileMode === 'idle'
     const callback = (deadline?: IdleDeadline) => {
       reconciliation.idleCallbackId = null;
 
@@ -331,6 +362,11 @@ export function createDocumentStore(
   /**
    * Force immediate reconciliation (blocking).
    * Use sparingly - prefer scheduleReconciliation().
+   *
+   * Does NOT bump `state.version`. Offset resolution is content-neutral:
+   * the document text is unchanged, so no version increment is warranted.
+   * Callers that need to detect whether lines are ready should inspect
+   * `lineIndex.rebuildPending`, not compare version numbers.
    */
   function reconcileNow(): DocumentState<'eager'> {
     // Cancel any pending idle callback
@@ -347,13 +383,13 @@ export function createDocumentStore(
       return state as DocumentState<'eager'>;
     }
 
-    const nextVersion = state.version + 1;
-    const newLineIndex = reconcileFull(state.lineIndex, nextVersion);
+    const newLineIndex = reconcileFull(state.lineIndex, state.version);
     if (newLineIndex !== state.lineIndex) {
       setState(Object.freeze({
         ...state,
         lineIndex: newLineIndex,
-        version: nextVersion,
+        // state.version is intentionally unchanged — reconciliation is
+        // content-neutral and must not produce spurious version bumps.
       }));
     }
     return state as DocumentState<'eager'>;
@@ -417,11 +453,11 @@ export function createDocumentStore(
  * const store = createDocumentStoreWithEvents({ content: 'Hello' });
  *
  * store.addEventListener('content-change', (event) => {
- *   console.log('Content changed:', event.affectedRange);
+ *   console.log('Content changed:', event.affectedRanges);
  * });
  *
  * store.dispatch({ type: 'INSERT', position: byteOffset(5), text: ' World' });
- * // Event fires with affectedRange: [5, 11]
+ * // Event fires with affectedRanges: [5, 11]
  * ```
  *
  * @param config - Optional configuration for the store
@@ -445,7 +481,7 @@ export function createDocumentStoreWithEvents(
     if (isTextEditAction(action) || action.type === 'APPLY_REMOTE') {
       emitter.emit(
         'content-change',
-        createContentChangeEvent(action, prevState, nextState, getAffectedRange(action))
+        createContentChangeEvent(action, prevState, nextState, getAffectedRanges(action))
       );
     }
 

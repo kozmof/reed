@@ -169,7 +169,7 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
    * @example
    * ```typescript
    * store.addEventListener('content-change', (event) => {
-   *   console.log('Changed range:', event.affectedRange);
+   *   console.log('Changed ranges:', event.affectedRanges);
    *   console.log('Action:', event.action.type);
    * });
    * ```

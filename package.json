@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "test:perf": "vitest run --config vitest.perf.config.ts",
     "test:perf:watch": "vitest --config vitest.perf.config.ts",
-    "gen-fixture": "npx tsx scripts/gen-fixture.ts"
+    "gen-fixture": "npx tsx scripts/gen-fixture.ts",
+    "bench": "npx tsx src/benchmarks/bench.ts"
   },
   "devDependencies": {
     "typescript": "~5.9.3",

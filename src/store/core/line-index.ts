@@ -34,6 +34,13 @@ import {
 } from '../../types/cost-doc.ts';
 import { asEagerLineIndex, createLineIndexNode, withLineIndexNode, withLineIndexState } from './state.ts';
 import { fixInsertWithPath, fixRedViolations, isRed, type WithNodeFn, type InsertionPathEntry, type RootToLeafInsertPath } from './rb-tree.ts';
+import {
+  mergeDirtyRanges,
+  reconcileRange,
+  reconcileFull,
+  reconcileViewport,
+  type ReconciliationConfig,
+} from './reconcile.ts';
 
 // Type-safe wrapper for withLineIndexNode to use with generic R-B tree functions
 import { textEncoder } from './encoding.ts';
@@ -51,25 +58,45 @@ const withLine: WithNodeFn<LineIndexNode> = withLineIndexNode;
  * Supports LF (\n), CR (\r), and CRLF (\r\n) line endings.
  * For CRLF, records the position of '\n' so the break width is included.
  *
- * Encodes text to UTF-8 bytes once, then scans for 0x0A/0x0D.
- * This is correct because these ASCII bytes never appear in UTF-8 continuation bytes.
+ * Uses charCodeAt instead of textEncoder.encode to avoid allocating a Uint8Array
+ * on every call (hot path: invoked on every insert). This is correct because
+ * 0x0A (\n) and 0x0D (\r) are single-byte ASCII and never appear in UTF-8
+ * continuation bytes — so character index equals byte index for these code points.
+ * Non-ASCII characters are accounted for in the running byteLen accumulator using
+ * the standard UTF-8 width rules (1/2/3/4 bytes per code point).
  */
 function findNewlineBytePositions(text: string): { positions: number[]; byteLength: number } {
-  const bytes = textEncoder.encode(text);
   const positions: number[] = [];
-  for (let i = 0; i < bytes.length; i++) {
-    if (bytes[i] === 0x0D) {
-      if (i + 1 < bytes.length && bytes[i + 1] === 0x0A) {
-        positions.push(i + 1);
+  let byteLen = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 0x0D) {
+      const next = text.charCodeAt(i + 1);
+      if (next === 0x0A) {
+        // CRLF: record position of the '\n' byte (byteLen + 1)
+        positions.push(byteLen + 1);
+        byteLen += 2;
         i++;
       } else {
-        positions.push(i);
+        positions.push(byteLen);
+        byteLen += 1;
       }
-    } else if (bytes[i] === 0x0A) {
-      positions.push(i);
+    } else if (c === 0x0A) {
+      positions.push(byteLen);
+      byteLen += 1;
+    } else if (c < 0x80) {
+      byteLen += 1;
+    } else if (c < 0x800) {
+      byteLen += 2;
+    } else if (c >= 0xD800 && c <= 0xDBFF) {
+      // High surrogate — paired with the following low surrogate: 4 bytes total
+      byteLen += 4;
+      i++;
+    } else {
+      byteLen += 3;
     }
   }
-  return { positions, byteLength: bytes.length };
+  return { positions, byteLength: byteLen };
 }
 
 /**
@@ -929,6 +956,7 @@ function buildLineIndexFromText(text: string, startOffset: number): LineIndexSta
       dirtyRanges: Object.freeze([]),
       lastReconciledVersion: 0,
       rebuildPending: false,
+      maxDirtyRanges: 32,
       unloadedLineCountsByChunk: new Map<number, number>(),
     });
   }
@@ -940,6 +968,7 @@ function buildLineIndexFromText(text: string, startOffset: number): LineIndexSta
     dirtyRanges: Object.freeze([]),
     lastReconciledVersion: 0,
     rebuildPending: false,
+    maxDirtyRanges: 32,
     unloadedLineCountsByChunk: new Map<number, number>(),
   });
 }
@@ -1364,147 +1393,11 @@ export function getLineRange(
 }
 
 // =============================================================================
-// Dirty Range Management (Lazy Line Index Maintenance)
+// Dirty Range Utilities (isLineDirty, getOffsetDeltaForLine)
+// Dirty range management (mergeDirtyRanges) and reconciliation functions
+// (reconcileRange, reconcileFull, reconcileViewport) live in ./reconcile.ts.
+// They are imported above and re-exported below to preserve the public API.
 // =============================================================================
-
-/**
- * Merge overlapping or adjacent dirty ranges to minimize tracking overhead.
- */
-export function mergeDirtyRanges(
-  ranges: readonly DirtyLineRange[]
-): NLogNCost<readonly DirtyLineRange[]> {
-  if (ranges.length <= 1) return $proveCtx('O(n log n)', $lift('O(n log n)', [...ranges]));
-
-  // If any range is a sentinel (full-rebuild marker), the merged result must also be a sentinel.
-  // With a discriminated union, no spread accident can silently drop or create a sentinel.
-  if (ranges.some(r => r.kind === 'sentinel')) {
-    return $proveCtx(
-      'O(n log n)',
-      $lift<'O(n log n)', readonly DirtyLineRange[]>(
-        'O(n log n)',
-        [Object.freeze({ kind: 'sentinel' as const })]
-      )
-    );
-  }
-
-  // Sort by startLine — skip sort if already in order (common case: appended sequentially).
-  // Safe to narrow: the sentinel early-exit above guarantees all remaining ranges are 'range'.
-  let needsSort = false;
-  for (let j = 1; j < ranges.length; j++) {
-    if ((ranges[j] as DirtyLineRangeEntry).startLine < (ranges[j - 1] as DirtyLineRangeEntry).startLine) { needsSort = true; break; }
-  }
-  const sorted = (needsSort ? [...ranges].sort((a, b) => (a as DirtyLineRangeEntry).startLine - (b as DirtyLineRangeEntry).startLine) : [...ranges]) as DirtyLineRangeEntry[];
-  const merged: DirtyLineRange[] = [];
-  let i = 0;
-  // Loop invariant: `current` is the "in-flight" range — it has NOT yet been
-  // pushed to `merged`. Every range in `merged` is fully resolved and will
-  // never be revisited. `current` is finalized either:
-  //   (a) post-loop via `if (!exhausted) merged.push(current)`, or
-  //   (b) mid-loop in the e1===e2 branch, which sets `exhausted = true` to
-  //       prevent (a) from double-counting it.
-  let current = sorted[0];
-  let exhausted = false;
-
-  while (i < sorted.length - 1) {
-    i++;
-    const next = sorted[i];
-    if (next.startLine <= current.endLine + 1) {
-      if (next.offsetDelta === current.offsetDelta && next.startLine > current.endLine) {
-        // Adjacent (non-overlapping) same delta — extend current to cover both
-        current = Object.freeze({
-          kind: 'range' as const,
-          startLine: current.startLine,
-          endLine: Math.max(current.endLine, next.endLine),
-          offsetDelta: current.offsetDelta,
-        });
-      } else if (next.startLine === current.startLine) {
-        // Same start, different delta — sum deltas (equivalent to applying both)
-        current = Object.freeze({
-          kind: 'range' as const,
-          startLine: current.startLine,
-          endLine: Math.max(current.endLine, next.endLine),
-          offsetDelta: current.offsetDelta + next.offsetDelta,
-        });
-      } else {
-        // True overlap: s1 < s2 <= e1, different deltas.
-        // Decompose into: [s1, s2-1, d1], [s2, min(e1,e2), d1+d2], tail.
-        merged.push(Object.freeze({
-          kind: 'range' as const,
-          startLine: current.startLine,
-          endLine: next.startLine - 1,
-          offsetDelta: current.offsetDelta,
-        }));
-        const combinedDelta = current.offsetDelta + next.offsetDelta;
-        if (current.endLine < next.endLine) {
-          // current ends first — overlap ends at current.endLine
-          merged.push(Object.freeze({
-            kind: 'range' as const,
-            startLine: next.startLine,
-            endLine: current.endLine,
-            offsetDelta: combinedDelta,
-          }));
-          current = Object.freeze({
-            kind: 'range' as const,
-            startLine: current.endLine + 1,
-            endLine: next.endLine,
-            offsetDelta: next.offsetDelta,
-          });
-        } else if (current.endLine > next.endLine) {
-          // next ends first — overlap ends at next.endLine
-          merged.push(Object.freeze({
-            kind: 'range' as const,
-            startLine: next.startLine,
-            endLine: next.endLine,
-            offsetDelta: combinedDelta,
-          }));
-          current = Object.freeze({
-            kind: 'range' as const,
-            startLine: next.endLine + 1,
-            endLine: current.endLine,
-            offsetDelta: current.offsetDelta,
-          });
-        } else {
-          // e1 === e2: both ranges fully consumed by the overlap — no tail remains.
-          // Push `current` into `merged` here (it is now resolved) and advance `i`
-          // to the next input range. If that exhausts the input, set `exhausted` so
-          // the post-loop push is skipped — `current` is already in `merged`.
-          merged.push(Object.freeze({
-            kind: 'range' as const,
-            startLine: next.startLine,
-            endLine: current.endLine,
-            offsetDelta: combinedDelta,
-          }));
-          i++;
-          if (i >= sorted.length) { exhausted = true; break; }
-          current = sorted[i];
-        }
-      }
-    } else {
-      // No overlap — finalize current, start fresh
-      merged.push(current);
-      current = next;
-    }
-  }
-  // Finalize the last in-flight range, unless the e1===e2 branch already pushed
-  // it into `merged` mid-loop (signalled by `exhausted`).
-  if (!exhausted) merged.push(current);
-
-  // Safety cap: if too many ranges accumulated, collapse to full-document rebuild
-  if (merged.length > 32) {
-    return $proveCtx(
-      'O(n log n)',
-      $lift<'O(n log n)', readonly DirtyLineRange[]>(
-        'O(n log n)',
-        [Object.freeze({ kind: 'sentinel' as const })]
-      )
-    );
-  }
-
-  return $proveCtx(
-    'O(n log n)',
-    $lift<'O(n log n)', readonly DirtyLineRange[]>('O(n log n)', merged)
-  );
-}
 
 /**
  * Check if a line number falls within any dirty range.
@@ -1758,7 +1651,7 @@ function insertLinesAtPositionLazy(
     byteLength // Offset delta
   );
 
-  const mergedRanges = mergeDirtyRanges([...remappedRanges, newDirtyRange]);
+  const mergedRanges = mergeDirtyRanges([...remappedRanges, newDirtyRange], state.maxDirtyRanges);
 
   return withLineIndexState(state, {
     root: result.root,
@@ -1871,7 +1764,7 @@ function deleteLineRangeLazy(
     -deleteLength
   );
 
-  const mergedRanges = mergeDirtyRanges([...remappedRanges, newDirtyRange]);
+  const mergedRanges = mergeDirtyRanges([...remappedRanges, newDirtyRange], state.maxDirtyRanges);
 
   return withLineIndexState(state, {
     root: newState.root,
@@ -1902,7 +1795,7 @@ function removeLinesToEndLazy(
 }
 
 // =============================================================================
-// Reconciliation Functions
+// Reconciliation Functions (implementations live in ./reconcile.ts)
 // =============================================================================
 
 /**
@@ -1936,296 +1829,11 @@ export function getLineRangePrecise(
   )));
 }
 
-/**
- * Reconcile a specific range of lines.
- * Updates offsets for lines in [startLine, endLine].
- *
- * @internal Low-level operation — callers must understand dirty-range semantics:
- * `version` must match the state version, and line bounds must be within
- * `[0, state.lineCount - 1]`. Misuse can leave the line index in a partially
- * reconciled state. Prefer the higher-level entry points:
- * - `reconcileNow()` — immediate full reconciliation (store method)
- * - `setViewport(startLine, endLine)` — priority reconciliation for visible lines
- */
-export function reconcileRange(
-  state: LineIndexState,
-  startLine: number,
-  endLine: number,
-  version: number
-): NLogNCost<LineIndexState> {
-  if (state.root === null || state.dirtyRanges.length === 0) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
-  const clampedStart = Math.max(0, startLine);
-  const clampedEnd = Math.min(endLine, state.lineCount - 1);
-  if (clampedStart > clampedEnd) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
-
-  // Build sweep events from sorted, non-overlapping dirty ranges — O(K)
-  // Each range contributes a +delta event at its effective start and
-  // a -delta event at its effective end+1 within [clampedStart, clampedEnd].
-  const events: Array<{ line: number; delta: number }> = [];
-  for (const range of state.dirtyRanges) {
-    if (range.kind === 'sentinel') continue; // Sentinel triggers slow path in reconcileFull; skip here
-    const effectiveStart = Math.max(range.startLine, clampedStart);
-    const effectiveEnd = Math.min(range.endLine, clampedEnd);
-    if (effectiveStart > effectiveEnd) continue;
-    events.push({ line: effectiveStart, delta: range.offsetDelta });
-    if (effectiveEnd < clampedEnd) {
-      events.push({ line: effectiveEnd + 1, delta: -range.offsetDelta });
-    }
-  }
-
-  // Sweep [clampedStart, clampedEnd] with a running cumulative delta — O(K + V)
-  let newRoot = state.root!;
-  let cumDelta = 0;
-  let evtIdx = 0;
-  for (let line = clampedStart; line <= clampedEnd; line++) {
-    while (evtIdx < events.length && events[evtIdx].line === line) {
-      cumDelta += events[evtIdx].delta;
-      evtIdx++;
-    }
-    if (cumDelta !== 0) {
-      newRoot = updateLineOffsetByNumber(newRoot, line, cumDelta);
-    }
-  }
-
-  // Keep only the parts of dirty ranges that are outside [clampedStart, clampedEnd].
-  const remaining: DirtyLineRange[] = [];
-  for (const range of state.dirtyRanges) {
-    // Sentinels survive: they signal a full rebuild is needed for the whole document.
-    if (range.kind === 'sentinel') { remaining.push(range); continue; }
-
-    const rangeEnd = Math.min(range.endLine, state.lineCount - 1);
-    if (range.startLine > rangeEnd) continue;
-
-    // No overlap with reconciled window.
-    if (rangeEnd < clampedStart || range.startLine > clampedEnd) {
-      remaining.push(range);
-      continue;
-    }
-
-    // Left-side remainder.
-    if (range.startLine < clampedStart) {
-      remaining.push(Object.freeze({
-        ...range,
-        endLine: clampedStart - 1,
-      }));
-    }
-
-    // Right-side remainder.
-    if (rangeEnd > clampedEnd) {
-      remaining.push(Object.freeze({
-        ...range,
-        startLine: clampedEnd + 1,
-      }));
-    }
-  }
-  const remainingRanges = mergeDirtyRanges(remaining);
-
-  return $proveCtx(
-    'O(n log n)',
-    $lift(
-      'O(n log n)',
-      withLineIndexState(state, {
-        root: newRoot,
-        dirtyRanges: Object.freeze(remainingRanges),
-        lastReconciledVersion: version,
-        rebuildPending: remainingRanges.length > 0,
-      })
-    )
-  );
-}
-
-/**
- * Update offset for a specific line in the tree.
- */
-function updateLineOffsetByNumber(
-  node: LineIndexNode,
-  lineNumber: number,
-  offsetDelta: number
-): LineIndexNode {
-  const leftLineCount = node.left?.subtreeLineCount ?? 0;
-
-  if (lineNumber < leftLineCount && node.left !== null) {
-    return withLineIndexNode(node, {
-      left: updateLineOffsetByNumber(node.left, lineNumber, offsetDelta),
-    });
-  } else if (lineNumber > leftLineCount && node.right !== null) {
-    return withLineIndexNode(node, {
-      right: updateLineOffsetByNumber(node.right, lineNumber - leftLineCount - 1, offsetDelta),
-    });
-  } else {
-    return withLineIndexNode(node, {
-      documentOffset: node.documentOffset === null ? offsetDelta : node.documentOffset + offsetDelta,
-    });
-  }
-}
-
-/**
- * Compute total number of dirty lines across all ranges, clamped to lineCount.
- */
-function computeTotalDirtyLines(
-  dirtyRanges: readonly DirtyLineRange[],
-  lineCount: number
-): number {
-  let total = 0;
-  for (const range of dirtyRanges) {
-    if (range.kind === 'sentinel') continue; // Sentinel triggers the slow path via hasCollapsedCapSentinel
-    const end = Math.min(range.endLine, lineCount - 1);
-    total += Math.max(0, end - range.startLine + 1);
-  }
-  return total;
-}
-
-/**
- * Walk the tree in-order and update offsets by accumulating line lengths.
- * Uses structural sharing — only nodes with incorrect offsets get new allocations.
- */
-function reconcileInPlace(
-  node: LineIndexNode | null,
-  acc: { offset: number }
-): LineIndexNode | null {
-  if (node === null) return null;
-
-  const newLeft = reconcileInPlace(node.left, acc);
-  const correctOffset = acc.offset;
-  acc.offset += node.lineLength;
-  const newRight = reconcileInPlace(node.right, acc);
-
-  if (newLeft !== node.left || newRight !== node.right || node.documentOffset !== correctOffset) {
-    return withLineIndexNode(node, {
-      left: newLeft,
-      right: newRight,
-      documentOffset: correctOffset,
-    });
-  }
-  return node;
-}
-
-/**
- * Perform full reconciliation of all dirty ranges.
- * Uses incremental updates for small dirty ranges (O(k * log n)),
- * and an in-place tree walk for large ranges (O(n) with structural sharing).
- * Intended to be called from idle callback.
- */
-/**
- * Configuration for reconciliation behavior.
- */
-export interface ReconciliationConfig {
-  /** Compute the threshold below which incremental reconciliation is used.
-   *  Receives lineCount, returns max dirty lines for incremental path.
-   *  Default: Math.max(64, Math.floor(lineCount / Math.log2(lineCount + 1)))
-   */
-  thresholdFn?: (lineCount: number) => number;
-}
-
-// Incremental reconciliation total cost: O(K² + totalDirty) where K ≤ 32 (sentinel cap).
-// Full-walk cost: O(n). Incremental is cheaper when totalDirty + 1024 ≤ n, i.e. when
-// totalDirty ≤ n − 1024 ≈ 0.75n for typical documents. The old formula (n / log₂n) was
-// calibrated for the former O(V×K) reconcileRange; the sweep-line O(K+V) implementation
-// makes incremental viable up to ~75% dirty lines.
-const defaultThresholdFn = (lineCount: number): number =>
-  Math.max(256, Math.floor(lineCount * 0.75));
-
-function toEagerLineIndexState(
-  state: LineIndexState,
-  version: number,
-  changes: Partial<LineIndexState> = {}
-): LineIndexState<'eager'> {
-  const reconciled = withLineIndexState(state, {
-    dirtyRanges: Object.freeze([]),
-    lastReconciledVersion: version,
-    rebuildPending: false,
-    ...changes,
-  });
-  return asEagerLineIndex(reconciled);
-}
-
-export function reconcileFull(
-  state: LineIndexState,
-  version: number,
-  config?: ReconciliationConfig
-): NLogNCost<LineIndexState<'eager'>> {
-  if (state.dirtyRanges.length === 0) {
-    return $proveCtx('O(n log n)', $lift('O(n log n)', toEagerLineIndexState(state, version)));
-  }
-
-  if (state.root === null) {
-    return $proveCtx('O(n log n)', $lift('O(n log n)', toEagerLineIndexState(state, version, {
-      lineCount: 1,
-    })));
-  }
-
-  // Fast path: incremental reconciliation — O(K² + totalDirty) via sweep-line reconcileRange
-  const totalDirty = computeTotalDirtyLines(state.dirtyRanges, state.lineCount);
-  const thresholdFn = config?.thresholdFn ?? defaultThresholdFn;
-  const threshold = thresholdFn(state.lineCount);
-  const hasCollapsedCapSentinel = state.dirtyRanges.some(range => range.kind === 'sentinel');
-
-  // mergeDirtyRanges may collapse many heterogeneous ranges into a single
-  // full-document sentinel with offsetDelta=0. Delta detail is lost there,
-  // so incremental reconciliation cannot repair offsets correctly.
-  if (!hasCollapsedCapSentinel && totalDirty <= threshold) {
-    let current: LineIndexState = state;
-    for (const range of state.dirtyRanges) {
-      if (range.kind === 'sentinel') continue; // Guarded by hasCollapsedCapSentinel above; defensive
-      const endLine = Math.min(range.endLine, current.lineCount - 1);
-      current = reconcileRange(current, range.startLine, endLine, version);
-    }
-    return $proveCtx(
-      'O(n log n)',
-      $lift('O(n log n)', toEagerLineIndexState(current, version))
-    );
-  }
-
-  // Slow path: triggered either by a sentinel (delta information lost) or when
-  // totalDirty > threshold (non-sentinel ranges covering most of the document).
-  // Both cases are intentional — the O(n) in-place tree walk is cheaper than the
-  // O(K²+totalDirty) incremental path when the dirty region is large.
-  //
-  // IMPORTANT: this path uses reconcileInPlace, which recomputes documentOffset
-  // values from each node's stored lineLength via an in-order traversal. It does
-  // NOT call getText or rebuildLineIndex — no full document decode occurs here.
-  const newRoot = reconcileInPlace(state.root, { offset: 0 });
-
-  return $proveCtx(
-    'O(n log n)',
-    $lift(
-      'O(n log n)',
-      toEagerLineIndexState(state, version, {
-        root: newRoot,
-      })
-    )
-  );
-}
-
-/**
- * Ensure viewport lines are fully reconciled.
- * Called before rendering to guarantee visible content accuracy.
- */
-export function reconcileViewport(
-  state: LineIndexState,
-  startLine: number,
-  endLine: number,
-  version: number
-): NLogNCost<LineIndexState> {
-  if (state.dirtyRanges.length === 0) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
-  const normalizedStart = Math.min(startLine, endLine);
-  const normalizedEnd = Math.max(startLine, endLine);
-  const clampedStart = Math.max(0, normalizedStart);
-  const clampedEnd = Math.min(normalizedEnd, state.lineCount - 1);
-  if (clampedStart > clampedEnd) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
-
-  // Check if any viewport lines are dirty.
-  // A sentinel means the entire document is dirty — viewport is always dirty.
-  const viewportDirty = state.dirtyRanges.some(range => {
-    if (range.kind === 'sentinel') return true;
-    return range.startLine <= clampedEnd && range.endLine >= clampedStart;
-  });
-
-  if (!viewportDirty) return $proveCtx('O(n log n)', $lift('O(n log n)', state));
-
-  // Reconcile only the viewport range
-  return reconcileRange(state, clampedStart, clampedEnd, version);
-}
+// reconcileRange, reconcileFull, reconcileViewport, ReconciliationConfig, and
+// mergeDirtyRanges are imported from ./reconcile.ts and re-exported here so
+// the public API of line-index.ts is unchanged.
+export { reconcileRange, reconcileFull, reconcileViewport, mergeDirtyRanges };
+export type { ReconciliationConfig };
 
 // =============================================================================
 // Debug Utilities

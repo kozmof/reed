@@ -101,7 +101,7 @@ export {
   createHistoryChangeEvent,
   createSaveEvent,
   createDirtyChangeEvent,
-  getAffectedRange,
+  getAffectedRanges,
 } from './features/events.ts';
 export type {
   DocumentEvent,

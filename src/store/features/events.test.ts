@@ -10,7 +10,7 @@ import {
   createHistoryChangeEvent,
   createSaveEvent,
   createDirtyChangeEvent,
-  getAffectedRange,
+  getAffectedRanges,
 } from './events.ts';
 import { createInitialState } from './../core/state.ts';
 import { DocumentActions } from './actions.ts';
@@ -185,13 +185,13 @@ describe('Event Creators', () => {
       const nextState = createInitialState({ content: 'Hello World' });
       const action = DocumentActions.insert(byteOffset(5), ' World');
 
-      const event = createContentChangeEvent(action, prevState, nextState, [5, 11]);
+      const event = createContentChangeEvent(action, prevState, nextState, [[5, 11]]);
 
       expect(event.type).toBe('content-change');
       expect(event.action).toBe(action);
       expect(event.prevState).toBe(prevState);
       expect(event.nextState).toBe(nextState);
-      expect(event.affectedRange).toEqual([5, 11]);
+      expect(event.affectedRanges).toEqual([[5, 11]]);
       expect(event.timestamp).toBeLessThanOrEqual(Date.now());
       expect(Object.isFrozen(event)).toBe(true);
     });
@@ -273,62 +273,58 @@ describe('Event Creators', () => {
   });
 });
 
-describe('getAffectedRange', () => {
+describe('getAffectedRanges', () => {
   it('should calculate range for INSERT', () => {
     const action = DocumentActions.insert(byteOffset(10), 'Hello');
-    const range = getAffectedRange(action);
+    const ranges = getAffectedRanges(action);
 
-    expect(range[0]).toBe(10);
-    expect(range[1]).toBe(15); // 10 + 5 bytes
+    expect(ranges).toEqual([[10, 15]]); // 10 + 5 bytes
   });
 
   it('should calculate range for DELETE', () => {
     const action = DocumentActions.delete(byteOffset(5), byteOffset(15)); // start=5, end=15
-    const range = getAffectedRange(action);
+    const ranges = getAffectedRanges(action);
 
-    expect(range[0]).toBe(5);
-    expect(range[1]).toBe(15);
+    expect(ranges).toEqual([[5, 15]]);
   });
 
   it('should calculate range for REPLACE using new content length', () => {
     const action = DocumentActions.replace(byteOffset(5), byteOffset(15), 'Hi'); // start=5, end=15, text='Hi' (2 bytes)
-    const range = getAffectedRange(action);
+    const ranges = getAffectedRanges(action);
 
-    expect(range[0]).toBe(5);
-    expect(range[1]).toBe(7); // 5 + 2 (insertLength), not max(deleteLength, insertLength)
+    expect(ranges).toEqual([[5, 7]]); // 5 + 2 (insertLength), not max(deleteLength, insertLength)
   });
 
   it('should calculate range for REPLACE when insert is longer than delete', () => {
     const action = DocumentActions.replace(byteOffset(0), byteOffset(2), 'Hello World'); // delete 2 bytes, insert 11
-    const range = getAffectedRange(action);
+    const ranges = getAffectedRanges(action);
 
-    expect(range[0]).toBe(0);
-    expect(range[1]).toBe(11); // 0 + 11 (insertLength)
+    expect(ranges).toEqual([[0, 11]]); // 0 + 11 (insertLength)
   });
 
   it('should handle unicode in INSERT', () => {
     const action = DocumentActions.insert(byteOffset(0), '世界'); // 6 bytes in UTF-8
-    const range = getAffectedRange(action);
+    const ranges = getAffectedRanges(action);
 
-    expect(range[0]).toBe(0);
-    expect(range[1]).toBe(6);
+    expect(ranges).toEqual([[0, 6]]);
   });
 
-  it('should return [0, 0] for non-edit actions', () => {
+  it('should return [[0, 0]] for non-edit actions', () => {
     const action = DocumentActions.undo();
-    const range = getAffectedRange(action);
+    const ranges = getAffectedRanges(action);
 
-    expect(range).toEqual([0, 0]);
+    expect(ranges).toEqual([[0, 0]]);
   });
 
-  it('should calculate merged range for APPLY_REMOTE changes', () => {
+  it('should return disjoint ranges for non-contiguous APPLY_REMOTE changes', () => {
     const action = DocumentActions.applyRemote([
       { type: 'insert', start: byteOffset(2), text: 'XY' },
       { type: 'delete', start: byteOffset(10), length: byteLength(4) },
     ]);
-    const range = getAffectedRange(action);
+    const ranges = getAffectedRanges(action);
 
-    expect(range).toEqual([2, 14]);
+    // Two distinct ranges — not a merged bounding box
+    expect(ranges).toEqual([[2, 4], [10, 14]]);
   });
 });
 
@@ -372,9 +368,9 @@ describe('Store event integration', () => {
     ]));
 
     expect(handler).toHaveBeenCalledTimes(1);
-    const event = handler.mock.calls[0][0] as { action: { type: string }; affectedRange: readonly [number, number] };
+    const event = handler.mock.calls[0][0] as { action: { type: string }; affectedRanges: readonly (readonly [number, number])[] };
     expect(event.action.type).toBe('APPLY_REMOTE');
-    expect(event.affectedRange).toEqual([5, 6]);
+    expect(event.affectedRanges).toEqual([[5, 6]]);
   });
 
   it('should emit dirty-change for APPLY_REMOTE when document becomes dirty', () => {

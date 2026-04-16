@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { NodeColor, RBNode } from '../../types/state.ts';
 import {
   ensureBlackRoot,
-  fixInsert,
   fixInsertWithPath,
   fixRedViolations,
   isBlack,
@@ -133,7 +132,8 @@ function buildInsertedTree(root: TestNode, key: number): TestNode {
 
 function insertWithFullFix(root: TestNode | null, key: number): TestNode {
   if (root === null) return createNode(key, 'black');
-  return fixInsert(buildInsertedTree(root, key), withTestNode);
+  // Use the O(log n) path-based fixer (fixInsert was O(n) and is no longer exported).
+  return insertWithPath(root, key);
 }
 
 describe('RB Tree Utilities', () => {
@@ -308,7 +308,7 @@ describe('RB Tree Utilities', () => {
     });
   });
 
-  describe('rebalanceAfterInsert / fixInsert', () => {
+  describe('rebalanceAfterInsert / ensureBlackRoot', () => {
     it('rebalanceAfterInsert fixes deep subtree violations', () => {
       const root = createNode(
         20,
@@ -335,16 +335,17 @@ describe('RB Tree Utilities', () => {
       expect(rebalanced.color).toBe('red');
     });
 
-    it('fixInsert enforces a black root', () => {
+    it('ensureBlackRoot enforces a black root after rebalance', () => {
       const root = createNode(10, 'red', createNode(5, 'black'), createNode(15, 'black'));
-      const fixed = fixInsert(root, withTestNode);
+      // ensureBlackRoot + rebalanceAfterInsert is the equivalent of the removed fixInsert
+      const fixed = ensureBlackRoot(rebalanceAfterInsert(root, withTestNode), withTestNode);
 
       expect(fixed.color).toBe('black');
       expect(inOrderKeys(fixed)).toEqual([5, 10, 15]);
       assertSizes(fixed);
     });
 
-    it('fixInsert keeps sorted order, subtree sizes, and black root through mixed insertions', () => {
+    it('insertWithPath keeps sorted order, subtree sizes, and black root through mixed insertions', () => {
       let root: TestNode | null = null;
       const keys = [10, 5, 15, 2, 7, 12, 20, 1, 3, 6, 8, 11, 13];
 

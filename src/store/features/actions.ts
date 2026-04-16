@@ -159,8 +159,13 @@ export const DocumentActions = {
   },
 
   /**
-   * Create an evict chunk action.
-   * @param chunkIndex - Index of the chunk to evict
+   * Create an evict-chunk action.
+   *
+   * Dispatching this action removes the chunk's text from the piece-table add-buffer.
+   * Any subsequent attempt to read text from the evicted range will throw at runtime.
+   * See {@link EvictChunkAction} for the full eviction contract.
+   *
+   * @param chunkIndex - Zero-based index of the chunk to evict
    */
   evictChunk(chunkIndex: number): EvictChunkAction {
     return Object.freeze({ type: 'EVICT_CHUNK', chunkIndex });

@@ -9,7 +9,7 @@ import {
   createHistoryChangeEvent,
   createSaveEvent,
   createDirtyChangeEvent,
-  getAffectedRange,
+  getAffectedRanges,
 } from '../store/features/events.ts';
 
 export const events = {
@@ -19,5 +19,5 @@ export const events = {
   createHistoryChangeEvent,
   createSaveEvent,
   createDirtyChangeEvent,
-  getAffectedRange,
+  getAffectedRanges,
 } as const;

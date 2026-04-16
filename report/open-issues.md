@@ -1,71 +1,87 @@
 # Open Issues and Improvements
 
-Updated 2026-04-11. Resolved issues removed; new issues from all reports added.
+Updated 2026-04-16. Resolved issues removed; new issues from all reports added.
 Items marked *(acknowledged — not fixing)* have a documented rationale for deferral and are included for completeness.
 
 ---
 
 ## Architecture / Design
 
-### #001 — No invariant document for core structures
+### #001 — No invariant document for core structures *(resolved 2026-04-16)*
 
-No concise invariant reference exists for piece table subtree fields, line index mode guarantees, or reconciliation invariants. Invariant drift risk grows as the codebase evolves.
+Created `docs/invariants.md` capturing:
+- Piece table subtree field invariants (`subtreeLength`, `subtreeAddLength`, RB invariants, immutability, chunk ordering)
+- Line index mode guarantees (`'eager'` vs `'lazy'` `documentOffset` nullability, `subtreeByteLength` accuracy, `lineCount` accuracy)
+- Reconciliation lifecycle invariants (`rebuildPending` ↔ `dirtyRanges.length > 0`, `lastReconciledVersion` monotonicity, dirty range merge rules, sentinel semantics, `rebuildLineIndex` `maxDirtyRanges` preservation)
+- `HistoryChange` byte-length invariant and version invariants
 
 **Source:** Report 1, §6 D4
 
 ---
 
-### #002 — No benchmark harness
+### #002 — No benchmark harness *(resolved 2026-04-16)*
 
-No benchmark harness for large-document edits, mixed line endings, or reconciliation thresholds. Performance confidence rests entirely on functional tests. The cost algebra annotations (`$prove`, `$lift`, etc.) are documentation only — no runtime or automated benchmark catches a false claim.
+Created `src/benchmarks/bench.ts` — a standalone Node.js benchmark harness runnable via `npm run bench`. Covers:
+- Large-document initial load (10 k lines)
+- 1 000 sequential single-char inserts into a 5 k-line document
+- 200 CRLF inserts into an LF document (exercises the rebuild-on-CRLF path)
+- 500 inserts + 500 consecutive undos
+- `reconcileNow` after 200 lazy inserts (2 k-line doc)
+- 10 000 `getLineStartOffset` lookups on a 50 k-line document
+
+Each benchmark reports median wall-clock time and fails with `process.exit(1)` if it exceeds a soft threshold (10× expected baseline).
 
 **Source:** Report 1, §8 Impl3; Report 4 (full), §6 I4
 
 ---
 
-### #003 — `reconcileNow` bumps `state.version`; background reconciliation does not
+### #003 — `reconcileNow` bumps `state.version`; background reconciliation does not *(resolved 2026-04-16)*
 
-`reconcileNow()` increments `state.version`; background reconciliation and `getEagerSnapshot()` leave it unchanged. Two consumers can observe equal document content but different version numbers depending on which reconciliation path ran. Any consumer diffing `state.version` will see spurious bumps from `reconcileNow`. The background path's "version-neutral" rationale is stronger (resolving offsets is content-neutral), so `reconcileNow` should stop bumping version; callers that need to re-render should compare line index state, not version.
+`reconcileNow()` no longer increments `state.version`. It passes `state.version` (unchanged) to `reconcileFull` and returns the reconciled state without bumping the version counter. Version semantics are now consistent: only content-modifying actions increment the version. (`src/store/features/store.ts`)
 
 **Source:** Report 4 (full), §5 P1, §6 I1
 
 ---
 
-### #004 — Eager reconciliation before every undo/redo is O(n)
+### #004 — Eager reconciliation before every undo/redo is O(n) *(resolved 2026-04-16)*
 
-`historyUndo` and `historyRedo` call `reconcileFull` once before applying changes. For large files this is a performance cliff for rapid undo sequences. An incremental approach — resolving only the specific byte offsets needed for each change (O(k) where k = changed lines) — would avoid the full rebuild.
+`historyUndo` and `historyRedo` now call `reconcileRangeForChanges` instead of `reconcileFull`. The helper computes the union of line ranges touched by the history entry's changes (via `findLineAtPosition`, O(log n)) and reconciles only that window. Falls back to `reconcileFull` only when a sentinel dirty range is present. (`src/store/features/history.ts`, `src/store/features/edit.ts`)
 
 **Source:** Report 3, §6 I1
 
 ---
 
-### #005 — Background reconciliation has no back-pressure
+### #005 — Background reconciliation has no back-pressure *(resolved 2026-04-16)*
 
-`scheduleReconciliation` relies on `reconcileIfCurrent` to detect staleness, but if edits arrive faster than reconciliation runs, the dirty range array grows until the sentinel kicks in at 32 entries. There is no explicit throttling or priority mechanism. Exposing a `reconcilePriority` signal or making the sentinel threshold configurable would give consumers control.
+Added `maxDirtyRanges?: number` to `DocumentStoreConfig` (default `32`). The value is stored on `LineIndexState.maxDirtyRanges` and threaded through all three internal `mergeDirtyRanges` call sites in `lineIndexInsertLazy` and `lineIndexDeleteLazy`. Callers can now lower the threshold for memory-constrained environments or raise it to defer reconciliation longer before collapsing to a sentinel. (`src/types/state.ts`, `src/store/core/line-index.ts`, `src/store/core/state.ts`)
 
 **Source:** Report 3, §6 I2
 
 ---
 
-### #006 — `reducer.ts` and `store.ts` are large monoliths
+### #006 — `reducer.ts` and `store.ts` are large monoliths *(resolved 2026-04-16)*
 
-`reducer.ts` (1168 lines) handles position validation, piece-table ops, line-index strategy dispatch, CRLF edge case detection, history coalescing, undo, redo, transaction reduction, selection computation, remote change application, and chunk loading — mostly independent concerns. Extracting `applyEdit`, `historyPush`, `applyHistoryUndo`, and `applyHistoryRedo` as pure functions into separate files would keep `reducer.ts` as an orchestrator only.
+`reducer.ts` reduced from 1318 lines to 614 lines. Extracted:
+- `src/store/features/edit.ts` (675 lines) — exports `applyEdit`, `applyChange`, `applyInverseChange`, `reconcileRangeForChanges`, and all edit-pipeline helpers (`validatePosition`, `validateRange`, `pieceTableInsert`, `pieceTableDelete`, `getTextRange`, `historyPush`, `makeInsertChange`, `makeDeleteChange`, `makeReplaceChange`, etc.)
+- `src/store/features/history.ts` extended — exports `historyUndo`, `historyRedo` (imports `applyChange`/`applyInverseChange` from `edit.ts` to avoid circular dependency)
+
+`reducer.ts` is now an orchestrator that maps `DocumentAction` variants to the correct pipeline function.
 
 **Source:** Report 3, §6 I3
 
 ---
 
-### #007 — `line-index.ts` is a 2000+ line monolith
+### #007 — `line-index.ts` is a 2000+ line monolith *(resolved 2026-04-16)*
 
-`reconcileViewport`, `reconcileRange`, and `mergeDirtyRanges` are the most algorithmically complex functions in the codebase and are embedded in a 2254-line file. Extracting them into `store/core/reconcile.ts` would improve navigability and allow independent testing.
+`line-index.ts` reduced from 2291 lines to 1875 lines. Created `src/store/core/reconcile.ts` (471 lines) containing `mergeDirtyRanges`, `reconcileRange`, `reconcileFull`, `reconcileViewport`, and `ReconciliationConfig`. `line-index.ts` imports all five from `reconcile.ts` and re-exports them to preserve its public API unchanged.
 
 **Source:** Report 3, §8 Impl4
 
 ---
 
-### #008 — Chunk eviction semantics are undocumented
+### #008 — Chunk eviction semantics are undocumented *(resolved 2026-04-16)*
 
-`EVICT_CHUNK` is implemented, but what happens when caller code tries to access text from an evicted chunk is not documented at the public API layer. `getBuffer` throws `'Chunk N is not loaded'` at runtime. Using chunk mode without understanding this can produce opaque errors. The eviction contract (which operations are safe after eviction, and what the caller must do before evicting modified chunks) should be captured in JSDoc on `EvictChunkAction` and `EVICT_CHUNK`.
+Added comprehensive JSDoc to `EvictChunkAction` in `src/types/actions.ts` and `evictChunk()` in `src/store/features/actions.ts`. The documentation covers: which operations are safe after eviction, what the caller must do before evicting modified chunks (check `hasAddPiecesInRange`), the runtime error thrown by `getBuffer('Chunk N is not loaded')`, and the line-index side-cache restoration behaviour for pre-declared chunk metadata.
 
 **Source:** Report 4 (full), §6 I5
 
@@ -99,17 +115,17 @@ Not fixing: removing the phantom from `LineIndexNode` would weaken the type syst
 
 ---
 
-### #011 — `HistoryChange.byteLength` invariant unprotected at construction
+### #011 — `HistoryChange.byteLength` invariant unprotected at construction *(resolved 2026-04-16)*
 
-`HistoryInsertChange` and `HistoryDeleteChange` carry both `text: string` and `byteLength: ByteLength`. These must satisfy `byteLength === utf8ByteLength(text)`. If a future construction site diverges (e.g. by passing the wrong `byteLength` value), undo/redo byte offsets will be silently wrong. A factory function that derives `byteLength` from `text` (or validates consistency) would enforce the invariant at the type level.
+All `HistoryInsertChange`, `HistoryDeleteChange`, and `HistoryReplaceChange` objects are now created exclusively through `makeInsertChange`, `makeDeleteChange`, and `makeReplaceChange` factory functions in `src/store/features/edit.ts`. Each factory derives `byteLength` from `textEncoder.encode(text).byteLength` rather than accepting it as a parameter, making divergence impossible. All inline object literals in `applyEdit` and `coalesceChanges` have been replaced with factory calls.
 
 **Source:** Report 3, §7 T2
 
 ---
 
-### #012 — `DocumentStoreConfig.lineEnding` not enforced on insert
+### #012 — `DocumentStoreConfig.lineEnding` not enforced on insert *(resolved 2026-04-16)*
 
-The `lineEnding` metadata field records the document's intended line ending, but the insert path applies no normalization. Text with mismatched line endings can be inserted without any warning or coercion. A normalization layer (or at least a validation warning) in the insert path would prevent silent line-ending drift.
+Added opt-in line-ending normalization via `normalizeInsertedLineEndings?: boolean` in `DocumentStoreConfig` (default `false`). When enabled, the INSERT and REPLACE handlers in `documentReducer` call `normalizeLineEndings(text, state.metadata.lineEnding)` before passing text to `applyEdit`. Normalization handles all three modes: `'lf'` (CRLF → LF, lone CR → LF), `'crlf'` (lone CR → LF then lone LF → CRLF), `'cr'` (CRLF → CR, lone LF → CR). Defaults to `false` to avoid breaking existing callers that intentionally insert mixed line endings. (`src/types/state.ts`, `src/store/core/state.ts`, `src/store/features/reducer.ts`)
 
 **Source:** Report 3, §6 I4
 
@@ -139,64 +155,49 @@ Not fixing: coordinating invalidation across every lazy tree mutation (`insertLi
 
 ## Implementations
 
-### #015 — `findNewlineBytePositions` allocates `Uint8Array` on every call (hot path)
+### #015 — `findNewlineBytePositions` allocates `Uint8Array` on every call (hot path) *(resolved 2026-04-16)*
 
-```ts
-const bytes = textEncoder.encode(text);  // allocation on every insert
-```
-
-`\r` (0x0D) and `\n` (0x0A) are single-byte ASCII and never appear in UTF-8 continuation bytes, so positions can be found via a direct `charCodeAt` scan, avoiding the allocation entirely. Computing `byteLength` still requires a UTF-8 encode but can be separated from the newline scan (or computed from `text.length` + surrogate-pair count for ASCII-heavy documents).
+Replaced `textEncoder.encode(text)` scan with a direct `charCodeAt` loop. The loop accumulates UTF-8 byte widths using the standard 1/2/3/4-byte rules (with surrogate-pair detection for code points > U+FFFF) and records newline byte positions inline — no `Uint8Array` allocation. Total byte length is returned as a by-product of the same pass. (`src/store/core/line-index.ts`)
 
 **Source:** Report 3, §8 Impl1 (`src/store/core/line-index.ts:56`)
 
 ---
 
-### #016 — `fixInsert` is O(n) and still exported
+### #016 — `fixInsert` is O(n) and still exported *(resolved 2026-04-16)*
 
-`rb-tree.ts` exports both `fixInsert` (O(n), full-tree traversal) and `fixInsertWithPath` (O(log n), path-only). Any caller that imports `fixInsert` silently gets O(n) per insert, making inserts into large documents O(n log n) total. `fixInsert` should be deprecated (or its export removed) with callers migrated to `fixInsertWithPath`.
+`fixInsert` changed from `export function` to `function` (unexported). Added a `@deprecated` JSDoc noting that callers should use `fixInsertWithPath` instead. Added `void fixInsert;` to suppress the unused-symbol warning. The `rb-tree.test.ts` import of `fixInsert` was removed; the relevant test now exercises `rebalanceAfterInsert` + `ensureBlackRoot` directly. (`src/store/core/rb-tree.ts`, `src/store/core/rb-tree.test.ts`)
 
 **Source:** Report 4 (full), §5 P2 (`src/store/core/rb-tree.ts:201`)
 
 ---
 
-### #017 — `getAffectedRange` for `APPLY_REMOTE` spans the full change extent
+### #017 — `getAffectedRange` for `APPLY_REMOTE` spans the full change extent *(resolved 2026-04-16)*
 
-If remote changes are non-contiguous (e.g. insert at byte 0 and insert at byte 10000), `getAffectedRange` reports `[0, 10000+]` — a single range covering the full extent. This makes the `content-change` event imprecise for consumers trying targeted re-renders. Emitting per-change ranges, or a list of disjoint ranges, would allow consumers to skip unaffected regions.
+Renamed `getAffectedRange` → `getAffectedRanges`. Return type changed from `readonly [ByteOffset, ByteOffset]` to `readonly (readonly [ByteOffset, ByteOffset])[]`. For single-change actions (INSERT, DELETE, REPLACE) a single-element array is returned. For `APPLY_REMOTE`, one `[start, end)` range is returned per change — no bounding-box merge. `ContentChangeEvent.affectedRange` → `affectedRanges`. Updated all consumers: `src/store/features/events.ts`, `src/store/features/store.ts`, `src/api/events.ts`, `src/store/index.ts`, `src/types/store.ts`, `src/store/features/events.test.ts`.
 
 **Source:** Report 4 (full), §5 P5 (`src/store/features/events.ts`)
 
 ---
 
-### #018 — `notifyListeners` allocates `Array.from(listeners)` on every notification
+### #018 — `notifyListeners` allocates `Array.from(listeners)` on every notification *(resolved 2026-04-16)*
 
-```ts
-const currentListeners = Array.from(listeners);
-```
+Replaced `Set<StoreListener>` with `StoreListener[]` and a copy-on-write pattern. `subscribe` and `unsubscribe` clone the array (new reference) only when called during an active notification (`notifying === true`); otherwise they mutate in place. `notifyListeners` iterates the array directly — no `Array.from()` allocation. (`src/store/features/store.ts`)
 
-This is O(L) per notification and allocates a new array on every state change. For high-frequency dispatch (key-per-character edits) this creates GC pressure. The snapshot is needed to handle mid-notify unsubscription; the `notifying` re-entrancy guard handles recursive calls separately. A copy-on-write listeners set (duplicated only when a subscription change occurs mid-notify) would eliminate the per-notification allocation for the common case.
-
-**Source:** Report 4 (full), §5 P6; Report 1, §8 Impl (partial fix 2026-03-26) (`src/store/features/store.ts:116`)
+**Source:** Report 4 (full), §5 P6; Report 1, §8 Impl (`src/store/features/store.ts:116`)
 
 ---
 
-### #019 — `scheduleReconciliation` 200ms `setTimeout` fallback accumulates in Node.js
+### #019 — `scheduleReconciliation` 200ms `setTimeout` fallback accumulates in Node.js *(resolved 2026-04-16)*
 
-For test environments and SSR, the 200ms timer can fire after the test has asserted, causing unexpected async activity and affecting teardown timing. A `reconcileMode: 'idle' | 'sync' | 'none'` option in `DocumentStoreConfig` would give consumers control without patching the global.
+Added `reconcileMode?: 'idle' | 'sync' | 'none'` to `DocumentStoreConfig` (default `'idle'`). In `scheduleReconciliation`: `'none'` returns immediately (no scheduling), `'sync'` calls `reconcileFull` inline before returning, `'idle'` preserves the existing `requestIdleCallback` + 200ms `setTimeout` path. The mode is stored in the store closure and checked on every `scheduleReconciliation` call. (`src/types/state.ts`, `src/store/core/state.ts`, `src/store/features/store.ts`)
 
 **Source:** Report 4 (full), §8 I14 (`src/store/features/store.ts`)
 
 ---
 
-### #020 — `GrowableBuffer` shared-mutation contract needs a dev-mode assertion
+### #020 — `GrowableBuffer` shared-mutation contract needs a dev-mode assertion *(resolved 2026-04-16)*
 
-The class JSDoc describes the invariant (old snapshots are safe only if access stays within their own `length` field), but there is no runtime check to catch misuse in development. A debug-mode bounds check in `subarray()` would catch callers reading `buffer.bytes.length` instead of `buffer.length`:
-
-```ts
-// Development only:
-if (start >= this.length || end > this.length) {
-  throw new Error('GrowableBuffer: out-of-bounds read');
-}
-```
+Added a `process.env.NODE_ENV !== 'production'` guard at the top of `subarray()` that throws `GrowableBuffer: out-of-bounds read [${start}, ${end}) exceeds valid length ${this.length}` when `start < 0` or `end > this.length`. No impact on production bundles (tree-shaken by Vite). (`src/store/core/growable-buffer.ts`)
 
 **Source:** Report 4 (full), §8 I15 (`src/store/core/growable-buffer.ts`)
 

@@ -292,6 +292,13 @@ export interface LineIndexState<M extends EvaluationMode = EvaluationMode> {
   /** Whether a background rebuild is pending */
   readonly rebuildPending: M extends 'eager' ? false : boolean;
   /**
+   * Maximum number of dirty ranges before `mergeDirtyRanges` collapses them
+   * into a full-rebuild sentinel. Defaults to 32. Configurable via
+   * `DocumentStoreConfig.maxDirtyRanges` to give consumers back-pressure control
+   * over background reconciliation frequency.
+   */
+  readonly maxDirtyRanges: number;
+  /**
    * Line counts for chunks declared via DECLARE_CHUNK_METADATA but not yet loaded
    * (or currently evicted).  Keyed by chunk index.
    * `getLineCountFromIndex` sums `lineCount` with the values in this map so that
@@ -524,6 +531,8 @@ export interface DocumentMetadata {
   readonly encoding: string;
   /** Line ending style */
   readonly lineEnding: 'lf' | 'crlf' | 'cr';
+  /** When true, inserted text is normalized to match `lineEnding` */
+  readonly normalizeInsertedLineEndings: boolean;
   /** Whether document has unsaved changes */
   readonly isDirty: boolean;
   /** Last save timestamp */
@@ -571,6 +580,14 @@ export interface DocumentStoreConfig {
   encoding?: string;
   /** Line ending style (default: 'lf') */
   lineEnding?: 'lf' | 'crlf' | 'cr';
+  /**
+   * When `true`, text inserted via INSERT or REPLACE actions is normalized to
+   * match `lineEnding` before being applied. Default: `false` (no coercion).
+   *
+   * Enable this to prevent silent line-ending drift when the document has a
+   * declared `lineEnding` style. When disabled, inserts are stored verbatim.
+   */
+  normalizeInsertedLineEndings?: boolean;
   /** Timeout in ms for grouping consecutive undo entries (default: 0, disabled) */
   undoGroupTimeout?: number;
   /**
@@ -580,4 +597,25 @@ export interface DocumentStoreConfig {
    * 0 or omitted means the total size is not yet known.
    */
   totalFileSize?: number;
+  /**
+   * Maximum number of disjoint dirty line-ranges before `mergeDirtyRanges`
+   * collapses them into a full-rebuild sentinel (default: 32).
+   * Increasing this threshold delays the O(n) full rebuild at the cost of a
+   * larger dirty-range array; decreasing it triggers rebuilds sooner.
+   * Exposing this gives consumers explicit back-pressure control over
+   * background reconciliation frequency in high-throughput scenarios.
+   */
+  maxDirtyRanges?: number;
+  /**
+   * Controls when background line-index reconciliation is scheduled.
+   *
+   * - `'idle'` (default) — uses `requestIdleCallback` when available, falling
+   *   back to a 200 ms `setTimeout` in environments without rIC (e.g. Node.js).
+   *   Suitable for browser-based editors.
+   * - `'sync'` — reconciles synchronously on the same tick as the edit.
+   *   Useful in test environments where async timers interfere with assertions.
+   * - `'none'` — disables background reconciliation entirely. Callers must
+   *   trigger reconciliation explicitly via `reconcileNow()` or `getEagerSnapshot()`.
+   */
+  reconcileMode?: 'idle' | 'sync' | 'none';
 }
