@@ -588,7 +588,6 @@ describe("Piece Table Operations", () => {
   describe("RB tree properties after insert (path-based fixInsert)", () => {
     function verifyRBProperties(
       node: ReturnType<typeof collectPieces>[0] | null,
-      visited: Set<any> = new Set(),
     ): { blackHeight: number; valid: boolean } {
       if (node === null) return { blackHeight: 1, valid: true };
 
@@ -600,8 +599,8 @@ describe("Piece Table Operations", () => {
         }
       }
 
-      const leftResult = verifyRBProperties(node.left as any, visited);
-      const rightResult = verifyRBProperties(node.right as any, visited);
+      const leftResult = verifyRBProperties(node.left as any);
+      const rightResult = verifyRBProperties(node.right as any);
 
       if (!leftResult.valid || !rightResult.valid) return { blackHeight: 0, valid: false };
       if (leftResult.blackHeight !== rightResult.blackHeight)

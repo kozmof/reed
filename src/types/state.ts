@@ -465,7 +465,7 @@ export const pstackPeek = <T>(s: PStack<T>): T | undefined => s?.top;
 export const pstackPop = <T>(s: NonNullable<PStack<T>>): [T, PStack<T>] => [s.top, s.rest];
 export const pstackSize = <T>(s: PStack<T>): number => s?.size ?? 0;
 export const pstackToArray = <T>(s: PStack<T>): T[] => {
-  const arr = new Array<T>(s?.size ?? 0);
+  const arr = Array.from<T>({ length: s?.size ?? 0 });
   let i = arr.length - 1;
   let cur = s;
   while (cur !== null) {
@@ -491,7 +491,7 @@ export const pstackTrimToSize = <T>(stack: PStack<T>, maxSize: number): PStack<T
   if (stack === null || stack.size <= maxSize) return stack;
   if (maxSize <= 0) return null;
   // Collect the top `maxSize` items (newest first)
-  const items: T[] = new Array(maxSize);
+  const items: T[] = Array.from({ length: maxSize });
   let cur: PStack<T> | null = stack;
   for (let i = 0; i < maxSize && cur !== null; i++) {
     items[i] = cur.top;

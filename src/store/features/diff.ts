@@ -482,7 +482,7 @@ function stringIndexToByteIndex(str: string, index: number): number {
  *   - str.slice(0, highIndex+2) contains the full pair → 4 bytes total (+1 over lone high)
  */
 function buildCharToByteMap(str: string): number[] {
-  const map = new Array<number>(str.length + 1);
+  const map = Array.from<number>({ length: str.length + 1 });
   map[0] = 0;
   let bytes = 0;
   for (let i = 0; i < str.length; i++) {

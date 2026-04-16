@@ -186,6 +186,7 @@ describe("Branded Types", () => {
 
   describe("cost boundaries", () => {
     it("should reject unwrapped callback plan", () => {
+      // eslint-disable-next-line no-constant-condition
       if (false) {
         // @ts-expect-error $prove requires a checked plan wrapper
         $prove("O(log n)", () => $pipe($lift("O(1)", [1, 2, 3]), $binarySearch(2)));
