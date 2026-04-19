@@ -18,10 +18,6 @@ The `query.*` namespace documents O(1)/O(log n) operations and `scan.*` document
 
 `createDocumentStore` mixes reconciliation lifecycle (idle callbacks, viewport tracking) with state transitions. Extracting a `ReconciliationScheduler` object would make the store easier to test and allow swapping in a synchronous scheduler in tests without `reconcileMode: 'sync'` in config.
 
-### §7.3 — `reconcileMode` default undocumented in the interface
-
-`DocumentStoreConfig` declares `reconcileMode?: 'idle' | 'sync' | 'none'` without a `@default` tag. The actual default is applied in `createDocumentStore` at `config.reconcileMode ?? 'idle'`. Adding `@default 'idle'` to the interface would surface the default in IDE hover.
-
 ### §7.4 — No factory for `SelectionRange` in char-offset units
 
 `store.selectionToCharOffsets` exists but `SET_SELECTION` accepts raw `SelectionRange[]` (byte offsets), which users commonly confuse with char offsets. A factory `position.selectionRange(charAnchor, charHead, state)` would guide users to the correct unit.
