@@ -44,9 +44,9 @@ import {
 import { historyUndo, historyRedo } from "./history.ts";
 
 // Regex patterns used for line-ending normalisation.
-const CRLF_RE = /\r\n/g;
-const LONE_CR_RE = /\r(?!\n)/g;
-const LONE_LF_RE = /(?<!\r)\n/g;
+const CRLF_RE = /\r\n/gu;
+const LONE_CR_RE = /\r(?!\n)/gu;
+const LONE_LF_RE = /(?<!\r)\n/gu;
 
 /**
  * Normalize line endings in `text` to match `lineEnding`.
@@ -255,9 +255,12 @@ function removeChunkPiecesFromTree(
     const leftAdd = left?.subtreeAddLength ?? 0;
     const rightAdd = right?.subtreeAddLength ?? 0;
     const selfAdd = src.bufferType === "add" ? src.length : 0;
+    // Color leaves red so subsequent inserts have RB slack; internal nodes black.
+    // All paths from root to null pass through the same black count because the
+    // tree is a perfectly-balanced median split, so no consecutive reds are possible.
     return Object.freeze({
       ...src,
-      color: "black" as const,
+      color: (left === null && right === null ? "red" : "black") as "red" | "black",
       left,
       right,
       subtreeLength: src.length + leftLen + rightLen,

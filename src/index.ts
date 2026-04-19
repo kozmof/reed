@@ -35,6 +35,7 @@ export type {
   LineIndexState,
   EvaluationMode,
   DirtyLineRange,
+  DirtyLineRangeList,
   SelectionRange,
   CharSelectionRange,
   SelectionState,

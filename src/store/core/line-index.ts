@@ -10,8 +10,8 @@
 import type {
   LineIndexNode,
   LineIndexState,
-  DirtyLineRange,
   DirtyLineRangeEntry,
+  DirtyLineRangeList,
   EvaluationMode,
 } from "../../types/state.ts";
 import { END_OF_DOCUMENT } from "../../types/state.ts";
@@ -98,10 +98,14 @@ function findNewlineBytePositions(text: string): { positions: number[]; byteLeng
     } else if (c < 0x800) {
       byteLen += 2;
     } else if (c >= 0xd800 && c <= 0xdbff) {
-      // High surrogate — paired with the following low surrogate: 4 bytes total
+      // High surrogate paired with the following low surrogate: 4 bytes total
       byteLen += 4;
       i++;
     } else {
+      // Lone surrogates (unpaired 0xD800–0xDBFF or any 0xDC00–0xDFFF) are
+      // counted as 3 bytes. TextEncoder.encode() also produces 3-byte sequences
+      // for lone surrogates, so the byte-length accounting here is correct for
+      // round-trip UTF-8 sizing. No additional guard is needed.
       byteLen += 3;
     }
   }
@@ -1494,16 +1498,17 @@ export function getLineRange(
  * Check if a line number falls within any dirty range.
  */
 export function isLineDirty(
-  dirtyRanges: readonly DirtyLineRange[],
+  dirtyRanges: DirtyLineRangeList,
   lineNumber: number,
 ): LinearCost<boolean> {
+  if (dirtyRanges === "full-rebuild-needed") {
+    return $proveCtx("O(n)", $lift("O(n)", true));
+  }
   return $proveCtx(
     "O(n)",
     $lift(
       "O(n)",
-      dirtyRanges.some(
-        (r) => r.kind === "sentinel" || (lineNumber >= r.startLine && lineNumber <= r.endLine),
-      ),
+      dirtyRanges.some((r) => lineNumber >= r.startLine && lineNumber <= r.endLine),
     ),
   );
 }
@@ -1512,12 +1517,15 @@ export function isLineDirty(
  * Get the cumulative offset delta for a line number.
  */
 export function getOffsetDeltaForLine(
-  dirtyRanges: readonly DirtyLineRange[],
+  dirtyRanges: DirtyLineRangeList,
   lineNumber: number,
 ): LinearCost<number> {
+  if (dirtyRanges === "full-rebuild-needed") {
+    // Delta information is lost; caller must reconcile before relying on offsets.
+    return $proveCtx("O(n)", $lift("O(n)", 0));
+  }
   let delta = 0;
   for (const range of dirtyRanges) {
-    if (range.kind === "sentinel") continue; // Sentinel has no delta info; handled by reconcileFull slow path
     if (lineNumber >= range.startLine && lineNumber <= range.endLine) {
       delta += range.offsetDelta;
     }
@@ -1547,17 +1555,14 @@ function createDirtyRange(
  * Ranges that span the insertion point are split into a before-part and a shifted after-part.
  */
 function remapDirtyRangesForInsert(
-  ranges: readonly DirtyLineRange[],
+  ranges: DirtyLineRangeList,
   insertionLine: number,
   insertedCount: number,
-): readonly DirtyLineRange[] {
+): DirtyLineRangeList {
+  if (ranges === "full-rebuild-needed") return "full-rebuild-needed";
   if (ranges.length === 0 || insertedCount === 0) return ranges;
-  const result: DirtyLineRange[] = [];
+  const result: DirtyLineRangeEntry[] = [];
   for (const range of ranges) {
-    if (range.kind === "sentinel") {
-      result.push(range);
-      continue;
-    }
     const { startLine: s, endLine: e, offsetDelta: d } = range;
     if (e < insertionLine + 1) {
       // Entirely at or before insertionLine — indices unchanged
@@ -1603,18 +1608,15 @@ function remapDirtyRangesForInsert(
  * lines deleteZoneEnd+1..N shift down by (deleteZoneEnd - deleteZoneStart + 1).
  */
 function remapDirtyRangesForDelete(
-  ranges: readonly DirtyLineRange[],
+  ranges: DirtyLineRangeList,
   deleteZoneStart: number,
   deleteZoneEnd: number,
-): readonly DirtyLineRange[] {
+): DirtyLineRangeList {
+  if (ranges === "full-rebuild-needed") return "full-rebuild-needed";
   const deletedCount = deleteZoneEnd - deleteZoneStart + 1;
   if (ranges.length === 0 || deletedCount <= 0) return ranges;
-  const result: DirtyLineRange[] = [];
+  const result: DirtyLineRangeEntry[] = [];
   for (const range of ranges) {
-    if (range.kind === "sentinel") {
-      result.push(range);
-      continue;
-    }
     const { startLine: s, endLine: e, offsetDelta: d } = range;
     // Before zone: keep s..min(e, deleteZoneStart-1) unchanged
     if (s < deleteZoneStart) {
@@ -1806,12 +1808,15 @@ function insertLinesAtPositionLazy(
     byteLength, // Offset delta
   );
 
-  const mergedRanges = mergeDirtyRanges([...remappedRanges, newDirtyRange], state.maxDirtyRanges);
+  const mergedRanges: DirtyLineRangeList =
+    remappedRanges === "full-rebuild-needed"
+      ? "full-rebuild-needed"
+      : mergeDirtyRanges([...remappedRanges, newDirtyRange], state.maxDirtyRanges);
 
   return withLineIndexState(state, {
     root: result.root,
     lineCount: result.lineCount,
-    dirtyRanges: Object.freeze(mergedRanges),
+    dirtyRanges: mergedRanges,
     rebuildPending: true,
   });
 }
@@ -1930,12 +1935,15 @@ function deleteLineRangeLazy(
   // Mark lines after deletion as dirty
   const newDirtyRange = createDirtyRange(startLine + 1, END_OF_DOCUMENT, -deleteLength);
 
-  const mergedRanges = mergeDirtyRanges([...remappedRanges, newDirtyRange], state.maxDirtyRanges);
+  const mergedRanges: DirtyLineRangeList =
+    remappedRanges === "full-rebuild-needed"
+      ? "full-rebuild-needed"
+      : mergeDirtyRanges([...remappedRanges, newDirtyRange], state.maxDirtyRanges);
 
   return withLineIndexState(state, {
     root: newState.root,
     lineCount: newState.lineCount,
-    dirtyRanges: Object.freeze(mergedRanges),
+    dirtyRanges: mergedRanges,
     rebuildPending: true,
   });
 }

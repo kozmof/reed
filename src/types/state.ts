@@ -266,6 +266,23 @@ export interface DirtyLineRangeSentinel {
 export type DirtyLineRange = DirtyLineRangeEntry | DirtyLineRangeSentinel;
 
 /**
+ * The set of dirty line ranges for a lazy line index, or the string literal
+ * `'full-rebuild-needed'` when delta information has been lost (too many ranges
+ * were accumulated) and a full O(n) tree walk is required.
+ *
+ * Prefer this type over `readonly DirtyLineRange[]` in new code — the list-level
+ * sentinel makes the full-rebuild state unmistakable and prevents accidentally
+ * treating a sentinel as a range entry.
+ *
+ * @example
+ * ```ts
+ * if (dirtyRanges === 'full-rebuild-needed') { triggerFullRebuild(); }
+ * else { for (const r of dirtyRanges) { applyDelta(r); } }
+ * ```
+ */
+export type DirtyLineRangeList = readonly DirtyLineRangeEntry[] | "full-rebuild-needed";
+
+/**
  * Sentinel value for DirtyLineRange.endLine meaning "to end of document".
  * Use this constant instead of Number.MAX_SAFE_INTEGER directly so the intent
  * is explicit and all sites share a single reference point.
@@ -288,7 +305,7 @@ export interface LineIndexState<M extends EvaluationMode = EvaluationMode> {
   /** Total line count (cached for O(1) access) */
   readonly lineCount: number;
   /** Dirty ranges awaiting background reconciliation */
-  readonly dirtyRanges: M extends "eager" ? readonly [] : readonly DirtyLineRange[];
+  readonly dirtyRanges: M extends "eager" ? readonly [] : DirtyLineRangeList;
   /** Version number of last full reconciliation */
   readonly lastReconciledVersion: number;
   /** Whether a background rebuild is pending */

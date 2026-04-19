@@ -180,7 +180,7 @@ export interface PieceLocation {
   /** Document offset where this piece starts */
   pieceStartOffset: number;
   /** Path from root to this node (for tree modifications) */
-  path: PathEntry[];
+  path: readonly PathEntry[];
 }
 
 /**
@@ -188,8 +188,8 @@ export interface PieceLocation {
  * Used for immutable tree modifications with path copying.
  */
 export interface PathEntry {
-  node: PieceNode;
-  direction: "left" | "right";
+  readonly node: PieceNode;
+  readonly direction: "left" | "right";
 }
 
 // =============================================================================
@@ -615,7 +615,11 @@ function insertWithSplit(
  * Instead of traversing the entire tree O(n), we walk back up the path
  * that was built during findPieceAtPosition, creating only O(log n) new nodes.
  */
-function replacePieceInTree(path: PathEntry[], oldNode: PieceNode, newNode: PieceNode): PieceNode {
+function replacePieceInTree(
+  path: readonly PathEntry[],
+  oldNode: PieceNode,
+  newNode: PieceNode,
+): PieceNode {
   // Start with the new node, preserving the old node's children
   let current = withPieceNode(newNode, {
     left: oldNode.left,
@@ -1126,6 +1130,7 @@ export function getLineLinearScan(state: PieceTableState, lineNumber: number): L
 /**
  * Find the byte offsets for a specific line.
  * Returns {start, end} or null if line doesn't exist.
+ * Uses pieceTableInOrder with early exit to avoid collecting all pieces upfront.
  */
 function findLineOffsets(
   state: PieceTableState,
@@ -1135,43 +1140,35 @@ function findLineOffsets(
 
   return $prove(
     "O(n)",
-    $checked(() =>
-      $pipe(
-        $from(collectPieces(state.root)),
-        $map((pieces) => {
-          let currentLine = 0;
-          let lineStartOffset = 0;
-          let currentOffset = 0;
+    $checked(() => {
+      let currentLine = 0;
+      let lineStartOffset = 0;
+      let result: { start: ByteOffset; end: ByteOffset } | null = null;
 
-          for (const piece of pieces) {
-            const buffer = getPieceBuffer(state, piece);
-            for (let i = 0; i < piece.length; i++) {
-              // Check for newline byte (0x0A)
-              if (buffer[piece.start + i] === 0x0a) {
-                if (currentLine === lineNumber) {
-                  // Found the end of target line (include newline)
-                  return {
-                    start: byteOffset(lineStartOffset),
-                    end: byteOffset(currentOffset + i + 1),
-                  };
-                }
-                currentLine++;
-                lineStartOffset = currentOffset + i + 1;
-              }
+      pieceTableInOrder(state.root, (piece, pieceDocOffset) => {
+        const buffer = getPieceBuffer(state, piece);
+        for (let i = 0; i < piece.length; i++) {
+          if (buffer[piece.start + i] === 0x0a) {
+            if (currentLine === lineNumber) {
+              result = {
+                start: byteOffset(lineStartOffset),
+                end: byteOffset(pieceDocOffset + i + 1),
+              };
+              return true; // early exit from pieceTableInOrder
             }
-
-            currentOffset += piece.length;
+            currentLine++;
+            lineStartOffset = pieceDocOffset + i + 1;
           }
+        }
+      });
 
-          // Handle last line (no trailing newline)
-          if (currentLine === lineNumber) {
-            return { start: byteOffset(lineStartOffset), end: byteOffset(state.totalLength) };
-          }
+      // Handle last line (no trailing newline)
+      if (result === null && currentLine === lineNumber) {
+        result = { start: byteOffset(lineStartOffset), end: byteOffset(state.totalLength) };
+      }
 
-          return null;
-        }),
-      ),
-    ),
+      return $lift("O(n)", result);
+    }),
   );
 }
 
@@ -1257,14 +1254,17 @@ export function compactAddBuffer(
           return $pipe(
             $from(collectPieces(state.root)),
             $map((pieces) => {
-              // Single pass: build offset map and copy live data simultaneously
-              const offsetMap = new Map<number, number>();
+              // Build an ordered list of {newStart} entries for "add" pieces,
+              // indexed by their traversal order. Using an indexed array (rather
+              // than a Map keyed by piece.start) avoids collisions when two
+              // different add pieces share the same start value after splits.
+              const addOffsets: Array<{ newStart: number }> = [];
               const newBuffer = new Uint8Array(Math.max(stats.addBufferUsed * 2, 1024));
               let writeOffset = 0;
 
               for (const piece of pieces) {
                 if (piece.bufferType === "add") {
-                  offsetMap.set(piece.start, writeOffset);
+                  addOffsets.push({ newStart: writeOffset });
                   newBuffer.set(
                     state.addBuffer.subarray(piece.start, piece.start + piece.length),
                     writeOffset,
@@ -1273,8 +1273,10 @@ export function compactAddBuffer(
                 }
               }
 
-              // Rebuild tree with updated offsets
-              const newRoot = rebuildTreeWithNewOffsets(state.root, offsetMap);
+              // Rebuild tree with updated offsets, consuming addOffsets in the
+              // same in-order traversal that collectPieces used.
+              const counter = { index: 0 };
+              const newRoot = rebuildTreeWithNewOffsets(state.root, addOffsets, counter);
 
               return Object.freeze({
                 ...state,
@@ -1291,29 +1293,31 @@ export function compactAddBuffer(
 
 /**
  * Rebuild tree with updated add buffer offsets.
+ * `addOffsets` is consumed in in-order traversal order (matching collectPieces),
+ * so the shared `counter` must be passed by reference across recursive calls.
  */
 function rebuildTreeWithNewOffsets(
   node: PieceNode | null,
-  offsetMap: Map<number, number>,
+  addOffsets: Array<{ newStart: number }>,
+  counter: { index: number },
 ): PieceNode | null {
   if (node === null) return null;
 
-  const newLeft = rebuildTreeWithNewOffsets(node.left, offsetMap);
-  const newRight = rebuildTreeWithNewOffsets(node.right, offsetMap);
+  const newLeft = rebuildTreeWithNewOffsets(node.left, addOffsets, counter);
 
+  // Process this node (in-order: left subtree done, now self)
+  let updatedNode: PieceNode = node;
   if (node.bufferType === "add") {
-    const newStart = offsetMap.get(node.start);
-    if (newStart !== undefined && newStart !== node.start) {
-      return withPieceNode(node, {
-        start: byteOffset(newStart),
-        left: newLeft,
-        right: newRight,
-      });
+    const entry = addOffsets[counter.index++];
+    if (entry !== undefined && entry.newStart !== node.start) {
+      updatedNode = withPieceNode(node, { start: byteOffset(entry.newStart) });
     }
   }
 
-  if (newLeft !== node.left || newRight !== node.right) {
-    return withPieceNode(node, { left: newLeft, right: newRight });
+  const newRight = rebuildTreeWithNewOffsets(updatedNode.right, addOffsets, counter);
+
+  if (newLeft !== node.left || newRight !== node.right || updatedNode !== node) {
+    return withPieceNode(updatedNode, { left: newLeft, right: newRight });
   }
 
   return node;
@@ -1429,9 +1433,7 @@ export interface DocumentChunk {
  * @yields DocumentChunk objects
  *
  * @remarks
- * `collectPieces` (O(n) allocation) runs eagerly at call time — before the
- * first `next()` call on the returned generator. Callers that hold the
- * generator and iterate later will not trigger deferred allocation.
+ * Pieces are traversed lazily — no upfront O(n) array allocation.
  *
  * @example
  * ```typescript
@@ -1451,56 +1453,79 @@ export function getValueStream(
     end = state.totalLength,
   } = options;
 
-  // Collect pieces eagerly here (O(n)) — before the generator is iterated.
-  const pieces =
-    state.root === null || start >= end || start < 0 ? null : collectPieces(state.root);
+  if (state.root === null || start >= end || start < 0) {
+    return (function* () {})();
+  }
 
-  return streamChunks(state, pieces, chunkSize, start, end);
+  return streamChunks(state, inOrderPieces(state.root), chunkSize, start, end);
+}
+
+/**
+ * Lazily yields (piece, docOffset) pairs in document order via an iterative
+ * in-order traversal. No upfront allocation of all pieces.
+ */
+function* inOrderPieces(
+  root: PieceNode | null,
+): Generator<{ piece: PieceNode; docOffset: number }, void, undefined> {
+  if (root === null) return;
+  const nodeStack: PieceNode[] = [];
+  const offsetStack: number[] = [];
+  let currentOffset = 0;
+  let currentNode: PieceNode | null = root;
+
+  while (currentNode !== null || nodeStack.length > 0) {
+    while (currentNode !== null) {
+      nodeStack.push(currentNode);
+      offsetStack.push(currentOffset);
+      currentOffset += currentNode.left?.subtreeLength ?? 0;
+      currentNode = currentNode.left;
+    }
+    const n = nodeStack.pop()!;
+    const nOffset = offsetStack.pop()!;
+    const pieceStart = nOffset + (n.left?.subtreeLength ?? 0);
+    yield { piece: n, docOffset: pieceStart };
+    currentOffset = pieceStart + n.length;
+    currentNode = n.right;
+  }
 }
 
 function* streamChunks(
   state: PieceTableState,
-  pieces: readonly PieceNode[] | null,
+  pieceGen: Generator<{ piece: PieceNode; docOffset: number }, void, undefined>,
   chunkSize: number,
   start: number,
   end: number,
 ): Generator<DocumentChunk, void, undefined> {
-  if (pieces === null) {
-    return;
-  }
-
-  // Track position across pieces
-  let documentPosition = 0;
-  let pieceIndex = 0;
+  // Advance generator to the first piece that overlaps [start, end)
+  let currentEntry: { piece: PieceNode; docOffset: number } | null = null;
   let offsetInCurrentPiece = 0;
 
-  // Skip to start position
-  while (pieceIndex < pieces.length && documentPosition + pieces[pieceIndex].length <= start) {
-    documentPosition += pieces[pieceIndex].length;
-    pieceIndex++;
+  for (const entry of pieceGen) {
+    const pieceEnd = entry.docOffset + entry.piece.length;
+    if (pieceEnd <= start) continue; // entirely before range
+    currentEntry = entry;
+    offsetInCurrentPiece = start - entry.docOffset;
+    if (offsetInCurrentPiece < 0) offsetInCurrentPiece = 0;
+    break;
   }
 
-  if (pieceIndex < pieces.length) {
-    offsetInCurrentPiece = start - documentPosition;
-    documentPosition = start;
-  }
+  if (currentEntry === null) return;
 
-  // Build and yield chunks
+  let documentPosition = start;
   let chunkBuffer = new Uint8Array(chunkSize);
   let chunkOffset = 0;
   let chunkStartPosition = documentPosition;
 
-  while (pieceIndex < pieces.length && documentPosition < end) {
-    const piece = pieces[pieceIndex];
+  // Process pieces until we reach `end`
+  while (currentEntry !== null && documentPosition < end) {
+    const { piece } = currentEntry;
     const buffer = getPieceBuffer(state, piece);
 
-    // Calculate how much to read from this piece
     const pieceRemaining = piece.length - offsetInCurrentPiece;
     const documentRemaining = end - documentPosition;
     const chunkRemaining = chunkSize - chunkOffset;
     const bytesToRead = Math.min(pieceRemaining, documentRemaining, chunkRemaining);
 
-    // Copy to chunk buffer
     chunkBuffer.set(
       buffer.subarray(
         piece.start + offsetInCurrentPiece,
@@ -1513,14 +1538,14 @@ function* streamChunks(
     documentPosition += bytesToRead;
     offsetInCurrentPiece += bytesToRead;
 
-    // Move to next piece if we've consumed this one
+    // Advance to next piece when this one is exhausted
     if (offsetInCurrentPiece >= piece.length) {
-      pieceIndex++;
+      const next = pieceGen.next();
+      currentEntry = next.done ? null : next.value;
       offsetInCurrentPiece = 0;
     }
 
-    // Yield chunk if buffer is full or we've reached the end
-    const isLast = documentPosition >= end || pieceIndex >= pieces.length;
+    const isLast = documentPosition >= end || currentEntry === null;
     if (chunkOffset >= chunkSize || isLast) {
       yield {
         content: textDecoder.decode(chunkBuffer.subarray(0, chunkOffset)),

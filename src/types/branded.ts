@@ -55,6 +55,12 @@ type Branded<T, B> = T & Brand<B>;
  *
  * At runtime every instance is still a plain Uint8Array — no wrapper is
  * allocated. instanceof Uint8Array checks continue to work.
+ *
+ * @remarks
+ * This is a compile-time guarantee only. Callers that retain a reference to
+ * the original `Uint8Array` can still mutate the backing data at runtime,
+ * because no defensive copy is made. For true immutability, copy the buffer
+ * before dispatching: `new Uint8Array(buffer)`.
  */
 export type ReadonlyUint8Array = Readonly<Uint8Array> & {
   readonly [index: number]: number;

@@ -20,6 +20,7 @@ export type {
   DirtyLineRange,
   DirtyLineRangeEntry,
   DirtyLineRangeSentinel,
+  DirtyLineRangeList,
   EndOfDocument,
   SelectionRange,
   CharSelectionRange,

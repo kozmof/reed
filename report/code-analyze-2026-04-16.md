@@ -170,25 +170,33 @@ chunkManager.ensureLoaded(chunkIndex)
 
 **Fix applied (2026-04-16):** `deleteRange` split case (keepBefore > 0 && keepAfter > 0) now calls `fixRedViolations` on the combined node to resolve red-red violations when the original node was red. `pieceTableDelete` now enforces a black root after `deleteRange` returns. Note: full double-black propagation for black-height imbalances from deletion remains a future work item.
 
-### 5.3 `compactAddBuffer` uses a fragile offset map
+### 5.3 ~~`compactAddBuffer` uses a fragile offset map~~ ✅ Fixed
 
-`src/store/core/piece-table.ts:1183` — The offset map keyed by `piece.start` will collide if two different pieces in the tree share the same `start` value in the add buffer (which can happen after edits that produce split add pieces at the same old start). The condition `newStart !== node.start` is correct only if starts are unique; deduplication of pieces with identical starts would silently drop one remapping.
+~~`src/store/core/piece-table.ts:1183` — The offset map keyed by `piece.start` will collide if two different pieces in the tree share the same `start` value in the add buffer (which can happen after edits that produce split add pieces at the same old start). The condition `newStart !== node.start` is correct only if starts are unique; deduplication of pieces with identical starts would silently drop one remapping.~~
+
+**Fix applied (2026-04-19):** Replaced `Map<number, number>` keyed by `piece.start` with an ordered `Array<{ newStart: number }>` populated in the same in-order traversal as `collectPieces`. `rebuildTreeWithNewOffsets` now consumes entries via a shared counter, advancing one slot per "add" node visited — guaranteed to match since both use standard in-order (left, self, right) order. Collision between pieces sharing a start offset is no longer possible.
 
 ### 5.4 `withTransactionBatch` success flag set before `COMMIT`
 
 `src/store/features/store.ts:55` — `success = true` is set before `txDispatch({ type: 'TRANSACTION_COMMIT' })`. If `COMMIT` throws, the `finally` block correctly skips rollback (because `success` is already `true`). However it also skips `emergencyReset`, leaving the store in an inconsistent half-committed state with no recovery path. This is a documented trade-off but can be surprising.
 
-### 5.5 `rebalanceAfterInsert` is O(n) and deprecated, but still present
+### 5.5 ~~`rebalanceAfterInsert` is O(n) and deprecated, but still present~~ ✅ Fixed
 
-`src/store/core/rb-tree.ts:172` — `rebalanceAfterInsert` traverses the entire tree. `fixInsert` wraps it and is marked `@deprecated` but is kept alive via `void fixInsert`. Leaving dead code in a performance-sensitive core module is risky (easy to accidentally re-use).
+~~`src/store/core/rb-tree.ts:172` — `rebalanceAfterInsert` traverses the entire tree. `fixInsert` wraps it and is marked `@deprecated` but is kept alive via `void fixInsert`. Leaving dead code in a performance-sensitive core module is risky (easy to accidentally re-use).~~
 
-### 5.6 `findNewlineBytePositions` assumes `\r` and `\n` are single-byte
+**Fix applied (2026-04-19):** Removed `rebalanceAfterInsert` (exported) and `fixInsert` (private) from `rb-tree.ts`, along with the `void fixInsert` suppression comment. Updated `rb-tree.test.ts` to remove the import and replace the two tests that exercised `rebalanceAfterInsert` directly with a single `ensureBlackRoot` test that does not depend on the removed function.
 
-`src/store/core/line-index.ts:68` — The comment correctly notes this is safe for ASCII control characters in UTF-8. But there is no guard against malformed input (lone surrogates) that could produce incorrect byte-length accounting and corrupt the line index silently.
+### 5.6 ~~`findNewlineBytePositions` assumes `\r` and `\n` are single-byte~~ ✅ Documented
 
-### 5.7 `ReadonlyUint8Array` does not prevent aliased mutation
+~~`src/store/core/line-index.ts:68` — The comment correctly notes this is safe for ASCII control characters in UTF-8. But there is no guard against malformed input (lone surrogates) that could produce incorrect byte-length accounting and corrupt the line index silently.~~
 
-`src/types/branded.ts:59` — `ReadonlyUint8Array` blocks direct mutation of the dispatched buffer but does not prevent callers from holding a reference to the original `Uint8Array` and mutating it after dispatch, since `instanceof Uint8Array` is still true. This is a documentation-only guarantee.
+**Fix applied (2026-04-19):** Added an explicit comment on the `else` branch explaining that lone surrogates (unpaired 0xD800–0xDBFF or any 0xDC00–0xDFFF) are already handled correctly: they reach the `byteLen += 3` branch, which matches what `TextEncoder.encode()` produces for lone surrogates (3-byte CESU-8-like sequences). No behavior change; no additional guard is needed.
+
+### 5.7 ~~`ReadonlyUint8Array` does not prevent aliased mutation~~ ✅ Documented
+
+~~`src/types/branded.ts:59` — `ReadonlyUint8Array` blocks direct mutation of the dispatched buffer but does not prevent callers from holding a reference to the original `Uint8Array` and mutating it after dispatch, since `instanceof Uint8Array` is still true. This is a documentation-only guarantee.~~
+
+**Fix applied (2026-04-19):** Added a `@remarks` JSDoc block to `ReadonlyUint8Array` explicitly stating that this is a compile-time guarantee only, and that callers retaining a reference to the original `Uint8Array` can still mutate the backing data at runtime. Recommends `new Uint8Array(buffer)` for true immutability.
 
 ---
 
@@ -221,13 +229,17 @@ The `query.*` namespace documents O(1)/O(log n) operations and `scan.*` document
 
 ## 7. Improvement Points 2 — Types / Interfaces
 
-### 7.1 `DirtyLineRange` sentinel pattern is a footgun
+### 7.1 ~~`DirtyLineRange` sentinel pattern is a footgun~~ ✅ Fixed
 
-`DirtyLineRangeSentinel` (`kind: 'sentinel'`) is mixed into `DirtyLineRange[]`. Any code that iterates the array must check `kind` at every element. A dedicated type `DirtyLineRangeList = DirtyLineRangeEntry[] | 'full-rebuild-needed'` would make the sentinel state unmistakable and prevent accidentally treating a sentinel as a range entry.
+~~`DirtyLineRangeSentinel` (`kind: 'sentinel'`) is mixed into `DirtyLineRange[]`. Any code that iterates the array must check `kind` at every element. A dedicated type `DirtyLineRangeList = DirtyLineRangeEntry[] | 'full-rebuild-needed'` would make the sentinel state unmistakable and prevent accidentally treating a sentinel as a range entry.~~
 
-### 7.2 `PieceLocation.path` is mutable
+**Fix applied (2026-04-19):** Introduced `DirtyLineRangeList = readonly DirtyLineRangeEntry[] | 'full-rebuild-needed'` in `src/types/state.ts` and updated `LineIndexState.dirtyRanges` to use it. All sentinel productions (`[{ kind: 'sentinel' }]`) are replaced with the string literal `'full-rebuild-needed'`. All consumers (`reconcile.ts`, `line-index.ts`, `edit.ts`) now check `=== 'full-rebuild-needed'` instead of `.some(r => r.kind === 'sentinel')`, and iteration loops no longer need per-element `kind` guards. `DirtyLineRangeList` is exported from the public API. `DirtyLineRangeSentinel` and `DirtyLineRange` remain exported for backwards compatibility.
 
-`src/store/core/piece-table.ts:134` — `path: PathEntry[]` is returned from `findPieceAtPosition` as part of a `PieceLocation`. Callers could mutate this path after calling `findPieceAtPosition`, corrupting subsequent `replacePieceInTree` calls. The path should be typed `readonly PathEntry[]`.
+### 7.2 ~~`PieceLocation.path` is mutable~~ ✅ Fixed
+
+~~`src/store/core/piece-table.ts:134` — `path: PathEntry[]` is returned from `findPieceAtPosition` as part of a `PieceLocation`. Callers could mutate this path after calling `findPieceAtPosition`, corrupting subsequent `replacePieceInTree` calls. The path should be typed `readonly PathEntry[]`.~~
+
+**Fix applied (2026-04-19):** `PieceLocation.path` changed to `readonly PathEntry[]`; `PathEntry.node` and `PathEntry.direction` made `readonly`. `replacePieceInTree` parameter updated to accept `readonly PathEntry[]`. TypeScript enforces that no caller can mutate the returned path.
 
 ### 7.3 `DocumentStoreConfig.reconcileMode` default is undocumented in the interface
 
@@ -247,13 +259,17 @@ The public API exports `store.selectionToCharOffsets` (via `query` namespace) bu
 
 **Fix applied (2026-04-16):** Red-red violation from the split case is resolved with `fixRedViolations`; root black invariant is enforced in `pieceTableDelete`. Full double-black propagation for black-height imbalances after arbitrary deletions remains a future work item.
 
-### 8.2 `collectPieces` is used inside `getValueStream` eagerly before iteration
+### 8.2 ~~`collectPieces` is used inside `getValueStream` eagerly before iteration~~ ✅ Fixed
 
-`src/store/core/piece-table.ts:1372` — The docstring acknowledges this: `collectPieces` (O(n) allocation) runs at call time. For very large documents, this doubles memory: `pieces[]` + streaming output buffer simultaneously. An iterator-based in-order traversal without pre-collecting would reduce peak memory for large files.
+~~`src/store/core/piece-table.ts:1372` — The docstring acknowledges this: `collectPieces` (O(n) allocation) runs at call time. For very large documents, this doubles memory: `pieces[]` + streaming output buffer simultaneously. An iterator-based in-order traversal without pre-collecting would reduce peak memory for large files.~~
 
-### 8.3 `removeChunkPiecesFromTree` rebuilds a fully-black tree
+**Fix applied (2026-04-19):** Introduced a private `inOrderPieces(root)` generator that lazily yields `{ piece, docOffset }` pairs via iterative in-order traversal. `getValueStream` and `streamChunks` now consume this generator — no upfront array is allocated. Peak memory is reduced from O(n) + stream buffer to O(log n) stack depth + stream buffer.
 
-`src/store/features/reducer.ts:308` — The inline `buildTree` function creates all nodes with `color: 'black'`. While this preserves black-height for a perfectly balanced tree, the resulting tree may violate the red-coloring heuristic that keeps RB-trees balanced after subsequent inserts. A proper rebuild should color the root black and children red for standard balanced construction.
+### 8.3 ~~`removeChunkPiecesFromTree` rebuilds a fully-black tree~~ ✅ Fixed
+
+~~`src/store/features/reducer.ts:308` — The inline `buildTree` function creates all nodes with `color: 'black'`. While this preserves black-height for a perfectly balanced tree, the resulting tree may violate the red-coloring heuristic that keeps RB-trees balanced after subsequent inserts. A proper rebuild should color the root black and children red for standard balanced construction.~~
+
+**Fix applied (2026-04-19):** `buildTree` now colors leaf nodes (no left or right child) `'red'` and internal nodes `'black'`. For a perfectly balanced median-split tree this preserves consistent black-height while providing red slack for subsequent insertions. Subsequent `fixInsertWithPath` calls rebalance normally from this foundation.
 
 ### 8.4 ~~In-order traversal boilerplate is duplicated in `reducer.ts`~~ ✅ Fixed
 
@@ -261,13 +277,17 @@ The public API exports `store.selectionToCharOffsets` (via `query` namespace) bu
 
 **Fix applied (2026-04-16):** `pieceTableInOrder(root, visitor)` exported from `src/store/core/piece-table.ts`. `findReloadInsertionPos`, `findChunkDocumentRange`, and `hasAddPiecesInRange` in `reducer.ts` all refactored to use it, removing ~80 lines of duplicated nodeStack/offsetStack boilerplate.
 
-### 8.5 `getLineLinearScan` collects all pieces before scanning
+### 8.5 ~~`getLineLinearScan` collects all pieces before scanning~~ ✅ Fixed
 
-`src/store/core/piece-table.ts:1048` — `getLineLinearScan` collects all pieces first, then scans byte-by-byte. For documents with millions of lines, this is unavoidably O(n). However, the function could avoid `collectPieces` by using the already-available `findPieceAtPosition` to start the scan from the right piece, reducing constant factors significantly for random-line access.
+~~`src/store/core/piece-table.ts:1048` — `getLineLinearScan` collects all pieces first, then scans byte-by-byte. For documents with millions of lines, this is unavoidably O(n). However, the function could avoid `collectPieces` by using the already-available `findPieceAtPosition` to start the scan from the right piece, reducing constant factors significantly for random-line access.~~
 
-### 8.6 Module-level global regex with `/g` flag
+**Fix applied (2026-04-19):** `findLineOffsets` (internal helper for `getLineLinearScan`) now uses `pieceTableInOrder` with an early-exit visitor instead of `collectPieces`. No upfront array is allocated; the traversal stops as soon as the target line's closing newline is found. Worst-case complexity remains O(n), but best-case for early lines is O(k) where k is the byte offset of line N.
 
-`src/store/features/reducer.ts:37` — `CRLF_RE`, `LONE_CR_RE`, `LONE_LF_RE` are declared with `/g` (global flag). In ECMAScript, regexes with `/g` have internal `lastIndex` state. Although `String.prototype.replace` resets `lastIndex` before each call, using globally-scoped regex literals with `/g` in concurrent environments (Workers) can produce unexpected behavior if the regex is ever used with `exec()` in future. Using `/gu` or creating regexes per-call would be safer.
+### 8.6 ~~Module-level global regex with `/g` flag~~ ✅ Fixed
+
+~~`src/store/features/reducer.ts:37` — `CRLF_RE`, `LONE_CR_RE`, `LONE_LF_RE` are declared with `/g` (global flag). In ECMAScript, regexes with `/g` have internal `lastIndex` state. Although `String.prototype.replace` resets `lastIndex` before each call, using globally-scoped regex literals with `/g` in concurrent environments (Workers) can produce unexpected behavior if the regex is ever used with `exec()` in future. Using `/gu` or creating regexes per-call would be safer.~~
+
+**Fix applied (2026-04-19):** All three constants changed to `/gu` (Unicode + global). The `u` flag enables strict Unicode mode, making regex syntax errors parse-time failures, and ensures well-defined behaviour for accidental `exec()` usage in Worker contexts. All three patterns are syntactically valid and behaviourally unchanged under the `u` flag.
 
 ---
 

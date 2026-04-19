@@ -6,7 +6,6 @@ import {
   fixRedViolations,
   isBlack,
   isRed,
-  rebalanceAfterInsert,
   rotateLeft,
   rotateRight,
   type InsertionPathEntry,
@@ -296,37 +295,10 @@ describe("RB Tree Utilities", () => {
     });
   });
 
-  describe("rebalanceAfterInsert / ensureBlackRoot", () => {
-    it("rebalanceAfterInsert fixes deep subtree violations", () => {
-      const root = createNode(
-        20,
-        "black",
-        createNode(
-          10,
-          "black",
-          createNode(5, "red", createNode(2, "red"), null),
-          createNode(15, "black"),
-        ),
-        createNode(30, "black"),
-      );
-
-      const rebalanced = rebalanceAfterInsert(root, withTestNode);
-
-      expect(inOrderKeys(rebalanced)).toEqual([2, 5, 10, 15, 20, 30]);
-      assertNoRedRed(rebalanced);
-      assertSizes(rebalanced);
-    });
-
-    it("rebalanceAfterInsert does not force a black root", () => {
+  describe("ensureBlackRoot", () => {
+    it("ensureBlackRoot enforces a black root on a red node", () => {
       const root = createNode(10, "red", createNode(5, "black"), createNode(15, "black"));
-      const rebalanced = rebalanceAfterInsert(root, withTestNode);
-      expect(rebalanced.color).toBe("red");
-    });
-
-    it("ensureBlackRoot enforces a black root after rebalance", () => {
-      const root = createNode(10, "red", createNode(5, "black"), createNode(15, "black"));
-      // ensureBlackRoot + rebalanceAfterInsert is the equivalent of the removed fixInsert
-      const fixed = ensureBlackRoot(rebalanceAfterInsert(root, withTestNode), withTestNode);
+      const fixed = ensureBlackRoot(root, withTestNode);
 
       expect(fixed.color).toBe("black");
       expect(inOrderKeys(fixed)).toEqual([5, 10, 15]);

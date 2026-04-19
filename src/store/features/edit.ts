@@ -431,8 +431,8 @@ export function reconcileRangeForChanges(
 ): LineIndexState {
   if (!lineIndex.rebuildPending) return lineIndex;
 
-  // If the sentinel is set, we cannot do a targeted reconcile — fall back.
-  if (lineIndex.dirtyRanges.some((r) => r.kind === "sentinel")) {
+  // If 'full-rebuild-needed', delta information is lost — fall back to full reconciliation.
+  if (lineIndex.dirtyRanges === "full-rebuild-needed") {
     return reconcileFull(lineIndex, version);
   }
 

@@ -153,46 +153,6 @@ export function fixRedViolations<N extends RBNode<N>>(node: N, withNode: WithNod
   return result;
 }
 
-/**
- * Rebalance tree after insert to fix red-red violations.
- * Recursively fixes violations from leaves up to root.
- */
-export function rebalanceAfterInsert<N extends RBNode<N>>(node: N, withNode: WithNodeFn<N>): N {
-  // Fix left subtree first
-  let newLeft = node.left as N | null;
-  if (newLeft !== null) {
-    newLeft = rebalanceAfterInsert(newLeft, withNode);
-  }
-
-  // Fix right subtree
-  let newRight = node.right as N | null;
-  if (newRight !== null) {
-    newRight = rebalanceAfterInsert(newRight, withNode);
-  }
-
-  let result = node;
-  if (newLeft !== node.left || newRight !== node.right) {
-    result = withNode(node, { left: newLeft, right: newRight });
-  }
-
-  // Check for red-red violations and fix
-  return fixRedViolations(result, withNode);
-}
-
-/**
- * Complete rebalancing after insert: rebalance and ensure black root.
- *
- * @deprecated O(n) — traverses the entire tree. Use `fixInsertWithPath` (O(log n)) instead.
- * This function is kept as an internal helper; it is no longer part of the public API.
- */
-function fixInsert<N extends RBNode<N>>(root: N, withNode: WithNodeFn<N>): N {
-  return ensureBlackRoot(rebalanceAfterInsert(root, withNode), withNode);
-}
-
-// Keep a reference so tree-integrity tests can call ensureBlackRoot + rebalanceAfterInsert
-// directly without needing this wrapper.
-void fixInsert; // suppress "unused" lint warnings in strict configs
-
 // =============================================================================
 // Path-based Insert Fix (O(log n))
 // =============================================================================
