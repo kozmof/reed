@@ -6,10 +6,6 @@ Collected from all reports in `report/`. Fixed items are excluded.
 
 ## From `code-analyze-2026-04-16.md`
 
-### §5.1-c — Lazy line-index precision before reconciliation
-
-`documentOffset` can be `null` for lines updated in lazy mode. Any caller that passes a lazy `DocumentState` (not `DocumentState<'eager'>`) to functions requiring precise offsets (e.g. `getLineRange`) will get a runtime error or silently wrong data. No guard or type-level enforcement exists.
-
 ### §5.2 / §8.1 — `deleteRange`: full double-black propagation missing
 
 **Partial fix applied (2026-04-16):** Red-red violation from the split case is resolved and root black invariant is enforced. Full double-black propagation for black-height imbalances after arbitrary deletions remains a future work item.

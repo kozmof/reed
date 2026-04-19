@@ -45,10 +45,6 @@ This repository does **not** currently include:
 - Read layers: `query.*`, `scan.*`
 - Write helpers: `documentReducer`, `setValue`, diff-based action computation
 
-## Known Cross-Cutting Gaps
-
-- Lazy line-index precision can be incorrect in some multiline edit paths before reconciliation.
-
 ## Verification Snapshot
 
 - Latest verified test run: 2026-02-21
