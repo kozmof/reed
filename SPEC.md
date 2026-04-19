@@ -47,7 +47,6 @@ This repository does **not** currently include:
 
 ## Known Cross-Cutting Gaps
 
-- `APPLY_REMOTE` mutates content but does not auto-emit `content-change` in event-store wrapper.
 - `batch()` commit path does not automatically schedule line-index reconciliation when `rebuildPending` remains true.
 - Lazy line-index precision can be incorrect in some multiline edit paths before reconciliation.
 

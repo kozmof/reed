@@ -107,6 +107,6 @@ Not implemented in current codebase:
 
 ## 6. Current Gap Summary
 
-Previously tracked core consistency gaps (`getLineRangePrecise` lazy offset issue, missing `batch()` reconciliation scheduling, missing remote content-change emission) are fixed in current code.
+Previously tracked core consistency gaps (`getLineRangePrecise` lazy offset issue, missing `batch()` reconciliation scheduling, missing remote content-change emission, incorrect `affectedRanges` for multi-change `APPLY_REMOTE` batches) are fixed in current code.
 
 Remaining gaps are roadmap/runtime scope gaps (chunk runtime, collaboration transport, framework adapters), not core reducer/store correctness blockers.

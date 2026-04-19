@@ -342,22 +342,33 @@ export function getAffectedRanges(
       return [[action.start, byteOffset(action.start + insertLength)]];
     }
     case "APPLY_REMOTE": {
-      const ranges: [ByteOffset, ByteOffset][] = [];
+      type Entry = { start: number; size: number; byteChange: number };
+      const entries: Entry[] = [];
+
       for (const change of action.changes) {
         if (change.type === "insert" && change.text) {
-          const insertLength = utf8ByteLength(change.text);
-          if (insertLength > 0) {
-            ranges.push([byteOffset(change.start), byteOffset(change.start + insertLength)]);
-          }
-        } else if (
-          change.type === "delete" &&
-          typeof change.length === "number" &&
-          change.length > 0
-        ) {
-          ranges.push([byteOffset(change.start), byteOffset(change.start + change.length)]);
+          const len = utf8ByteLength(change.text);
+          if (len > 0) entries.push({ start: change.start, size: len, byteChange: len });
+        } else if (change.type === "delete" && typeof change.length === "number" && change.length > 0) {
+          entries.push({ start: change.start, size: change.length, byteChange: -change.length });
         }
       }
-      return ranges.length > 0 ? ranges : [[byteOffset(0), byteOffset(0)]];
+
+      if (entries.length === 0) return [[byteOffset(0), byteOffset(0)]];
+
+      // Adjust each entry's start to nextState coordinate space.
+      // Each entry.start is in intermediate space (after applying all previous entries).
+      // A subsequent entry j that sits at or before entry i's start shifts entry i by entry j's byteChange.
+      const ranges: [ByteOffset, ByteOffset][] = [];
+      for (let i = 0; i < entries.length; i++) {
+        let delta = 0;
+        for (let j = i + 1; j < entries.length; j++) {
+          if (entries[j].start <= entries[i].start) delta += entries[j].byteChange;
+        }
+        const s = entries[i].start + delta;
+        ranges.push([byteOffset(s), byteOffset(s + entries[i].size)]);
+      }
+      return ranges;
     }
     default:
       return [[byteOffset(0), byteOffset(0)]];

@@ -38,7 +38,7 @@ Implemented coverage is strongest in:
 - reducer behavior for local edits, remote edits, history, selection, and transactions
 - line-index and piece-table correctness across multiline/mixed-line-ending workloads
 - store semantics (`batch`, nested transactions, rollback, snapshot gating)
-- event semantics including `APPLY_REMOTE` `content-change` emission
+- event semantics including `APPLY_REMOTE` `content-change` emission and `affectedRanges` correctness for multi-change batches
 - selector-level rendering and byte/char conversion logic
 
 ## 4. Testing Gaps

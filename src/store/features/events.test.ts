@@ -331,6 +331,23 @@ describe("getAffectedRanges", () => {
       [10, 14],
     ]);
   });
+
+  it("should adjust ranges to nextState space when a later change precedes an earlier one", () => {
+    // change[0]: insert "XY" at position 7 (prevState space)
+    // change[1]: insert "Z"  at position 2 (intermediate space, after change[0])
+    // change[1] sits before change[0]'s region, so it shifts change[0] by +1 byte.
+    // In nextState: "Z" is at [2, 3), "XY" is at [8, 10) — not [7, 9).
+    const action = DocumentActions.applyRemote([
+      { type: "insert", start: byteOffset(7), text: "XY" },
+      { type: "insert", start: byteOffset(2), text: "Z" },
+    ]);
+    const ranges = getAffectedRanges(action);
+
+    expect(ranges).toEqual([
+      [8, 10], // "XY" shifted to [8, 10) in nextState
+      [2, 3],  // "Z" at [2, 3) in nextState (last change, no adjustment needed)
+    ]);
+  });
 });
 
 describe("Batch event emission with intermediate states", () => {
