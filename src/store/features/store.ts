@@ -7,6 +7,7 @@ import type { DocumentState, DocumentStoreConfig } from "../../types/state.ts";
 import type { DocumentAction } from "../../types/actions.ts";
 import type {
   DocumentStore,
+  TransactionControl,
   ReconcilableDocumentStore,
   DocumentStoreWithEvents,
   StoreListener,
@@ -39,36 +40,34 @@ interface ReconciliationState {
 /**
  * Shared try/finally logic for batch transaction management.
  *
- * `txDispatch` handles TRANSACTION_START / TRANSACTION_COMMIT / TRANSACTION_ROLLBACK
- * (always the base store's dispatch, which owns the transaction stack).
- * `actionDispatch` handles individual user actions (may differ — e.g. an event-emitting
- * wrapper — while still routing transaction control through `txDispatch`).
+ * Three-phase error handling:
+ *   Phase 1 (begin)    — if beginTransaction throws, the store internally called emergencyReset;
+ *                        the exception propagates, no further cleanup needed here.
+ *   Phase 2 (actions)  — if any action throws, we attempt rollback; if rollback also throws
+ *                        we call emergencyReset, then rethrow the original exception.
+ *   Phase 3 (commit)   — if commitTransaction throws, the store internally called emergencyReset;
+ *                        the exception propagates, rollback is NOT attempted (commit already
+ *                        decremented depth, so rollback would be a depth-0 call).
  */
 function withTransactionBatch(
-  txDispatch: (action: DocumentAction) => DocumentState,
+  txControl: TransactionControl & { emergencyReset(): DocumentState | null },
   actionDispatch: (action: DocumentAction) => DocumentState,
-  emergencyReset: () => DocumentState | null,
   actions: readonly DocumentAction[],
 ): void {
-  txDispatch({ type: "TRANSACTION_START" });
-  let success = false;
+  txControl.beginTransaction();
   try {
     for (const action of actions) {
       actionDispatch(action);
     }
-    // Set success before COMMIT: if COMMIT itself throws, the finally block must not
-    // attempt ROLLBACK on half-committed state (depth already decremented).
-    success = true;
-    txDispatch({ type: "TRANSACTION_COMMIT" });
-  } finally {
-    if (!success) {
-      try {
-        txDispatch({ type: "TRANSACTION_ROLLBACK" });
-      } catch {
-        emergencyReset();
-      }
+  } catch (e) {
+    try {
+      txControl.rollbackTransaction();
+    } catch {
+      txControl.emergencyReset();
     }
+    throw e;
   }
+  txControl.commitTransaction();
 }
 
 /**
@@ -175,7 +174,7 @@ export function createDocumentStore(
   }
 
   /**
-   * Dispatch an action to modify state.
+   * Dispatch a document action to modify state.
    * @param action - Action to dispatch
    * @returns New state after applying the action
    *
@@ -184,13 +183,40 @@ export function createDocumentStore(
    * suppressed and delivered as a single call on outermost commit or outermost rollback.
    */
   function dispatch(action: DocumentAction): DocumentState {
-    // Handle transaction control actions
-    if (action.type === "TRANSACTION_START") {
-      transaction.begin(state);
-      return state;
+    const newState = documentReducer(state, action);
+    if (newState !== state) {
+      setState(newState);
+      if (!transaction.isActive) {
+        notifyListeners();
+        if (state.lineIndex.rebuildPending) {
+          scheduleReconciliation();
+        }
+      }
     }
+    return state;
+  }
 
-    if (action.type === "TRANSACTION_COMMIT") {
+  /**
+   * Begin a transaction (or nest within an existing one).
+   * On invariant violation the store calls emergencyReset before rethrowing.
+   */
+  function beginTransaction(): void {
+    try {
+      transaction.begin(state);
+    } catch (e) {
+      emergencyReset();
+      throw e;
+    }
+  }
+
+  /**
+   * Commit the current transaction level.
+   * Notifies listeners and schedules reconciliation when the outermost transaction completes.
+   * On throw (invariant violation) the store calls emergencyReset before rethrowing.
+   * The caller must NOT attempt rollback after a commitTransaction throw.
+   */
+  function commitTransaction(): void {
+    try {
       const result = transaction.commit();
       if (result.isOutermost) {
         notifyListeners();
@@ -198,39 +224,25 @@ export function createDocumentStore(
           scheduleReconciliation();
         }
       }
-      return state;
+    } catch (e) {
+      emergencyReset();
+      throw e;
     }
+  }
 
-    if (action.type === "TRANSACTION_ROLLBACK") {
-      const result = transaction.rollback();
-      if (result.snapshot) {
-        setState(result.snapshot);
-      }
-      if (result.isOutermost) {
-        notifyListeners();
-      }
-      return state;
+  /**
+   * Rollback the current transaction level, restoring the pre-transaction snapshot.
+   * Notifies listeners when the outermost rollback completes.
+   * @throws if called with no active transaction (depth is 0).
+   */
+  function rollbackTransaction(): void {
+    const result = transaction.rollback();
+    if (result.snapshot) {
+      setState(result.snapshot);
     }
-
-    // Apply the action through the reducer
-    const newState = documentReducer(state, action);
-
-    // Only update if state actually changed (referential equality)
-    if (newState !== state) {
-      setState(newState);
-
-      if (!transaction.isActive) {
-        // Notify listeners immediately if not in transaction
-        notifyListeners();
-
-        // Schedule background reconciliation if line index has dirty ranges
-        if (state.lineIndex.rebuildPending) {
-          scheduleReconciliation();
-        }
-      }
+    if (result.isOutermost) {
+      notifyListeners();
     }
-
-    return state;
   }
 
   /**
@@ -245,7 +257,11 @@ export function createDocumentStore(
     if (actions.length === 0) {
       return state;
     }
-    withTransactionBatch(dispatch, dispatch, emergencyReset, actions);
+    withTransactionBatch(
+      { beginTransaction, commitTransaction, rollbackTransaction, emergencyReset },
+      dispatch,
+      actions,
+    );
     return state;
   }
 
@@ -443,6 +459,9 @@ export function createDocumentStore(
     isCurrentSnapshot,
     dispatch,
     batch,
+    beginTransaction,
+    commitTransaction,
+    rollbackTransaction,
     getEagerSnapshot,
     scheduleReconciliation,
     reconcileNow,
@@ -461,6 +480,11 @@ export function createDocumentStore(
  * - 'selection-change': On SET_SELECTION
  * - 'history-change': On UNDO, REDO
  * - 'dirty-change': When isDirty state changes
+ *
+ * Event buffering during transactions: events emitted while a transaction is active
+ * are buffered per nesting depth. On outermost commit they are flushed in order.
+ * On any rollback the current depth's buffered events are discarded, preserving
+ * events from enclosing transaction depths.
  *
  * @example
  * ```typescript
@@ -482,6 +506,21 @@ export function createDocumentStoreWithEvents(
 ): DocumentStoreWithEvents {
   const baseStore = createDocumentStore(config);
   const emitter = createEventEmitter();
+
+  // Depth-indexed event buffer. Each entry corresponds to one open transaction level.
+  // Index 0 = outermost open transaction, last = innermost.
+  const pendingEventLevels: Array<Array<() => void>> = [];
+
+  /**
+   * Emit or buffer an event emit function depending on whether a transaction is active.
+   */
+  function bufferOrEmit(fn: () => void): void {
+    if (pendingEventLevels.length > 0) {
+      pendingEventLevels[pendingEventLevels.length - 1].push(fn);
+    } else {
+      fn();
+    }
+  }
 
   /**
    * Emit appropriate events based on action type and state changes.
@@ -519,18 +558,68 @@ export function createDocumentStoreWithEvents(
   }
 
   /**
-   * Enhanced dispatch that emits events after state changes.
+   * Enhanced dispatch that buffers or emits events depending on transaction state.
    */
   function dispatch(action: DocumentAction): DocumentState {
     const prevState = baseStore.getSnapshot();
     const nextState = baseStore.dispatch(action);
 
-    // Only emit events if state actually changed
     if (nextState !== prevState) {
-      emitEventsForAction(action, prevState, nextState);
+      const prev = prevState;
+      const next = nextState;
+      bufferOrEmit(() => emitEventsForAction(action, prev, next));
     }
 
     return nextState;
+  }
+
+  /**
+   * Begin a transaction, pushing a new event buffer level.
+   */
+  function beginTransaction(): void {
+    baseStore.beginTransaction();
+    pendingEventLevels.push([]);
+  }
+
+  /**
+   * Commit the current transaction level.
+   * On outermost commit, flushes buffered events after the base store commits.
+   * On inner commit, merges buffered events into the parent level.
+   * On throw (from base store), clears all pending event levels.
+   */
+  function commitTransaction(): void {
+    const isOutermost = pendingEventLevels.length === 1;
+    const events = pendingEventLevels[pendingEventLevels.length - 1];
+    try {
+      baseStore.commitTransaction();
+      pendingEventLevels.pop();
+      if (isOutermost) {
+        for (const fn of events) fn();
+      } else {
+        pendingEventLevels[pendingEventLevels.length - 1].push(...events);
+      }
+    } catch (e) {
+      // baseStore already called emergencyReset internally; clear our buffer to match.
+      pendingEventLevels.length = 0;
+      throw e;
+    }
+  }
+
+  /**
+   * Rollback the current transaction level.
+   * Discards the current depth's buffered events before delegating to the base store.
+   */
+  function rollbackTransaction(): void {
+    pendingEventLevels.pop();
+    baseStore.rollbackTransaction();
+  }
+
+  /**
+   * Emergency reset: clears all pending event levels in addition to base store reset.
+   */
+  function emergencyReset(): DocumentState | null {
+    pendingEventLevels.length = 0;
+    return baseStore.emergencyReset();
   }
 
   /**
@@ -542,9 +631,11 @@ export function createDocumentStoreWithEvents(
     if (actions.length === 0) {
       return baseStore.getSnapshot();
     }
-    // Transaction control goes through baseStore.dispatch (owns the transaction stack).
-    // Per-action dispatch goes through the local event-emitting dispatch.
-    withTransactionBatch(baseStore.dispatch, dispatch, baseStore.emergencyReset, actions);
+    withTransactionBatch(
+      { beginTransaction, commitTransaction, rollbackTransaction, emergencyReset },
+      dispatch,
+      actions,
+    );
     return baseStore.getSnapshot();
   }
 
@@ -559,11 +650,14 @@ export function createDocumentStoreWithEvents(
     reconcileNow: baseStore.reconcileNow,
     reconcileIfCurrent: baseStore.reconcileIfCurrent,
     setViewport: baseStore.setViewport,
-    emergencyReset: baseStore.emergencyReset,
 
-    // Enhanced methods with event emission
+    // Enhanced methods with event emission and buffer management
     dispatch,
     batch,
+    beginTransaction,
+    commitTransaction,
+    rollbackTransaction,
+    emergencyReset,
 
     // Event emitter methods
     addEventListener: emitter.addEventListener,
@@ -576,9 +670,12 @@ export function createDocumentStoreWithEvents(
  * Execute a callback within a transaction boundary on the given store.
  *
  * Provides the same error-handling resilience as `batch`: the callback runs
- * inside a TRANSACTION_START / TRANSACTION_COMMIT bracket; on any exception
- * a TRANSACTION_ROLLBACK is attempted, falling back to `emergencyReset` if
- * the rollback dispatch itself throws.
+ * inside a beginTransaction / commitTransaction bracket. On any exception from
+ * the callback a rollback is attempted, falling back to `emergencyReset` if
+ * rollback itself throws.
+ *
+ * If commitTransaction throws (invariant violation), the store has already called
+ * emergencyReset internally — no additional rollback is attempted.
  *
  * Nests correctly: if the store is already in a transaction, this starts an
  * inner transaction and only the outermost completion notifies listeners.
@@ -600,22 +697,21 @@ export function withTransaction<T>(
   store: ReconcilableDocumentStore,
   fn: (store: ReconcilableDocumentStore) => T,
 ): T {
-  store.dispatch({ type: "TRANSACTION_START" });
-  let success = false;
+  store.beginTransaction();
+  let result: T;
   try {
-    const result = fn(store);
-    success = true;
-    store.dispatch({ type: "TRANSACTION_COMMIT" });
-    return result;
-  } finally {
-    if (!success) {
-      try {
-        store.dispatch({ type: "TRANSACTION_ROLLBACK" });
-      } catch {
-        store.emergencyReset();
-      }
+    result = fn(store);
+  } catch (e) {
+    try {
+      store.rollbackTransaction();
+    } catch {
+      store.emergencyReset();
     }
+    throw e;
   }
+  // fn succeeded — commit (handles its own failure internally via emergencyReset)
+  store.commitTransaction();
+  return result;
 }
 
 /**

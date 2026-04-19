@@ -47,7 +47,6 @@ import {
 import {
   isTextEditAction,
   isHistoryAction,
-  isTransactionAction,
   isDocumentAction,
   validateAction,
 } from "../types/actions.ts";
@@ -114,7 +113,6 @@ export const store = {
   // Type guards
   isTextEditAction,
   isHistoryAction,
-  isTransactionAction,
   isDocumentAction,
   validateAction,
 } as const;

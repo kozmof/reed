@@ -14,9 +14,6 @@ import type {
   UndoAction,
   RedoAction,
   HistoryClearAction,
-  TransactionStartAction,
-  TransactionCommitAction,
-  TransactionRollbackAction,
   ApplyRemoteAction,
   RemoteChange,
   LoadChunkAction,
@@ -123,27 +120,6 @@ export const DocumentActions = {
     selection?: readonly SelectionRange[],
   ): ReplaceAction {
     return DocumentActions.replace(rollbackStart, rollbackEnd, composedText, selection);
-  },
-
-  /**
-   * Create a transaction start action.
-   */
-  transactionStart(): TransactionStartAction {
-    return Object.freeze({ type: "TRANSACTION_START" });
-  },
-
-  /**
-   * Create a transaction commit action.
-   */
-  transactionCommit(): TransactionCommitAction {
-    return Object.freeze({ type: "TRANSACTION_COMMIT" });
-  },
-
-  /**
-   * Create a transaction rollback action.
-   */
-  transactionRollback(): TransactionRollbackAction {
-    return Object.freeze({ type: "TRANSACTION_ROLLBACK" });
   },
 
   /**

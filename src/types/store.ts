@@ -80,10 +80,36 @@ export interface DocumentStore {
 }
 
 /**
+ * Explicit transaction control methods, separated from the document-action dispatch channel.
+ * Each method has its own error contract (see createDocumentStore for details).
+ */
+export interface TransactionControl {
+  /**
+   * Begin a transaction (or nest within an existing one).
+   * On throw, the store has already called emergencyReset internally.
+   */
+  beginTransaction(): void;
+
+  /**
+   * Commit the current transaction level.
+   * If this is the outermost transaction, listeners are notified and reconciliation is scheduled.
+   * On throw, the store has already called emergencyReset internally.
+   */
+  commitTransaction(): void;
+
+  /**
+   * Rollback the current transaction level, restoring the snapshot captured at beginTransaction.
+   * If this is the outermost rollback, listeners are notified.
+   * @throws if called with no active transaction (depth is 0).
+   */
+  rollbackTransaction(): void;
+}
+
+/**
  * Store with reconciliation capabilities.
  * Returned by createDocumentStore — reconciliation methods are always present.
  */
-export interface ReconcilableDocumentStore extends DocumentStore {
+export interface ReconcilableDocumentStore extends DocumentStore, TransactionControl {
   /**
    * Schedule background reconciliation of the line index.
    * Uses requestIdleCallback when available, falls back to setTimeout.

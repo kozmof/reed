@@ -374,12 +374,6 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       });
     }
 
-    case "TRANSACTION_START":
-    case "TRANSACTION_COMMIT":
-    case "TRANSACTION_ROLLBACK":
-      // Transaction handling is done in the store, not the reducer
-      return state;
-
     case "APPLY_REMOTE": {
       // Apply remote changes from collaboration
       const nextVersion = state.version + 1;

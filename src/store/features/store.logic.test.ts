@@ -22,12 +22,7 @@ import {
   withLineIndexNode,
 } from "./../core/state.ts";
 import { DocumentActions, serializeAction, deserializeAction } from "./actions.ts";
-import {
-  isTextEditAction,
-  isHistoryAction,
-  isTransactionAction,
-  isDocumentAction,
-} from "../../types/actions.ts";
+import { isTextEditAction, isHistoryAction, isDocumentAction } from "../../types/actions.ts";
 import { createDocumentStore, isDocumentStore } from "./store.ts";
 import { getLineCountFromIndex } from "./../core/line-index.ts";
 import { byteOffset, byteLength, type ByteOffset } from "../../types/branded.ts";
@@ -627,29 +622,6 @@ describe("Document Reducer", () => {
     });
   });
 
-  describe("Transaction actions", () => {
-    it("should return same state for TRANSACTION_START", () => {
-      const state = createInitialState();
-      const newState = documentReducer(state, DocumentActions.transactionStart());
-
-      expect(newState).toBe(state);
-    });
-
-    it("should return same state for TRANSACTION_COMMIT", () => {
-      const state = createInitialState();
-      const newState = documentReducer(state, DocumentActions.transactionCommit());
-
-      expect(newState).toBe(state);
-    });
-
-    it("should return same state for TRANSACTION_ROLLBACK", () => {
-      const state = createInitialState();
-      const newState = documentReducer(state, DocumentActions.transactionRollback());
-
-      expect(newState).toBe(state);
-    });
-  });
-
   describe("Structural sharing", () => {
     it("should preserve unchanged subtrees", () => {
       const state = createInitialState({ content: "Hello" });
@@ -737,12 +709,6 @@ describe("Action Creators", () => {
     it("should create REDO action", () => {
       const action = DocumentActions.redo();
       expect(action.type).toBe("REDO");
-    });
-
-    it("should create transaction actions", () => {
-      expect(DocumentActions.transactionStart().type).toBe("TRANSACTION_START");
-      expect(DocumentActions.transactionCommit().type).toBe("TRANSACTION_COMMIT");
-      expect(DocumentActions.transactionRollback().type).toBe("TRANSACTION_ROLLBACK");
     });
 
     it("should create APPLY_REMOTE action", () => {
@@ -847,24 +813,6 @@ describe("Type Guards", () => {
     });
   });
 
-  describe("isTransactionAction", () => {
-    it("should return true for TRANSACTION_START", () => {
-      expect(isTransactionAction(DocumentActions.transactionStart())).toBe(true);
-    });
-
-    it("should return true for TRANSACTION_COMMIT", () => {
-      expect(isTransactionAction(DocumentActions.transactionCommit())).toBe(true);
-    });
-
-    it("should return true for TRANSACTION_ROLLBACK", () => {
-      expect(isTransactionAction(DocumentActions.transactionRollback())).toBe(true);
-    });
-
-    it("should return false for INSERT", () => {
-      expect(isTransactionAction(DocumentActions.insert(byteOffset(0), "a"))).toBe(false);
-    });
-  });
-
   describe("isDocumentAction", () => {
     it("should validate INSERT action", () => {
       expect(isDocumentAction({ type: "INSERT", start: 0, text: "a" })).toBe(true);
@@ -891,9 +839,6 @@ describe("Type Guards", () => {
       expect(isDocumentAction({ type: "UNDO" })).toBe(true);
       expect(isDocumentAction({ type: "REDO" })).toBe(true);
       expect(isDocumentAction({ type: "HISTORY_CLEAR" })).toBe(true);
-      expect(isDocumentAction({ type: "TRANSACTION_START" })).toBe(true);
-      expect(isDocumentAction({ type: "TRANSACTION_COMMIT" })).toBe(true);
-      expect(isDocumentAction({ type: "TRANSACTION_ROLLBACK" })).toBe(true);
     });
 
     it("should validate APPLY_REMOTE action", () => {

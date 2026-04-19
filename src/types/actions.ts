@@ -110,34 +110,6 @@ export interface HistoryClearAction {
 }
 
 // =============================================================================
-// Transaction Actions
-// =============================================================================
-
-/**
- * Start a transaction (batched notification boundary).
- * Actions still apply immediately and record history per action.
- */
-export interface TransactionStartAction {
-  readonly type: "TRANSACTION_START";
-}
-
-/**
- * Commit a transaction.
- * Notifies listeners when the outermost transaction completes.
- */
-export interface TransactionCommitAction {
-  readonly type: "TRANSACTION_COMMIT";
-}
-
-/**
- * Rollback a transaction.
- * Discards all changes since TRANSACTION_START.
- */
-export interface TransactionRollbackAction {
-  readonly type: "TRANSACTION_ROLLBACK";
-}
-
-// =============================================================================
 // Collaboration Actions
 // =============================================================================
 
@@ -230,9 +202,6 @@ export type DocumentAction =
   | UndoAction
   | RedoAction
   | HistoryClearAction
-  | TransactionStartAction
-  | TransactionCommitAction
-  | TransactionRollbackAction
   | ApplyRemoteAction
   | LoadChunkAction
   | EvictChunkAction
@@ -254,9 +223,6 @@ export const DocumentActionTypes = strEnum([
   "UNDO",
   "REDO",
   "HISTORY_CLEAR",
-  "TRANSACTION_START",
-  "TRANSACTION_COMMIT",
-  "TRANSACTION_ROLLBACK",
   "APPLY_REMOTE",
   "LOAD_CHUNK",
   "EVICT_CHUNK",
@@ -293,19 +259,6 @@ export function isHistoryAction(
   action: DocumentAction,
 ): action is UndoAction | RedoAction | HistoryClearAction {
   return action.type === "UNDO" || action.type === "REDO" || action.type === "HISTORY_CLEAR";
-}
-
-/**
- * Check if an action is a transaction action.
- */
-export function isTransactionAction(
-  action: DocumentAction,
-): action is TransactionStartAction | TransactionCommitAction | TransactionRollbackAction {
-  return (
-    action.type === "TRANSACTION_START" ||
-    action.type === "TRANSACTION_COMMIT" ||
-    action.type === "TRANSACTION_ROLLBACK"
-  );
 }
 
 /**
@@ -347,9 +300,6 @@ export function isDocumentAction(value: unknown): value is DocumentAction {
     case "UNDO":
     case "REDO":
     case "HISTORY_CLEAR":
-    case "TRANSACTION_START":
-    case "TRANSACTION_COMMIT":
-    case "TRANSACTION_ROLLBACK":
       return true;
     case "APPLY_REMOTE": {
       const remote = action as ApplyRemoteAction;
@@ -534,10 +484,6 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
     case "UNDO":
     case "REDO":
     case "HISTORY_CLEAR":
-    case "TRANSACTION_START":
-    case "TRANSACTION_COMMIT":
-    case "TRANSACTION_ROLLBACK":
-      // These actions have no additional properties to validate
       break;
 
     case "APPLY_REMOTE": {

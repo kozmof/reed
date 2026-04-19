@@ -176,9 +176,16 @@ chunkManager.ensureLoaded(chunkIndex)
 
 **Fix applied (2026-04-19):** Replaced `Map<number, number>` keyed by `piece.start` with an ordered `Array<{ newStart: number }>` populated in the same in-order traversal as `collectPieces`. `rebuildTreeWithNewOffsets` now consumes entries via a shared counter, advancing one slot per "add" node visited — guaranteed to match since both use standard in-order (left, self, right) order. Collision between pieces sharing a start offset is no longer possible.
 
-### 5.4 `withTransactionBatch` success flag set before `COMMIT`
+### 5.4 ~~`withTransactionBatch` success flag set before `COMMIT`~~ ✅ Fixed
 
-`src/store/features/store.ts:55` — `success = true` is set before `txDispatch({ type: 'TRANSACTION_COMMIT' })`. If `COMMIT` throws, the `finally` block correctly skips rollback (because `success` is already `true`). However it also skips `emergencyReset`, leaving the store in an inconsistent half-committed state with no recovery path. This is a documented trade-off but can be surprising.
+~~`src/store/features/store.ts:55` — `success = true` is set before `txDispatch({ type: 'TRANSACTION_COMMIT' })`. If `COMMIT` throws, the `finally` block correctly skips rollback (because `success` is already `true`). However it also skips `emergencyReset`, leaving the store in an inconsistent half-committed state with no recovery path. This is a documented trade-off but can be surprising.~~
+
+**Fix applied (2026-04-19):** The root cause was a design issue, not just a flag placement bug: transaction control actions (`TRANSACTION_START/COMMIT/ROLLBACK`) shared the `dispatch` channel with document actions but had no matching error contract. The fix is fundamental:
+
+- `TRANSACTION_START`, `TRANSACTION_COMMIT`, `TRANSACTION_ROLLBACK` removed from `DocumentAction`, `DocumentActionTypes`, and the reducer. `DocumentActions.transactionStart/Commit/Rollback` and `isTransactionAction` removed from the public API (semver-major breaking change).
+- `beginTransaction()`, `commitTransaction()`, `rollbackTransaction()` added as explicit methods on `ReconcilableDocumentStore` via a new `TransactionControl` interface.
+- `withTransactionBatch` and `withTransaction` rewritten with three-phase error handling: (1) `beginTransaction` throws → store already called `emergencyReset` internally; (2) action phase throws → rollback attempted, fallback to `emergencyReset` if rollback also throws; (3) `commitTransaction` throws → store already called `emergencyReset` internally, rollback is **not** attempted (commit already decremented depth). The old `success = true` flag is gone entirely.
+- **Event-store desync also fixed:** `createDocumentStoreWithEvents` previously emitted events synchronously inside the action loop, so an event-handler exception after a successful state mutation could trigger a rollback of already-applied state. Events are now buffered in a depth-indexed `pendingEventLevels` stack during transactions, flushed in order on outermost commit, and discarded (per-depth) on rollback.
 
 ### 5.5 ~~`rebalanceAfterInsert` is O(n) and deprecated, but still present~~ ✅ Fixed
 

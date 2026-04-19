@@ -23,9 +23,6 @@ describe("serializeAction / deserializeAction", () => {
       ["UNDO", DocumentActions.undo()],
       ["REDO", DocumentActions.redo()],
       ["HISTORY_CLEAR", DocumentActions.historyClear()],
-      ["TRANSACTION_START", DocumentActions.transactionStart()],
-      ["TRANSACTION_COMMIT", DocumentActions.transactionCommit()],
-      ["TRANSACTION_ROLLBACK", DocumentActions.transactionRollback()],
       ["EVICT_CHUNK", DocumentActions.evictChunk(3)],
       ["APPLY_REMOTE (empty)", DocumentActions.applyRemote([])],
     ];
@@ -66,18 +63,6 @@ describe("serializeAction / deserializeAction", () => {
       const action = DocumentActions.insert(byteOffset(0), "😀 hello\nworld");
       const deserialized = deserializeAction(serializeAction(action));
       expect(deserialized).toEqual(action);
-    });
-
-    it("serialized transaction actions are plain JSON objects (no special encoding)", () => {
-      for (const action of [
-        DocumentActions.transactionStart(),
-        DocumentActions.transactionCommit(),
-        DocumentActions.transactionRollback(),
-      ]) {
-        const json = serializeAction(action);
-        const parsed = JSON.parse(json);
-        expect(parsed).toEqual({ type: action.type });
-      }
     });
   });
 
