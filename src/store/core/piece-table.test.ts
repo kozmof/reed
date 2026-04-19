@@ -586,9 +586,10 @@ describe("Piece Table Operations", () => {
   });
 
   describe("RB tree properties after insert (path-based fixInsert)", () => {
-    function verifyRBProperties(
-      node: ReturnType<typeof collectPieces>[0] | null,
-    ): { blackHeight: number; valid: boolean } {
+    function verifyRBProperties(node: ReturnType<typeof collectPieces>[0] | null): {
+      blackHeight: number;
+      valid: boolean;
+    } {
       if (node === null) return { blackHeight: 1, valid: true };
 
       // Check for red-red violation between this node and its children
