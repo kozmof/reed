@@ -208,6 +208,11 @@ export interface PieceTableState {
  * - `'eager'`: `documentOffset` is always `number` (offsets are computed immediately)
  * - `'lazy'`: `documentOffset` is `number | null` (`null` means pending reconciliation)
  * - Default (union): `number | null` for backward compatibility
+ *
+ * `<M>` is intentionally kept on individual nodes (not only on `LineIndexState`) so that
+ * `getLineRangePrecise` overloads can statically guarantee a non-null `documentOffset` in eager
+ * mode on a per-node basis. Restricting `<M>` to `LineIndexState` alone would make
+ * `documentOffset` always `number | null` on every node, collapsing those overload guarantees.
  */
 export interface LineIndexNode<M extends EvaluationMode = EvaluationMode> extends RBNode<
   LineIndexNode<M>

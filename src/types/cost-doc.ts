@@ -209,6 +209,12 @@ type UncheckedBoundaryValue<T> = T extends CtxLike ? never : T extends CheckedPl
  * Explicit unchecked boundary declaration.
  * Use this when a proof plan is not modeled.
  * For checked boundaries, use `$prove` or `$proveCtx`.
+ *
+ * This is a **pure assertion** with no compile-time or runtime verification. A caller can
+ * annotate an O(n) value as O(1) and the type system will not object. `$declare` exists for
+ * contexts where cost is provable by reasoning but cannot be expressed through the
+ * `$pipe`/`$andThen` combinator algebra (e.g., amortized bounds, platform-specific guarantees).
+ * The trade-off is made explicit here so that reviewers know to scrutinize `$declare` call sites.
  */
 export function $declare<L extends CostInputLabel, T>(
   max: L,

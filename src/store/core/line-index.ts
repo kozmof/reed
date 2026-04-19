@@ -1918,8 +1918,10 @@ function deleteLineRangeLazy(
   }
   const mergedCharLength = Math.max(0, endBound - startLineCharStart - deletedCharLength);
 
-  // Rebuild with deleted range (this is still O(n) for deletions with newlines)
-  // Future optimization: track deleted ranges for lazy reconciliation
+  // Multi-line deletions always require O(n) structural rebalancing via rebuildWithDeletedRange,
+  // even in lazy mode. RB-tree node removal must rebalance the tree immediately — that structural
+  // work cannot be deferred the way offset recalculation can. "Lazy" defers only documentOffset
+  // updates, not the tree shape itself, so this path carries the same cost as eager deletion.
   const newState = rebuildWithDeletedRange(
     state,
     state.root!,

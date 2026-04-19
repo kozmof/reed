@@ -207,6 +207,14 @@ function computeTotalDirtyLines(dirtyRanges: DirtyLineRangeList, lineCount: numb
 /**
  * Walk the tree in-order and update offsets by accumulating line lengths.
  * Uses structural sharing — only nodes with incorrect offsets get new allocations.
+ *
+ * There is no subtree-level short-circuit (a "subtree-clean" flag that would skip whole subtrees).
+ * Adding one would require invalidating it across every lazy mutation: insertLinesAtPositionLazy,
+ * rbDeleteLineByNumber, RB rotations, etc. That coordination complexity is not justified here
+ * because reconcileInPlace is already the last resort — it runs only when the dirty region spans
+ * most of the document or when delta information has been lost (sentinel dirty range). The
+ * per-node structural-sharing check (`node.documentOffset !== correctOffset`) keeps allocations
+ * minimal without the overhead of a subtree flag.
  */
 function reconcileInPlace(
   node: LineIndexNode | null,
