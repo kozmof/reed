@@ -70,16 +70,14 @@ Missing:
 - awareness/cursor presence
 - conflict/recovery UX
 
-### 2.2 Chunk management primitives
+### 2.2 Chunk management
 
-Implemented:
+Fully implemented:
 
-- action types and action creators (`LOAD_CHUNK`, `EVICT_CHUNK`)
-- `chunkSize` in config
-
-Missing:
-
-- actual chunk runtime behavior (reducer currently no-op)
+- Action types and creators: `LOAD_CHUNK`, `EVICT_CHUNK`, `DECLARE_CHUNK_METADATA`
+- Reducer handles both load and evict paths (byte decode, piece-table surgery, line-index update)
+- `createChunkManager` runtime: async loading, in-flight deduplication, LRU eviction, chunk pinning
+- `chunkSize`, `totalFileSize` in config
 
 ## 3. Not Implemented
 
@@ -93,5 +91,5 @@ Primary remaining gaps are unimplemented runtime layers (chunk runtime, collabor
 
 ## 5. Near-Term Priorities
 
-1. Decide and implement real chunk loading strategy (or remove chunk actions from public contract).
-2. Add collaboration transport/provider + synchronization recovery tests.
+1. Add collaboration transport/provider + synchronization recovery tests.
+2. Add ChunkManager integration stress tests (large-file load/evict at scale).

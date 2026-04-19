@@ -36,7 +36,9 @@ Returns `ReconcilableDocumentStore` with:
 - `dispatch(action)`
 - `batch(actions)`
 - `scheduleReconciliation()`
-- `reconcileNow()` / `reconcileNow(snapshot)`
+- `reconcileNow()` — reconcile and return `DocumentState<'eager'>`
+- `reconcileIfCurrent(snapshot)` — reconcile only if `snapshot` is still current; returns `DocumentState<'eager'> | null`
+- `getEagerSnapshot()` — return current state with eager line-index without bumping version
 - `setViewport(startLine, endLine)`
 - `emergencyReset()`
 
@@ -44,10 +46,14 @@ Supported config fields (`DocumentStoreConfig`):
 
 - `content`
 - `historyLimit`
-- `chunkSize` (reserved; chunk runtime is not implemented)
+- `chunkSize`
 - `encoding`
 - `lineEnding`
 - `undoGroupTimeout`
+- `normalizeInsertedLineEndings` — coerce line endings on `INSERT`/`REPLACE` to match `lineEnding`
+- `totalFileSize` — pre-declared file size used for chunk sizing
+- `maxDirtyRanges` — dirty-range count threshold before a full line-index rebuild is triggered
+- `reconcileMode` — `'idle'` (default, uses `requestIdleCallback`) | `'sync'` (same-tick) | `'none'` (manual)
 
 ### 2.2 `store.createDocumentStoreWithEvents(config?)`
 
@@ -57,7 +63,20 @@ Wraps the base store and adds:
 - `removeEventListener(type, handler)`
 - `events` emitter handle
 
-### 2.3 Additional store namespace exports
+### 2.3 `store.createChunkManager(store, loader, config?)`
+
+Returns a `ChunkManager` with:
+
+- `ensureLoaded(chunkIndex)` — load a chunk if not already in memory
+- `prefetch(chunkIndices)` — speculatively load chunks
+- `setActiveChunks(chunkIndices)` — pin chunks to prevent LRU eviction
+- `dispose()` — cancel in-flight loads and release resources
+
+Requires a user-supplied `ChunkLoader` with `loadChunk(chunkIndex): Promise<Uint8Array>`.
+
+Config (`ChunkManagerConfig`): `maxLoadedChunks`, `fetchStrategy`.
+
+### 2.4 Additional store namespace exports
 
 - `store.withTransaction(store, fn)`
 - `store.isDocumentStore(value)`
@@ -134,6 +153,5 @@ Important behavior:
 
 ## 6. Not Yet Implemented on Public Surface
 
-- Real chunk loading/eviction runtime behavior
 - Collaboration transport/provider integration
 - Framework adapters

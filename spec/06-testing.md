@@ -2,9 +2,9 @@
 
 ## 1. Latest Verified Run
 
-- Date: 2026-03-07
+- Date: 2026-04-19
 - Functional command: `pnpm test`
-- Functional result: `13` test files, `556` tests passed
+- Functional result: `16` test files, `608` tests passed
 - Perf command: `pnpm test:perf`
 - Perf result: `1` test file, `26` tests passed
 
@@ -25,6 +25,8 @@ Functional suites (`pnpm test`):
 - `src/store/core/line-index.test.ts`: line-index operations and lookups
 - `src/store/features/store.logic.test.ts`: reducer invariants, action validation, store logic
 - `src/store/features/store.usecase.test.ts`: end-to-end workflows and randomized reconciliation checks
+- `src/store/features/chunk-manager.test.ts`: ChunkManager load/evict/LRU/pin behavior
+- `src/store/features/chunk-metadata.test.ts`: DECLARE_CHUNK_METADATA and pre-declared line-count queries
 
 Performance suite (`pnpm test:perf`):
 
@@ -45,7 +47,7 @@ Implemented coverage is strongest in:
 
 Current gaps relative to roadmap/spec ambitions:
 
-- no real chunk loading/eviction runtime tests (`LOAD_CHUNK`/`EVICT_CHUNK` are stubs)
+- no LOAD_CHUNK/EVICT_CHUNK cross-boundary stress tests (reducer paths covered; ChunkManager integration at scale is not)
 - no CRDT/provider/network collaboration integration tests
 - performance tests report timings but do not enforce hard budget thresholds
 

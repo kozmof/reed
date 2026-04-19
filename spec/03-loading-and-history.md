@@ -12,17 +12,21 @@
 - Core piece-table compaction primitive exists internally:
   - `compactAddBuffer` in `src/store/core/piece-table.ts`
 
-### 1.2 Partially Implemented / Stubbed
+### 1.2 Chunk Loading Runtime
 
-- Action types and creators exist for chunk management:
-  - `LOAD_CHUNK`
-  - `EVICT_CHUNK`
-- Reducer currently treats both as no-ops.
+Fully implemented:
+
+- Action types and creators: `LOAD_CHUNK`, `EVICT_CHUNK`, `DECLARE_CHUNK_METADATA`
+- Reducer handles `LOAD_CHUNK` (byte decode, first-load vs re-load, piece-table insertion, line-index update) and `EVICT_CHUNK` (range finding, add-piece overlap detection, tree pruning, line-index cleanup)
+- `createChunkManager(store, loader, config)` runtime sits above the store and coordinates:
+  - Async chunk loading via user-supplied `ChunkLoader`
+  - In-flight deduplication (concurrent `ensureLoaded` calls for the same chunk share one fetch)
+  - LRU eviction (`maxLoadedChunks` cap)
+  - Chunk pinning via `setActiveChunks` to prevent hot-chunk eviction
+- `DECLARE_CHUNK_METADATA` pre-declares per-chunk byte lengths and line counts so `getLineCount` is accurate on unloaded ranges
 
 ### 1.3 Not Implemented
 
-- Real chunk fetch/load subsystem
-- LRU cache manager
 - Background file parsing workers
 - Disk-backed paging
 

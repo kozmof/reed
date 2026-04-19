@@ -14,7 +14,6 @@ This repository does **not** currently include:
 
 - framework adapters (React/Vue/Svelte/Redux/Zustand)
 - a full collaboration transport/CRDT bridge
-- real chunk loader/eviction runtime
 
 ## Design Principles (Implemented)
 
@@ -41,14 +40,15 @@ This repository does **not** currently include:
 
 - Entry point: `src/index.ts`
 - Store factories: `createDocumentStore`, `createDocumentStoreWithEvents`
+- Chunk runtime: `createChunkManager`
 - Action creators: `DocumentActions`
 - Read layers: `query.*`, `scan.*`
 - Write helpers: `documentReducer`, `setValue`, diff-based action computation
 
 ## Verification Snapshot
 
-- Latest verified test run: 2026-02-21
+- Latest verified test run: 2026-04-19
 - Command: `pnpm test`
-- Result: `11` test files, `465` tests passed
+- Result: `16` test files, `608` tests passed
 
 See domain files under `/spec` for implementation-level details and constraints.

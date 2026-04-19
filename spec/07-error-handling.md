@@ -27,7 +27,7 @@
 ### 1.5 Snapshot safety for reconciliation
 
 - `isCurrentSnapshot()` lets callers detect stale snapshots.
-- `reconcileNow(snapshot)` returns `null` for stale snapshots instead of mutating current state from an outdated reference.
+- `reconcileIfCurrent(snapshot)` returns `null` for stale snapshots instead of mutating current state from an outdated reference.
 
 ## 2. Current Non-Goals / Not Implemented
 
@@ -39,7 +39,6 @@ The following error domains are not implemented because the related runtime laye
 
 ## 3. Current Caveats
 
-- `LOAD_CHUNK` and `EVICT_CHUNK` actions are accepted but currently no-op in reducer logic.
 - `save` event type exists, but there is no built-in save action/path that auto-emits it.
 
 ## 4. Recommendation for Next Iteration
