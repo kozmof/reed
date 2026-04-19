@@ -6,10 +6,6 @@ Collected from all reports in `report/`. Fixed items are excluded.
 
 ## From `code-analyze-2026-04-16.md`
 
-### §5.1-b — `batch()` reconciliation scheduling needs re-verification
-
-The spec warns that `TRANSACTION_COMMIT` may not schedule reconciliation when `rebuildPending` remains true. The code at `store.ts:191` appears to handle this, but the warning may refer to older code. A test is needed.
-
 ### §5.1-c — Lazy line-index precision before reconciliation
 
 `documentOffset` can be `null` for lines updated in lazy mode. Any caller that passes a lazy `DocumentState` (not `DocumentState<'eager'>`) to functions requiring precise offsets (e.g. `getLineRange`) will get a runtime error or silently wrong data. No guard or type-level enforcement exists.
