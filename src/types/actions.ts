@@ -315,6 +315,7 @@ export function isDocumentAction(value: unknown): value is DocumentAction {
     case "LOAD_CHUNK":
       return (
         typeof (action as LoadChunkAction).chunkIndex === "number" &&
+        // ReadonlyUint8Array is a compile-time alias; Uint8Array is the correct runtime check.
         (action as LoadChunkAction).data instanceof Uint8Array
       );
     case "EVICT_CHUNK":

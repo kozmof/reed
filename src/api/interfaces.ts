@@ -17,7 +17,7 @@ import type {
   PieceTableState,
   PieceNode,
 } from "../types/state.ts";
-import type { ByteOffset, ByteLength } from "../types/branded.ts";
+import type { ByteOffset, ByteLength, CharOffset } from "../types/branded.ts";
 import type { LineLocation } from "../store/core/line-index.ts";
 import type {
   PieceLocation,
@@ -40,7 +40,7 @@ export interface QueryLineIndexApi {
     position: ByteOffset,
   ): LogCost<LineLocation> | null;
   findLineByNumber(root: LineIndexNode | null, lineNumber: number): LogCost<LineIndexNode> | null;
-  getLineStartOffset(root: LineIndexNode | null, lineNumber: number): LogCost<number>;
+  getLineStartOffset(root: LineIndexNode | null, lineNumber: number): LogCost<ByteOffset>;
   getLineRange(
     state: LineIndexState<"eager">,
     lineNumber: number,
@@ -50,7 +50,7 @@ export interface QueryLineIndexApi {
     lineNumber: number,
   ): LogCost<{ start: ByteOffset; length: ByteLength }> | null;
   getLineCount(state: LineIndexState): ConstCost<number>;
-  getCharStartOffset(root: LineIndexNode | null, lineNumber: number): LogCost<number>;
+  getCharStartOffset(root: LineIndexNode | null, lineNumber: number): LogCost<CharOffset>;
   findLineAtCharPosition(
     root: LineIndexNode | null,
     charPosition: number,
@@ -69,7 +69,7 @@ export interface QueryApi {
   isReconciledState(state: DocumentState): ConstCost<boolean>;
   findLineAtPosition(state: DocumentState, position: ByteOffset): LogCost<LineLocation> | null;
   findLineByNumber(state: DocumentState, lineNumber: number): LogCost<LineIndexNode> | null;
-  getLineStartOffset(state: DocumentState, lineNumber: number): LogCost<number>;
+  getLineStartOffset(state: DocumentState, lineNumber: number): LogCost<ByteOffset>;
   getLineRange(
     state: DocumentState<"eager">,
     lineNumber: number,
@@ -83,7 +83,7 @@ export interface QueryApi {
     lineNumber: number,
   ): LogCost<{ start: ByteOffset; length: ByteLength }> | null;
   getLineCount(state: DocumentState): ConstCost<number>;
-  getCharStartOffset(state: DocumentState, lineNumber: number): LogCost<number>;
+  getCharStartOffset(state: DocumentState, lineNumber: number): LogCost<CharOffset>;
   findLineAtCharPosition(
     state: DocumentState,
     charPosition: number,

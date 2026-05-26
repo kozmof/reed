@@ -79,8 +79,7 @@ function normalizeLineEndings(text: string, lineEnding: "lf" | "crlf" | "cr"): s
  */
 function setSelection(state: DocumentState, ranges: readonly SelectionRange[]): DocumentState {
   if (ranges.length === 0) {
-    console.warn("SET_SELECTION: ranges must be non-empty; action ignored");
-    return state;
+    throw new Error("SET_SELECTION: ranges must be non-empty");
   }
   return withState(state, {
     selection: Object.freeze({

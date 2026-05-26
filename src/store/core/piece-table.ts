@@ -272,15 +272,17 @@ export function findLastPiece(root: PieceNode | null): LogCost<PieceLocation> | 
  */
 export function collectPieces(root: PieceNode | null): LinearCost<readonly PieceNode[]> {
   const result: PieceNode[] = [];
-
-  function inOrder(node: PieceNode | null) {
-    if (node === null) return;
-    inOrder(node.left);
-    result.push(node);
-    inOrder(node.right);
+  const stack: PieceNode[] = [];
+  let current: PieceNode | null = root;
+  while (current !== null || stack.length > 0) {
+    while (current !== null) {
+      stack.push(current);
+      current = current.left;
+    }
+    current = stack.pop()!;
+    result.push(current);
+    current = current.right;
   }
-
-  inOrder(root);
   return $proveCtx("O(n)", $lift("O(n)", result));
 }
 
@@ -324,37 +326,42 @@ function bstInsert(
   position: number,
   newNode: PieceNode,
 ): RootToLeafInsertPath<PieceNode> {
-  const insertPath: InsertionPathEntry<PieceNode>[] = [];
+  // Phase 1: descend root-to-leaf, collecting (node, direction) in document order.
+  const descent: InsertionPathEntry<PieceNode>[] = [];
+  let current: PieceNode = root;
+  let offset = 0;
 
-  function insert(node: PieceNode, offset: number): PieceNode {
-    const leftLength = node.left?.subtreeLength ?? 0;
+  while (true) {
+    const leftLength = current.left?.subtreeLength ?? 0;
     const pieceStart = offset + leftLength;
 
-    let result: PieceNode;
-    let direction: "left" | "right";
     if (position <= pieceStart) {
-      direction = "left";
-      if (node.left === null) {
-        result = withPieceNode(node, { left: newNode });
-      } else {
-        result = withPieceNode(node, { left: insert(node.left, offset) });
-      }
+      descent.push({ node: current, direction: "left" });
+      if (current.left === null) break;
+      current = current.left;
     } else {
-      direction = "right";
-      const newOffset = pieceStart + node.length;
-      if (node.right === null) {
-        result = withPieceNode(node, { right: newNode });
-      } else {
-        result = withPieceNode(node, { right: insert(node.right, newOffset) });
-      }
+      const newOffset = pieceStart + current.length;
+      descent.push({ node: current, direction: "right" });
+      if (current.right === null) break;
+      current = current.right;
+      offset = newOffset;
     }
-    insertPath.push({ node: result, direction }); // leaf-to-root order as recursion unwinds
-    return result;
   }
 
-  insert(root, 0);
-  // Reverse to root-to-leaf order, as required by fixInsertWithPath (index 0 = root).
-  insertPath.reverse();
+  // Phase 2: rebuild bottom-up with path-copied nodes; result is already root-to-leaf.
+  const insertPath: InsertionPathEntry<PieceNode>[] = new Array(descent.length);
+  let child: PieceNode = newNode;
+
+  for (let i = descent.length - 1; i >= 0; i--) {
+    const { node, direction } = descent[i];
+    const rebuilt =
+      direction === "left"
+        ? withPieceNode(node, { left: child })
+        : withPieceNode(node, { right: child });
+    insertPath[i] = { node: rebuilt, direction };
+    child = rebuilt;
+  }
+
   return insertPath as RootToLeafInsertPath<PieceNode>;
 }
 
@@ -1347,7 +1354,26 @@ function rebuildTreeWithNewOffsets(
  */
 export function charToByteOffset(text: string, charOffset: number): LinearCost<number> {
   const clampedOffset = Math.max(0, Math.min(charOffset, text.length));
-  return $proveCtx("O(n)", $lift("O(n)", textEncoder.encode(text.slice(0, clampedOffset)).length));
+  let bytes = 0;
+  for (let i = 0; i < clampedOffset; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 0x80) {
+      bytes += 1;
+    } else if (c < 0x800) {
+      bytes += 2;
+    } else if (c >= 0xd800 && c <= 0xdbff) {
+      // High surrogate: lone encodes as 3 bytes; full pair adds 1 more (4 total).
+      bytes += 3;
+      const lo = i + 1 < text.length ? text.charCodeAt(i + 1) : 0;
+      if (lo >= 0xdc00 && lo <= 0xdfff) {
+        bytes += 1;
+        i++;
+      }
+    } else {
+      bytes += 3;
+    }
+  }
+  return $proveCtx("O(n)", $lift("O(n)", bytes));
 }
 
 /**

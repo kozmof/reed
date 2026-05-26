@@ -4,6 +4,8 @@
  */
 
 import type { DocumentState } from "../../types/state.ts";
+import type { DocumentAction } from "../../types/actions.ts";
+import type { TransactionControl } from "../../types/store.ts";
 
 /**
  * Result of a commit operation.
@@ -130,5 +132,49 @@ export function createTransactionManager(): TransactionManager {
       return depth > 0;
     },
     emergencyReset,
+  };
+}
+
+type BatchTxControl = TransactionControl & { emergencyReset(): DocumentState | null };
+
+/**
+ * Shared three-phase error handling for batch dispatches.
+ * Wrapped in a helper so both the base store and the event store use the same logic.
+ */
+export function withTransactionBatch(
+  txControl: BatchTxControl,
+  actionDispatch: (action: DocumentAction) => DocumentState,
+  actions: readonly DocumentAction[],
+): void {
+  txControl.beginTransaction();
+  try {
+    for (const action of actions) {
+      actionDispatch(action);
+    }
+  } catch (e) {
+    try {
+      txControl.rollbackTransaction();
+    } catch {
+      txControl.emergencyReset();
+    }
+    throw e;
+  }
+  txControl.commitTransaction();
+}
+
+/**
+ * Factory that creates a `batch` function sharing the three-phase transaction
+ * logic. Both the base store and the event store use this to avoid duplicating
+ * the `withTransactionBatch` call site.
+ */
+export function makeBatch(
+  txControl: BatchTxControl,
+  actionDispatch: (action: DocumentAction) => DocumentState,
+  getSnapshot: () => DocumentState,
+): (actions: readonly DocumentAction[]) => DocumentState {
+  return function batch(actions: readonly DocumentAction[]): DocumentState {
+    if (actions.length === 0) return getSnapshot();
+    withTransactionBatch(txControl, actionDispatch, actions);
+    return getSnapshot();
   };
 }

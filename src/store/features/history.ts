@@ -4,10 +4,16 @@
  * historyUndo / historyRedo operations that apply stored changes.
  */
 
-import type { DocumentState, HistoryState } from "../../types/state.ts";
+import type { DocumentState, HistoryState, LineIndexState, HistoryChange } from "../../types/state.ts";
 import { pstackSize, pstackPush, pstackPop } from "../../types/state.ts";
+import { byteOffset } from "../../types/branded.ts";
 import { withState } from "../core/state.ts";
-import { applyChange, applyInverseChange, reconcileRangeForChanges } from "./edit.ts";
+import {
+  reconcileFull,
+  reconcileRange,
+  findLineAtPosition,
+} from "../core/line-index.ts";
+import { applyChange, applyInverseChange } from "./edit.ts";
 
 /**
  * Check if undo is available.
@@ -57,6 +63,54 @@ export function getRedoCount(state: DocumentState | HistoryState): number {
 export function isHistoryEmpty(state: DocumentState | HistoryState): boolean {
   const history = "history" in state ? state.history : state;
   return history.undoStack === null && history.redoStack === null;
+}
+
+// =============================================================================
+// Line-Index Reconciliation for History Operations
+// =============================================================================
+
+/**
+ * Reconcile the line index covering only the lines touched by a set of history
+ * changes, rather than running a full O(n) rebuild for every undo/redo.
+ * For each change the starting line is found via `findLineAtPosition`
+ * (O(log n), works in lazy mode since subtreeByteLength is always accurate).
+ * Falls back to `reconcileFull` when the line index has a `"full-rebuild-needed"` dirty range.
+ */
+export function reconcileRangeForChanges(
+  lineIndex: LineIndexState,
+  changes: readonly HistoryChange[],
+  version: number,
+): LineIndexState {
+  if (!lineIndex.rebuildPending) return lineIndex;
+
+  // If 'full-rebuild-needed', delta information is lost — fall back to full reconciliation.
+  if (lineIndex.dirtyRanges === "full-rebuild-needed") {
+    return reconcileFull(lineIndex, version);
+  }
+
+  let minLine = Infinity;
+  let maxLine = -Infinity;
+
+  for (const change of changes) {
+    const startLoc = findLineAtPosition(lineIndex.root, change.position);
+    if (startLoc !== null) {
+      minLine = Math.min(minLine, startLoc.lineNumber);
+      maxLine = Math.max(maxLine, startLoc.lineNumber);
+    }
+    // Extend to cover the end of the change range
+    const endPos = byteOffset(change.position + change.byteLength);
+    const endLoc = findLineAtPosition(lineIndex.root, endPos);
+    if (endLoc !== null) {
+      maxLine = Math.max(maxLine, endLoc.lineNumber);
+    }
+  }
+
+  if (minLine === Infinity) {
+    // Could not determine line range (empty history?) — fall back
+    return reconcileFull(lineIndex, version);
+  }
+
+  return reconcileRange(lineIndex, minLine, maxLine, version);
 }
 
 // =============================================================================

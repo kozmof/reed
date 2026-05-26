@@ -37,9 +37,6 @@ import {
   lineIndexDelete as liDelete,
   lineIndexInsertLazy as liInsertLazy,
   lineIndexDeleteLazy as liDeleteLazy,
-  reconcileFull,
-  reconcileRange,
-  findLineAtPosition,
   rebuildLineIndex,
 } from "../core/line-index.ts";
 import { textEncoder } from "../core/encoding.ts";
@@ -407,58 +404,6 @@ export function historyPush(
       redoStack: null, // Clear redo stack on new change
     }),
   });
-}
-
-// =============================================================================
-// Reconciliation Helper
-// =============================================================================
-
-/**
- * Reconcile only the line range touched by a set of history changes.
- *
- * This replaces the previous O(n) `reconcileFull` call that ran before every
- * undo/redo. For each change we find the starting line via `findLineAtPosition`
- * (O(log n), works in lazy mode since subtreeByteLength is always accurate).
- * We then call `reconcileRange` covering the union of those lines.
- *
- * Falls back to `reconcileFull` when the line index has a sentinel dirty range
- * (which signals that the entire tree needs rebuilding).
- */
-export function reconcileRangeForChanges(
-  lineIndex: LineIndexState,
-  changes: readonly HistoryChange[],
-  version: number,
-): LineIndexState {
-  if (!lineIndex.rebuildPending) return lineIndex;
-
-  // If 'full-rebuild-needed', delta information is lost — fall back to full reconciliation.
-  if (lineIndex.dirtyRanges === "full-rebuild-needed") {
-    return reconcileFull(lineIndex, version);
-  }
-
-  let minLine = Infinity;
-  let maxLine = -Infinity;
-
-  for (const change of changes) {
-    const startLoc = findLineAtPosition(lineIndex.root, change.position);
-    if (startLoc !== null) {
-      minLine = Math.min(minLine, startLoc.lineNumber);
-      maxLine = Math.max(maxLine, startLoc.lineNumber);
-    }
-    // Extend to cover the end of the change range
-    const endPos = byteOffset(change.position + change.byteLength);
-    const endLoc = findLineAtPosition(lineIndex.root, endPos);
-    if (endLoc !== null) {
-      maxLine = Math.max(maxLine, endLoc.lineNumber);
-    }
-  }
-
-  if (minLine === Infinity) {
-    // Could not determine line range (empty history?) — fall back
-    return reconcileFull(lineIndex, version);
-  }
-
-  return reconcileRange(lineIndex, minLine, maxLine, version);
 }
 
 // =============================================================================

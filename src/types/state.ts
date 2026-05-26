@@ -249,26 +249,11 @@ export interface DirtyLineRangeEntry {
 }
 
 /**
- * Sentinel value produced by mergeDirtyRanges when range count exceeds 32.
- * Signals that delta information was lost and a full O(n) rebuild is required.
- * Structurally distinct from any legitimate range — no spreading accident can
- * silently drop or create a sentinel.
+ * Alias for a concrete dirty line range entry.
+ * The list-level `"full-rebuild-needed"` sentinel in `DirtyLineRangeList` is the
+ * single sentinel form — there is no element-level sentinel.
  */
-export interface DirtyLineRangeSentinel {
-  readonly kind: "sentinel";
-}
-
-/**
- * Discriminated union for dirty line ranges.
- * Use `range.kind` to distinguish between a concrete range and the full-rebuild sentinel.
- *
- * @example
- * ```ts
- * if (range.kind === 'sentinel') { triggerFullRebuild(); }
- * else { applyDelta(range.startLine, range.endLine, range.offsetDelta); }
- * ```
- */
-export type DirtyLineRange = DirtyLineRangeEntry | DirtyLineRangeSentinel;
+export type DirtyLineRange = DirtyLineRangeEntry;
 
 /**
  * The set of dirty line ranges for a lazy line index, or the string literal
@@ -454,8 +439,7 @@ export interface HistoryEntry {
 
 /**
  * Internal cons-cell for the persistent stack.
- * Not exported — only module-internal code can call `new PStackCons(...)`,
- * eliminating `as unknown as PStack<T>` casts in push/trim helpers.
+ * Not exported — construction is module-internal only.
  * The `private declare _brand` field (zero runtime overhead) prevents plain
  * object literals from being structurally assignable to `PStack<T>`.
  */
@@ -471,18 +455,21 @@ class PStackCons<T> {
   }
 }
 
+declare const _pstackBrand: unique symbol;
+
 /**
  * Persistent singly-linked stack with O(1) push/pop/peek and automatic
  * structural sharing across snapshots. Empty stack is `null`.
  *
- * External code cannot construct a `PStackCons<T>` value directly (class is
- * unexported), preventing accidental bypass of the helper API.
+ * The `[_pstackBrand]` symbol is unexported, so external code cannot construct
+ * or structurally pattern-match against the non-null branch — only the exported
+ * helper functions (`pstackPush`, `pstackPeek`, etc.) form the public API.
  */
-export type PStack<T> = null | PStackCons<T>;
+export type PStack<T> = null | (PStackCons<T> & { readonly [_pstackBrand]: never });
 
 export const pstackEmpty = <T>(): PStack<T> => null;
 export const pstackPush = <T>(s: PStack<T>, v: T): PStack<T> =>
-  new PStackCons(v, s, (s?.size ?? 0) + 1);
+  new PStackCons(v, s, (s?.size ?? 0) + 1) as unknown as NonNullable<PStack<T>>;
 export const pstackPeek = <T>(s: PStack<T>): T | undefined => s?.top;
 export const pstackPop = <T>(s: NonNullable<PStack<T>>): [T, PStack<T>] => [s.top, s.rest];
 export const pstackSize = <T>(s: PStack<T>): number => s?.size ?? 0;
@@ -522,7 +509,7 @@ export const pstackTrimToSize = <T>(stack: PStack<T>, maxSize: number): PStack<T
   // Rebuild cons-list from oldest→newest so top is the newest item
   let result: PStack<T> = null;
   for (let i = maxSize - 1; i >= 0; i--) {
-    result = new PStackCons(items[i], result, maxSize - i);
+    result = new PStackCons(items[i], result, maxSize - i) as unknown as NonNullable<PStack<T>>;
   }
   return result;
 };

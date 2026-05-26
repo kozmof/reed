@@ -20,6 +20,7 @@ import {
   byteLength as toByteLengthBrand,
   type ByteOffset,
   type ByteLength,
+  type CharOffset,
 } from "../../types/branded.ts";
 import type { ReadTextFn, DeleteBoundaryContext } from "../../types/operations.ts";
 import {
@@ -335,14 +336,12 @@ export function findLineByNumber(
 export function getLineStartOffset(
   root: LineIndexNode | null,
   lineNumber: number,
-): LogCost<number> {
+): LogCost<ByteOffset> {
   if (root === null) {
-    const emptyOffset = $proveCtx("O(log n)", $lift("O(1)", 0));
-    return emptyOffset;
+    return $proveCtx("O(log n)", $lift("O(1)", 0 as ByteOffset));
   }
   if (lineNumber < 0) {
-    const invalidOffset = $proveCtx("O(log n)", $lift("O(1)", 0));
-    return invalidOffset;
+    return $proveCtx("O(log n)", $lift("O(1)", 0 as ByteOffset));
   }
 
   let offset = 0;
@@ -369,7 +368,7 @@ export function getLineStartOffset(
     }
   }
 
-  const startOffset = $proveCtx("O(log n)", $lift("O(log n)", foundOffset ?? offset));
+  const startOffset = $proveCtx("O(log n)", $lift("O(log n)", (foundOffset ?? offset) as ByteOffset));
   return startOffset;
 }
 
@@ -380,14 +379,12 @@ export function getLineStartOffset(
 export function getCharStartOffset(
   root: LineIndexNode | null,
   lineNumber: number,
-): LogCost<number> {
+): LogCost<CharOffset> {
   if (root === null) {
-    const emptyOffset = $proveCtx("O(log n)", $lift("O(1)", 0));
-    return emptyOffset;
+    return $proveCtx("O(log n)", $lift("O(1)", 0 as CharOffset));
   }
   if (lineNumber < 0) {
-    const invalidOffset = $proveCtx("O(log n)", $lift("O(1)", 0));
-    return invalidOffset;
+    return $proveCtx("O(log n)", $lift("O(1)", 0 as CharOffset));
   }
 
   let offset = 0;
@@ -411,7 +408,7 @@ export function getCharStartOffset(
     }
   }
 
-  const startOffset = $proveCtx("O(log n)", $lift("O(log n)", foundOffset ?? offset));
+  const startOffset = $proveCtx("O(log n)", $lift("O(log n)", (foundOffset ?? offset) as CharOffset));
   return startOffset;
 }
 

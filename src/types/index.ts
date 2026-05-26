@@ -19,7 +19,6 @@ export type {
   EvaluationMode,
   DirtyLineRange,
   DirtyLineRangeEntry,
-  DirtyLineRangeSentinel,
   DirtyLineRangeList,
   EndOfDocument,
   SelectionRange,

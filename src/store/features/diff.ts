@@ -189,11 +189,12 @@ function myersDiff(
   const max = n + m;
   const vSize = 2 * max + 1;
   const v = new Int32Array(vSize);
-  const trace: Int32Array[] = [];
+  // Single flat buffer for all (max+1) trace snapshots: O((n+m)²) memory but one allocation.
+  const traceBuf = new Int32Array((max + 1) * vSize);
 
   // Forward phase - find the path
   for (let d = 0; d <= max; d++) {
-    trace.push(new Int32Array(v));
+    traceBuf.set(v, d * vSize);
 
     for (let k = -d; k <= d; k += 2) {
       const kIndex = k + max;
@@ -217,7 +218,7 @@ function myersDiff(
 
       // Check if we've reached the end
       if (x >= n && y >= m) {
-        return backtrack(trace, oldText, newText, oldOffset, newOffset, d, max);
+        return backtrack(traceBuf, vSize, oldText, newText, oldOffset, newOffset, d, max);
       }
     }
   }
@@ -230,7 +231,8 @@ function myersDiff(
  * Backtrack through the trace to build the edit list.
  */
 function backtrack(
-  trace: Int32Array[],
+  traceBuf: Int32Array,
+  vSize: number,
   oldText: string,
   newText: string,
   oldOffset: number,
@@ -243,7 +245,7 @@ function backtrack(
   let y = newText.length;
 
   for (let i = d; i > 0; i--) {
-    const vPrev = trace[i - 1];
+    const vPrev = traceBuf.subarray((i - 1) * vSize, i * vSize);
     const k = x - y;
     const kIndex = k + max;
 
@@ -318,43 +320,68 @@ function simpleDiff(
     }
   }
 
-  // Backtrack to find edits
+  // Backtrack, accumulating consecutive same-type characters into runs to avoid a separate pass.
   const edits: DiffEdit[] = [];
   let i = n;
   let j = m;
+  let runType: DiffEdit["type"] | null = null;
+  let runText = "";
+  let runOldPos = 0;
+  let runNewPos = 0;
 
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && oldText[i - 1] === newText[j - 1]) {
-      edits.push({
-        type: "equal",
-        text: oldText[i - 1],
-        oldPos: oldOffset + i - 1,
-        newPos: newOffset + j - 1,
-      });
-      i--;
-      j--;
-    } else if (j > 0 && (i === 0 || dp[i * cols + (j - 1)] >= dp[(i - 1) * cols + j])) {
-      edits.push({
-        type: "insert",
-        text: newText[j - 1],
-        oldPos: oldOffset + i,
-        newPos: newOffset + j - 1,
-      });
-      j--;
-    } else {
-      edits.push({
-        type: "delete",
-        text: oldText[i - 1],
-        oldPos: oldOffset + i - 1,
-        newPos: newOffset + j,
-      });
-      i--;
+  function flushRun() {
+    if (runType !== null) {
+      edits.push({ type: runType, text: runText, oldPos: runOldPos, newPos: runNewPos });
+      runType = null;
+      runText = "";
     }
   }
 
-  // Backtracking walks from end→start, so edits are in reverse document order — reverse before consolidating.
+  while (i > 0 || j > 0) {
+    let type: DiffEdit["type"];
+    let char: string;
+    let oldPos: number;
+    let newPos: number;
+
+    if (i > 0 && j > 0 && oldText[i - 1] === newText[j - 1]) {
+      type = "equal";
+      char = oldText[i - 1];
+      oldPos = oldOffset + i - 1;
+      newPos = newOffset + j - 1;
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || dp[i * cols + (j - 1)] >= dp[(i - 1) * cols + j])) {
+      type = "insert";
+      char = newText[j - 1];
+      oldPos = oldOffset + i;
+      newPos = newOffset + j - 1;
+      j--;
+    } else {
+      type = "delete";
+      char = oldText[i - 1];
+      oldPos = oldOffset + i - 1;
+      newPos = newOffset + j;
+      i--;
+    }
+
+    if (type === runType) {
+      // Prepend to accumulate in forward document order (backtrack walks end→start).
+      runText = char + runText;
+      runOldPos = oldPos;
+      runNewPos = newPos;
+    } else {
+      flushRun();
+      runType = type;
+      runText = char;
+      runOldPos = oldPos;
+      runNewPos = newPos;
+    }
+  }
+
+  flushRun();
+  // Backtracking walks from end→start, so runs are in reverse document order — reverse.
   edits.reverse();
-  return consolidateEdits(edits);
+  return edits;
 }
 
 /**

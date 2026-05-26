@@ -7,7 +7,6 @@ import type { DocumentState, DocumentStoreConfig } from "../../types/state.ts";
 import type { DocumentAction } from "../../types/actions.ts";
 import type {
   DocumentStore,
-  TransactionControl,
   ReconcilableDocumentStore,
   DocumentStoreWithEvents,
   StoreListener,
@@ -16,7 +15,7 @@ import type {
 import { createInitialState } from "../core/state.ts";
 import { documentReducer } from "./reducer.ts";
 import { reconcileFull, reconcileViewport } from "../core/line-index.ts";
-import { createTransactionManager } from "./transaction.ts";
+import { createTransactionManager, makeBatch } from "./transaction.ts";
 import {
   createEventEmitter,
   createContentChangeEvent,
@@ -35,39 +34,6 @@ interface ReconciliationState {
   idleCallbackId: number | null;
   /** Whether reconciliation is currently running */
   isReconciling: boolean;
-}
-
-/**
- * Shared try/finally logic for batch transaction management.
- *
- * Three-phase error handling:
- *   Phase 1 (begin)    — if beginTransaction throws, the store internally called emergencyReset;
- *                        the exception propagates, no further cleanup needed here.
- *   Phase 2 (actions)  — if any action throws, we attempt rollback; if rollback also throws
- *                        we call emergencyReset, then rethrow the original exception.
- *   Phase 3 (commit)   — if commitTransaction throws, the store internally called emergencyReset;
- *                        the exception propagates, rollback is NOT attempted (commit already
- *                        decremented depth, so rollback would be a depth-0 call).
- */
-function withTransactionBatch(
-  txControl: TransactionControl & { emergencyReset(): DocumentState | null },
-  actionDispatch: (action: DocumentAction) => DocumentState,
-  actions: readonly DocumentAction[],
-): void {
-  txControl.beginTransaction();
-  try {
-    for (const action of actions) {
-      actionDispatch(action);
-    }
-  } catch (e) {
-    try {
-      txControl.rollbackTransaction();
-    } catch {
-      txControl.emergencyReset();
-    }
-    throw e;
-  }
-  txControl.commitTransaction();
 }
 
 /**
@@ -253,17 +219,11 @@ export function createDocumentStore(
    * @param actions - Array of actions to apply
    * @returns New state after applying all actions
    */
-  function batch(actions: readonly DocumentAction[]): DocumentState {
-    if (actions.length === 0) {
-      return state;
-    }
-    withTransactionBatch(
-      { beginTransaction, commitTransaction, rollbackTransaction, emergencyReset },
-      dispatch,
-      actions,
-    );
-    return state;
-  }
+  const batch = makeBatch(
+    { beginTransaction, commitTransaction, rollbackTransaction, emergencyReset },
+    dispatch,
+    () => state,
+  );
 
   /**
    * Emergency reset when a rollback dispatch itself throws.
@@ -627,17 +587,11 @@ export function createDocumentStoreWithEvents(
    * Uses the enhanced dispatch (which captures before/after for events)
    * within a transaction, eliminating the need to replay the reducer.
    */
-  function batch(actions: readonly DocumentAction[]): DocumentState {
-    if (actions.length === 0) {
-      return baseStore.getSnapshot();
-    }
-    withTransactionBatch(
-      { beginTransaction, commitTransaction, rollbackTransaction, emergencyReset },
-      dispatch,
-      actions,
-    );
-    return baseStore.getSnapshot();
-  }
+  const batch = makeBatch(
+    { beginTransaction, commitTransaction, rollbackTransaction, emergencyReset },
+    dispatch,
+    baseStore.getSnapshot,
+  );
 
   return {
     // Pass through base store methods

@@ -221,8 +221,8 @@ describe("estimateLineHeight", () => {
   const mockLine: VisibleLine = {
     lineNumber: 0,
     content: "A".repeat(50),
-    startOffset: 0,
-    endOffset: 50,
+    startOffset: byteOffset(0),
+    endOffset: byteOffset(50),
     hasNewline: true,
   };
 
@@ -253,8 +253,8 @@ describe("estimateLineHeight", () => {
     const emptyLine: VisibleLine = {
       lineNumber: 0,
       content: "",
-      startOffset: 0,
-      endOffset: 1,
+      startOffset: byteOffset(0),
+      endOffset: byteOffset(1),
       hasNewline: true,
     };
 

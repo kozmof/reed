@@ -48,9 +48,9 @@ export interface VisibleLine {
   /** Text content of the line (without trailing newline) */
   readonly content: string;
   /** Byte offset where this line starts in the document */
-  readonly startOffset: number;
+  readonly startOffset: ByteOffset;
   /** Byte offset where this line ends (exclusive) */
-  readonly endOffset: number;
+  readonly endOffset: ByteOffset;
   /** Whether this line ends with a newline */
   readonly hasNewline: boolean;
 }
@@ -237,8 +237,7 @@ export function getVisibleLine(
     "O(n)",
     $checked(() =>
       $pipe(
-        $from(totalLines),
-        $andThen(() => $from(range)),
+        $from(range),
         $andThen((resolvedRange) =>
           $pipe(
             $from(
