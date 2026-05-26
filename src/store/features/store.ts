@@ -271,6 +271,12 @@ export function createDocumentStore(
     }
 
     // reconcileMode === 'idle'
+    // NOTE: `state` below is the live closure variable, not the snapshot captured when
+    // this callback was scheduled.  The callback always reconciles against the latest
+    // state, which is intentional — there is no benefit to reconciling a stale snapshot.
+    // Callers must NOT check `lineIndex.rebuildPending` on a snapshot they held before
+    // this callback fires and assume the callback reconciled *that* snapshot; it may
+    // have silently reconciled a newer one instead.
     const callback = (deadline?: IdleDeadline) => {
       reconciliation.idleCallbackId = null;
 
@@ -394,6 +400,25 @@ export function createDocumentStore(
   }
 
   /**
+   * Return a Promise that resolves once the line index is fully reconciled.
+   * Resolves immediately when rebuildPending is already false; otherwise waits
+   * for the next store notification after which the index is clean.
+   */
+  function whenReconciled(): Promise<DocumentState<"eager">> {
+    if (!state.lineIndex.rebuildPending) {
+      return Promise.resolve(state as DocumentState<"eager">);
+    }
+    return new Promise<DocumentState<"eager">>((resolve) => {
+      const unsub = subscribe(() => {
+        if (!state.lineIndex.rebuildPending) {
+          unsub();
+          resolve(state as DocumentState<"eager">);
+        }
+      });
+    });
+  }
+
+  /**
    * Set viewport bounds and ensure those lines are accurate.
    */
   function setViewport(startLine: number, endLine: number): void {
@@ -428,6 +453,7 @@ export function createDocumentStore(
     reconcileIfCurrent,
     setViewport,
     emergencyReset,
+    whenReconciled,
   };
 }
 
@@ -604,6 +630,7 @@ export function createDocumentStoreWithEvents(
     reconcileNow: baseStore.reconcileNow,
     reconcileIfCurrent: baseStore.reconcileIfCurrent,
     setViewport: baseStore.setViewport,
+    whenReconciled: baseStore.whenReconciled,
 
     // Enhanced methods with event emission and buffer management
     dispatch,

@@ -94,8 +94,9 @@ export {
   computeSetValueActionsFromStateWithDiff,
   setValue,
   setValueWithDiff,
+  setValueAuto,
 } from "./features/diff.ts";
-export type { DiffEdit, DiffResult } from "./features/diff.ts";
+export type { DiffEdit, DiffResult, SetValueOptions } from "./features/diff.ts";
 
 // Event system
 export {

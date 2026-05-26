@@ -28,6 +28,34 @@ import {
   rawByteOffset,
   rawCharOffset,
 } from "../types/branded.ts";
+import { charOffsetsToSelection } from "../store/features/rendering.ts";
+import type { DocumentState, SelectionRange } from "../types/state.ts";
+import type { LinearCost } from "../types/cost-doc.ts";
+
+/**
+ * Build a `SelectionRange` (byte offsets) from character (UTF-16 code unit) offsets.
+ *
+ * `SET_SELECTION` accepts byte-offset `SelectionRange[]`, which is easy to confuse
+ * with char offsets. Use this factory when constructing a selection from user-visible
+ * cursor positions — it performs the char→byte conversion for you.
+ *
+ * @param charAnchor - Anchor char offset (where the selection started)
+ * @param charHead   - Head char offset (cursor position / end of selection)
+ * @param state      - Current document state (used for char→byte conversion)
+ * @returns A `SelectionRange` using byte offsets, suitable for `SET_SELECTION`
+ *
+ * @complexity O(log n + line_length) per offset
+ */
+function selectionRange(
+  charAnchor: number,
+  charHead: number,
+  state: DocumentState,
+): LinearCost<SelectionRange> {
+  return charOffsetsToSelection(state, {
+    anchor: charOffset(charAnchor),
+    head: charOffset(charHead),
+  });
+}
 
 export const position = {
   // Constructors
@@ -67,4 +95,8 @@ export const position = {
   // Extraction
   rawByteOffset,
   rawCharOffset,
+
+  // Selection factory
+  /** Build a byte-offset SelectionRange from char offsets. Use with SET_SELECTION. */
+  selectionRange,
 } as const;

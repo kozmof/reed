@@ -125,7 +125,7 @@ export type { ChunkLoader, ChunkManagerConfig, ChunkManager } from "./store/inde
 export { createChunkManager } from "./store/index.ts";
 
 // Diff types
-export type { DiffEdit, DiffResult } from "./store/index.ts";
+export type { DiffEdit, DiffResult, SetValueOptions } from "./store/index.ts";
 
 // Event types
 export type {

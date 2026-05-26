@@ -22,6 +22,7 @@ import {
   $linearScan,
   $forEachN,
   $mapN,
+  $value,
 } from "../types/cost-doc.ts";
 
 export const cost = {
@@ -44,4 +45,6 @@ export const cost = {
   $linearScan,
   $forEachN,
   $mapN,
+  /** Extract the plain value from a cost-branded result. Identity at runtime. */
+  $value,
 } as const;

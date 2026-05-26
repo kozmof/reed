@@ -162,6 +162,25 @@ export interface ReconcilableDocumentStore extends DocumentStore, TransactionCon
    * Returns the restored state, or null if no snapshot was available.
    */
   emergencyReset(): DocumentState | null;
+
+  /**
+   * Return a Promise that resolves with an eager (fully-reconciled) state.
+   *
+   * Resolves immediately when `lineIndex.rebuildPending` is already false.
+   * Otherwise subscribes to the store and resolves on the first notification
+   * after which `rebuildPending` is false — i.e. after background reconciliation
+   * completes (or `reconcileNow()` is called).
+   *
+   * Eliminates the polling pattern (`while (lineIndex.rebuildPending) { ... }`)
+   * seen in tests and async consumers that need an eager `DocumentState<"eager">`.
+   *
+   * @example
+   * ```ts
+   * const eager = await store.whenReconciled();
+   * const range = query.getLineRange(eager, 0);
+   * ```
+   */
+  whenReconciled(): Promise<DocumentState<"eager">>;
 }
 
 /**

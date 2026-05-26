@@ -172,4 +172,5 @@ export {
   $linearScan,
   $forEachN,
   $mapN,
+  $value,
 } from "./cost-doc.ts";

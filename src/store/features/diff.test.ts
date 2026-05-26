@@ -11,7 +11,7 @@ import {
   setValueWithDiff,
 } from "./diff.ts";
 import { createInitialState } from "../core/state.ts";
-import { getValue } from "../core/piece-table.ts";
+import { getValue, charToByteOffset, byteToCharOffset } from "../core/piece-table.ts";
 
 describe("Diff Algorithm", () => {
   describe("diff", () => {
@@ -248,6 +248,35 @@ describe("Diff Algorithm", () => {
       const state = createInitialState({ content: "hello world" });
       const newState = setValue(state, "hello  world");
       expect(getValue(newState.pieceTable)).toBe("hello  world");
+    });
+
+    it("setValue completes without error when content contains a lone high surrogate", () => {
+      // U+D800 is a lone high surrogate. TextEncoder normalises it to U+FFFD (3 bytes),
+      // so the piece-table stores and returns the replacement character — not the original
+      // surrogate. buildCharToByteMap must agree with TextEncoder on the 3-byte count so
+      // that the delete range computed by computeSetValueActionsOptimized is correct.
+      const loneHighSurrogate = "\uD800";
+      const original = `text${loneHighSurrogate}`;
+      const state = createInitialState({ content: original });
+      const appended = `text${loneHighSurrogate}after`;
+      const newState = setValue(state, appended);
+      // TextEncoder normalises the lone surrogate to U+FFFD during encode; TextDecoder
+      // then returns U+FFFD. Verify the operation succeeds and the suffix is correct.
+      const result = getValue(newState.pieceTable);
+      expect(result.endsWith("after")).toBe(true);
+      expect(result.startsWith("text")).toBe(true);
+    });
+
+    it("charToByteOffset / byteToCharOffset round-trips over a lone high surrogate", () => {
+      // Ensures the byte-map built during computeSetValueActions is consistent with
+      // the piece-table offset helpers for the same lone-surrogate encoding.
+      const loneHighSurrogate = "\uD800";
+      const str = `abc${loneHighSurrogate}xyz`;
+      // char index 4 = 'x', one position past the lone surrogate
+      const charIdx = 4;
+      const byteIdx = charToByteOffset(str, charIdx) as unknown as number;
+      const roundTrip = byteToCharOffset(str, byteIdx) as unknown as number;
+      expect(roundTrip).toBe(charIdx);
     });
   });
 });

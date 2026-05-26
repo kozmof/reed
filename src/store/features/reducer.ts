@@ -254,9 +254,13 @@ function removeChunkPiecesFromTree(
     const leftAdd = left?.subtreeAddLength ?? 0;
     const rightAdd = right?.subtreeAddLength ?? 0;
     const selfAdd = src.bufferType === "add" ? src.length : 0;
+    // PRECONDITION: arr must be the full in-order survivor list, built from a
+    // single-pass traversal above — the median split is therefore perfectly balanced.
     // Color leaves red so subsequent inserts have RB slack; internal nodes black.
-    // All paths from root to null pass through the same black count because the
-    // tree is a perfectly-balanced median split, so no consecutive reds are possible.
+    // No-consecutive-reds holds because a perfectly-balanced split guarantees equal
+    // black-height on all root-to-null paths, so leaf reds are never adjacent.
+    // If this function is ever called with a non-contiguous or pre-filtered slice,
+    // verify that equal black-heights still hold before keeping red leaves.
     return Object.freeze({
       ...src,
       color: (left === null && right === null ? "red" : "black") as "red" | "black",

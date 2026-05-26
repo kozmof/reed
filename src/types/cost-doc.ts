@@ -206,6 +206,24 @@ type CheckedPlanLike = { readonly run: () => CtxLike };
 type UncheckedBoundaryValue<T> = T extends CtxLike ? never : T extends CheckedPlanLike ? never : T;
 
 /**
+ * Extract the plain value from a cost-branded result.
+ * Identity at runtime — the brand only exists at compile time.
+ *
+ * Use this instead of `as unknown as T` when a function returns a cost-branded
+ * type (e.g. `ConstCost<number>`, `LogCost<{ lineNumber: number; ... }>`) and
+ * you need the underlying value with its original type.
+ *
+ * @example
+ * ```ts
+ * const len: number = cost.$value(query.getLength(state.pieceTable));
+ * const line = cost.$value(query.findLineAtCharPosition(state, cursor));
+ * ```
+ */
+export function $value<T>(costed: Costed<CostLevel, T>): T {
+  return costed as unknown as T;
+}
+
+/**
  * Explicit unchecked boundary declaration.
  * Use this when a proof plan is not modeled.
  * For checked boundaries, use `$prove` or `$proveCtx`.

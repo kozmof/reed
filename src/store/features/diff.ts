@@ -683,6 +683,44 @@ export function setValue(state: DocumentState, newContent: string): LinearCost<D
 }
 
 /**
+ * Options for setValueAuto.
+ */
+export interface SetValueOptions {
+  /**
+   * Strategy to use when computing the edit:
+   * - `'fast'` (default) — single REPLACE operation, O(n). Best for interactive edits.
+   * - `'diff'` — Myers minimal-edit script, O(n²). Produces finer-grained history entries.
+   */
+  strategy?: "fast" | "diff";
+}
+
+/**
+ * Unified entry point for setting the entire document value.
+ * Routes to `setValue` (O(n), single REPLACE) or `setValueWithDiff` (O(n²), minimal diff)
+ * based on the `strategy` option.
+ *
+ * Use `strategy: 'diff'` only when fine-grained undo history matters — e.g. collaborative
+ * editing or patch generation. For all other cases the default `'fast'` is preferable.
+ *
+ * For store semantics (single notification and rollback safety), callers should use store.batch().
+ *
+ * @param state - Current document state
+ * @param newContent - The new content to set
+ * @param options - Optional strategy selector
+ * @returns New document state with the content changed
+ */
+export function setValueAuto(
+  state: DocumentState,
+  newContent: string,
+  options?: SetValueOptions,
+): QuadCost<DocumentState> {
+  if (options?.strategy === "diff") {
+    return setValueWithDiff(state, newContent);
+  }
+  return $proveCtx("O(n^2)", $lift("O(n^2)", setValue(state, newContent) as DocumentState));
+}
+
+/**
  * Set the entire document value to new content using the Myers diff algorithm.
  * Computes a minimal edit script — O(n²) worst case, but produces finer-grained history entries.
  *
