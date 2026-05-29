@@ -349,7 +349,7 @@ function bstInsert(
   }
 
   // Phase 2: rebuild bottom-up with path-copied nodes; result is already root-to-leaf.
-  const insertPath: InsertionPathEntry<PieceNode>[] = new Array(descent.length);
+  const insertPath: InsertionPathEntry<PieceNode>[] = Array.from({ length: descent.length });
   let child: PieceNode = newNode;
 
   for (let i = descent.length - 1; i >= 0; i--) {
