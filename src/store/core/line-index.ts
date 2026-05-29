@@ -368,7 +368,10 @@ export function getLineStartOffset(
     }
   }
 
-  const startOffset = $proveCtx("O(log n)", $lift("O(log n)", (foundOffset ?? offset) as ByteOffset));
+  const startOffset = $proveCtx(
+    "O(log n)",
+    $lift("O(log n)", (foundOffset ?? offset) as ByteOffset),
+  );
   return startOffset;
 }
 
@@ -408,7 +411,10 @@ export function getCharStartOffset(
     }
   }
 
-  const startOffset = $proveCtx("O(log n)", $lift("O(log n)", (foundOffset ?? offset) as CharOffset));
+  const startOffset = $proveCtx(
+    "O(log n)",
+    $lift("O(log n)", (foundOffset ?? offset) as CharOffset),
+  );
   return startOffset;
 }
 

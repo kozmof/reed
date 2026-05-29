@@ -345,7 +345,7 @@ describe("getAffectedRanges", () => {
 
     expect(ranges).toEqual([
       [8, 10], // "XY" shifted to [8, 10) in nextState
-      [2, 3],  // "Z" at [2, 3) in nextState (last change, no adjustment needed)
+      [2, 3], // "Z" at [2, 3) in nextState (last change, no adjustment needed)
     ]);
   });
 });

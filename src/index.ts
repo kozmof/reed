@@ -124,6 +124,14 @@ export type { StreamOptions, DocumentChunk } from "./store/index.ts";
 export type { ChunkLoader, ChunkManagerConfig, ChunkManager } from "./store/index.ts";
 export { createChunkManager } from "./store/index.ts";
 
+// Streaming document loader types
+export type { StreamingDocumentLoaderConfig, StreamingDocumentLoader } from "./store/index.ts";
+export { createStreamingDocumentLoader } from "./store/index.ts";
+
+// Reconciliation scheduler
+export type { ReconciliationScheduler, ReconciliationSchedulerOptions } from "./store/index.ts";
+export { createReconciliationScheduler } from "./store/index.ts";
+
 // Diff types
 export type { DiffEdit, DiffResult, SetValueOptions } from "./store/index.ts";
 

@@ -349,7 +349,11 @@ export function getAffectedRanges(
         if (change.type === "insert" && change.text) {
           const len = utf8ByteLength(change.text);
           if (len > 0) entries.push({ start: change.start, size: len, byteChange: len });
-        } else if (change.type === "delete" && typeof change.length === "number" && change.length > 0) {
+        } else if (
+          change.type === "delete" &&
+          typeof change.length === "number" &&
+          change.length > 0
+        ) {
           entries.push({ start: change.start, size: change.length, byteChange: -change.length });
         }
       }

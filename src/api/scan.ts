@@ -1,7 +1,18 @@
 /**
  * Scan namespace — O(n) operations.
- * All functions in this namespace perform full or partial document traversals.
- * Use `query.*` for efficient lookups when possible.
+ *
+ * Every function here walks the full document (or a large portion of it).
+ * **Do not call `scan.*` inside a hot rendering loop or on every keystroke.**
+ * Hot paths — line lookups, cursor positioning, range reads — belong in
+ * `query.*`, which provides O(1) and O(log n) alternatives backed by the
+ * piece-tree and line-index prefix sums.
+ *
+ * Appropriate uses of `scan.*`:
+ * - One-time export / serialisation of the whole document
+ * - Background analysis (spell-check, word-count, diff)
+ * - Test assertions that need the complete document string
+ *
+ * @see query — O(1) / O(log n) read operations
  */
 
 import { $linearCostFn } from "../types/cost-doc.ts";

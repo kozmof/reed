@@ -4,15 +4,16 @@
  * historyUndo / historyRedo operations that apply stored changes.
  */
 
-import type { DocumentState, HistoryState, LineIndexState, HistoryChange } from "../../types/state.ts";
+import type {
+  DocumentState,
+  HistoryState,
+  LineIndexState,
+  HistoryChange,
+} from "../../types/state.ts";
 import { pstackSize, pstackPush, pstackPop } from "../../types/state.ts";
 import { byteOffset } from "../../types/branded.ts";
 import { withState } from "../core/state.ts";
-import {
-  reconcileFull,
-  reconcileRange,
-  findLineAtPosition,
-} from "../core/line-index.ts";
+import { reconcileFull, reconcileRange, findLineAtPosition } from "../core/line-index.ts";
 import { applyChange, applyInverseChange } from "./edit.ts";
 
 /**

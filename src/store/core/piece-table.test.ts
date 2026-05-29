@@ -639,4 +639,113 @@ describe("Piece Table Operations", () => {
       expect(getValue(state)).toBe("x".repeat(50));
     });
   });
+
+  describe("RB tree properties after delete (split-join)", () => {
+    // Validates full RB invariants: black root, no red-red, equal black-heights.
+    function validateRB(node: ReturnType<typeof collectPieces>[0] | null): {
+      blackHeight: number;
+      valid: boolean;
+    } {
+      if (node === null) return { blackHeight: 1, valid: true };
+      if (node.color === "red") {
+        if (node.left?.color === "red" || node.right?.color === "red") {
+          return { blackHeight: 0, valid: false };
+        }
+      }
+      const left = validateRB(node.left as any);
+      const right = validateRB(node.right as any);
+      if (!left.valid || !right.valid) return { blackHeight: 0, valid: false };
+      if (left.blackHeight !== right.blackHeight) return { blackHeight: 0, valid: false };
+      return { blackHeight: left.blackHeight + (node.color === "black" ? 1 : 0), valid: true };
+    }
+
+    function buildFragmentedState(pieces: string[]): ReturnType<typeof pieceTableInsert>["state"] {
+      let state = createEmptyPieceTableState();
+      let pos = 0;
+      for (const p of pieces) {
+        state = pieceTableInsert(state, byteOffset(pos), p).state;
+        pos += p.length;
+      }
+      return state;
+    }
+
+    it("root is always black after delete", () => {
+      let state = buildFragmentedState(["abc", "def", "ghi"]);
+      state = pieceTableDelete(state, byteOffset(2), byteOffset(7));
+      if (state.root !== null) expect(state.root.color).toBe("black");
+    });
+
+    it("maintains RB invariant after single-piece interior delete", () => {
+      let state = createPieceTableState("Hello World");
+      state = pieceTableDelete(state, byteOffset(5), byteOffset(6));
+      expect(getValue(state)).toBe("HelloWorld");
+      expect(validateRB(state.root).valid).toBe(true);
+    });
+
+    it("maintains RB invariant after delete spanning multiple pieces", () => {
+      // Build a fragmented tree with many small pieces, then delete a range
+      // that crosses several piece boundaries — the core scenario from §5.2/§8.1.
+      let state = buildFragmentedState(["aa", "bb", "cc", "dd", "ee", "ff", "gg"]);
+      expect(getValue(state)).toBe("aabbccddeeffgg");
+
+      // Delete across pieces 2–5 ("bbccddeef")
+      state = pieceTableDelete(state, byteOffset(2), byteOffset(11));
+      expect(getValue(state)).toBe("aafgg");
+      expect(validateRB(state.root).valid).toBe(true);
+    });
+
+    it("maintains RB invariant after deleting entire content", () => {
+      let state = buildFragmentedState(["hello", "world"]);
+      const total = state.totalLength;
+      state = pieceTableDelete(state, byteOffset(0), byteOffset(total));
+      expect(getValue(state)).toBe("");
+      expect(state.root).toBeNull();
+    });
+
+    it("maintains RB invariant after repeated inserts and deletes", () => {
+      let state = createEmptyPieceTableState();
+      // Interleave 30 inserts and 15 deletes to stress-test tree shape
+      for (let i = 0; i < 30; i++) {
+        state = pieceTableInsert(state, byteOffset(state.totalLength), `x${i}`).state;
+        if (i % 2 === 0 && state.totalLength >= 2) {
+          state = pieceTableDelete(state, byteOffset(0), byteOffset(1));
+        }
+      }
+      expect(validateRB(state.root).valid).toBe(true);
+    });
+
+    it("maintains RB invariant when delete range exactly spans a whole piece", () => {
+      // Build state so one of the add-pieces has length exactly 3
+      let state = buildFragmentedState(["ab", "cde", "fg"]);
+      // Delete the middle piece exactly
+      state = pieceTableDelete(state, byteOffset(2), byteOffset(5));
+      expect(getValue(state)).toBe("abfg");
+      expect(validateRB(state.root).valid).toBe(true);
+    });
+
+    it("delete at start boundary keeps invariant", () => {
+      let state = buildFragmentedState(["aaa", "bbb", "ccc"]);
+      state = pieceTableDelete(state, byteOffset(0), byteOffset(3));
+      expect(getValue(state)).toBe("bbbccc");
+      expect(validateRB(state.root).valid).toBe(true);
+    });
+
+    it("delete at end boundary keeps invariant", () => {
+      let state = buildFragmentedState(["aaa", "bbb", "ccc"]);
+      state = pieceTableDelete(state, byteOffset(6), byteOffset(9));
+      expect(getValue(state)).toBe("aaabbb");
+      expect(validateRB(state.root).valid).toBe(true);
+    });
+
+    it("large-tree delete maintains invariant (20+ pieces)", () => {
+      let state = createEmptyPieceTableState();
+      for (let i = 0; i < 20; i++) {
+        state = pieceTableInsert(state, byteOffset(state.totalLength), "xy").state;
+      }
+      // Delete 30 bytes from the middle (spanning ~15 pieces)
+      const mid = Math.floor(state.totalLength / 2);
+      state = pieceTableDelete(state, byteOffset(mid - 15), byteOffset(mid + 15));
+      expect(validateRB(state.root).valid).toBe(true);
+    });
+  });
 });

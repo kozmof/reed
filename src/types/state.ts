@@ -6,6 +6,7 @@
 import type { ByteOffset, ByteLength, CharOffset } from "./branded.ts";
 import type { GrowableBuffer } from "../store/core/growable-buffer.ts";
 import type { NonEmptyReadonlyArray } from "./utils.ts";
+import type { ReconciliationScheduler } from "../store/features/reconciliation-scheduler.ts";
 export type { NonEmptyReadonlyArray } from "./utils.ts";
 export type { ReadTextFn, DeleteBoundaryContext } from "./operations.ts";
 
@@ -635,4 +636,11 @@ export interface DocumentStoreConfig {
    *   trigger reconciliation explicitly via `reconcileNow()` or `getEagerSnapshot()`.
    */
   reconcileMode?: "idle" | "sync" | "none";
+  /**
+   * Inject a custom ReconciliationScheduler, overriding `reconcileMode`.
+   * Intended for test environments that need fine-grained control over
+   * when background maintenance fires.
+   * When provided, `reconcileMode` is ignored.
+   */
+  scheduler?: ReconciliationScheduler;
 }

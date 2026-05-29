@@ -15,6 +15,7 @@ import type {
 import { createInitialState } from "../core/state.ts";
 import { documentReducer } from "./reducer.ts";
 import { reconcileFull, reconcileViewport } from "../core/line-index.ts";
+import { getBufferStats, compactAddBuffer } from "../core/piece-table.ts";
 import { createTransactionManager, makeBatch } from "./transaction.ts";
 import {
   createEventEmitter,
@@ -25,16 +26,13 @@ import {
   getAffectedRanges,
 } from "./events.ts";
 import { isTextEditAction } from "../../types/actions.ts";
+import { createReconciliationScheduler } from "./reconciliation-scheduler.ts";
 
-/**
- * Background reconciliation state.
- */
-interface ReconciliationState {
-  /** ID of pending idle callback (or timeout) */
-  idleCallbackId: number | null;
-  /** Whether reconciliation is currently running */
-  isReconciling: boolean;
-}
+// Automatically compact the add buffer when more than this fraction of allocated bytes
+// are unreferenced waste AND the buffer exceeds AUTO_COMPACT_MIN_BYTES.
+// Checked after each mutation in the idle callback, alongside reconciliation.
+const AUTO_COMPACT_WASTE_RATIO = 0.5;
+const AUTO_COMPACT_MIN_BYTES = 16384; // 16 KB
 
 /**
  * Factory function to create a DocumentStore.
@@ -59,10 +57,6 @@ export function createDocumentStore(
   let listeners: StoreListener[] = [];
   let notifying = false; // Re-entrancy guard for notifyListeners (see 6.4)
   const transaction = createTransactionManager();
-  const reconciliation: ReconciliationState = {
-    idleCallbackId: null,
-    isReconciling: false,
-  };
 
   /**
    * Replace internal state reference only when it changes.
@@ -72,6 +66,39 @@ export function createDocumentStore(
       state = nextState;
     }
   }
+
+  function needsCompaction(): boolean {
+    const stats = getBufferStats(state.pieceTable);
+    return (
+      stats.wasteRatio > AUTO_COMPACT_WASTE_RATIO && stats.addBufferSize > AUTO_COMPACT_MIN_BYTES
+    );
+  }
+
+  function applyCompactionIfNeeded(): void {
+    if (!needsCompaction()) return;
+    const newPieceTable = compactAddBuffer(state.pieceTable, AUTO_COMPACT_WASTE_RATIO);
+    if (newPieceTable !== state.pieceTable) {
+      setState(Object.freeze({ ...state, pieceTable: newPieceTable }));
+      notifyListeners();
+    }
+  }
+
+  const scheduler =
+    config.scheduler ??
+    createReconciliationScheduler(reconcileMode, {
+      hasPendingWork: () => state.lineIndex.rebuildPending || needsCompaction(),
+      shouldDefer: () => transaction.isActive,
+      performWork() {
+        if (state.lineIndex.rebuildPending) {
+          const newLineIndex = reconcileFull(state.lineIndex, state.version);
+          if (newLineIndex !== state.lineIndex) {
+            setState(Object.freeze({ ...state, lineIndex: newLineIndex }));
+            notifyListeners();
+          }
+        }
+        applyCompactionIfNeeded();
+      },
+    });
 
   /**
    * Notify all listeners of state change.
@@ -154,7 +181,7 @@ export function createDocumentStore(
       setState(newState);
       if (!transaction.isActive) {
         notifyListeners();
-        if (state.lineIndex.rebuildPending) {
+        if (state.lineIndex.rebuildPending || needsCompaction()) {
           scheduleReconciliation();
         }
       }
@@ -186,7 +213,7 @@ export function createDocumentStore(
       const result = transaction.commit();
       if (result.isOutermost) {
         notifyListeners();
-        if (state.lineIndex.rebuildPending) {
+        if (state.lineIndex.rebuildPending || needsCompaction()) {
           scheduleReconciliation();
         }
       }
@@ -238,96 +265,8 @@ export function createDocumentStore(
     return earliest ?? null;
   }
 
-  /**
-   * Schedule background reconciliation using requestIdleCallback.
-   * Falls back to setTimeout for environments without rIC.
-   *
-   * Behaviour is controlled by `reconcileMode` (from `DocumentStoreConfig`):
-   * - `'idle'`  — async, via rIC / 200 ms setTimeout fallback (default)
-   * - `'sync'`  — reconcile inline on the same tick (useful in tests)
-   * - `'none'`  — skip entirely; caller must call reconcileNow() explicitly
-   */
   function scheduleReconciliation(): void {
-    // Don't schedule if already scheduled or no reconciliation needed
-    if (reconciliation.idleCallbackId !== null) return;
-    if (!state.lineIndex.rebuildPending) return;
-
-    if (reconcileMode === "none") return;
-
-    if (reconcileMode === "sync") {
-      // Reconcile inline — skip scheduling, run immediately
-      if (transaction.isActive) return; // defer until transaction commits
-      reconciliation.isReconciling = true;
-      try {
-        const newLineIndex = reconcileFull(state.lineIndex, state.version);
-        if (newLineIndex !== state.lineIndex) {
-          setState(Object.freeze({ ...state, lineIndex: newLineIndex }));
-          notifyListeners();
-        }
-      } finally {
-        reconciliation.isReconciling = false;
-      }
-      return;
-    }
-
-    // reconcileMode === 'idle'
-    // NOTE: `state` below is the live closure variable, not the snapshot captured when
-    // this callback was scheduled.  The callback always reconciles against the latest
-    // state, which is intentional — there is no benefit to reconciling a stale snapshot.
-    // Callers must NOT check `lineIndex.rebuildPending` on a snapshot they held before
-    // this callback fires and assume the callback reconciled *that* snapshot; it may
-    // have silently reconciled a newer one instead.
-    const callback = (deadline?: IdleDeadline) => {
-      reconciliation.idleCallbackId = null;
-
-      // Don't reconcile during active transaction
-      if (transaction.isActive) {
-        scheduleReconciliation();
-        return;
-      }
-
-      // Check if we have time (>5ms remaining or no deadline)
-      const hasTime = !deadline || deadline.timeRemaining() > 5;
-      if (!hasTime) {
-        scheduleReconciliation();
-        return;
-      }
-
-      reconciliation.isReconciling = true;
-
-      try {
-        // Pass the current version (not version+1): reconciliation is
-        // version-neutral and does not change visible content.
-        const newLineIndex = reconcileFull(state.lineIndex, state.version);
-        if (newLineIndex !== state.lineIndex) {
-          setState(
-            Object.freeze({
-              ...state,
-              lineIndex: newLineIndex,
-              // state.version is intentionally unchanged — background reconciliation
-              // is invisible to listeners and should not produce a version bump.
-            }),
-          );
-          // Notify consumers so they can re-read getSnapshot() with accurate offsets.
-          // Previously-null documentOffset values are now resolved; without this call,
-          // consumers relying on getSnapshot() would silently see stale nulls until the
-          // next user action.
-          notifyListeners();
-        }
-      } finally {
-        reconciliation.isReconciling = false;
-      }
-    };
-
-    if (typeof requestIdleCallback !== "undefined") {
-      reconciliation.idleCallbackId = requestIdleCallback(callback, {
-        timeout: 1000, // Max 1 second delay
-      });
-    } else {
-      // Fallback to setTimeout for environments without requestIdleCallback.
-      // 200ms avoids the 16ms frame-rate storm in high-throughput Node.js scenarios.
-      reconciliation.idleCallbackId = setTimeout(callback, 200) as unknown as number;
-    }
+    scheduler.schedule();
   }
 
   /**
@@ -361,30 +300,13 @@ export function createDocumentStore(
    * `lineIndex.rebuildPending`, not compare version numbers.
    */
   function reconcileNow(): DocumentState<"eager"> {
-    // Cancel any pending idle callback
-    if (reconciliation.idleCallbackId !== null) {
-      if (typeof cancelIdleCallback !== "undefined") {
-        cancelIdleCallback(reconciliation.idleCallbackId);
-      } else {
-        clearTimeout(reconciliation.idleCallbackId);
-      }
-      reconciliation.idleCallbackId = null;
-    }
-
+    scheduler.cancel();
     if (!state.lineIndex.rebuildPending) {
       return state as DocumentState<"eager">;
     }
-
     const newLineIndex = reconcileFull(state.lineIndex, state.version);
     if (newLineIndex !== state.lineIndex) {
-      setState(
-        Object.freeze({
-          ...state,
-          lineIndex: newLineIndex,
-          // state.version is intentionally unchanged — reconciliation is
-          // content-neutral and must not produce spurious version bumps.
-        }),
-      );
+      setState(Object.freeze({ ...state, lineIndex: newLineIndex }));
     }
     return state as DocumentState<"eager">;
   }

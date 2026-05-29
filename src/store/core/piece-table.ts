@@ -648,31 +648,104 @@ function replacePieceInTree(
   return current;
 }
 
+// =============================================================================
+// Split / Delete Operations
+// =============================================================================
+
+/**
+ * Create a child-less copy of `node` with new `start` and `length`.
+ * Color is a placeholder ("black") — joinByBlackHeight always overrides it.
+ */
+function makePiece(node: PieceNode, start: ByteOffset, length: ByteLength): PieceNode {
+  if (node.bufferType === "chunk") {
+    return createChunkPieceNode(node.chunkIndex, start, length, "black", null, null);
+  }
+  return createPieceNode(node.bufferType, start, length, "black", null, null);
+}
+
+/**
+ * Split the subtree rooted at `node` at byte `offset` within that subtree.
+ * Returns `[left, right]` where `left` covers `[0, offset)` and `right` covers
+ * `[offset, subtreeLength)` in document order.
+ *
+ * When `offset` falls in the middle of a piece that piece is cut into two
+ * child-less pieces; each half is then assembled via `joinByBlackHeight` which
+ * restores the RB black-height invariant for the resulting subtrees.
+ *
+ * Complexity: O(log n) per call (each level of the recursion makes one
+ * joinByBlackHeight call whose cost is proportional to the height difference,
+ * and those differences telescope to O(log n) total across the root-to-leaf path).
+ */
+function splitAt(node: PieceNode | null, offset: number): [PieceNode | null, PieceNode | null] {
+  if (node === null) return [null, null];
+  if (offset <= 0) return [null, node];
+  if (offset >= node.subtreeLength) return [node, null];
+
+  const leftLen = node.left?.subtreeLength ?? 0;
+  const pieceStart = leftLen; // piece start relative to this subtree's origin
+  const pieceEnd = pieceStart + node.length;
+
+  if (offset <= pieceStart) {
+    // Split falls in the left subtree; rebuild right part as join(lr, this-piece, right)
+    const [ll, lr] = splitAt(node.left, offset);
+    const key = makePiece(node, node.start, byteLength(node.length));
+    return [ll, joinByBlackHeight(lr, key, node.right)];
+  }
+
+  if (offset >= pieceEnd) {
+    // Split falls in the right subtree; rebuild left part as join(left, this-piece, rl)
+    const [rl, rr] = splitAt(node.right, offset - pieceEnd);
+    const key = makePiece(node, node.start, byteLength(node.length));
+    return [joinByBlackHeight(node.left, key, rl), rr];
+  }
+
+  // Split falls within this piece — cut it into two child-less halves
+  const off = offset - pieceStart;
+  const lKey = makePiece(node, node.start, byteLength(off));
+  const rKey = makePiece(node, byteOffset(node.start + off), byteLength(node.length - off));
+  return [joinByBlackHeight(node.left, lKey, null), joinByBlackHeight(null, rKey, node.right)];
+}
+
 /**
  * Delete text from the piece table in the range [start, end).
  * Returns a new PieceTableState.
+ *
+ * Uses a split–join strategy:
+ *   1. splitAt(root, clampedStart)          → [left, rest]
+ *   2. splitAt(rest, clampedEnd - clampedStart) → [_, right]
+ *   3. mergeTrees(left, right)              → new root
+ *
+ * Each split is O(log n) via joinByBlackHeight, making the overall delete
+ * O(log n) regardless of how many pieces the deleted range spans.
+ * The joinByBlackHeight calls also maintain the RB black-height invariant,
+ * fixing the double-black propagation gap in the previous deleteRange approach.
  */
 export function pieceTableDelete(
   state: PieceTableState,
   start: ByteOffset,
   end: ByteOffset,
-): LinearCost<PieceTableState> {
-  if (start >= end) return $proveCtx("O(n)", $lift("O(n)", state));
-  if (state.root === null) return $proveCtx("O(n)", $lift("O(n)", state));
+): LogCost<PieceTableState> {
+  if (start >= end) return $proveCtx("O(log n)", $lift("O(log n)", state));
+  if (state.root === null) return $proveCtx("O(log n)", $lift("O(log n)", state));
 
   const deleteLength = Math.min(end, state.totalLength) - Math.max(start, 0);
-  if (deleteLength <= 0) return $proveCtx("O(n)", $lift("O(n)", state));
+  if (deleteLength <= 0) return $proveCtx("O(log n)", $lift("O(log n)", state));
 
-  // Rebuild tree excluding the deleted range, then ensure root stays black.
-  let newRoot = deleteRange(state.root, 0, start, end);
+  const clampedStart = Math.max(start, 0);
+  const clampedEnd = Math.min(end, state.totalLength);
+
+  const [left, rest] = splitAt(state.root, clampedStart);
+  const [, right] = splitAt(rest, clampedEnd - clampedStart);
+
+  let newRoot = mergeTrees(left, right);
   if (newRoot !== null && isRed(newRoot)) {
     newRoot = withPieceNode(newRoot, { color: "black" });
   }
 
   return $proveCtx(
-    "O(n)",
+    "O(log n)",
     $lift(
-      "O(n)",
+      "O(log n)",
       Object.freeze({
         ...state,
         root: newRoot,
@@ -680,127 +753,6 @@ export function pieceTableDelete(
       }),
     ),
   );
-}
-
-/**
- * Delete a range from the tree by rebuilding without the deleted portion.
- *
- * Boundary convention (used consistently throughout this function):
- *   All ranges are half-open: [start, end).
- *   Non-overlap:  rangeEnd <= deleteStart || rangeStart >= deleteEnd
- *   Overlap:      rangeStart < deleteEnd  && deleteStart < rangeEnd
- */
-function deleteRange(
-  node: PieceNode | null,
-  offset: number,
-  deleteStart: number,
-  deleteEnd: number,
-): PieceNode | null {
-  if (node === null) return null;
-
-  // Early return: entire subtree [offset, subtreeEnd) does not overlap [deleteStart, deleteEnd)
-  const subtreeEnd = offset + node.subtreeLength;
-  if (subtreeEnd <= deleteStart || offset >= deleteEnd) {
-    return node;
-  }
-
-  const leftLength = node.left?.subtreeLength ?? 0;
-  const pieceStart = offset + leftLength;
-  const pieceEnd = pieceStart + node.length;
-
-  // Recurse into left child only if its range [offset, pieceStart) overlaps [deleteStart, deleteEnd)
-  const newLeft =
-    node.left !== null && offset < deleteEnd && deleteStart < pieceStart
-      ? deleteRange(node.left, offset, deleteStart, deleteEnd)
-      : node.left;
-
-  // Recurse into right child only if its range [pieceEnd, subtreeEnd) overlaps [deleteStart, deleteEnd)
-  const newRight =
-    node.right !== null && pieceEnd < deleteEnd && deleteStart < subtreeEnd
-      ? deleteRange(node.right, pieceEnd, deleteStart, deleteEnd)
-      : node.right;
-
-  // Check if this piece [pieceStart, pieceEnd) overlaps [deleteStart, deleteEnd)
-  if (pieceEnd <= deleteStart || pieceStart >= deleteEnd) {
-    // No overlap - keep this piece but update children
-    if (newLeft !== node.left || newRight !== node.right) {
-      return withPieceNode(node, { left: newLeft, right: newRight });
-    }
-    return node;
-  }
-
-  // Piece overlaps with delete range
-  const keepBefore = deleteStart - pieceStart; // Characters to keep before delete
-  const keepAfter = pieceEnd - deleteEnd; // Characters to keep after delete
-
-  if (keepBefore <= 0 && keepAfter <= 0) {
-    // Entire piece is deleted
-    return mergeTrees(newLeft, newRight);
-  }
-
-  if (keepBefore > 0 && keepAfter > 0) {
-    // Delete is in the middle - split into two pieces
-    let leftPiece: PieceNode;
-    let rightPiece: PieceNode;
-
-    if (node.bufferType === "chunk") {
-      leftPiece = createChunkPieceNode(
-        node.chunkIndex,
-        node.start,
-        byteLength(keepBefore),
-        node.color,
-        newLeft,
-        null,
-      );
-      rightPiece = createChunkPieceNode(
-        node.chunkIndex,
-        byteOffset(node.start + node.length - keepAfter),
-        byteLength(keepAfter),
-        "red",
-        null,
-        newRight,
-      );
-    } else {
-      leftPiece = createPieceNode(
-        node.bufferType,
-        node.start,
-        byteLength(keepBefore),
-        node.color,
-        newLeft,
-        null,
-      );
-      rightPiece = createPieceNode(
-        node.bufferType,
-        byteOffset(node.start + node.length - keepAfter),
-        byteLength(keepAfter),
-        "red",
-        null,
-        newRight,
-      );
-    }
-
-    // Combine the two pieces. fixRedViolations handles the case where leftPiece
-    // inherits node.color === 'red' and rightPiece is also red (red-red violation).
-    return fixRedViolations(withPieceNode(leftPiece, { right: rightPiece }), withPieceNode);
-  }
-
-  if (keepBefore > 0) {
-    // Keep left part only
-    return withPieceNode(node, {
-      left: newLeft,
-      right: newRight,
-      start: node.start,
-      length: byteLength(keepBefore),
-    });
-  }
-
-  // Keep right part only
-  return withPieceNode(node, {
-    left: newLeft,
-    right: newRight,
-    start: byteOffset(node.start + (node.length - keepAfter)),
-    length: byteLength(keepAfter),
-  });
 }
 
 /**
@@ -904,11 +856,13 @@ function joinRight(
   let node: PieceNode = left;
   let bh = lh;
 
-  // Descend until we reach a subtree with black-height equal to rh
+  // Descend until we reach a subtree with black-height equal to rh.
+  // Decrement bh based on the CURRENT (parent) node's color before moving,
+  // because blackHeight(n.right) = blackHeight(n) - (n.color==="black" ? 1 : 0).
   while (bh > rh && node.right !== null) {
     path.push(node);
-    node = node.right;
     if (node.color === "black") bh--;
+    node = node.right;
   }
 
   // If we haven't reached the target bh, descend one more level
@@ -960,10 +914,12 @@ function joinLeft(
   let node: PieceNode = right;
   let bh = rh;
 
+  // Decrement bh based on the CURRENT (parent) node's color before moving,
+  // because blackHeight(n.left) = blackHeight(n) - (n.color==="black" ? 1 : 0).
   while (bh > lh && node.left !== null) {
     path.push(node);
-    node = node.left;
     if (node.color === "black") bh--;
+    node = node.left;
   }
 
   if (bh > lh) {

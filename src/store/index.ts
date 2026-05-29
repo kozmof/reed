@@ -159,3 +159,17 @@ export {
 // Chunk manager — async chunk fetch subsystem for large-file streaming
 export { createChunkManager } from "./features/chunk-manager.ts";
 export type { ChunkLoader, ChunkManagerConfig, ChunkManager } from "./features/chunk-manager.ts";
+
+// Streaming document loader — high-level chunk lifecycle wrapper
+export { createStreamingDocumentLoader } from "./features/streaming-loader.ts";
+export type {
+  StreamingDocumentLoaderConfig,
+  StreamingDocumentLoader,
+} from "./features/streaming-loader.ts";
+
+// Reconciliation scheduler
+export { createReconciliationScheduler } from "./features/reconciliation-scheduler.ts";
+export type {
+  ReconciliationScheduler,
+  ReconciliationSchedulerOptions,
+} from "./features/reconciliation-scheduler.ts";
