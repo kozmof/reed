@@ -6,6 +6,7 @@
 
 import type { SelectionRange, ChunkMetadata } from "./state.ts";
 import type { ByteOffset, ByteLength, ReadonlyUint8Array } from "./branded.ts";
+import type { NonEmptyReadonlyArray } from "./utils.ts";
 import { strEnum } from "./str-enum.ts";
 
 // =============================================================================
@@ -81,7 +82,7 @@ export interface ReplaceAction {
 export interface SetSelectionAction {
   readonly type: "SET_SELECTION";
   /** New selection ranges */
-  readonly ranges: readonly SelectionRange[];
+  readonly ranges: NonEmptyReadonlyArray<SelectionRange>;
 }
 
 // =============================================================================

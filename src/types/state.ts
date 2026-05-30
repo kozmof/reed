@@ -240,7 +240,6 @@ export interface LineIndexNode<M extends EvaluationMode = EvaluationMode> extend
  * Used for lazy line index maintenance to defer expensive O(n) offset recalculations.
  */
 export interface DirtyLineRangeEntry {
-  readonly kind: "range";
   /** First line affected (inclusive, 0-indexed) */
   readonly startLine: number;
   /** Last line affected (inclusive). Use Number.MAX_SAFE_INTEGER for "to end of document" */
@@ -585,9 +584,14 @@ export interface DocumentState<M extends EvaluationMode = EvaluationMode> {
 // =============================================================================
 
 /**
- * Configuration options for creating a document store.
+ * Reconciliation scheduling options — mutually exclusive: either a preset
+ * `reconcileMode` string or a custom `scheduler` instance, never both.
  */
-export interface DocumentStoreConfig {
+type ReconcileModeConfig = { reconcileMode?: "idle" | "sync" | "none"; scheduler?: never };
+type CustomSchedulerConfig = { scheduler: ReconciliationScheduler; reconcileMode?: never };
+type ReconcileOptions = ReconcileModeConfig | CustomSchedulerConfig;
+
+export interface DocumentStoreConfigBase {
   /** Initial document content */
   content?: string;
   /** Maximum history entries (default: 1000) */
@@ -624,23 +628,13 @@ export interface DocumentStoreConfig {
    * background reconciliation frequency in high-throughput scenarios.
    */
   maxDirtyRanges?: number;
-  /**
-   * Controls when background line-index reconciliation is scheduled.
-   *
-   * - `'idle'` (default) — uses `requestIdleCallback` when available, falling
-   *   back to a 200 ms `setTimeout` in environments without rIC (e.g. Node.js).
-   *   Suitable for browser-based editors.
-   * - `'sync'` — reconciles synchronously on the same tick as the edit.
-   *   Useful in test environments where async timers interfere with assertions.
-   * - `'none'` — disables background reconciliation entirely. Callers must
-   *   trigger reconciliation explicitly via `reconcileNow()` or `getEagerSnapshot()`.
-   */
-  reconcileMode?: "idle" | "sync" | "none";
-  /**
-   * Inject a custom ReconciliationScheduler, overriding `reconcileMode`.
-   * Intended for test environments that need fine-grained control over
-   * when background maintenance fires.
-   * When provided, `reconcileMode` is ignored.
-   */
-  scheduler?: ReconciliationScheduler;
 }
+
+/**
+ * Configuration options for creating a document store.
+ *
+ * The `reconcileMode` and `scheduler` fields are mutually exclusive: providing
+ * both at the same time is a compile error. Use `reconcileMode` for the built-in
+ * presets or `scheduler` to supply a fully custom implementation.
+ */
+export type DocumentStoreConfig = DocumentStoreConfigBase & ReconcileOptions;

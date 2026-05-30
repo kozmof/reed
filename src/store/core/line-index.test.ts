@@ -497,8 +497,8 @@ describe("mergeDirtyRanges improvements", () => {
   it("should decompose overlapping ranges with different startLine and delta (next contained in current)", () => {
     // current=[0,10,d1=5], next=[4,7,d2=-3]  → [0,3,5], [4,7,2], [8,10,5]
     const ranges = [
-      Object.freeze({ kind: "range" as const, startLine: 0, endLine: 10, offsetDelta: 5 }),
-      Object.freeze({ kind: "range" as const, startLine: 4, endLine: 7, offsetDelta: -3 }),
+      Object.freeze({ startLine: 0, endLine: 10, offsetDelta: 5 }),
+      Object.freeze({ startLine: 4, endLine: 7, offsetDelta: -3 }),
     ];
     const merged = mergeDirtyRanges(ranges);
     expect(merged).toHaveLength(3);
@@ -510,8 +510,8 @@ describe("mergeDirtyRanges improvements", () => {
   it("should decompose overlapping ranges with different startLine and delta (current ends first)", () => {
     // current=[0,6,d1=4], next=[3,10,d2=-2]  → [0,2,4], [3,6,2], [7,10,-2]
     const ranges = [
-      Object.freeze({ kind: "range" as const, startLine: 0, endLine: 6, offsetDelta: 4 }),
-      Object.freeze({ kind: "range" as const, startLine: 3, endLine: 10, offsetDelta: -2 }),
+      Object.freeze({ startLine: 0, endLine: 6, offsetDelta: 4 }),
+      Object.freeze({ startLine: 3, endLine: 10, offsetDelta: -2 }),
     ];
     const merged = mergeDirtyRanges(ranges);
     expect(merged).toHaveLength(3);
@@ -523,8 +523,8 @@ describe("mergeDirtyRanges improvements", () => {
   it("should decompose overlapping ranges with different startLine and delta (same end)", () => {
     // current=[0,8,d1=3], next=[5,8,d2=-1]  → [0,4,3], [5,8,2]
     const ranges = [
-      Object.freeze({ kind: "range" as const, startLine: 0, endLine: 8, offsetDelta: 3 }),
-      Object.freeze({ kind: "range" as const, startLine: 5, endLine: 8, offsetDelta: -1 }),
+      Object.freeze({ startLine: 0, endLine: 8, offsetDelta: 3 }),
+      Object.freeze({ startLine: 5, endLine: 8, offsetDelta: -1 }),
     ];
     const merged = mergeDirtyRanges(ranges);
     expect(merged).toHaveLength(2);
@@ -534,8 +534,8 @@ describe("mergeDirtyRanges improvements", () => {
 
   it("should merge same-start ranges with different deltas by summing", () => {
     const ranges = [
-      Object.freeze({ kind: "range" as const, startLine: 5, endLine: 10, offsetDelta: 3 }),
-      Object.freeze({ kind: "range" as const, startLine: 5, endLine: 12, offsetDelta: -2 }),
+      Object.freeze({ startLine: 5, endLine: 10, offsetDelta: 3 }),
+      Object.freeze({ startLine: 5, endLine: 12, offsetDelta: -2 }),
     ];
 
     const merged = mergeDirtyRanges(
@@ -546,7 +546,6 @@ describe("mergeDirtyRanges improvements", () => {
         (merged as import("../../types/state.ts").DirtyLineRangeEntry[]).length === 1,
     ).toBe(true);
     const m0 = (merged as import("../../types/state.ts").DirtyLineRangeEntry[])[0];
-    expect(m0.kind).toBe("range");
     expect(m0.startLine).toBe(5);
     expect(m0.endLine).toBe(12);
     expect(m0.offsetDelta).toBe(1); // 3 + (-2)
@@ -557,7 +556,6 @@ describe("mergeDirtyRanges improvements", () => {
     for (let i = 0; i < 40; i++) {
       ranges.push(
         Object.freeze({
-          kind: "range" as const,
           startLine: i * 10,
           endLine: i * 10 + 5,
           offsetDelta: i % 2 === 0 ? 1 : -1,
@@ -571,8 +569,8 @@ describe("mergeDirtyRanges improvements", () => {
 
   it("should still merge adjacent same-delta ranges normally", () => {
     const ranges = [
-      Object.freeze({ kind: "range" as const, startLine: 0, endLine: 5, offsetDelta: 2 }),
-      Object.freeze({ kind: "range" as const, startLine: 6, endLine: 10, offsetDelta: 2 }),
+      Object.freeze({ startLine: 0, endLine: 5, offsetDelta: 2 }),
+      Object.freeze({ startLine: 6, endLine: 10, offsetDelta: 2 }),
     ];
 
     const merged = mergeDirtyRanges(
@@ -583,7 +581,6 @@ describe("mergeDirtyRanges improvements", () => {
         (merged as import("../../types/state.ts").DirtyLineRangeEntry[]).length === 1,
     ).toBe(true);
     const m0 = (merged as import("../../types/state.ts").DirtyLineRangeEntry[])[0];
-    expect(m0.kind).toBe("range");
     expect(m0.startLine).toBe(0);
     expect(m0.endLine).toBe(10);
   });
@@ -597,7 +594,6 @@ describe("mergeDirtyRanges improvements", () => {
     for (let i = 0; i < 40; i++) {
       manyRanges.push(
         Object.freeze({
-          kind: "range" as const,
           startLine: i * 2,
           endLine: i * 2,
           offsetDelta: i % 2 === 0 ? 1 : -1,
@@ -959,7 +955,6 @@ describe("dirty range remapping — sequential edits", () => {
     const base = makeDoc(10); // small doc OK; reconcileFull detects full-rebuild → slow path
     const manyRanges = Array.from({ length: 40 }, (_, i) =>
       Object.freeze({
-        kind: "range" as const,
         startLine: i * 2,
         endLine: i * 2,
         offsetDelta: i % 2 === 0 ? 1 : -1,
@@ -988,7 +983,6 @@ describe("dirty range remapping — sequential edits", () => {
     const base = makeDoc(10);
     const manyRanges = Array.from({ length: 40 }, (_, i) =>
       Object.freeze({
-        kind: "range" as const,
         startLine: i * 2,
         endLine: i * 2,
         offsetDelta: i % 2 === 0 ? 1 : -1,

@@ -6,6 +6,7 @@
 import type {
   DocumentState,
   DocumentStoreConfig,
+  DocumentStoreConfigBase,
   PieceTableState,
   PieceNode,
   EvaluationMode,
@@ -24,7 +25,9 @@ import { GrowableBuffer } from "./growable-buffer.ts";
 /**
  * Default configuration values.
  */
-const DEFAULT_CONFIG: Required<DocumentStoreConfig> = {
+const DEFAULT_CONFIG: Required<DocumentStoreConfigBase> & {
+  reconcileMode: "idle" | "sync" | "none";
+} = {
   content: "",
   historyLimit: 1000,
   chunkSize: 65536,

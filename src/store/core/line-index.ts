@@ -466,15 +466,19 @@ export function findLineAtCharPosition(
  */
 export function collectLines(root: LineIndexNode | null): LinearCost<readonly LineIndexNode[]> {
   const result: LineIndexNode[] = [];
+  const stack: LineIndexNode[] = [];
+  let current: LineIndexNode | null = root;
 
-  function inOrder(node: LineIndexNode | null) {
-    if (node === null) return;
-    inOrder(node.left);
-    result.push(node);
-    inOrder(node.right);
+  while (current !== null || stack.length > 0) {
+    while (current !== null) {
+      stack.push(current);
+      current = current.left;
+    }
+    current = stack.pop()!;
+    result.push(current);
+    current = current.right;
   }
 
-  inOrder(root);
   return $proveCtx("O(n)", $lift("O(n)", result));
 }
 
@@ -513,39 +517,39 @@ function bstInsertLine(
   lineNumber: number,
   newNode: LineIndexNode,
 ): RootToLeafInsertPath<LineIndexNode> {
-  const insertPath: InsertionPathEntry<LineIndexNode>[] = [];
+  // Phase 1: descend root-to-leaf, collecting (node, direction) in document order.
+  const descent: InsertionPathEntry<LineIndexNode>[] = [];
+  let current: LineIndexNode = root;
+  let lineNum = lineNumber;
 
-  function insert(node: LineIndexNode, lineNum: number): LineIndexNode {
-    const leftLineCount = node.left?.subtreeLineCount ?? 0;
-
-    let result: LineIndexNode;
-    let direction: "left" | "right";
+  while (true) {
+    const leftLineCount = current.left?.subtreeLineCount ?? 0;
     if (lineNum <= leftLineCount) {
-      direction = "left";
-      if (node.left === null) {
-        result = withLineIndexNode(node, { left: newNode });
-      } else {
-        result = withLineIndexNode(node, {
-          left: insert(node.left, lineNum),
-        });
-      }
+      descent.push({ node: current, direction: "left" });
+      if (current.left === null) break;
+      current = current.left;
     } else {
-      direction = "right";
-      const rightLineNumber = lineNum - leftLineCount - 1;
-      if (node.right === null) {
-        result = withLineIndexNode(node, { right: newNode });
-      } else {
-        result = withLineIndexNode(node, {
-          right: insert(node.right, rightLineNumber),
-        });
-      }
+      lineNum = lineNum - leftLineCount - 1;
+      descent.push({ node: current, direction: "right" });
+      if (current.right === null) break;
+      current = current.right;
     }
-    insertPath.push({ node: result, direction });
-    return result;
   }
 
-  insert(root, lineNumber);
-  insertPath.reverse(); // root-to-leaf-parent order
+  // Phase 2: rebuild bottom-up with path-copied nodes; result is already root-to-leaf.
+  const insertPath: InsertionPathEntry<LineIndexNode>[] = Array.from({ length: descent.length });
+  let child: LineIndexNode = newNode;
+
+  for (let i = descent.length - 1; i >= 0; i--) {
+    const { node, direction } = descent[i];
+    const rebuilt =
+      direction === "left"
+        ? withLineIndexNode(node, { left: child })
+        : withLineIndexNode(node, { right: child });
+    insertPath[i] = { node: rebuilt, direction };
+    child = rebuilt;
+  }
+
   return insertPath as RootToLeafInsertPath<LineIndexNode>;
 }
 
@@ -1111,6 +1115,57 @@ export function lineIndexDelete(
 }
 
 /**
+ * Compute merged line metrics for a multi-line deletion, and rebuild the tree.
+ * Returns the rebuilt state, or null if the end line is out of range (caller
+ * should fall back to removeLinesToEnd / removeLinesToEndLazy).
+ */
+function applyDeleteLineRange(
+  state: LineIndexState,
+  startLine: number,
+  startOffset: number,
+  endLine: number,
+  deleteLength: number,
+  deletedCharLength: number,
+): LineIndexState | null {
+  const endNode = findLineByNumber(state.root, endLine);
+  if (endNode === null) return null;
+
+  const startNode = findLineByNumber(state.root, startLine);
+  if (startNode === null) return state;
+
+  const startLineLength = startNode.lineLength;
+  const endLineLength = endNode.lineLength;
+  const deleteOnStartLine = startLineLength - startOffset;
+
+  const startLineStart = getLineStartOffset(state.root, startLine);
+  const endLineStart = getLineStartOffset(state.root, endLine);
+  const middleLinesTotal = endLineStart - startLineStart - startLineLength;
+  const remainingDelete = deleteLength - deleteOnStartLine - middleLinesTotal;
+
+  const deleteOnEndLine = Math.max(0, remainingDelete);
+  const keepFromEndLine = Math.max(0, endLineLength - deleteOnEndLine);
+  const mergedLength = startOffset + keepFromEndLine;
+
+  const startLineCharStart = getCharStartOffset(state.root, startLine);
+  let endBound: number;
+  if (endLine + 1 < state.lineCount) {
+    endBound = getCharStartOffset(state.root, endLine + 1);
+  } else {
+    endBound = state.root!.subtreeCharLength;
+  }
+  const mergedCharLength = Math.max(0, endBound - startLineCharStart - deletedCharLength);
+
+  return rebuildWithDeletedRange(
+    state,
+    state.root!,
+    startLine,
+    endLine,
+    mergedLength,
+    mergedCharLength,
+  );
+}
+
+/**
  * Delete a range of lines and merge.
  * Optimized to use single-pass tree reconstruction.
  */
@@ -1124,58 +1179,18 @@ function deleteLineRange(
   const { lineNumber: startLine, offsetInLine: startOffset } = startLocation;
   const endLine = startLine + deletedNewlines;
 
-  // Find the end line to get its length
-  const endNode = findLineByNumber(state.root, endLine);
-  if (endNode === null) {
-    // End line doesn't exist - delete to end of document
+  const result = applyDeleteLineRange(
+    state,
+    startLine,
+    startOffset,
+    endLine,
+    deleteLength,
+    deletedCharLength,
+  );
+  if (result === null) {
     return removeLinesToEnd(state, startLine, startOffset, deletedCharLength);
   }
-
-  // Find the start line to get its length
-  const startNode = findLineByNumber(state.root, startLine);
-  if (startNode === null) {
-    return state;
-  }
-
-  // Calculate merged line length
-  const startLineLength = startNode.lineLength;
-  const endLineLength = endNode.lineLength;
-
-  // How much of the deletion falls on the start line (after startOffset)
-  const deleteOnStartLine = startLineLength - startOffset;
-
-  // Compute middle lines total via line start offsets — O(log n) instead of O(k * log n) loop
-  const startLineStart = getLineStartOffset(state.root, startLine);
-  const endLineStart = getLineStartOffset(state.root, endLine);
-  const middleLinesTotal = endLineStart - startLineStart - startLineLength;
-  const remainingDelete = deleteLength - deleteOnStartLine - middleLinesTotal;
-
-  // What's left is deleted from the end line
-  const deleteOnEndLine = Math.max(0, remainingDelete);
-  const keepFromEndLine = Math.max(0, endLineLength - deleteOnEndLine);
-
-  // Merged line length = what we keep from start + what we keep from end
-  const mergedLength = startOffset + keepFromEndLine;
-
-  // Compute merged char length
-  const startLineCharStart = getCharStartOffset(state.root, startLine);
-  let endBound: number;
-  if (endLine + 1 < state.lineCount) {
-    endBound = getCharStartOffset(state.root, endLine + 1);
-  } else {
-    endBound = state.root!.subtreeCharLength;
-  }
-  const mergedCharLength = Math.max(0, endBound - startLineCharStart - deletedCharLength);
-
-  // Single-pass reconstruction: collect lines, skip deleted range, merge start/end
-  return rebuildWithDeletedRange(
-    state,
-    state.root!,
-    startLine,
-    endLine,
-    mergedLength,
-    mergedCharLength,
-  );
+  return result;
 }
 
 /**
@@ -1381,26 +1396,32 @@ function removeLinesToEnd(
   startOffset: number,
   deletedCharLength?: number,
 ): LineIndexState {
-  const lines = collectLines(state.root);
+  // Collect only the kept prefix [0, startLine) using an early-stopping traversal.
+  // O(startLine) allocation instead of O(n) from collectLines.
   const newLines: { offset: number; length: number; charLength: number }[] = [];
-
+  const stack: LineIndexNode[] = [];
+  let cur: LineIndexNode | null = state.root;
   let currentOffset = 0;
-  for (let i = 0; i < startLine && i < lines.length; i++) {
-    newLines.push({
-      offset: currentOffset,
-      length: lines[i].lineLength,
-      charLength: lines[i].charLength,
-    });
-    currentOffset += lines[i].lineLength;
+  let prefixCharLength = 0;
+
+  outer: while (cur !== null || stack.length > 0) {
+    while (cur !== null) {
+      stack.push(cur);
+      cur = cur.left;
+    }
+    cur = stack.pop()!;
+    if (newLines.length >= startLine) break outer;
+    newLines.push({ offset: currentOffset, length: cur.lineLength, charLength: cur.charLength });
+    currentOffset += cur.lineLength;
+    prefixCharLength += cur.charLength;
+    cur = cur.right;
   }
 
-  // Add partial last line if there's content before the deletion
-  if (startOffset > 0 && startLine < lines.length) {
-    // Compute charLength for the truncated line
-    let totalCharsFromStartToEnd = 0;
-    for (let i = startLine; i < lines.length; i++) {
-      totalCharsFromStartToEnd += lines[i].charLength;
-    }
+  // Add partial last line if there's content before the deletion point.
+  if (startOffset > 0 && startLine < state.lineCount) {
+    // Suffix char length = total - already-counted prefix chars.
+    const totalCharLength = state.root?.subtreeCharLength ?? 0;
+    const totalCharsFromStartToEnd = totalCharLength - prefixCharLength;
     const truncatedCharLength =
       deletedCharLength !== undefined ? totalCharsFromStartToEnd - deletedCharLength : 0;
     newLines.push({
@@ -1545,7 +1566,6 @@ function createDirtyRange(
   offsetDelta: number,
 ): DirtyLineRangeEntry {
   return Object.freeze({
-    kind: "range" as const,
     startLine,
     endLine,
     offsetDelta,
@@ -1574,7 +1594,6 @@ function remapDirtyRangesForInsert(
       // Entirely after insertionLine — shift both bounds up
       result.push(
         Object.freeze({
-          kind: "range" as const,
           startLine: s + insertedCount,
           endLine: e === END_OF_DOCUMENT ? e : e + insertedCount,
           offsetDelta: d,
@@ -1585,7 +1604,6 @@ function remapDirtyRangesForInsert(
       // Before part: s..insertionLine — indices unchanged
       result.push(
         Object.freeze({
-          kind: "range" as const,
           startLine: s,
           endLine: insertionLine,
           offsetDelta: d,
@@ -1594,7 +1612,6 @@ function remapDirtyRangesForInsert(
       // After part: old insertionLine+1..e → new insertionLine+insertedCount+1..e+insertedCount
       result.push(
         Object.freeze({
-          kind: "range" as const,
           startLine: insertionLine + 1 + insertedCount,
           endLine: e === END_OF_DOCUMENT ? e : e + insertedCount,
           offsetDelta: d,
@@ -1625,7 +1642,6 @@ function remapDirtyRangesForDelete(
     if (s < deleteZoneStart) {
       result.push(
         Object.freeze({
-          kind: "range" as const,
           startLine: s,
           endLine: Math.min(e, deleteZoneStart - 1),
           offsetDelta: d,
@@ -1637,7 +1653,6 @@ function remapDirtyRangesForDelete(
     if (postStart <= e) {
       result.push(
         Object.freeze({
-          kind: "range" as const,
           startLine: postStart - deletedCount,
           endLine: e === END_OF_DOCUMENT ? e : e - deletedCount,
           offsetDelta: d,
@@ -1888,51 +1903,21 @@ function deleteLineRangeLazy(
   const { lineNumber: startLine, offsetInLine: startOffset } = startLocation;
   const endLine = startLine + deletedNewlines;
 
-  const endNode = findLineByNumber(state.root, endLine);
-  if (endNode === null) {
-    return removeLinesToEndLazy(state, startLine, startOffset, currentVersion, deletedCharLength);
-  }
-
-  const startNode = findLineByNumber(state.root, startLine);
-  if (startNode === null) return state;
-
-  // Calculate merged line length
-  const startLineLength = startNode.lineLength;
-  const endLineLength = endNode.lineLength;
-  const deleteOnStartLine = startLineLength - startOffset;
-
-  // Compute middle lines total via line start offsets — O(log n) instead of O(k * log n) loop
-  const startLineStart = getLineStartOffset(state.root, startLine);
-  const endLineStart = getLineStartOffset(state.root, endLine);
-  const middleLinesTotal = endLineStart - startLineStart - startLineLength;
-  const remainingDelete = deleteLength - deleteOnStartLine - middleLinesTotal;
-
-  const deleteOnEndLine = Math.max(0, remainingDelete);
-  const keepFromEndLine = Math.max(0, endLineLength - deleteOnEndLine);
-  const mergedLength = startOffset + keepFromEndLine;
-
-  // Compute merged char length
-  const startLineCharStart = getCharStartOffset(state.root, startLine);
-  let endBound: number;
-  if (endLine + 1 < state.lineCount) {
-    endBound = getCharStartOffset(state.root, endLine + 1);
-  } else {
-    endBound = state.root!.subtreeCharLength;
-  }
-  const mergedCharLength = Math.max(0, endBound - startLineCharStart - deletedCharLength);
-
   // Multi-line deletions always require O(n) structural rebalancing via rebuildWithDeletedRange,
   // even in lazy mode. RB-tree node removal must rebalance the tree immediately — that structural
   // work cannot be deferred the way offset recalculation can. "Lazy" defers only documentOffset
   // updates, not the tree shape itself, so this path carries the same cost as eager deletion.
-  const newState = rebuildWithDeletedRange(
+  const newState = applyDeleteLineRange(
     state,
-    state.root!,
     startLine,
+    startOffset,
     endLine,
-    mergedLength,
-    mergedCharLength,
+    deleteLength,
+    deletedCharLength,
   );
+  if (newState === null) {
+    return removeLinesToEndLazy(state, startLine, startOffset, currentVersion, deletedCharLength);
+  }
 
   // Remap existing dirty ranges to new tree line numbering before merging
   const remappedRanges = remapDirtyRangesForDelete(state.dirtyRanges, startLine + 1, endLine);

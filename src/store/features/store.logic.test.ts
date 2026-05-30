@@ -694,7 +694,7 @@ describe("Action Creators", () => {
     });
 
     it("should create SET_SELECTION action", () => {
-      const ranges = [{ anchor: byteOffset(0), head: byteOffset(5) }];
+      const ranges = [{ anchor: byteOffset(0), head: byteOffset(5) }] as const;
       const action = DocumentActions.setSelection(ranges);
 
       expect(action.type).toBe("SET_SELECTION");

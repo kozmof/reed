@@ -19,7 +19,10 @@ describe("serializeAction / deserializeAction", () => {
       ["INSERT", DocumentActions.insert(byteOffset(0), "hello")],
       ["DELETE", DocumentActions.delete(byteOffset(2), byteOffset(7))],
       ["REPLACE", DocumentActions.replace(byteOffset(0), byteOffset(3), "xyz")],
-      ["SET_SELECTION", DocumentActions.setSelection([])],
+      [
+        "SET_SELECTION",
+        DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(5) }]),
+      ],
       ["UNDO", DocumentActions.undo()],
       ["REDO", DocumentActions.redo()],
       ["HISTORY_CLEAR", DocumentActions.historyClear()],

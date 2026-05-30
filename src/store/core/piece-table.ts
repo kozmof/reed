@@ -373,11 +373,10 @@ function bstInsert(
  * Split a piece into two pieces at the given offset within the piece.
  * Returns [leftPiece, rightPiece] or [piece, null] if at boundary.
  *
- * **Pre-condition**: `piece` must be a near-leaf node — at most one of
- * `piece.left` / `piece.right` may be non-null. The left half of the split
- * inherits `piece.left` and the right half inherits `piece.right`. If both
- * children were populated the right subtree would be detached from the tree
- * when `insertWithSplit` replaces the original node with the left half.
+ * The caller (`insertWithSplit`) is responsible for re-inserting both halves
+ * into the tree: it uses `replacePieceInTree` to place the left half (which
+ * restores the original children) and `rbReInsertPiece` for the right half
+ * (which strips children before BST re-insertion).
  */
 export function splitPiece(piece: PieceNode, offsetInPiece: number): [PieceNode, PieceNode | null] {
   if (offsetInPiece <= 0) {

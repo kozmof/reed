@@ -254,3 +254,41 @@ export function fixInsertWithPath<N extends RBNode<N>>(
 
   return ensureBlackRoot(insertPath[0].node, withNode);
 }
+
+// =============================================================================
+// Right-Spine Append
+// =============================================================================
+
+/**
+ * Append a new red leaf as the rightmost node of the tree, then fix any
+ * red-red violations bottom-up and ensure the root is black.
+ *
+ * Used for sequential append operations (e.g. streaming chunk loading) where
+ * the new element is always the largest key in document order.
+ */
+export function appendToRightmost<N extends RBNode<N>>(
+  root: N | null,
+  newLeaf: N,
+  withNode: WithNodeFn<N>,
+): N {
+  if (root === null) {
+    return withNode(newLeaf, { color: "black" });
+  }
+
+  // Walk the right spine collecting ancestors (root → rightmost parent).
+  const path: N[] = [];
+  let cur: N = root;
+  while (cur.right !== null) {
+    path.push(cur);
+    cur = cur.right;
+  }
+
+  // Attach leaf to the rightmost node, then fix any red-red violation.
+  let updated: N = fixRedViolations(withNode(cur, { right: newLeaf }), withNode);
+
+  for (let i = path.length - 1; i >= 0; i--) {
+    updated = fixRedViolations(withNode(path[i], { right: updated }), withNode);
+  }
+
+  return updated.color === "black" ? updated : withNode(updated, { color: "black" });
+}

@@ -5,6 +5,7 @@
 
 import type { SelectionRange } from "../../types/state.ts";
 import type { ByteOffset, ReadonlyUint8Array } from "../../types/branded.ts";
+import type { NonEmptyReadonlyArray } from "../../types/utils.ts";
 import type {
   DocumentAction,
   InsertAction,
@@ -65,7 +66,7 @@ export const DocumentActions = {
    * Create a set selection action.
    * @param ranges - New selection ranges
    */
-  setSelection(ranges: readonly SelectionRange[]): SetSelectionAction {
+  setSelection(ranges: NonEmptyReadonlyArray<SelectionRange>): SetSelectionAction {
     return Object.freeze({ type: "SET_SELECTION", ranges });
   },
 

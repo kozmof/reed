@@ -48,109 +48,92 @@ export function mergeDirtyRanges(
     : [...ranges];
   const merged: DirtyLineRangeEntry[] = [];
   let i = 0;
-  // Loop invariant: `current` is the "in-flight" range — it has NOT yet been
-  // pushed to `merged`. Every range in `merged` is fully resolved and will
-  // never be revisited. `current` is finalized either:
-  //   (a) post-loop via `if (!exhausted) merged.push(current)`, or
-  //   (b) mid-loop in the e1===e2 branch, which sets `exhausted = true` to
-  //       prevent (a) from double-counting it.
-  let current = sorted[0];
-  let exhausted = false;
+  // Loop invariant: `current` is the "in-flight" range that has NOT yet been
+  // pushed to `merged`. It is set to null only in the e1===e2 branch when the
+  // input is exhausted mid-loop — the post-loop push checks for null to avoid
+  // a double push.
+  let current: DirtyLineRangeEntry | null = sorted[0];
 
   while (i < sorted.length - 1) {
     i++;
     const next = sorted[i];
-    if (next.startLine <= current.endLine + 1) {
-      if (next.offsetDelta === current.offsetDelta && next.startLine > current.endLine) {
+    if (next.startLine <= current!.endLine + 1) {
+      if (next.offsetDelta === current!.offsetDelta && next.startLine > current!.endLine) {
         // Adjacent (non-overlapping) same delta — extend current to cover both
         current = Object.freeze({
-          kind: "range" as const,
-          startLine: current.startLine,
-          endLine: Math.max(current.endLine, next.endLine),
-          offsetDelta: current.offsetDelta,
+          startLine: current!.startLine,
+          endLine: Math.max(current!.endLine, next.endLine),
+          offsetDelta: current!.offsetDelta,
         });
-      } else if (next.startLine === current.startLine) {
+      } else if (next.startLine === current!.startLine) {
         // Same start, different delta — sum deltas (equivalent to applying both)
         current = Object.freeze({
-          kind: "range" as const,
-          startLine: current.startLine,
-          endLine: Math.max(current.endLine, next.endLine),
-          offsetDelta: current.offsetDelta + next.offsetDelta,
+          startLine: current!.startLine,
+          endLine: Math.max(current!.endLine, next.endLine),
+          offsetDelta: current!.offsetDelta + next.offsetDelta,
         });
       } else {
         // True overlap: s1 < s2 <= e1, different deltas.
         // Decompose into: [s1, s2-1, d1], [s2, min(e1,e2), d1+d2], tail.
         merged.push(
           Object.freeze({
-            kind: "range" as const,
-            startLine: current.startLine,
+            startLine: current!.startLine,
             endLine: next.startLine - 1,
-            offsetDelta: current.offsetDelta,
+            offsetDelta: current!.offsetDelta,
           }),
         );
-        const combinedDelta = current.offsetDelta + next.offsetDelta;
-        if (current.endLine < next.endLine) {
+        const combinedDelta = current!.offsetDelta + next.offsetDelta;
+        if (current!.endLine < next.endLine) {
           // current ends first — overlap ends at current.endLine
           merged.push(
             Object.freeze({
-              kind: "range" as const,
               startLine: next.startLine,
-              endLine: current.endLine,
+              endLine: current!.endLine,
               offsetDelta: combinedDelta,
             }),
           );
           current = Object.freeze({
-            kind: "range" as const,
-            startLine: current.endLine + 1,
+            startLine: current!.endLine + 1,
             endLine: next.endLine,
             offsetDelta: next.offsetDelta,
           });
-        } else if (current.endLine > next.endLine) {
+        } else if (current!.endLine > next.endLine) {
           // next ends first — overlap ends at next.endLine
           merged.push(
             Object.freeze({
-              kind: "range" as const,
               startLine: next.startLine,
               endLine: next.endLine,
               offsetDelta: combinedDelta,
             }),
           );
           current = Object.freeze({
-            kind: "range" as const,
             startLine: next.endLine + 1,
-            endLine: current.endLine,
-            offsetDelta: current.offsetDelta,
+            endLine: current!.endLine,
+            offsetDelta: current!.offsetDelta,
           });
         } else {
           // e1 === e2: both ranges fully consumed by the overlap — no tail remains.
-          // Push `current` into `merged` here (it is now resolved) and advance `i`
-          // to the next input range. If that exhausts the input, set `exhausted` so
-          // the post-loop push is skipped — `current` is already in `merged`.
+          // Push the resolved combined segment; advance to the next input range.
+          // Setting current = null when input is exhausted prevents the post-loop
+          // push from double-counting a range already in `merged`.
           merged.push(
             Object.freeze({
-              kind: "range" as const,
               startLine: next.startLine,
-              endLine: current.endLine,
+              endLine: current!.endLine,
               offsetDelta: combinedDelta,
             }),
           );
           i++;
-          if (i >= sorted.length) {
-            exhausted = true;
-            break;
-          }
-          current = sorted[i];
+          current = i < sorted.length ? sorted[i] : null;
         }
       }
     } else {
       // No overlap — finalize current, start fresh
-      merged.push(current);
+      merged.push(current!);
       current = next;
     }
   }
-  // Finalize the last in-flight range, unless the e1===e2 branch already pushed
-  // it into `merged` mid-loop (signalled by `exhausted`).
-  if (!exhausted) merged.push(current);
+  if (current !== null) merged.push(current);
 
   // Safety cap: if too many ranges accumulated, collapse to full-document rebuild.
   // Threshold is configurable via DocumentStoreConfig.maxDirtyRanges (default 32).

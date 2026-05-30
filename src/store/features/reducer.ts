@@ -23,7 +23,7 @@ import {
   withPieceNode,
   withLineIndexState,
 } from "../core/state.ts";
-import { fixRedViolations } from "../core/rb-tree.ts";
+import { appendToRightmost } from "../core/rb-tree.ts";
 import { getText, insertChunkPieceAt, pieceTableInOrder } from "../core/piece-table.ts";
 import {
   lineIndexInsertLazy as liInsertLazy,
@@ -112,29 +112,7 @@ function appendChunkPiece(
     byteLength(chunkByteLength),
     "red",
   );
-
-  if (root === null) {
-    return withPieceNode(newLeaf, { color: "black" });
-  }
-
-  // Walk the right spine collecting ancestors (root → rightmost parent).
-  const path: PieceNode[] = [];
-  let cur: PieceNode = root;
-  while (cur.right !== null) {
-    path.push(cur);
-    cur = cur.right;
-  }
-
-  // Attach leaf to the rightmost node, then fix any red-red violation at that level.
-  let updated: PieceNode = fixRedViolations(withPieceNode(cur, { right: newLeaf }), withPieceNode);
-
-  // Walk back up, applying fixup at each ancestor level.
-  for (let i = path.length - 1; i >= 0; i--) {
-    updated = fixRedViolations(withPieceNode(path[i], { right: updated }), withPieceNode);
-  }
-
-  // Ensure the root is always black.
-  return updated.color === "black" ? updated : withPieceNode(updated, { color: "black" });
+  return appendToRightmost(root, newLeaf, withPieceNode);
 }
 
 /**
