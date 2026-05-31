@@ -31,6 +31,7 @@ import {
   pieceTableInsert as ptInsert,
   pieceTableDelete as ptDelete,
   getText,
+  getRawByte,
 } from "../core/piece-table.ts";
 import {
   lineIndexInsert as liInsert,
@@ -173,16 +174,18 @@ export function getDeleteBoundaryContext(
   start: ByteOffset,
   end: ByteOffset,
 ): DeleteBoundaryContext {
-  const startN = start;
-  const endN = end;
   const totalLength = state.pieceTable.totalLength;
 
-  const prevChar = startN > 0 ? getText(state.pieceTable, byteOffset(startN - 1), start) : "";
-  const nextChar = endN < totalLength ? getText(state.pieceTable, end, byteOffset(endN + 1)) : "";
+  // Read raw bytes immediately before and after the delete range.
+  // Only CR (0x0d) and LF (0x0a) are meaningful for CRLF boundary detection;
+  // all other byte values (including multi-byte UTF-8 continuation bytes that
+  // could appear at the boundary) are irrelevant and map to undefined.
+  const prevByte = start > 0 ? getRawByte(state.pieceTable, byteOffset(start - 1)) : -1;
+  const nextByte = end < totalLength ? getRawByte(state.pieceTable, end) : -1;
 
   return {
-    prevChar: prevChar.length > 0 ? prevChar : undefined,
-    nextChar: nextChar.length > 0 ? nextChar : undefined,
+    prevChar: prevByte === 0x0d ? "\r" : prevByte === 0x0a ? "\n" : undefined,
+    nextChar: nextByte === 0x0d ? "\r" : nextByte === 0x0a ? "\n" : undefined,
   };
 }
 
@@ -254,6 +257,10 @@ function computeSelectionAfterChange(state: DocumentState, change: HistoryChange
  * Check if a new change can be coalesced with the last history entry.
  * Coalescing merges consecutive same-type changes within a timeout window
  * into a single undo entry (e.g., typing a word becomes one undo step).
+ *
+ * Coalescing targets the LAST change in the entry regardless of how many
+ * changes it contains (e.g., the tail of a batched transaction). The earlier
+ * changes are preserved in the merged entry — see historyPush.
  */
 function canCoalesce(
   lastEntry: HistoryEntry,
@@ -263,9 +270,9 @@ function canCoalesce(
 ): boolean {
   if (timeout <= 0) return false;
   if (now - lastEntry.timestamp > timeout) return false;
-  if (lastEntry.changes.length !== 1) return false;
+  if (lastEntry.changes.length === 0) return false;
 
-  const last = lastEntry.changes[0];
+  const last = lastEntry.changes[lastEntry.changes.length - 1];
   if (last.type !== newChange.type) return false;
 
   switch (newChange.type) {
@@ -368,9 +375,11 @@ export function historyPush(
   // Try to coalesce with the last entry
   const lastEntry = pstackPeek(history.undoStack);
   if (lastEntry && canCoalesce(lastEntry, change, history.coalesceTimeout, now)) {
-    const merged = coalesceChanges(lastEntry.changes[0], change);
+    const lastChange = lastEntry.changes[lastEntry.changes.length - 1];
+    const merged = coalesceChanges(lastChange, change);
+    // Preserve earlier changes in the entry; only the tail change is merged.
     const mergedEntry: HistoryEntry = Object.freeze({
-      changes: Object.freeze([merged]),
+      changes: Object.freeze([...lastEntry.changes.slice(0, -1), merged]),
       selectionBefore: lastEntry.selectionBefore,
       selectionAfter,
       timestamp: now,
@@ -393,8 +402,8 @@ export function historyPush(
   });
 
   // Trim undo stack if it exceeds limit.
-  // pstackTrimToSize is O(limit) — visits only the top `limit` nodes rather than
-  // the full O(H) array round-trip that pstackToArray+slice+pstackFromArray would require.
+  // pstackTrimToSize is O(limit) per call but amortized O(1) per push: trim only fires
+  // when stack.size > limit, which happens at most once every `limit` pushes.
   const undoStack = pstackTrimToSize(pstackPush(history.undoStack, entry), history.limit);
 
   return withState(state, {

@@ -5,12 +5,13 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { canUndo, canRedo, getUndoCount, getRedoCount, isHistoryEmpty } from "./history.ts";
-import { createInitialState } from "./../core/state.ts";
+import { createInitialState, withState } from "./../core/state.ts";
 import { documentReducer } from "./reducer.ts";
 import { DocumentActions } from "./actions.ts";
 import type { HistoryState } from "../../types/state.ts";
-import { pstackFromArray } from "../../types/state.ts";
+import { pstackFromArray, pstackPush } from "../../types/state.ts";
 import { byteOffset, byteLength } from "../../types/branded.ts";
+import { makeInsertChange, makeDeleteChange } from "./edit.ts";
 
 // =============================================================================
 // canUndo Tests
@@ -582,5 +583,42 @@ describe("Undo coalescing", () => {
     // Undo removes both emojis
     state = documentReducer(state, DocumentActions.undo());
     expect(state.pieceTable.totalLength).toBe(0);
+  });
+
+  it("should coalesce typing with the last change of a multi-change entry", () => {
+    // Directly inject a 2-change undo entry (simulating a future batch mechanism),
+    // then verify that subsequent contiguous typing coalesces with the tail insert
+    // while preserving the earlier delete change.
+    let state = createInitialState({ undoGroupTimeout: 300 });
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "X"));
+
+    // Manually craft a 2-change entry: [delete "AB", insert "X"].
+    const deleteChange = makeDeleteChange(byteOffset(0), "AB");
+    const insertChange = makeInsertChange(byteOffset(0), "X");
+    const multiEntry = Object.freeze({
+      changes: Object.freeze([deleteChange, insertChange]),
+      selectionBefore: state.selection,
+      selectionAfter: state.selection,
+      timestamp: Date.now(),
+    });
+    state = withState(state, {
+      history: Object.freeze({
+        ...state.history,
+        undoStack: pstackPush(null, multiEntry),
+      }),
+    });
+    expect(getUndoCount(state)).toBe(1);
+
+    // Type "Y" contiguously after "X" (byte offset 1).
+    // Should coalesce with the tail insert "X" → "XY", preserving the delete.
+    state = documentReducer(state, DocumentActions.insert(byteOffset(1), "Y"));
+
+    expect(getUndoCount(state)).toBe(1);
+
+    const entry = state.history.undoStack?.top;
+    expect(entry?.changes.length).toBe(2);
+    expect(entry?.changes[0].type).toBe("delete");
+    expect(entry?.changes[1].type).toBe("insert");
+    expect(entry?.changes[1].text).toBe("XY");
   });
 });

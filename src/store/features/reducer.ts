@@ -222,26 +222,16 @@ function removeChunkPiecesFromTree(
 ): { newRoot: PieceNode | null; removedLength: number } {
   if (root === null) return { newRoot: null, removedLength: 0 };
 
-  // Collect surviving pieces in document order
   const survivors: PieceNode[] = [];
   let removedLength = 0;
 
-  const nodeStack: PieceNode[] = [];
-  let currentNode: PieceNode | null = root;
-
-  while (currentNode !== null || nodeStack.length > 0) {
-    while (currentNode !== null) {
-      nodeStack.push(currentNode);
-      currentNode = currentNode.left;
-    }
-    const n = nodeStack.pop()!;
+  pieceTableInOrder(root, (n) => {
     if (n.bufferType === "chunk" && n.chunkIndex === targetChunk) {
       removedLength += n.length;
     } else {
       survivors.push(n);
     }
-    currentNode = n.right;
-  }
+  });
 
   if (survivors.length === 0) return { newRoot: null, removedLength };
 
@@ -317,6 +307,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
     case "SET_SELECTION": {
       return withState(setSelection(state, action.ranges), {
         version: state.version + 1,
+        selectionVersion: state.selectionVersion + 1,
       });
     }
 

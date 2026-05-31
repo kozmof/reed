@@ -493,6 +493,8 @@ export const pstackFromArray = <T>(arr: readonly T[]): PStack<T> =>
  * Cost: O(maxSize) — traverses only the top `maxSize` nodes, never the full stack.
  * This is strictly better than the O(H) pstackToArray + slice + pstackFromArray
  * round-trip when maxSize << H (e.g. history limit << total history depth).
+ * Amortized O(1) per push: trim only fires when size exceeds maxSize, which
+ * happens at most once every maxSize pushes.
  *
  * Returns the original stack unchanged (O(1)) when stack.size ≤ maxSize.
  */
@@ -567,6 +569,12 @@ export interface DocumentMetadata {
 export interface DocumentState<M extends EvaluationMode = EvaluationMode> {
   /** Monotonically increasing version number for change detection */
   readonly version: number;
+  /**
+   * Monotonically increasing counter bumped only when the selection changes.
+   * Consumers can compare `state.version === prev.version` to cheaply detect
+   * selection-only changes and skip expensive content re-computations.
+   */
+  readonly selectionVersion: number;
   /** Piece table containing the document content */
   readonly pieceTable: PieceTableState;
   /** Line index for O(log n) line lookups */

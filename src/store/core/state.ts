@@ -392,6 +392,7 @@ export function createInitialState(config: Partial<DocumentStoreConfig> = {}): D
 
   return Object.freeze({
     version: 0,
+    selectionVersion: 0,
     pieceTable:
       content.length > 0
         ? createPieceTableState(content)

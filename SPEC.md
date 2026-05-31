@@ -52,10 +52,10 @@ This repository does **not** currently include:
 
 - Latest verified functional test run: 2026-05-31
 - Command: `pnpm test`
-- Result: `16` test files, `619` tests passed
+- Result: `16` test files, `624` tests passed
 - Latest verified perf test run: 2026-05-31
 - Command: `pnpm test:perf`
 - Result: `1` test file, `27` tests passed, `1` test failed
-- Current perf failure: `Undo / redo > 200 undos then 200 redos on 50k-line document` throws `Expected eager LineIndexState but found dirty ranges or pending rebuild`
+- Current perf failure: `Scaling ratio (cost-algebra validation) > getLineStartOffset ratio (10k → 900k lines) is sub-linear` — timing-sensitive flakiness; result varies between runs (5.2×–5.6× vs threshold 5×). Not a correctness bug.
 
 See domain files under `/spec` for implementation-level details and constraints.

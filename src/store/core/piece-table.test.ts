@@ -110,6 +110,34 @@ describe("Piece Table Operations", () => {
       expect(getLineLinearScan(state, 5)).toBe("");
       expect(getLineLinearScan(state, -1)).toBe("");
     });
+
+    it("should handle CR-only line endings", () => {
+      const state = createPieceTableState("Line 1\rLine 2\rLine 3");
+      expect(getLineLinearScan(state, 0)).toBe("Line 1\r");
+      expect(getLineLinearScan(state, 1)).toBe("Line 2\r");
+      expect(getLineLinearScan(state, 2)).toBe("Line 3");
+    });
+
+    it("should handle CRLF line endings", () => {
+      const state = createPieceTableState("Line 1\r\nLine 2\r\nLine 3");
+      expect(getLineLinearScan(state, 0)).toBe("Line 1\r\n");
+      expect(getLineLinearScan(state, 1)).toBe("Line 2\r\n");
+      expect(getLineLinearScan(state, 2)).toBe("Line 3");
+    });
+
+    it("should count CRLF as a single line break", () => {
+      const state = createPieceTableState("A\r\nB\r\nC");
+      expect(getLineLinearScan(state, 0)).toBe("A\r\n");
+      expect(getLineLinearScan(state, 1)).toBe("B\r\n");
+      expect(getLineLinearScan(state, 2)).toBe("C");
+      expect(getLineLinearScan(state, 3)).toBe("");
+    });
+
+    it("should handle trailing CR at end of document", () => {
+      const state = createPieceTableState("Line 1\r");
+      expect(getLineLinearScan(state, 0)).toBe("Line 1\r");
+      expect(getLineLinearScan(state, 1)).toBe("");
+    });
   });
 
   describe("pieceTableInsert", () => {

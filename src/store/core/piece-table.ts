@@ -30,21 +30,21 @@ import {
   type InsertionPathEntry,
   type RootToLeafInsertPath,
 } from "./rb-tree.ts";
+import { textEncoder, textDecoder } from "./encoding.ts";
+import { GrowableBuffer } from "./growable-buffer.ts";
 
 // =============================================================================
-// In-Order Traversal Helper
+// In-Order Traversal Helpers
 // =============================================================================
 
 /**
- * Iterative in-order traversal of the piece tree.
- * Calls `visitor(node, pieceStart)` for each node in document order, where
- * `pieceStart` is the byte offset of that node's first byte in the document.
- * Returns early (stops iteration) if `visitor` returns `true`.
+ * Lazily yields (piece, docOffset) pairs in document order via an iterative
+ * in-order traversal. No upfront allocation of all pieces.
+ * Used directly by getValueStream and as the canonical implementation for pieceTableInOrder.
  */
-export function pieceTableInOrder(
+export function* inOrderPieces(
   root: PieceNode | null,
-  visitor: (node: PieceNode, pieceStart: number) => boolean | void,
-): void {
+): Generator<{ piece: PieceNode; docOffset: number }, void, undefined> {
   if (root === null) return;
   const nodeStack: PieceNode[] = [];
   const offsetStack: number[] = [];
@@ -61,15 +61,26 @@ export function pieceTableInOrder(
     const n = nodeStack.pop()!;
     const nOffset = offsetStack.pop()!;
     const pieceStart = nOffset + (n.left?.subtreeLength ?? 0);
-
-    if (visitor(n, pieceStart) === true) return;
-
+    yield { piece: n, docOffset: pieceStart };
     currentOffset = pieceStart + n.length;
     currentNode = n.right;
   }
 }
-import { textEncoder, textDecoder } from "./encoding.ts";
-import { GrowableBuffer } from "./growable-buffer.ts";
+
+/**
+ * Iterative in-order traversal of the piece tree.
+ * Calls `visitor(node, pieceStart)` for each node in document order, where
+ * `pieceStart` is the byte offset of that node's first byte in the document.
+ * Returns early (stops iteration) if `visitor` returns `true`.
+ */
+export function pieceTableInOrder(
+  root: PieceNode | null,
+  visitor: (node: PieceNode, pieceStart: number) => boolean | void,
+): void {
+  for (const { piece, docOffset } of inOrderPieces(root)) {
+    if (visitor(piece, docOffset) === true) return;
+  }
+}
 
 // Type-safe wrapper for withPieceNode to use with generic R-B tree functions
 const withPiece: WithNodeFn<PieceNode> = withPieceNode;
@@ -163,6 +174,19 @@ export function getPieceBuffer(state: PieceTableState, piece: PieceNode): Uint8A
       throw new Error(`Unknown buffer type: ${String(_never)}`);
     }
   }
+}
+
+/**
+ * Read the raw byte value at a single document offset.
+ * Returns -1 if the offset is out of range.
+ * O(log n) — delegates to findPieceAtPosition.
+ */
+export function getRawByte(state: PieceTableState, docOffset: ByteOffset): number {
+  const location = findPieceAtPosition(state.root, docOffset);
+  if (location === null) return -1;
+  const { node, offsetInPiece } = location;
+  const buffer = getPieceBuffer(state, node);
+  return buffer[node.start + offsetInPiece];
 }
 
 // =============================================================================
@@ -1093,6 +1117,14 @@ export function getLineLinearScan(state: PieceTableState, lineNumber: number): L
  * Find the byte offsets for a specific line.
  * Returns {start, end} or null if line doesn't exist.
  * Uses pieceTableInOrder with early exit to avoid collecting all pieces upfront.
+ *
+ * Handles all three newline conventions:
+ *   LF   (0x0a)       — Unix
+ *   CR   (0x0d)       — classic Mac
+ *   CRLF (0x0d 0x0a)  — Windows; the pair counts as a single line break.
+ *
+ * A pending CR is deferred until the next byte is seen so that CRLF pairs
+ * spanning piece boundaries are handled correctly.
  */
 function findLineOffsets(
   state: PieceTableState,
@@ -1106,25 +1138,67 @@ function findLineOffsets(
       let currentLine = 0;
       let lineStartOffset = 0;
       let result: { start: ByteOffset; end: ByteOffset } | null = null;
+      // Document position just after the last unresolved \r (-1 = none pending).
+      let pendingCREnd = -1;
 
       pieceTableInOrder(state.root, (piece, pieceDocOffset) => {
         const buffer = getPieceBuffer(state, piece);
         for (let i = 0; i < piece.length; i++) {
-          if (buffer[piece.start + i] === 0x0a) {
+          const b = buffer[piece.start + i];
+          const docPos = pieceDocOffset + i;
+
+          if (pendingCREnd >= 0) {
+            if (b === 0x0a) {
+              // CRLF pair complete: line ends after the \n.
+              const lineEnd = docPos + 1;
+              pendingCREnd = -1;
+              if (currentLine === lineNumber) {
+                result = { start: byteOffset(lineStartOffset), end: byteOffset(lineEnd) };
+                return true;
+              }
+              currentLine++;
+              lineStartOffset = lineEnd;
+              continue;
+            } else {
+              // Standalone CR: commit the line break at the saved end position.
+              const lineEnd = pendingCREnd;
+              pendingCREnd = -1;
+              if (currentLine === lineNumber) {
+                result = { start: byteOffset(lineStartOffset), end: byteOffset(lineEnd) };
+                return true;
+              }
+              currentLine++;
+              lineStartOffset = lineEnd;
+              // Fall through to process the current byte b.
+            }
+          }
+
+          if (b === 0x0d) {
+            // Defer: might be CR-only or the start of CRLF.
+            pendingCREnd = docPos + 1;
+          } else if (b === 0x0a) {
+            const lineEnd = docPos + 1;
             if (currentLine === lineNumber) {
-              result = {
-                start: byteOffset(lineStartOffset),
-                end: byteOffset(pieceDocOffset + i + 1),
-              };
-              return true; // early exit from pieceTableInOrder
+              result = { start: byteOffset(lineStartOffset), end: byteOffset(lineEnd) };
+              return true;
             }
             currentLine++;
-            lineStartOffset = pieceDocOffset + i + 1;
+            lineStartOffset = lineEnd;
           }
         }
       });
 
-      // Handle last line (no trailing newline)
+      // Trailing CR at end of document (no following byte to resolve it).
+      if (result === null && pendingCREnd >= 0) {
+        if (currentLine === lineNumber) {
+          result = { start: byteOffset(lineStartOffset), end: byteOffset(pendingCREnd) };
+        } else {
+          currentLine++;
+          lineStartOffset = pendingCREnd;
+        }
+      }
+
+      // Last line with no trailing newline.
       if (result === null && currentLine === lineNumber) {
         result = { start: byteOffset(lineStartOffset), end: byteOffset(state.totalLength) };
       }
@@ -1439,35 +1513,6 @@ export function getValueStream(
   }
 
   return streamChunks(state, inOrderPieces(state.root), chunkSize, start, end);
-}
-
-/**
- * Lazily yields (piece, docOffset) pairs in document order via an iterative
- * in-order traversal. No upfront allocation of all pieces.
- */
-function* inOrderPieces(
-  root: PieceNode | null,
-): Generator<{ piece: PieceNode; docOffset: number }, void, undefined> {
-  if (root === null) return;
-  const nodeStack: PieceNode[] = [];
-  const offsetStack: number[] = [];
-  let currentOffset = 0;
-  let currentNode: PieceNode | null = root;
-
-  while (currentNode !== null || nodeStack.length > 0) {
-    while (currentNode !== null) {
-      nodeStack.push(currentNode);
-      offsetStack.push(currentOffset);
-      currentOffset += currentNode.left?.subtreeLength ?? 0;
-      currentNode = currentNode.left;
-    }
-    const n = nodeStack.pop()!;
-    const nOffset = offsetStack.pop()!;
-    const pieceStart = nOffset + (n.left?.subtreeLength ?? 0);
-    yield { piece: n, docOffset: pieceStart };
-    currentOffset = pieceStart + n.length;
-    currentNode = n.right;
-  }
 }
 
 function* streamChunks(
