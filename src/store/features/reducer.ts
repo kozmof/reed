@@ -54,9 +54,12 @@ function normalizeLineEndings(text: string, lineEnding: "lf" | "crlf" | "cr"): s
   // then convert to the requested style with a second pass when needed.
   const lf = text.replace(/\r\n|\r/g, "\n");
   switch (lineEnding) {
-    case "lf":   return lf;
-    case "crlf": return lf.replace(/\n/g, "\r\n");
-    case "cr":   return lf.replace(/\n/g, "\r");
+    case "lf":
+      return lf;
+    case "crlf":
+      return lf.replace(/\n/g, "\r\n");
+    case "cr":
+      return lf.replace(/\n/g, "\r");
   }
 }
 
@@ -144,6 +147,8 @@ function findChunkDocumentRange(
     if (n.bufferType === "chunk" && n.chunkIndex === chunkIndex) {
       if (rangeStart === -1) rangeStart = pieceStart;
       rangeEnd = pieceStart + n.length;
+    } else if (rangeStart !== -1 && pieceStart >= rangeEnd) {
+      return true; // past the target chunk's range — stop
     }
   });
   if (rangeStart === -1) return null;
@@ -170,6 +175,37 @@ function hasAddPiecesInRange(
     }
   });
   return found;
+}
+
+/**
+ * Rebuild a balanced RB-tree from an in-order array of piece nodes using median-split
+ * recursion. All internal nodes are black; leaves are red to give subsequent inserts
+ * RB slack.
+ *
+ * PRECONDITION: `arr` must be a complete, contiguous in-order list produced by a
+ * single-pass traversal — the median split is only perfectly balanced in that case.
+ * If called with a non-contiguous or pre-filtered slice, verify that equal
+ * black-heights still hold before keeping leaf nodes red.
+ */
+function buildBalancedPieceTree(arr: PieceNode[], lo: number, hi: number): PieceNode | null {
+  if (lo > hi) return null;
+  const mid = (lo + hi) >> 1;
+  const src = arr[mid];
+  const left = buildBalancedPieceTree(arr, lo, mid - 1);
+  const right = buildBalancedPieceTree(arr, mid + 1, hi);
+  const leftLen = left?.subtreeLength ?? 0;
+  const rightLen = right?.subtreeLength ?? 0;
+  const leftAdd = left?.subtreeAddLength ?? 0;
+  const rightAdd = right?.subtreeAddLength ?? 0;
+  const selfAdd = src.bufferType === "add" ? src.length : 0;
+  return Object.freeze({
+    ...src,
+    color: (left === null && right === null ? "red" : "black") as "red" | "black",
+    left,
+    right,
+    subtreeLength: src.length + leftLen + rightLen,
+    subtreeAddLength: selfAdd + leftAdd + rightAdd,
+  });
 }
 
 /**
@@ -209,37 +245,7 @@ function removeChunkPiecesFromTree(
 
   if (survivors.length === 0) return { newRoot: null, removedLength };
 
-  // Rebuild a balanced tree from survivors using median-split recursion.
-  // All nodes black so the black-height invariant holds for a balanced tree.
-  function buildTree(arr: PieceNode[], lo: number, hi: number): PieceNode | null {
-    if (lo > hi) return null;
-    const mid = (lo + hi) >> 1;
-    const src = arr[mid];
-    const left = buildTree(arr, lo, mid - 1);
-    const right = buildTree(arr, mid + 1, hi);
-    const leftLen = left?.subtreeLength ?? 0;
-    const rightLen = right?.subtreeLength ?? 0;
-    const leftAdd = left?.subtreeAddLength ?? 0;
-    const rightAdd = right?.subtreeAddLength ?? 0;
-    const selfAdd = src.bufferType === "add" ? src.length : 0;
-    // PRECONDITION: arr must be the full in-order survivor list, built from a
-    // single-pass traversal above — the median split is therefore perfectly balanced.
-    // Color leaves red so subsequent inserts have RB slack; internal nodes black.
-    // No-consecutive-reds holds because a perfectly-balanced split guarantees equal
-    // black-height on all root-to-null paths, so leaf reds are never adjacent.
-    // If this function is ever called with a non-contiguous or pre-filtered slice,
-    // verify that equal black-heights still hold before keeping red leaves.
-    return Object.freeze({
-      ...src,
-      color: (left === null && right === null ? "red" : "black") as "red" | "black",
-      left,
-      right,
-      subtreeLength: src.length + leftLen + rightLen,
-      subtreeAddLength: selfAdd + leftAdd + rightAdd,
-    });
-  }
-
-  return { newRoot: buildTree(survivors, 0, survivors.length - 1), removedLength };
+  return { newRoot: buildBalancedPieceTree(survivors, 0, survivors.length - 1), removedLength };
 }
 
 // =============================================================================

@@ -166,18 +166,23 @@ export function createChunkManager(
         continue;
       }
 
-      const before = store.getSnapshot().pieceTable.chunkMap.size;
       store.dispatch(DocumentActions.evictChunk(candidate));
-      const after = store.getSnapshot().pieceTable.chunkMap.size;
 
-      if (after < before) {
+      if (!store.getSnapshot().pieceTable.chunkMap.has(candidate)) {
         // Eviction succeeded.
         lruRemove(candidate);
         i--; // re-examine after splice
         loadedCount--;
       }
-      // If eviction was refused (user edits overlap), leave the chunk and
-      // continue to the next candidate.
+      // If eviction was refused (user edits overlap the chunk's byte range),
+      // leave the chunk and continue to the next LRU candidate.
+    }
+
+    if (loadedCount > maxLoadedChunks) {
+      console.warn(
+        `[ChunkManager] eviction pressure: ${loadedCount} chunks loaded but all non-pinned ` +
+          `candidates have overlapping user edits. Memory limit (${maxLoadedChunks}) exceeded.`,
+      );
     }
   }
 

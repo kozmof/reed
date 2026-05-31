@@ -2,6 +2,7 @@
  * Store namespace — store lifecycle, state factories, mutations, reducer, actions, and type guards.
  */
 
+import type { DocumentState } from "../types/state.ts";
 import {
   createDocumentStore,
   createDocumentStoreWithEvents,
@@ -115,4 +116,32 @@ export const store = {
   isHistoryAction,
   isDocumentAction,
   validateAction,
+
+  // Eviction helpers
+  didEvict,
 } as const;
+
+/**
+ * Returns true if dispatching EVICT_CHUNK for `chunkIndex` successfully removed
+ * the chunk from memory — i.e. it is present in `prevState.pieceTable.chunkMap`
+ * and absent from `nextState.pieceTable.chunkMap`.
+ *
+ * Returns false when eviction was silently refused (e.g. user edits overlap the
+ * chunk's byte range). Use this instead of comparing `chunkMap.size` so that the
+ * check is tied to the specific chunk rather than any incidental size change.
+ *
+ * @example
+ * ```ts
+ * const prev = store.getSnapshot();
+ * store.dispatch(DocumentActions.evictChunk(chunkIndex));
+ * const next = store.getSnapshot();
+ * if (!store.didEvict(prev, next, chunkIndex)) {
+ *   // chunk has overlapping edits — cannot evict right now
+ * }
+ * ```
+ */
+function didEvict(prevState: DocumentState, nextState: DocumentState, chunkIndex: number): boolean {
+  return (
+    prevState.pieceTable.chunkMap.has(chunkIndex) && !nextState.pieceTable.chunkMap.has(chunkIndex)
+  );
+}

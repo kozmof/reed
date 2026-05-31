@@ -47,6 +47,7 @@ export type {
   HistoryState,
   DocumentMetadata,
   DocumentState,
+  DocumentStoreConfigBase,
   DocumentStoreConfig,
   ChunkMetadata,
 } from "./types/index.ts";

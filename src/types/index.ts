@@ -33,6 +33,7 @@ export type {
   PStack,
   DocumentMetadata,
   DocumentState,
+  DocumentStoreConfigBase,
   DocumentStoreConfig,
   ChunkMetadata,
 } from "./state.ts";

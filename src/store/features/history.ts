@@ -8,12 +8,10 @@ import type {
   DocumentState,
   HistoryState,
   LineIndexState,
-  HistoryChange,
 } from "../../types/state.ts";
 import { pstackSize, pstackPush, pstackPop } from "../../types/state.ts";
-import { byteOffset } from "../../types/branded.ts";
 import { withState } from "../core/state.ts";
-import { reconcileFull, reconcileRange, findLineAtPosition } from "../core/line-index.ts";
+import { reconcileFull } from "../core/line-index.ts";
 import { applyChange, applyInverseChange } from "./edit.ts";
 
 /**
@@ -71,47 +69,18 @@ export function isHistoryEmpty(state: DocumentState | HistoryState): boolean {
 // =============================================================================
 
 /**
- * Reconcile the line index covering only the lines touched by a set of history
- * changes, rather than running a full O(n) rebuild for every undo/redo.
- * For each change the starting line is found via `findLineAtPosition`
- * (O(log n), works in lazy mode since subtreeByteLength is always accurate).
- * Falls back to `reconcileFull` when the line index has a `"full-rebuild-needed"` dirty range.
+ * Reconcile the line index to a fully eager state before replaying history changes.
+ * `applyChange` / `applyInverseChange` both call `asEagerLineIndex`, which throws
+ * unless every dirty range has been resolved. A partial `reconcileRange` is not
+ * sufficient — it would leave dirty ranges outside the changed window, causing the
+ * second undo/redo in a sequence to throw on the `asEagerLineIndex` assertion.
  */
 export function reconcileRangeForChanges(
   lineIndex: LineIndexState,
-  changes: readonly HistoryChange[],
   version: number,
-): LineIndexState {
-  if (!lineIndex.rebuildPending) return lineIndex;
-
-  // If 'full-rebuild-needed', delta information is lost — fall back to full reconciliation.
-  if (lineIndex.dirtyRanges === "full-rebuild-needed") {
-    return reconcileFull(lineIndex, version);
-  }
-
-  let minLine = Infinity;
-  let maxLine = -Infinity;
-
-  for (const change of changes) {
-    const startLoc = findLineAtPosition(lineIndex.root, change.position);
-    if (startLoc !== null) {
-      minLine = Math.min(minLine, startLoc.lineNumber);
-      maxLine = Math.max(maxLine, startLoc.lineNumber);
-    }
-    // Extend to cover the end of the change range
-    const endPos = byteOffset(change.position + change.byteLength);
-    const endLoc = findLineAtPosition(lineIndex.root, endPos);
-    if (endLoc !== null) {
-      maxLine = Math.max(maxLine, endLoc.lineNumber);
-    }
-  }
-
-  if (minLine === Infinity) {
-    // Could not determine line range (empty history?) — fall back
-    return reconcileFull(lineIndex, version);
-  }
-
-  return reconcileRange(lineIndex, minLine, maxLine, version);
+): LineIndexState<"eager"> {
+  if (!lineIndex.rebuildPending) return lineIndex as LineIndexState<"eager">;
+  return reconcileFull(lineIndex, version);
 }
 
 // =============================================================================
@@ -142,11 +111,7 @@ export function historyUndo(state: DocumentState, version: number): DocumentStat
     }),
   });
 
-  // Incremental reconciliation: resolve only the line range covering the changes
-  // being undone (O(k) rather than O(n) full rebuild). Byte offsets from the
-  // history changes are mapped to line numbers via the tree's subtreeByteLength,
-  // which is accurate even in lazy mode.
-  const reconciledLI = reconcileRangeForChanges(newState.lineIndex, entry.changes, version);
+  const reconciledLI = reconcileRangeForChanges(newState.lineIndex, version);
   if (reconciledLI !== newState.lineIndex) {
     newState = withState(newState, { lineIndex: reconciledLI });
   }
@@ -189,9 +154,7 @@ export function historyRedo(state: DocumentState, version: number): DocumentStat
     }),
   });
 
-  // Incremental reconciliation: resolve only the line range covering the changes
-  // being redone (O(k) rather than O(n) full rebuild).
-  const reconciledLI = reconcileRangeForChanges(newState.lineIndex, entry.changes, version);
+  const reconciledLI = reconcileRangeForChanges(newState.lineIndex, version);
   if (reconciledLI !== newState.lineIndex) {
     newState = withState(newState, { lineIndex: reconciledLI });
   }

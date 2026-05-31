@@ -277,24 +277,25 @@ export function createDocumentStore(
   }
 
   /**
+   * Shared core: apply reconcileFull in-place and return eager state.
+   * Does NOT bump version — offset resolution is content-neutral.
+   */
+  function reconcileInPlace(): DocumentState<"eager"> {
+    if (!state.lineIndex.rebuildPending) return state as DocumentState<"eager">;
+    const newLineIndex = reconcileFull(state.lineIndex, state.version);
+    if (newLineIndex !== state.lineIndex) {
+      setState(Object.freeze({ ...state, lineIndex: newLineIndex }));
+    }
+    return state as DocumentState<"eager">;
+  }
+
+  /**
    * Get the current state with all dirty line-index ranges resolved.
    * Reconciles in-place without bumping the version number (offset resolution
    * does not change visible content, so no version increment is warranted).
    */
   function getEagerSnapshot(): DocumentState<"eager"> {
-    if (!state.lineIndex.rebuildPending) {
-      return state as DocumentState<"eager">;
-    }
-    const newLineIndex = reconcileFull(state.lineIndex, state.version);
-    if (newLineIndex !== state.lineIndex) {
-      setState(
-        Object.freeze({
-          ...state,
-          lineIndex: newLineIndex,
-        }),
-      );
-    }
-    return state as DocumentState<"eager">;
+    return reconcileInPlace();
   }
 
   /**
@@ -308,14 +309,7 @@ export function createDocumentStore(
    */
   function reconcileNow(): DocumentState<"eager"> {
     scheduler.cancel();
-    if (!state.lineIndex.rebuildPending) {
-      return state as DocumentState<"eager">;
-    }
-    const newLineIndex = reconcileFull(state.lineIndex, state.version);
-    if (newLineIndex !== state.lineIndex) {
-      setState(Object.freeze({ ...state, lineIndex: newLineIndex }));
-    }
-    return state as DocumentState<"eager">;
+    return reconcileInPlace();
   }
 
   /**
