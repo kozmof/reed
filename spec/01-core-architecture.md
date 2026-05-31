@@ -8,6 +8,7 @@ Reed is an **immutable state + reducer + store** system with a namespaced API su
 - Line model: separate line-index tree (`src/store/core/line-index.ts`)
 - State transition: pure reducer (`src/store/features/reducer.ts`)
 - Runtime orchestration: store factory + transaction manager (`src/store/features/store.ts`)
+- Background maintenance: reconciliation scheduler + add-buffer compaction (`src/store/features/reconciliation-scheduler.ts`)
 - Public runtime access: `store/query/scan/events/rendering/history/diff/position/cost` namespaces (`src/api/*`)
 
 The piece table and line index remain independent structures. Piece nodes do not store line metadata.
@@ -22,6 +23,7 @@ The piece table and line index remain independent structures. Piece nodes do not
 - `originalBuffer: Uint8Array` (immutable)
 - `addBuffer: GrowableBuffer` (append-only, structural sharing)
 - `totalLength: number`
+- chunk-streaming fields (`chunkMap`, `chunkSize`, `loadedChunks`, `chunkMetadata`, `totalFileSize`)
 
 `PieceNode` is immutable and stores:
 
@@ -78,7 +80,9 @@ Notes:
 - `subscribe`, `getSnapshot`, `getServerSnapshot`
 - `isCurrentSnapshot`
 - `dispatch`, `batch`
+- explicit transaction controls: `beginTransaction`, `commitTransaction`, `rollbackTransaction`
 - `scheduleReconciliation`, `reconcileNow`, `setViewport`
+- `reconcileIfCurrent`, `getEagerSnapshot`, `whenReconciled`
 - `emergencyReset`
 
 `store.withTransaction(store, fn)` provides scoped transaction execution with rollback safety.
@@ -95,13 +99,13 @@ Implemented:
 - Piece table insert/delete/read operations
 - Separate line-index tree with lazy/eager reconciliation
 - Undo/redo/history and transactions
+- Chunk loading/eviction runtime and high-level streaming loader
 - Typed events and query/scan API namespaces
-- Snapshot-gated reconciliation (`isCurrentSnapshot` + `reconcileNow(snapshot)`)
+- Snapshot-gated reconciliation (`isCurrentSnapshot` + `reconcileIfCurrent(snapshot)`)
 
 Not implemented in current codebase:
 
 - File I/O layer
-- Real chunk loader/eviction runtime
 - Framework adapters (React/Vue/Svelte/Redux/Zustand)
 - CRDT transport/provider bridge
 
@@ -109,4 +113,4 @@ Not implemented in current codebase:
 
 Previously tracked core consistency gaps (`getLineRangePrecise` lazy offset issue, missing `batch()` reconciliation scheduling, missing remote content-change emission, incorrect `affectedRanges` for multi-change `APPLY_REMOTE` batches) are fixed in current code.
 
-Remaining gaps are roadmap/runtime scope gaps (chunk runtime, collaboration transport, framework adapters), not core reducer/store correctness blockers.
+Remaining gaps are roadmap/runtime scope gaps (collaboration transport, framework adapters) plus one currently failing perf-suite undo/redo benchmark around eager line-index expectations after lazy edits. Functional tests pass.

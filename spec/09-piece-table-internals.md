@@ -104,11 +104,13 @@ Old `PieceTableState` snapshots (e.g. undo-stack entries) hold a `GrowableBuffer
 overwritten — those snapshots remain valid indefinitely; they simply ignore bytes beyond
 their own `length` boundary.
 
-### 2.3 Bytes are never freed
+### 2.3 Deleted bytes and compaction
 
-Deleted text leaves its bytes in `addBuffer` unreferenced. There is no compaction during
-normal editing. Unreferenced bytes are reclaimed only when the document is closed or
-reloaded from disk.
+Deleted text leaves its bytes in `addBuffer` unreferenced until compaction runs.
+The core primitive is `compactAddBuffer()`, and `createDocumentStore()` can run it as
+part of scheduled maintenance when add-buffer waste exceeds the configured internal
+thresholds. Without a store-maintenance pass, unreferenced bytes remain in the buffer
+until an explicit compaction, close, or reload.
 
 ---
 

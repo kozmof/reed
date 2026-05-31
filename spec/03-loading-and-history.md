@@ -9,8 +9,9 @@
   - supports `chunkSize`, `start`, `end`
 - Add-buffer usage introspection:
   - `query.getBufferStats`
-- Core piece-table compaction primitive exists internally:
+- Core piece-table compaction:
   - `compactAddBuffer` in `src/store/core/piece-table.ts`
+  - store-level idle/sync maintenance can compact the add buffer automatically when waste is high
 
 ### 1.2 Chunk Loading Runtime
 
@@ -24,6 +25,10 @@ Fully implemented:
   - LRU eviction (`maxLoadedChunks` cap)
   - Chunk pinning via `setActiveChunks` to prevent hot-chunk eviction
 - `DECLARE_CHUNK_METADATA` pre-declares per-chunk byte lengths and line counts so `getLineCount` is accurate on unloaded ranges
+- `createStreamingDocumentLoader(store, loader, metadata, config)` wraps the common lifecycle:
+  - declares all chunk metadata on construction
+  - loads visible viewport chunks
+  - pins and prefetches a surrounding chunk window
 
 ### 1.3 Not Implemented
 
@@ -68,6 +73,7 @@ Transaction behavior:
 - `batch()` executes actions inside transaction and notifies listeners once
 - rollback restores snapshot
 - `withTransaction(store, fn)` wraps begin/commit/rollback with the same safety behavior
+- event-store transactions buffer events by nesting depth and flush on outermost commit
 
 Important current behavior:
 

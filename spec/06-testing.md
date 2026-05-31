@@ -2,11 +2,12 @@
 
 ## 1. Latest Verified Run
 
-- Date: 2026-04-19
+- Date: 2026-05-31
 - Functional command: `pnpm test`
-- Functional result: `16` test files, `608` tests passed
+- Functional result: `16` test files, `619` tests passed
 - Perf command: `pnpm test:perf`
-- Perf result: `1` test file, `26` tests passed
+- Perf result: `1` test file, `27` tests passed, `1` test failed
+- Perf failure: `Undo / redo > 200 undos then 200 redos on 50k-line document` fails with `Expected eager LineIndexState but found dirty ranges or pending rebuild`
 
 ## 2. Current Test Suites
 
@@ -15,6 +16,7 @@ Functional suites (`pnpm test`):
 - `src/types/branded.test.ts`: branded position types and cost combinators
 - `src/store/features/actions.test.ts`: action creators and (de)serialization
 - `src/store/core/streaming.test.ts`: `getValueStream` behavior
+- `src/store/core/rb-tree.test.ts`: shared Red-Black tree invariants
 - `src/store/features/transaction.test.ts`: transaction manager behavior
 - `src/api/query.test.ts`: query namespace smoke/contract coverage
 - `src/store/features/diff.test.ts`: diff and `setValue`
@@ -28,7 +30,7 @@ Functional suites (`pnpm test`):
 - `src/store/features/chunk-manager.test.ts`: ChunkManager load/evict/LRU/pin behavior
 - `src/store/features/chunk-metadata.test.ts`: DECLARE_CHUNK_METADATA and pre-declared line-count queries
 
-Performance suite (`pnpm test:perf`):
+Performance suite (`pnpm test:perf`, currently not fully green):
 
 - `src/store/features/perf.test.ts`: large-document load/query/edit/reconcile benchmarks
 
@@ -48,8 +50,10 @@ Implemented coverage is strongest in:
 Current gaps relative to roadmap/spec ambitions:
 
 - no LOAD_CHUNK/EVICT_CHUNK cross-boundary stress tests (reducer paths covered; ChunkManager integration at scale is not)
+- no direct `createStreamingDocumentLoader` integration suite
 - no CRDT/provider/network collaboration integration tests
 - performance tests report timings but do not enforce hard budget thresholds
+- current perf undo/redo benchmark exposes a dirty-line-index/eager-line-index mismatch
 
 ## 5. Guidance for Spec-Driven Testing
 

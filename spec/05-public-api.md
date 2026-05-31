@@ -16,6 +16,12 @@ Current public runtime surface is exported from `src/index.ts` as namespaces:
 
 Types are exported flat from the same entry file.
 
+Additional flat runtime exports:
+
+- `createChunkManager`
+- `createStreamingDocumentLoader`
+- `createReconciliationScheduler`
+
 Not present in current codebase:
 
 - `reed/read` subpath
@@ -35,10 +41,14 @@ Returns `ReconcilableDocumentStore` with:
 - `isCurrentSnapshot(snapshot)`
 - `dispatch(action)`
 - `batch(actions)`
+- `beginTransaction()`
+- `commitTransaction()`
+- `rollbackTransaction()`
 - `scheduleReconciliation()`
 - `reconcileNow()` — reconcile and return `DocumentState<'eager'>`
 - `reconcileIfCurrent(snapshot)` — reconcile only if `snapshot` is still current; returns `DocumentState<'eager'> | null`
 - `getEagerSnapshot()` — return current state with eager line-index without bumping version
+- `whenReconciled()` — resolve with eager state after background reconciliation completes
 - `setViewport(startLine, endLine)`
 - `emergencyReset()`
 
@@ -54,6 +64,7 @@ Supported config fields (`DocumentStoreConfig`):
 - `totalFileSize` — pre-declared file size used for chunk sizing
 - `maxDirtyRanges` — dirty-range count threshold before a full line-index rebuild is triggered
 - `reconcileMode` — `'idle'` (default, uses `requestIdleCallback`) | `'sync'` (same-tick) | `'none'` (manual)
+- `scheduler` — custom `ReconciliationScheduler`; mutually exclusive with `reconcileMode`
 
 ### 2.2 `store.createDocumentStoreWithEvents(config?)`
 
@@ -63,12 +74,12 @@ Wraps the base store and adds:
 - `removeEventListener(type, handler)`
 - `events` emitter handle
 
-### 2.3 `store.createChunkManager(store, loader, config?)`
+### 2.3 Flat `createChunkManager(store, loader, config?)`
 
 Returns a `ChunkManager` with:
 
 - `ensureLoaded(chunkIndex)` — load a chunk if not already in memory
-- `prefetch(chunkIndices)` — speculatively load chunks
+- `prefetch(chunkIndex)` — speculatively load one chunk
 - `setActiveChunks(chunkIndices)` — pin chunks to prevent LRU eviction
 - `dispose()` — cancel in-flight loads and release resources
 
@@ -76,7 +87,22 @@ Requires a user-supplied `ChunkLoader` with `loadChunk(chunkIndex): Promise<Uint
 
 Config (`ChunkManagerConfig`): `maxLoadedChunks`, `fetchStrategy`.
 
-### 2.4 Additional store namespace exports
+### 2.4 Flat `createStreamingDocumentLoader(store, loader, metadata, config?)`
+
+Returns a `StreamingDocumentLoader` with:
+
+- `setViewport(startChunkIndex, endChunkIndex)` — load viewport chunks, pin/prefetch the configured surrounding window
+- `dispose()` — release loader resources
+
+Config (`StreamingDocumentLoaderConfig`): `prefetchWindowSize`, `chunkManagerConfig`.
+
+### 2.5 Flat `createReconciliationScheduler(mode, options)`
+
+Creates a scheduler for background line-index reconciliation and add-buffer compaction.
+
+Modes: `'idle'`, `'sync'`, `'none'`.
+
+### 2.6 Additional store namespace exports
 
 - `store.withTransaction(store, fn)`
 - `store.isDocumentStore(value)`
@@ -87,6 +113,8 @@ Config (`ChunkManagerConfig`): `maxLoadedChunks`, `fetchStrategy`.
 - piece-table and line-index core mutation helpers
 - reconciliation helpers (`reconcileRange`, `reconcileFull`, `reconcileViewport`)
 - action validators/guards (`isDocumentAction`, `validateAction`, etc.)
+
+Note: `createChunkManager`, `createStreamingDocumentLoader`, and `createReconciliationScheduler` are flat runtime exports from `src/index.ts`/`src/store/index.ts`, not members of the `store` namespace object in `src/api/store.ts`.
 
 ## 3. Event Semantics
 

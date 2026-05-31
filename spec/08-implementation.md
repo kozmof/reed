@@ -30,8 +30,9 @@ Implemented in:
 - `src/store/features/store.ts`
 - `src/store/features/transaction.ts`
 - `src/store/features/history.ts`
+- `src/store/features/reconciliation-scheduler.ts`
 
-Includes immutable reducer transitions, undo/redo, nested transactions, batching, snapshot-gated reconciliation, and emergency reset paths.
+Includes immutable reducer transitions, undo/redo, nested transactions, batching, snapshot-gated reconciliation, `whenReconciled`, background maintenance scheduling, and emergency reset paths.
 
 ### 1.4 Diff, events, rendering selectors
 
@@ -77,6 +78,7 @@ Fully implemented:
 - Action types and creators: `LOAD_CHUNK`, `EVICT_CHUNK`, `DECLARE_CHUNK_METADATA`
 - Reducer handles both load and evict paths (byte decode, piece-table surgery, line-index update)
 - `createChunkManager` runtime: async loading, in-flight deduplication, LRU eviction, chunk pinning
+- `createStreamingDocumentLoader` runtime: metadata declaration, viewport loading, pinned/prefetched windows
 - `chunkSize`, `totalFileSize` in config
 
 ## 3. Not Implemented
@@ -85,11 +87,12 @@ Fully implemented:
 
 ## 4. Current Known Gaps
 
-No currently confirmed core reducer/store correctness blockers from earlier spec revisions.
+No currently confirmed functional-suite core reducer/store correctness blockers from earlier spec revisions.
 
-Primary remaining gaps are unimplemented runtime layers (chunk runtime, collaboration transport).
+Primary remaining gaps are unimplemented collaboration/framework layers plus the current perf-suite undo/redo eager-line-index failure.
 
 ## 5. Near-Term Priorities
 
 1. Add collaboration transport/provider + synchronization recovery tests.
-2. Add ChunkManager integration stress tests (large-file load/evict at scale).
+2. Fix or explicitly redesign the perf undo/redo eager-line-index path.
+3. Add ChunkManager/StreamingDocumentLoader integration stress tests (large-file load/evict at scale).

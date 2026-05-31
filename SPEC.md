@@ -8,6 +8,7 @@ This repository currently implements a core text engine and state runtime:
 - piece table + line index data structures
 - pure reducer transitions
 - store factory with transactions and reconciliation helpers
+- chunk loading/eviction runtime and high-level streaming loader
 - query/scan API namespaces and selector-level rendering helpers
 
 This repository does **not** currently include:
@@ -35,20 +36,26 @@ This repository does **not** currently include:
 | [spec/06-testing.md](spec/06-testing.md)                         | Quality       | Current test suites, latest verified run, and coverage gaps                 |
 | [spec/07-error-handling.md](spec/07-error-handling.md)           | Reliability   | Implemented fail-soft behavior and known semantic gaps                      |
 | [spec/08-implementation.md](spec/08-implementation.md)           | Status        | Implemented, partial, and missing subsystems with near-term priorities      |
+| [spec/09-piece-table-internals.md](spec/09-piece-table-internals.md) | Internals | Add-buffer, chunk-buffer, and piece-table lifecycle details                 |
 
 ## Current API Snapshot
 
 - Entry point: `src/index.ts`
 - Store factories: `createDocumentStore`, `createDocumentStoreWithEvents`
-- Chunk runtime: `createChunkManager`
+- Chunk runtime: `createChunkManager`, `createStreamingDocumentLoader`
+- Reconciliation runtime: `createReconciliationScheduler`
 - Action creators: `DocumentActions`
 - Read layers: `query.*`, `scan.*`
 - Write helpers: `documentReducer`, `setValue`, diff-based action computation
 
 ## Verification Snapshot
 
-- Latest verified test run: 2026-04-19
+- Latest verified functional test run: 2026-05-31
 - Command: `pnpm test`
-- Result: `16` test files, `608` tests passed
+- Result: `16` test files, `619` tests passed
+- Latest verified perf test run: 2026-05-31
+- Command: `pnpm test:perf`
+- Result: `1` test file, `27` tests passed, `1` test failed
+- Current perf failure: `Undo / redo > 200 undos then 200 redos on 50k-line document` throws `Expected eager LineIndexState but found dirty ranges or pending rebuild`
 
 See domain files under `/spec` for implementation-level details and constraints.

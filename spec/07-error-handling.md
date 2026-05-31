@@ -28,6 +28,8 @@
 
 - `isCurrentSnapshot()` lets callers detect stale snapshots.
 - `reconcileIfCurrent(snapshot)` returns `null` for stale snapshots instead of mutating current state from an outdated reference.
+- `whenReconciled()` provides a promise-based path for consumers that need an eager state after background reconciliation.
+- A custom scheduler can be injected through `DocumentStoreConfig.scheduler` when callers need explicit scheduling behavior.
 
 ## 2. Current Non-Goals / Not Implemented
 
@@ -35,7 +37,7 @@ The following error domains are not implemented because the related runtime laye
 
 - file I/O errors (open/save/permissions)
 - network/provider/collaboration transport errors
-- chunk-cache eviction policies under memory pressure
+- host-level memory pressure handling beyond the implemented chunk LRU cap
 
 ## 3. Current Caveats
 
