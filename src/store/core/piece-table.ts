@@ -348,21 +348,21 @@ function bstInsert(
     }
   }
 
-  // Phase 2: rebuild bottom-up with path-copied nodes; result is already root-to-leaf.
-  const insertPath: InsertionPathEntry<PieceNode>[] = Array.from({ length: descent.length });
+  // Phase 2: rebuild bottom-up in-place — reuse descent to avoid a second allocation.
+  // We process i from high to low, reading descent[i] before overwriting it, so there
+  // is no aliasing between the read of the original node and the write of the rebuilt one.
   let child: PieceNode = newNode;
-
   for (let i = descent.length - 1; i >= 0; i--) {
     const { node, direction } = descent[i];
     const rebuilt =
       direction === "left"
         ? withPieceNode(node, { left: child })
         : withPieceNode(node, { right: child });
-    insertPath[i] = { node: rebuilt, direction };
+    descent[i] = { node: rebuilt, direction };
     child = rebuilt;
   }
 
-  return insertPath as RootToLeafInsertPath<PieceNode>;
+  return descent as unknown as RootToLeafInsertPath<PieceNode>;
 }
 
 // =============================================================================

@@ -50,10 +50,9 @@ export function createDocumentStore(
   // Internal mutable state
   let state = createInitialState(config);
   const reconcileMode = config.reconcileMode ?? "idle";
-  // Copy-on-write listeners array. Mutations (add/remove) during notification clone the
-  // array first so the in-progress iteration is not affected. In the common case (no
-  // mutation during notify) no copy is made, eliminating the Array.from allocation that
-  // was previously created on every notification event.
+  // Listeners array with on-demand COW: mutations during an active notification clone
+  // the array so the in-progress for-of iteration is not disturbed. Outside notification
+  // (the common case) push/splice mutate in place — O(1) add, O(n) remove (n ≈ 2–3).
   let listeners: StoreListener[] = [];
   let notifying = false; // Re-entrancy guard for notifyListeners (see 6.4)
   const transaction = createTransactionManager();
@@ -135,12 +134,20 @@ export function createDocumentStore(
    * @returns Unsubscribe function
    */
   function subscribe(listener: StoreListener): Unsubscribe {
-    // Always create a new array reference so any in-progress notifyListeners
-    // iteration (which holds a reference to the old array via closure over
-    // `listeners`) is not disturbed.
-    listeners = [...listeners, listener];
+    // Clone only if a notification is in progress so the for-of iteration keeps
+    // its snapshot; otherwise mutate in place (O(1)).
+    if (notifying) {
+      listeners = [...listeners, listener];
+    } else {
+      listeners.push(listener);
+    }
     return () => {
-      listeners = listeners.filter((l) => l !== listener);
+      if (notifying) {
+        listeners = listeners.filter((l) => l !== listener);
+      } else {
+        const idx = listeners.indexOf(listener);
+        if (idx !== -1) listeners.splice(idx, 1);
+      }
     };
   }
 

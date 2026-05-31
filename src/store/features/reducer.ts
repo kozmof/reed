@@ -43,30 +43,20 @@ import {
 } from "./edit.ts";
 import { historyUndo, historyRedo } from "./history.ts";
 
-// Regex patterns used for line-ending normalisation.
-const CRLF_RE = /\r\n/gu;
-const LONE_CR_RE = /\r(?!\n)/gu;
-const LONE_LF_RE = /(?<!\r)\n/gu;
-
 /**
  * Normalize line endings in `text` to match `lineEnding`.
  * Returns the original string unchanged if it contains no CR or LF characters
  * (fast path — avoids regex overhead for typical short inserts without newlines).
  */
 function normalizeLineEndings(text: string, lineEnding: "lf" | "crlf" | "cr"): string {
-  // Fast path: no line-break characters at all
   if (!text.includes("\r") && !text.includes("\n")) return text;
-
+  // Collapse every CRLF and lone CR to LF in one pass (\r\n is tried before \r),
+  // then convert to the requested style with a second pass when needed.
+  const lf = text.replace(/\r\n|\r/g, "\n");
   switch (lineEnding) {
-    case "lf":
-      // Normalise CRLF → LF first, then any remaining lone CR → LF
-      return text.replace(CRLF_RE, "\n").replace(LONE_CR_RE, "\n");
-    case "crlf":
-      // Normalise lone CR → LF first (to avoid double-processing), then lone LF → CRLF
-      return text.replace(LONE_CR_RE, "\n").replace(LONE_LF_RE, "\r\n");
-    case "cr":
-      // Normalise CRLF → CR first, then any remaining lone LF → CR
-      return text.replace(CRLF_RE, "\r").replace(LONE_LF_RE, "\r");
+    case "lf":   return lf;
+    case "crlf": return lf.replace(/\n/g, "\r\n");
+    case "cr":   return lf.replace(/\n/g, "\r");
   }
 }
 
