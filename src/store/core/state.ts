@@ -17,10 +17,18 @@ import type {
   DocumentMetadata,
   ChunkMetadata,
 } from "../../types/state.ts";
+import type { ReadonlyUint8Array } from "../../types/branded.ts";
 import { byteOffset, byteLength } from "../../types/branded.ts";
 import type { ByteOffset, ByteLength } from "../../types/branded.ts";
 import { textEncoder } from "./encoding.ts";
 import { GrowableBuffer } from "./growable-buffer.ts";
+import {
+  asReadonlyMap,
+  asReadonlySet,
+  asReadonlyUint8Array,
+  isReadonlyMapView,
+  isReadonlySetView,
+} from "./runtime-readonly.ts";
 
 /**
  * Default configuration values.
@@ -40,6 +48,88 @@ const DEFAULT_CONFIG: Required<DocumentStoreConfigBase> & {
   normalizeInsertedLineEndings: false,
 };
 
+function assertValidDocumentStoreConfig(config: DocumentStoreConfig): void {
+  if (config.scheduler !== undefined && config.reconcileMode !== undefined) {
+    throw new Error(
+      "DocumentStoreConfig cannot include both 'scheduler' and 'reconcileMode' at the same time",
+    );
+  }
+}
+
+function freezeChunkMetadata(metadata: ChunkMetadata): ChunkMetadata {
+  return Object.isFrozen(metadata) ? metadata : Object.freeze({ ...metadata });
+}
+
+function normalizeChunkMap(
+  chunkMap: PieceTableState["chunkMap"],
+): PieceTableState["chunkMap"] {
+  if (isReadonlyMapView(chunkMap)) {
+    return chunkMap;
+  }
+
+  const normalized = new Map<number, ReadonlyUint8Array>();
+  for (const [chunkIndex, bytes] of chunkMap) {
+    normalized.set(chunkIndex, asReadonlyUint8Array(bytes));
+  }
+  return asReadonlyMap(normalized);
+}
+
+function normalizeChunkMetadata(
+  chunkMetadata: PieceTableState["chunkMetadata"],
+): PieceTableState["chunkMetadata"] {
+  if (isReadonlyMapView(chunkMetadata)) {
+    return chunkMetadata;
+  }
+
+  const normalized = new Map<number, ChunkMetadata>();
+  for (const [chunkIndex, metadata] of chunkMetadata) {
+    normalized.set(chunkIndex, freezeChunkMetadata(metadata));
+  }
+  return asReadonlyMap(normalized);
+}
+
+function normalizeLoadedChunks(
+  loadedChunks: PieceTableState["loadedChunks"],
+): PieceTableState["loadedChunks"] {
+  return isReadonlySetView(loadedChunks) ? loadedChunks : asReadonlySet(new Set(loadedChunks));
+}
+
+function normalizeDirtyRanges<M extends EvaluationMode>(
+  dirtyRanges: LineIndexState<M>["dirtyRanges"],
+): LineIndexState<M>["dirtyRanges"] {
+  if (Object.isFrozen(dirtyRanges)) return dirtyRanges;
+  return Object.freeze([...dirtyRanges]) as LineIndexState<M>["dirtyRanges"];
+}
+
+function normalizeUnloadedLineCounts(
+  unloadedLineCountsByChunk: LineIndexState["unloadedLineCountsByChunk"],
+): LineIndexState["unloadedLineCountsByChunk"] {
+  return isReadonlyMapView(unloadedLineCountsByChunk)
+    ? unloadedLineCountsByChunk
+    : asReadonlyMap(new Map(unloadedLineCountsByChunk));
+}
+
+export function freezePieceTableState(state: PieceTableState): PieceTableState {
+  return Object.freeze({
+    ...state,
+    originalBuffer: asReadonlyUint8Array(state.originalBuffer),
+    addBuffer: state.addBuffer,
+    chunkMap: normalizeChunkMap(state.chunkMap),
+    loadedChunks: normalizeLoadedChunks(state.loadedChunks),
+    chunkMetadata: normalizeChunkMetadata(state.chunkMetadata),
+  });
+}
+
+export function freezeLineIndexState<M extends EvaluationMode = EvaluationMode>(
+  state: LineIndexState<M>,
+): LineIndexState<M> {
+  return Object.freeze({
+    ...state,
+    dirtyRanges: normalizeDirtyRanges(state.dirtyRanges),
+    unloadedLineCountsByChunk: normalizeUnloadedLineCounts(state.unloadedLineCountsByChunk),
+  }) as LineIndexState<M>;
+}
+
 /**
  * Create an empty piece table state.
  * @param chunkSize - Bytes per chunk for large-file streaming. 0 = non-chunked (default).
@@ -49,12 +139,12 @@ export function createEmptyPieceTableState(
   chunkSize: number = 0,
   totalFileSize: number = 0,
 ): PieceTableState {
-  return Object.freeze({
+  return freezePieceTableState({
     root: null,
-    originalBuffer: new Uint8Array(0),
+    originalBuffer: asReadonlyUint8Array(new Uint8Array(0)),
     addBuffer: GrowableBuffer.empty(),
     totalLength: 0,
-    chunkMap: new Map<number, Uint8Array>(),
+    chunkMap: new Map<number, ReadonlyUint8Array>(),
     chunkSize,
     nextExpectedChunk: 0,
     loadedChunks: new Set<number>(),
@@ -146,12 +236,12 @@ export function createPieceTableState(content: string): PieceTableState {
   // Create single piece spanning entire original buffer
   const root = createPieceNode("original", byteOffset(0), byteLength(originalBuffer.length));
 
-  return Object.freeze({
+  return freezePieceTableState({
     root,
-    originalBuffer,
+    originalBuffer: asReadonlyUint8Array(originalBuffer),
     addBuffer: GrowableBuffer.empty(1024),
     totalLength: originalBuffer.length,
-    chunkMap: new Map<number, Uint8Array>(),
+    chunkMap: new Map<number, ReadonlyUint8Array>(),
     chunkSize: 0,
     nextExpectedChunk: 0,
     loadedChunks: new Set<number>(),
@@ -166,7 +256,7 @@ export function createPieceTableState(content: string): PieceTableState {
  * @param maxDirtyRanges - Sentinel collapse threshold for mergeDirtyRanges (default 32)
  */
 export function createEmptyLineIndexState(maxDirtyRanges: number = 32): LineIndexState {
-  return Object.freeze({
+  return freezeLineIndexState({
     root: createLineIndexNode(0, 0, "black"),
     lineCount: 1, // Empty document has 1 line
     dirtyRanges: Object.freeze([]),
@@ -287,7 +377,7 @@ export function createLineIndexState(content: string, maxDirtyRanges: number = 3
   // Build balanced tree from line starts
   const root = buildLineIndexTree(lineStarts, 0, lineStarts.length - 1);
 
-  return Object.freeze({
+  return freezeLineIndexState({
     root,
     lineCount: lineStarts.length,
     dirtyRanges: Object.freeze([]),
@@ -359,7 +449,8 @@ export function createInitialHistoryState(
 /**
  * Create initial document metadata.
  */
-export function createInitialMetadata(config: Partial<DocumentStoreConfig> = {}): DocumentMetadata {
+export function createInitialMetadata(config: DocumentStoreConfig = {}): DocumentMetadata {
+  assertValidDocumentStoreConfig(config);
   return Object.freeze({
     filePath: undefined,
     encoding: config.encoding ?? DEFAULT_CONFIG.encoding,
@@ -378,7 +469,8 @@ export function createInitialMetadata(config: Partial<DocumentStoreConfig> = {})
  * initialized in chunked mode: `chunkSize` is set and `chunkMap` starts empty.
  * The caller then populates the document by dispatching `LOAD_CHUNK` actions.
  */
-export function createInitialState(config: Partial<DocumentStoreConfig> = {}): DocumentState {
+export function createInitialState(config: DocumentStoreConfig = {}): DocumentState {
+  assertValidDocumentStoreConfig(config);
   const mergedConfig = { ...DEFAULT_CONFIG, ...config };
   const content = mergedConfig.content;
 
@@ -409,7 +501,14 @@ export function createInitialState(config: Partial<DocumentStoreConfig> = {}): D
  * Only creates new objects for changed properties.
  */
 export function withState(state: DocumentState, changes: Partial<DocumentState>): DocumentState {
-  return Object.freeze({ ...state, ...changes });
+  const nextState = { ...state, ...changes };
+  if (changes.pieceTable !== undefined) {
+    nextState.pieceTable = freezePieceTableState(changes.pieceTable);
+  }
+  if (changes.lineIndex !== undefined) {
+    nextState.lineIndex = freezeLineIndexState(changes.lineIndex);
+  }
+  return Object.freeze(nextState);
 }
 
 /**
@@ -428,7 +527,7 @@ export function withLineIndexState<M extends EvaluationMode = EvaluationMode>(
   state: LineIndexState<M>,
   changes: Partial<LineIndexState<M>>,
 ): LineIndexState<M> {
-  return Object.freeze({ ...state, ...changes }) as LineIndexState<M>;
+  return freezeLineIndexState({ ...state, ...changes } as LineIndexState<M>);
 }
 
 /**

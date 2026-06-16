@@ -3,7 +3,7 @@
  * All state structures are read-only and use structural sharing for efficiency.
  */
 
-import type { ByteOffset, ByteLength, CharOffset } from "./branded.ts";
+import type { ByteOffset, ByteLength, CharOffset, ReadonlyUint8Array } from "./branded.ts";
 import type { GrowableBuffer } from "../store/core/growable-buffer.ts";
 import type { NonEmptyReadonlyArray } from "./utils.ts";
 import type { ReconciliationScheduler } from "../store/features/reconciliation-scheduler.ts";
@@ -151,7 +151,7 @@ export interface PieceTableState {
   /** Root of the Red-Black tree of pieces */
   readonly root: PieceNode | null;
   /** Original buffer: immutable, loaded from file */
-  readonly originalBuffer: Uint8Array;
+  readonly originalBuffer: ReadonlyUint8Array;
   /** Add buffer: append-only growable buffer for user edits */
   readonly addBuffer: GrowableBuffer;
   /** Total document length (cached for O(1) access) */
@@ -160,7 +160,7 @@ export interface PieceTableState {
    * Loaded chunk buffers keyed by chunk index.
    * Empty map when not in chunked mode (chunkSize === 0).
    */
-  readonly chunkMap: ReadonlyMap<number, Uint8Array>;
+  readonly chunkMap: ReadonlyMap<number, ReadonlyUint8Array>;
   /**
    * Number of bytes per chunk for large-file streaming.
    * 0 means the document is not in chunked mode.

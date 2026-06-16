@@ -50,12 +50,11 @@ This repository does **not** currently include:
 
 ## Verification Snapshot
 
-- Latest verified functional test run: 2026-05-31
+- Latest verified functional test run: 2026-06-17
 - Command: `pnpm test`
-- Result: `16` test files, `624` tests passed
-- Latest verified perf test run: 2026-05-31
+- Result: `18` test files, `651` tests passed
+- Latest verified perf test run: 2026-06-17
 - Command: `pnpm test:perf`
-- Result: `1` test file, `27` tests passed, `1` test failed
-- Current perf failure: `Scaling ratio (cost-algebra validation) > getLineStartOffset ratio (10k → 900k lines) is sub-linear` — timing-sensitive flakiness; result varies between runs (5.2×–5.6× vs threshold 5×). Not a correctness bug.
+- Result: `1` test file, `28` tests passed
 
 See domain files under `/spec` for implementation-level details and constraints.

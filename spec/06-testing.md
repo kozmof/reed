@@ -2,12 +2,11 @@
 
 ## 1. Latest Verified Run
 
-- Date: 2026-05-31
+- Date: 2026-06-17
 - Functional command: `pnpm test`
-- Functional result: `16` test files, `619` tests passed
+- Functional result: `18` test files, `651` tests passed
 - Perf command: `pnpm test:perf`
-- Perf result: `1` test file, `27` tests passed, `1` test failed
-- Perf failure: `Undo / redo > 200 undos then 200 redos on 50k-line document` fails with `Expected eager LineIndexState but found dirty ranges or pending rebuild`
+- Perf result: `1` test file, `28` tests passed
 
 ## 2. Current Test Suites
 
@@ -25,12 +24,13 @@ Functional suites (`pnpm test`):
 - `src/store/features/events.test.ts`: event emitter and event-store behavior
 - `src/store/core/piece-table.test.ts`: piece-table operations and buffer behavior
 - `src/store/core/line-index.test.ts`: line-index operations and lookups
+- `src/store/features/reconciliation-scheduler.test.ts`: scheduler mode, cancel, and idle reschedule behavior
 - `src/store/features/store.logic.test.ts`: reducer invariants, action validation, store logic
 - `src/store/features/store.usecase.test.ts`: end-to-end workflows and randomized reconciliation checks
 - `src/store/features/chunk-manager.test.ts`: ChunkManager load/evict/LRU/pin behavior
 - `src/store/features/chunk-metadata.test.ts`: DECLARE_CHUNK_METADATA and pre-declared line-count queries
 
-Performance suite (`pnpm test:perf`, currently not fully green):
+Performance suite (`pnpm test:perf`):
 
 - `src/store/features/perf.test.ts`: large-document load/query/edit/reconcile benchmarks
 
@@ -50,10 +50,9 @@ Implemented coverage is strongest in:
 Current gaps relative to roadmap/spec ambitions:
 
 - no LOAD_CHUNK/EVICT_CHUNK cross-boundary stress tests (reducer paths covered; ChunkManager integration at scale is not)
-- no direct `createStreamingDocumentLoader` integration suite
+- `createStreamingDocumentLoader` has only a narrow direct suite today
 - no CRDT/provider/network collaboration integration tests
 - performance tests report timings but do not enforce hard budget thresholds
-- current perf undo/redo benchmark exposes a dirty-line-index/eager-line-index mismatch
 
 ## 5. Guidance for Spec-Driven Testing
 

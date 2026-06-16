@@ -21,7 +21,8 @@ import {
   type LogCost,
   type LinearCost,
 } from "../../types/cost-doc.ts";
-import { createPieceNode, createChunkPieceNode, withPieceNode } from "./state.ts";
+import { createPieceNode, createChunkPieceNode, withPieceNode, freezePieceTableState } from "./state.ts";
+import { unwrapReadonlyUint8Array } from "./runtime-readonly.ts";
 import {
   fixInsertWithPath,
   fixRedViolations,
@@ -115,13 +116,13 @@ export function getPieceBufferRef(piece: PieceNode): BufferReference {
 export function getBuffer(state: PieceTableState, ref: BufferReference): Uint8Array {
   switch (ref.bufferType) {
     case "original":
-      return state.originalBuffer;
+      return new Uint8Array(unwrapReadonlyUint8Array(state.originalBuffer));
     case "add":
-      return state.addBuffer.bytes;
+      return new Uint8Array(unwrapReadonlyUint8Array(state.addBuffer.bytes));
     case "chunk": {
       const chunk = state.chunkMap.get(ref.chunkIndex);
       if (chunk === undefined) throw new Error(`Chunk ${ref.chunkIndex} is not loaded`);
-      return chunk;
+      return new Uint8Array(unwrapReadonlyUint8Array(chunk));
     }
     default: {
       const _never: never = ref;
@@ -137,13 +138,13 @@ export function getBuffer(state: PieceTableState, ref: BufferReference): Uint8Ar
 export function getBufferSlice(state: PieceTableState, ref: BufferReference): Uint8Array {
   switch (ref.bufferType) {
     case "original":
-      return state.originalBuffer.subarray(ref.start, ref.start + ref.length);
+      return unwrapReadonlyUint8Array(state.originalBuffer).slice(ref.start, ref.start + ref.length);
     case "add":
-      return state.addBuffer.bytes.subarray(ref.start, ref.start + ref.length);
+      return unwrapReadonlyUint8Array(state.addBuffer.bytes).slice(ref.start, ref.start + ref.length);
     case "chunk": {
       const chunk = state.chunkMap.get(ref.chunkIndex);
       if (chunk === undefined) throw new Error(`Chunk ${ref.chunkIndex} is not loaded`);
-      return chunk.subarray(ref.start, ref.start + ref.length);
+      return unwrapReadonlyUint8Array(chunk).slice(ref.start, ref.start + ref.length);
     }
     default: {
       const _never: never = ref;
@@ -161,13 +162,31 @@ export function getBufferSlice(state: PieceTableState, ref: BufferReference): Ui
 export function getPieceBuffer(state: PieceTableState, piece: PieceNode): Uint8Array {
   switch (piece.bufferType) {
     case "original":
-      return state.originalBuffer;
+      return new Uint8Array(unwrapReadonlyUint8Array(state.originalBuffer));
     case "add":
-      return state.addBuffer.bytes;
+      return new Uint8Array(unwrapReadonlyUint8Array(state.addBuffer.bytes));
     case "chunk": {
       const chunk = state.chunkMap.get(piece.chunkIndex);
       if (chunk === undefined) throw new Error(`Chunk ${piece.chunkIndex} is not loaded`);
-      return chunk;
+      return new Uint8Array(unwrapReadonlyUint8Array(chunk));
+    }
+    default: {
+      const _never: never = piece;
+      throw new Error(`Unknown buffer type: ${String(_never)}`);
+    }
+  }
+}
+
+function getPieceBufferRaw(state: PieceTableState, piece: PieceNode): Uint8Array {
+  switch (piece.bufferType) {
+    case "original":
+      return unwrapReadonlyUint8Array(state.originalBuffer);
+    case "add":
+      return unwrapReadonlyUint8Array(state.addBuffer.bytes);
+    case "chunk": {
+      const chunk = state.chunkMap.get(piece.chunkIndex);
+      if (chunk === undefined) throw new Error(`Chunk ${piece.chunkIndex} is not loaded`);
+      return unwrapReadonlyUint8Array(chunk);
     }
     default: {
       const _never: never = piece;
@@ -185,7 +204,7 @@ export function getRawByte(state: PieceTableState, docOffset: ByteOffset): numbe
   const location = findPieceAtPosition(state.root, docOffset);
   if (location === null) return -1;
   const { node, offsetInPiece } = location;
-  const buffer = getPieceBuffer(state, node);
+  const buffer = getPieceBufferRaw(state, node);
   return buffer[node.start + offsetInPiece];
 }
 
@@ -493,13 +512,13 @@ export function pieceTableInsert(
     );
     return $proveCtx(
       "O(n)",
-      $lift("O(n)", {
-        state: Object.freeze({
-          ...state,
-          root: newRoot,
-          addBuffer,
-          totalLength: textBytes.length,
-        }),
+        $lift("O(n)", {
+          state: freezePieceTableState({
+            ...state,
+            root: newRoot,
+            addBuffer,
+            totalLength: textBytes.length,
+          }),
         insertedByteLength: textBytes.length,
       }),
     );
@@ -559,7 +578,7 @@ export function pieceTableInsert(
           );
         }),
         $map((newRoot) => ({
-          state: Object.freeze({
+          state: freezePieceTableState({
             ...state,
             root: newRoot,
             addBuffer,
@@ -769,7 +788,7 @@ export function pieceTableDelete(
     "O(log n)",
     $lift(
       "O(log n)",
-      Object.freeze({
+      freezePieceTableState({
         ...state,
         root: newRoot,
         totalLength: state.totalLength - deleteLength,
@@ -1002,7 +1021,7 @@ export function getValue(state: PieceTableState): LinearCost<string> {
           let offset = 0;
 
           for (const piece of pieces) {
-            const buffer = getPieceBuffer(state, piece);
+            const buffer = getPieceBufferRaw(state, piece);
             result.set(buffer.subarray(piece.start, piece.start + piece.length), offset);
             offset += piece.length;
           }
@@ -1066,7 +1085,7 @@ function collectBytesInRange(
 
   // Collect from this piece if it overlaps
   if (pieceStart < end && pieceEnd > start) {
-    const buffer = getPieceBuffer(state, node);
+    const buffer = getPieceBufferRaw(state, node);
     const copyStart = Math.max(0, start - pieceStart);
     const copyEnd = Math.min(node.length, end - pieceStart);
 
@@ -1142,7 +1161,7 @@ function findLineOffsets(
       let pendingCREnd = -1;
 
       pieceTableInOrder(state.root, (piece, pieceDocOffset) => {
-        const buffer = getPieceBuffer(state, piece);
+        const buffer = getPieceBufferRaw(state, piece);
         for (let i = 0; i < piece.length; i++) {
           const b = buffer[piece.start + i];
           const docPos = pieceDocOffset + i;
@@ -1276,7 +1295,7 @@ export function compactAddBuffer(
             // No add buffer content - reset to empty
             return $lift(
               "O(n)",
-              Object.freeze({
+              freezePieceTableState({
                 ...state,
                 addBuffer: GrowableBuffer.empty(1024),
               }),
@@ -1314,7 +1333,7 @@ export function compactAddBuffer(
               const counter = { index: 0 };
               const newRoot = rebuildTreeWithNewOffsets(state.root, addOffsets, counter);
 
-              return Object.freeze({
+              return freezePieceTableState({
                 ...state,
                 root: newRoot,
                 addBuffer: new GrowableBuffer(newBuffer, writeOffset),
@@ -1545,7 +1564,7 @@ function* streamChunks(
   // Process pieces until we reach `end`
   while (currentEntry !== null && documentPosition < end) {
     const { piece } = currentEntry;
-    const buffer = getPieceBuffer(state, piece);
+    const buffer = getPieceBufferRaw(state, piece);
 
     const pieceRemaining = piece.length - offsetInCurrentPiece;
     const documentRemaining = end - documentPosition;

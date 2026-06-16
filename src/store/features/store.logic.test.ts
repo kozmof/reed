@@ -5,6 +5,7 @@
 
 import { describe, it, expect } from "vitest";
 import { pstackSize, pstackPeek } from "../../types/state.ts";
+import type { DocumentStoreConfig } from "../../types/state.ts";
 import { documentReducer } from "./reducer.ts";
 import {
   createInitialState,
@@ -83,6 +84,24 @@ describe("State Factories", () => {
       expect(Object.isFrozen(state.selection)).toBe(true);
       expect(Object.isFrozen(state.history)).toBe(true);
       expect(Object.isFrozen(state.metadata)).toBe(true);
+    });
+
+    it("should reject conflicting scheduler and reconcileMode config", () => {
+      const scheduler = {
+        schedule() {},
+        cancel() {},
+        runNow() {},
+        get isRunning() {
+          return false;
+        },
+      };
+
+      expect(() =>
+        createInitialState({
+          scheduler,
+          reconcileMode: "sync",
+        } as unknown as DocumentStoreConfig),
+      ).toThrow("cannot include both 'scheduler' and 'reconcileMode'");
     });
   });
 
@@ -952,6 +971,51 @@ describe("Immutability", () => {
 
     expect(() => {
       (state.history.undoStack as unknown as unknown[]).push({});
+    }).toThrow();
+  });
+
+  it("should not allow piece-table collection mutation", () => {
+    const state = createInitialState({ chunkSize: 4 });
+
+    expect(() => {
+      (state.pieceTable.loadedChunks as unknown as Set<number>).add(1);
+    }).toThrow();
+
+    expect(() => {
+      (state.pieceTable.chunkMetadata as unknown as Map<number, unknown>).set(0, {});
+    }).toThrow();
+
+    expect(() => {
+      (state.lineIndex.unloadedLineCountsByChunk as unknown as Map<number, number>).set(0, 1);
+    }).toThrow();
+  });
+
+  it("should not allow byte-buffer mutation through snapshots", () => {
+    const state = createInitialState({ content: "Hello" });
+
+    expect(() => {
+      (state.pieceTable.originalBuffer as Uint8Array)[0] = 0x58;
+    }).toThrow();
+
+    expect(() => {
+      state.pieceTable.originalBuffer.subarray(0, 1)[0] = 0x58;
+    }).toThrow();
+
+    expect(() => {
+      (state.pieceTable.addBuffer.bytes as Uint8Array)[0] = 0x58;
+    }).toThrow();
+  });
+
+  it("should defensively copy chunk bytes before storing them in state", () => {
+    const bytes = new Uint8Array([0x41, 0x42, 0x43]);
+    const state0 = createInitialState({ chunkSize: 3, totalFileSize: 3 });
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
+
+    bytes[0] = 0x58;
+
+    expect(state1.pieceTable.chunkMap.get(0)![0]).toBe(0x41);
+    expect(() => {
+      (state1.pieceTable.chunkMap.get(0)! as Uint8Array)[0] = 0x58;
     }).toThrow();
   });
 });

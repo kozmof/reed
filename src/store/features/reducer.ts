@@ -23,6 +23,7 @@ import {
   withPieceNode,
   withLineIndexState,
 } from "../core/state.ts";
+import { unwrapReadonlyUint8Array } from "../core/runtime-readonly.ts";
 import { appendToRightmost } from "../core/rb-tree.ts";
 import { getText, insertChunkPieceAt, pieceTableInOrder } from "../core/piece-table.ts";
 import {
@@ -480,7 +481,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       // A chunk that was evicted is no longer in chunkMap, so re-loads are allowed.
       if (chunkMap.has(chunkIndex)) return state;
 
-      const chunkBytes = data as Uint8Array;
+      const chunkBytes = new Uint8Array(data);
       if (chunkBytes.length === 0) return state;
 
       const chunkText = textDecoder.decode(chunkBytes);
@@ -549,7 +550,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       // Refuse eviction if the chunk is missing pieces or has any local edits in its span.
       if (range === null) return state;
       if (hasAddPieceTouchingRange(state.pieceTable.root, range.start, range.end)) return state;
-      const chunkText = textDecoder.decode(chunkBytes);
+      const chunkText = textDecoder.decode(unwrapReadonlyUint8Array(chunkBytes));
 
       const { newRoot, removedLength } = removeChunkPiecesFromTree(
         state.pieceTable.root,

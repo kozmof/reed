@@ -12,7 +12,7 @@ import type {
   StoreListener,
   Unsubscribe,
 } from "../../types/store.ts";
-import { createInitialState } from "../core/state.ts";
+import { createInitialState, withState } from "../core/state.ts";
 import { documentReducer } from "./reducer.ts";
 import { reconcileFull, reconcileViewport } from "../core/line-index.ts";
 import { getBufferStats, compactAddBuffer } from "../core/piece-table.ts";
@@ -45,7 +45,7 @@ const AUTO_COMPACT_MIN_BYTES = 16384; // 16 KB
  * @returns A new DocumentStore instance
  */
 export function createDocumentStore(
-  config: Partial<DocumentStoreConfig> = {},
+  config: DocumentStoreConfig = {},
 ): ReconcilableDocumentStore {
   // Internal mutable state
   let state = createInitialState(config);
@@ -89,7 +89,7 @@ export function createDocumentStore(
     if (!needsCompaction()) return;
     const newPieceTable = compactAddBuffer(state.pieceTable, AUTO_COMPACT_WASTE_RATIO);
     if (newPieceTable !== state.pieceTable) {
-      setState(Object.freeze({ ...state, pieceTable: newPieceTable }));
+      setState(withState(state, { pieceTable: newPieceTable }));
       notifyListeners();
     }
   }
@@ -103,7 +103,7 @@ export function createDocumentStore(
         if (state.lineIndex.rebuildPending) {
           const newLineIndex = reconcileFull(state.lineIndex, state.version);
           if (newLineIndex !== state.lineIndex) {
-            setState(Object.freeze({ ...state, lineIndex: newLineIndex }));
+            setState(withState(state, { lineIndex: newLineIndex }));
             notifyListeners();
           }
         }
@@ -296,7 +296,7 @@ export function createDocumentStore(
     if (!state.lineIndex.rebuildPending) return state as DocumentState<"eager">;
     const newLineIndex = reconcileFull(state.lineIndex, state.version);
     if (newLineIndex !== state.lineIndex) {
-      setState(Object.freeze({ ...state, lineIndex: newLineIndex }));
+      setState(withState(state, { lineIndex: newLineIndex }));
     }
     resolveWhenReconciledIfReady();
     return state as DocumentState<"eager">;
@@ -361,12 +361,7 @@ export function createDocumentStore(
   function setViewport(startLine: number, endLine: number): void {
     const newLineIndex = reconcileViewport(state.lineIndex, startLine, endLine, state.version);
     if (newLineIndex !== state.lineIndex) {
-      setState(
-        Object.freeze({
-          ...state,
-          lineIndex: newLineIndex,
-        }),
-      );
+      setState(withState(state, { lineIndex: newLineIndex }));
     }
 
     // Schedule background reconciliation for remaining dirty ranges
@@ -425,7 +420,7 @@ export function createDocumentStore(
  * @returns A DocumentStoreWithEvents instance
  */
 export function createDocumentStoreWithEvents(
-  config: Partial<DocumentStoreConfig> = {},
+  config: DocumentStoreConfig = {},
 ): DocumentStoreWithEvents {
   const baseStore = createDocumentStore(config);
   const emitter = createEventEmitter();

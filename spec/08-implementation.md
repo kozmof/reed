@@ -89,10 +89,10 @@ Fully implemented:
 
 No currently confirmed functional-suite core reducer/store correctness blockers from earlier spec revisions.
 
-Primary remaining gaps are unimplemented collaboration/framework layers plus the current perf-suite undo/redo eager-line-index failure.
+Primary remaining gaps are unimplemented collaboration/framework layers plus broader high-scale streaming/integration coverage.
 
 ## 5. Near-Term Priorities
 
 1. Add collaboration transport/provider + synchronization recovery tests.
-2. Fix or explicitly redesign the perf undo/redo eager-line-index path.
-3. Add ChunkManager/StreamingDocumentLoader integration stress tests (large-file load/evict at scale).
+2. Add ChunkManager/StreamingDocumentLoader integration stress tests (large-file load/evict at scale).
+3. Expand collaboration/provider integration tests once those runtime layers exist.

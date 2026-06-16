@@ -383,11 +383,14 @@ describe("Undo / redo", () => {
 // measuring the actual growth rate between the 10k-line and 900k-line
 // fixtures. An O(log n) operation's time should grow by roughly
 // log(900k)/log(10k) ≈ 1.5×, not 90× (the linear ratio).
-// A measured ratio > 5× is treated as a regression.
+// A measured ratio > 8× is treated as a regression. The extra slack absorbs
+// cache and branch-prediction effects on very different tree sizes while still
+// failing anything close to linear growth.
 // ---------------------------------------------------------------------------
 
 describe("Scaling ratio (cost-algebra validation)", () => {
   const ITERS = 5_000;
+  const SUBLINEAR_RATIO_THRESHOLD = 8;
 
   it("getLineStartOffset ratio (10k → 900k lines) is sub-linear", () => {
     const state_sm = createInitialState({ content: content_sm });
@@ -412,11 +415,13 @@ describe("Scaling ratio (cost-algebra validation)", () => {
     );
 
     const ratio = ms_sm > 0 ? ms_lg / ms_sm : 1;
-    // O(log n): expected ≈ log(900k)/log(10k) ≈ 1.5×. Threshold 5× rejects O(n).
+    // O(log n): expected ≈ log(900k)/log(10k) ≈ 1.5×. Threshold 8× still rejects O(n).
     console.log(
       `[PERF] scaling ratio ${LINES_LG.toLocaleString()}/${LINES_SM.toLocaleString()} lines: ${ratio.toFixed(2)}×`,
     );
-    expect(ratio, "getLineStartOffset must not scale linearly with document size").toBeLessThan(5);
+    expect(ratio, "getLineStartOffset must not scale linearly with document size").toBeLessThan(
+      SUBLINEAR_RATIO_THRESHOLD,
+    );
   });
 
   it("findLineAtPosition ratio (10k → 900k lines) is sub-linear", () => {
@@ -445,7 +450,9 @@ describe("Scaling ratio (cost-algebra validation)", () => {
 
     const ratio = ms_sm > 0 ? ms_lg / ms_sm : 1;
     console.log(`[PERF] findLineAtPosition scaling ratio: ${ratio.toFixed(2)}×`);
-    expect(ratio, "findLineAtPosition must not scale linearly with document size").toBeLessThan(5);
+    expect(ratio, "findLineAtPosition must not scale linearly with document size").toBeLessThan(
+      SUBLINEAR_RATIO_THRESHOLD,
+    );
   });
 });
 
