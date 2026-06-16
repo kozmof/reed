@@ -280,6 +280,7 @@ export function createChunkManager(
 
   function setActiveChunks(chunkIndices: readonly number[]): void {
     activeChunks = new Set(chunkIndices);
+    evictIfOverLimit();
   }
 
   function dispose(): void {

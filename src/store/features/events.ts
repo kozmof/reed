@@ -6,25 +6,7 @@
 import type { DocumentState } from "../../types/state.ts";
 import type { ContentChangeAction, DocumentAction } from "../../types/actions.ts";
 import { byteOffset, type ByteOffset } from "../../types/branded.ts";
-
-/**
- * Count UTF-8 byte length of a JavaScript string without allocating a Uint8Array.
- * Avoids the `textEncoder.encode(str).length` pattern which allocates per call.
- */
-function utf8ByteLength(str: string): number {
-  let len = 0;
-  for (let i = 0; i < str.length; i++) {
-    const c = str.charCodeAt(i);
-    if (c < 0x80) len += 1;
-    else if (c < 0x800) len += 2;
-    else if (c >= 0xd800 && c <= 0xdbff) {
-      len += 4;
-      i++;
-    } // surrogate pair → 4 bytes
-    else len += 3;
-  }
-  return len;
-}
+import { utf8ByteLength } from "../core/encoding.ts";
 
 // =============================================================================
 // Event Types

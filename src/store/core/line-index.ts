@@ -54,6 +54,7 @@ import {
   reconcileViewport,
   type ReconciliationConfig,
 } from "./reconcile.ts";
+import { isSurrogatePairAt } from "./encoding.ts";
 
 const withLine: WithNodeFn<LineIndexNode> = withLineIndexNode;
 
@@ -98,8 +99,8 @@ function findNewlineBytePositions(text: string): { positions: number[]; byteLeng
       byteLen += 1;
     } else if (c < 0x800) {
       byteLen += 2;
-    } else if (c >= 0xd800 && c <= 0xdbff) {
-      // High surrogate paired with the following low surrogate: 4 bytes total
+    } else if (isSurrogatePairAt(text, i)) {
+      // Valid surrogate pairs are 4 bytes in UTF-8 and span two UTF-16 code units.
       byteLen += 4;
       i++;
     } else {

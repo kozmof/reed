@@ -169,7 +169,8 @@ export interface ReconcilableDocumentStore extends DocumentStore, TransactionCon
    * Resolves immediately when `lineIndex.rebuildPending` is already false.
    * Otherwise subscribes to the store and resolves on the first notification
    * after which `rebuildPending` is false — i.e. after background reconciliation
-   * completes (or `reconcileNow()` is called).
+   * completes (or `reconcileNow()` is called). In `reconcileMode: "none"`,
+   * Reed performs that reconcile immediately because no background scheduler exists.
    *
    * Eliminates the polling pattern (`while (lineIndex.rebuildPending) { ... }`)
    * seen in tests and async consumers that need an eager `DocumentState<"eager">`.

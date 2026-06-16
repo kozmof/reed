@@ -314,6 +314,17 @@ describe("Line Index Operations", () => {
         const line2 = getLineRange(state, 2);
         expect(line2).toEqual({ start: 15, length: 6 }); // '世界' = 6
       });
+
+      it("should treat lone surrogates as 3-byte code points without skipping newlines", () => {
+        const state = createLineIndexState("\ud800\nX");
+        expect(getLineCountFromIndex(state)).toBe(2);
+
+        const line0 = getLineRange(state, 0);
+        expect(line0).toEqual({ start: 0, length: 4 }); // U+FFFD + '\n' = 3 + 1
+
+        const line1 = getLineRange(state, 1);
+        expect(line1).toEqual({ start: 4, length: 1 }); // 'X'
+      });
     });
 
     describe("lineIndexInsert with multi-byte text", () => {

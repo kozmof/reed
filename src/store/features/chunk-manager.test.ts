@@ -179,6 +179,29 @@ describe("ChunkManager LRU eviction", () => {
     manager.dispose();
   });
 
+  it("re-applies eviction pressure when the active chunk set shrinks", async () => {
+    const store = createDocumentStore({ chunkSize: CHUNK_SIZE, totalFileSize: CHUNK_SIZE * 3 });
+    const loader = makeLoader({ 0: "aaaabbbb", 1: "bbbbcccc", 2: "ccccdddd" });
+    const manager = createChunkManager(store, loader, { maxLoadedChunks: 2 });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    manager.setActiveChunks([0, 1, 2]);
+    await manager.ensureLoaded(0);
+    await manager.ensureLoaded(1);
+    await manager.ensureLoaded(2);
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+
+    manager.setActiveChunks([2]);
+
+    const snap = store.getSnapshot();
+    expect(snap.pieceTable.chunkMap.size).toBe(2);
+    expect(snap.pieceTable.chunkMap.has(2)).toBe(true);
+    expect(snap.pieceTable.chunkMap.has(0)).toBe(false);
+
+    warn.mockRestore();
+    manager.dispose();
+  });
+
   it("keeps the requested chunk resident when an older dirty chunk cannot be evicted", async () => {
     const store = makeStore();
     const loader = makeLoader({ 0: "aaaabbbb", 1: "bbbbcccc" });

@@ -714,6 +714,22 @@ describe("Editor Use Cases", () => {
       expect(listener).toHaveBeenCalledTimes(1);
     });
 
+    it("should make forward progress when whenReconciled is awaited in reconcileMode none", async () => {
+      const store = createDocumentStore({
+        content: Array.from({ length: 10 }, (_, i) => `Line ${i}`).join("\n"),
+        reconcileMode: "none",
+      });
+
+      store.dispatch(DocumentActions.insert(byteOffset(0), "\ud800\nprefix\n"));
+      expect(store.getSnapshot().lineIndex.rebuildPending).toBe(true);
+
+      const eager = await store.whenReconciled();
+
+      expect(eager.lineIndex.rebuildPending).toBe(false);
+      expect(getLineStartOffset(eager.lineIndex.root, 1)).toBe(4);
+      expect(getLineStartOffset(eager.lineIndex.root, 2)).toBe(11);
+    });
+
     it("should preserve line index through rapid multiline edits with full undo/redo", () => {
       const initialContent = Array.from({ length: 25 }, (_, i) => `Base ${i}`).join("\n");
       const store = createDocumentStore({ content: initialContent });

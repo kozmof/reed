@@ -311,6 +311,13 @@ describe("getAffectedRanges", () => {
     expect(ranges).toEqual([[0, 6]]);
   });
 
+  it("should count lone surrogates using TextEncoder semantics", () => {
+    const action = DocumentActions.insert(byteOffset(0), "\ud800");
+    const ranges = getAffectedRanges(action);
+
+    expect(ranges).toEqual([[0, 3]]);
+  });
+
   it("should return [[0, 0]] for non-edit actions", () => {
     const action = DocumentActions.undo();
     const ranges = getAffectedRanges(action);

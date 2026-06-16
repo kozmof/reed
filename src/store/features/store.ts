@@ -339,11 +339,17 @@ export function createDocumentStore(
    * Return a Promise that resolves once the line index is fully reconciled.
    * Resolves immediately when rebuildPending is already false; otherwise waits
    * for the next store notification after which the index is clean.
+   * In reconcileMode 'none', this performs an immediate synchronous reconcile
+   * because there is no background scheduler to make forward progress.
    */
   function whenReconciled(): Promise<DocumentState<"eager">> {
     if (!state.lineIndex.rebuildPending) {
       return Promise.resolve(state as DocumentState<"eager">);
     }
+    if (config.scheduler === undefined && reconcileMode === "none") {
+      return Promise.resolve(reconcileNow());
+    }
+    scheduleReconciliation();
     return new Promise<DocumentState<"eager">>((resolve) => {
       whenReconciledResolvers.push(resolve);
     });
