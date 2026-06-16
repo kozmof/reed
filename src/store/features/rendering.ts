@@ -7,7 +7,6 @@ import type {
   DocumentState,
   SelectionRange,
   CharSelectionRange,
-  LineIndexNode,
 } from "../../types/state.ts";
 import { byteOffset, charOffset, addByteOffset, type ByteOffset } from "../../types/branded.ts";
 import {
@@ -30,7 +29,6 @@ import {
   findLineAtCharPosition,
   getLineRangePrecise,
   getLineCountFromIndex,
-  findLineByNumber,
 } from "../core/line-index.ts";
 import { getText, charToByteOffset } from "../core/piece-table.ts";
 import { textEncoder } from "../core/encoding.ts";
@@ -97,6 +95,41 @@ export interface ScrollPosition {
 // Viewport Calculations
 // =============================================================================
 
+interface RenderedLineText {
+  readonly content: string;
+  readonly hasNewline: boolean;
+}
+
+/**
+ * Split a rendered line into display content plus a terminator flag.
+ * Supports LF, CR, and CRLF without leaking terminator characters into UI text.
+ */
+function splitRenderedLineText(text: string): RenderedLineText {
+  if (text.endsWith("\r\n")) {
+    return { content: text.slice(0, -2), hasNewline: true };
+  }
+  if (text.endsWith("\n") || text.endsWith("\r")) {
+    return { content: text.slice(0, -1), hasNewline: true };
+  }
+  return { content: text, hasNewline: false };
+}
+
+function createVisibleLine(
+  lineNumber: number,
+  startOffset: ByteOffset,
+  endOffset: ByteOffset,
+  rawContent: string,
+): VisibleLine {
+  const { content, hasNewline } = splitRenderedLineText(rawContent);
+  return Object.freeze({
+    lineNumber,
+    content,
+    startOffset,
+    endOffset,
+    hasNewline,
+  });
+}
+
 /**
  * Calculate which lines are visible given a scroll position.
  */
@@ -152,7 +185,7 @@ export const getLineContent: CostFn<"linear", [DocumentState, number], string | 
             ),
           ),
         ),
-        $map((text: string) => (text.endsWith("\n") ? text.slice(0, -1) : text)),
+        $map((text: string) => splitRenderedLineText(text).content),
       ),
     ),
   );
@@ -183,20 +216,7 @@ export function getVisibleLines(
       const startOffset = range.start;
       const endOffset = addByteOffset(range.start, range.length);
       const rawContent = getText(state.pieceTable, startOffset, endOffset);
-
-      // Check if line ends with newline and strip it for display
-      const hasNewline = rawContent.endsWith("\n");
-      const content = hasNewline ? rawContent.slice(0, -1) : rawContent;
-
-      lines.push(
-        Object.freeze({
-          lineNumber: lineNum,
-          content,
-          startOffset,
-          endOffset,
-          hasNewline,
-        }),
-      );
+      lines.push(createVisibleLine(lineNum, startOffset, endOffset, rawContent));
     }
   }
 
@@ -253,15 +273,7 @@ export function getVisibleLine(
         $map(({ resolvedRange, text }) => {
           const startOffset = resolvedRange.start;
           const endOffset = addByteOffset(resolvedRange.start, resolvedRange.length);
-          const hasNewline = text.endsWith("\n");
-          const content = hasNewline ? text.slice(0, -1) : text;
-          return Object.freeze({
-            lineNumber,
-            content,
-            startOffset,
-            endOffset,
-            hasNewline,
-          });
+          return createVisibleLine(lineNumber, startOffset, endOffset, text);
         }),
       ),
     ),
@@ -304,24 +316,11 @@ export function estimateLineHeight(line: VisibleLine, config: LineHeightConfig):
 }
 
 /**
- * In-order traversal collecting charLength from every line index node.
- * O(n) single pass — avoids repeated O(log n) findLineByNumber calls and
- * O(line_length) getText calls that would accumulate to O(n log n + doc_bytes).
+ * Compute wrapped line height from rendered line content.
+ * Uses content with any CR/LF/CRLF terminator already stripped.
  */
-function collectLineCharLengths(root: LineIndexNode | null, out: number[]): void {
-  if (root === null) return;
-  collectLineCharLengths(root.left as LineIndexNode | null, out);
-  out.push(root.charLength);
-  collectLineCharLengths(root.right as LineIndexNode | null, out);
-}
-
-/**
- * Compute wrapped line height from a char length, factoring out the newline char.
- * Shared by the exact and sampling paths of estimateTotalHeight.
- */
-function wrappedHeight(charLen: number, charsPerLine: number, baseLineHeight: number): number {
-  const contentLen = Math.max(0, charLen - 1); // strip the trailing newline
-  const wrappedLines = charsPerLine > 0 ? Math.ceil(contentLen / charsPerLine) || 1 : 1;
+function wrappedHeight(contentLength: number, charsPerLine: number, baseLineHeight: number): number {
+  const wrappedLines = charsPerLine > 0 ? Math.ceil(contentLength / charsPerLine) || 1 : 1;
   return wrappedLines * baseLineHeight;
 }
 
@@ -343,31 +342,36 @@ export function estimateTotalHeight(
   const charsPerLine = Math.floor(config.viewportWidth / config.charWidth);
 
   if (totalLines <= SAMPLE_SIZE) {
-    // Small document: single O(n) in-order traversal over the line index tree.
-    // Uses charLength directly — no getText calls needed for height estimation.
-    const charLengths: number[] = [];
-    collectLineCharLengths(state.lineIndex.root as LineIndexNode | null, charLengths);
+    // Small document: reuse the rendered line content so LF/CR/CRLF all strip
+    // terminators consistently with getVisibleLine/getLineContent.
+    const renderedLines = getVisibleLines(state, {
+      startLine: 0,
+      visibleLineCount: totalLines,
+      overscan: 0,
+    }).lines;
     let totalHeight = 0;
-    for (const charLen of charLengths) {
-      totalHeight += wrappedHeight(charLen, charsPerLine, config.baseLineHeight);
+    for (const line of renderedLines) {
+      totalHeight += wrappedHeight(line.content.length, charsPerLine, config.baseLineHeight);
     }
     return $proveCtx("O(n)", $lift("O(n)", totalHeight));
   }
 
-  // Large document: sample SAMPLE_SIZE evenly-spaced lines using O(log n) tree lookups.
-  // Uses charLength from the line index node — no getText calls needed.
+  // Large document: sample evenly-spaced rendered lines so mixed newline styles
+  // contribute the same wrapped height as the visible-line helpers.
   let sampleHeight = 0;
   const step = Math.floor(totalLines / SAMPLE_SIZE);
+  let sampledLines = 0;
 
   for (let i = 0; i < totalLines; i += step) {
-    const nodeResult = findLineByNumber(state.lineIndex.root, i);
-    if (nodeResult !== null) {
-      sampleHeight += wrappedHeight(nodeResult.charLength, charsPerLine, config.baseLineHeight);
+    const line = getVisibleLine(state, i);
+    if (line !== null) {
+      sampleHeight += wrappedHeight(line.content.length, charsPerLine, config.baseLineHeight);
+      sampledLines++;
     }
   }
 
-  const sampledLines = Math.ceil(totalLines / step);
-  const avgLineHeight = sampleHeight / sampledLines;
+  const avgLineHeight =
+    sampledLines > 0 ? sampleHeight / sampledLines : config.baseLineHeight;
 
   return $proveCtx("O(n)", $lift("O(n)", Math.ceil(totalLines * avgLineHeight)));
 }

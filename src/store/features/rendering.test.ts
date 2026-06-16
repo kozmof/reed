@@ -125,6 +125,21 @@ describe("getVisibleLines", () => {
     expect(result.lines[1].hasNewline).toBe(true);
   });
 
+  it("should strip CRLF and CR terminators from rendered content", () => {
+    const state = createInitialState({
+      content: "Hello\r\nWorld\rTail",
+    });
+
+    const result = getVisibleLines(state, {
+      startLine: 0,
+      visibleLineCount: 3,
+      overscan: 0,
+    });
+
+    expect(result.lines.map((line) => line.content)).toEqual(["Hello", "World", "Tail"]);
+    expect(result.lines.map((line) => line.hasNewline)).toEqual([true, true, false]);
+  });
+
   it("should include offsets", () => {
     const state = createInitialState({
       content: "ABC\nDEF\n",
@@ -207,6 +222,17 @@ describe("getVisibleLine", () => {
 
     expect(line!.content).toBe("World");
     expect(line!.hasNewline).toBe(false);
+  });
+
+  it("should treat CR-only lines as newline-terminated", () => {
+    const state = createInitialState({
+      content: "Alpha\rBeta",
+    });
+
+    const line = getVisibleLine(state, 0);
+
+    expect(line!.content).toBe("Alpha");
+    expect(line!.hasNewline).toBe(true);
   });
 
   it("should return frozen result", () => {
@@ -302,6 +328,21 @@ describe("estimateTotalHeight", () => {
     // Line 3: 1 row (5 chars)
     // Total: 5 rows * 20 = 100
     expect(estimateTotalHeight(state, config)).toBe(100);
+  });
+
+  it("should not count the extra CR in CRLF lines when wrapping", () => {
+    const state = createInitialState({
+      content: "abcdefghij\r\nx",
+    });
+
+    const config: LineHeightConfig = {
+      baseLineHeight: 10,
+      charWidth: 10,
+      viewportWidth: 100, // 10 chars per line
+      softWrap: true,
+    };
+
+    expect(estimateTotalHeight(state, config)).toBe(20);
   });
 });
 
@@ -410,5 +451,15 @@ describe("getLineContent (optimization)", () => {
 
     expect(getLineContent(state, 0)).toBe("你好");
     expect(getLineContent(state, 1)).toBe("world");
+  });
+
+  it("should strip CRLF and CR terminators", () => {
+    const state = createInitialState({
+      content: "Line 1\r\nLine 2\rTail",
+    });
+
+    expect(getLineContent(state, 0)).toBe("Line 1");
+    expect(getLineContent(state, 1)).toBe("Line 2");
+    expect(getLineContent(state, 2)).toBe("Tail");
   });
 });

@@ -106,6 +106,7 @@ export function createStreamingDocumentLoader(
   const prefetchWindowSize = Math.max(0, config.prefetchWindowSize ?? 2);
   const totalChunks = metadata.length;
   let disposed = false;
+  let latestViewportRequestId = 0;
 
   // Declare all chunk metadata upfront so the store can answer total line-count
   // queries even while most chunks are not yet loaded.
@@ -124,6 +125,7 @@ export function createStreamingDocumentLoader(
 
   async function setViewport(startChunkIndex: number, endChunkIndex: number): Promise<void> {
     if (disposed) return;
+    const requestId = ++latestViewportRequestId;
 
     const start = Math.max(0, startChunkIndex);
     const end = Math.min(totalChunks - 1, endChunkIndex);
@@ -141,6 +143,7 @@ export function createStreamingDocumentLoader(
     const viewportLoads: Promise<void>[] = [];
     for (let i = start; i <= end; i++) viewportLoads.push(manager.ensureLoaded(i));
     await Promise.all(viewportLoads);
+    if (disposed || requestId !== latestViewportRequestId) return;
 
     // Prefetch window chunks outside the viewport in the background.
     for (let i = windowStart; i < start; i++) manager.prefetch(i);
