@@ -352,7 +352,11 @@ export interface ActionValidationResult {
 
 /**
  * Validate an action with detailed error messages.
- * Optionally validates position bounds against document length.
+ * Validates action shape and invariants that the reducer does not normalize away.
+ *
+ * Numeric edit positions are intentionally not rejected for being outside
+ * `documentLength`: the reducer clamps them to document bounds as part of its
+ * fail-soft input handling.
  *
  * @example
  * ```typescript
@@ -368,6 +372,7 @@ export interface ActionValidationResult {
  */
 export function validateAction(value: unknown, documentLength?: number): ActionValidationResult {
   const errors: string[] = [];
+  void documentLength;
 
   // Basic type check
   if (typeof value !== "object" || value === null) {
@@ -395,10 +400,6 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
       const insertAction = action as Partial<InsertAction>;
       if (typeof insertAction.start !== "number") {
         errors.push('INSERT action requires a numeric "start" property');
-      } else if (insertAction.start < 0) {
-        errors.push(`INSERT start cannot be negative: ${insertAction.start}`);
-      } else if (documentLength !== undefined && insertAction.start > documentLength) {
-        errors.push(`INSERT start ${insertAction.start} exceeds document length ${documentLength}`);
       }
       if (typeof insertAction.text !== "string") {
         errors.push('INSERT action requires a string "text" property');
@@ -410,29 +411,15 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
       const deleteAction = action as Partial<DeleteAction>;
       if (typeof deleteAction.start !== "number") {
         errors.push('DELETE action requires a numeric "start" property');
-      } else if (deleteAction.start < 0) {
-        errors.push(`DELETE start cannot be negative: ${deleteAction.start}`);
       }
       if (typeof deleteAction.end !== "number") {
         errors.push('DELETE action requires a numeric "end" property');
-      } else if (deleteAction.end < 0) {
-        errors.push(`DELETE end cannot be negative: ${deleteAction.end}`);
       }
       if (typeof deleteAction.start === "number" && typeof deleteAction.end === "number") {
         if (deleteAction.start > deleteAction.end) {
           errors.push(
             `DELETE start (${deleteAction.start}) cannot be greater than end (${deleteAction.end})`,
           );
-        }
-        if (documentLength !== undefined) {
-          if (deleteAction.start > documentLength) {
-            errors.push(
-              `DELETE start ${deleteAction.start} exceeds document length ${documentLength}`,
-            );
-          }
-          if (deleteAction.end > documentLength) {
-            errors.push(`DELETE end ${deleteAction.end} exceeds document length ${documentLength}`);
-          }
         }
       }
       break;
@@ -442,13 +429,9 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
       const replaceAction = action as Partial<ReplaceAction>;
       if (typeof replaceAction.start !== "number") {
         errors.push('REPLACE action requires a numeric "start" property');
-      } else if (replaceAction.start < 0) {
-        errors.push(`REPLACE start cannot be negative: ${replaceAction.start}`);
       }
       if (typeof replaceAction.end !== "number") {
         errors.push('REPLACE action requires a numeric "end" property');
-      } else if (replaceAction.end < 0) {
-        errors.push(`REPLACE end cannot be negative: ${replaceAction.end}`);
       }
       if (typeof replaceAction.text !== "string") {
         errors.push('REPLACE action requires a string "text" property');
@@ -458,18 +441,6 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
           errors.push(
             `REPLACE start (${replaceAction.start}) cannot be greater than end (${replaceAction.end})`,
           );
-        }
-        if (documentLength !== undefined) {
-          if (replaceAction.start > documentLength) {
-            errors.push(
-              `REPLACE start ${replaceAction.start} exceeds document length ${documentLength}`,
-            );
-          }
-          if (replaceAction.end > documentLength) {
-            errors.push(
-              `REPLACE end ${replaceAction.end} exceeds document length ${documentLength}`,
-            );
-          }
         }
       }
       break;

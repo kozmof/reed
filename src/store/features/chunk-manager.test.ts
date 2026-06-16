@@ -109,6 +109,41 @@ describe("ChunkManager.ensureLoaded", () => {
     expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(true);
     manager.dispose();
   });
+
+  it("rejects negative chunk indices before fetching", async () => {
+    const store = makeStore();
+    const loader = makeLoader({ 0: "aaaabbbb" });
+    const manager = createChunkManager(store, loader);
+
+    await expect(manager.ensureLoaded(-1)).rejects.toThrow(
+      "Chunk index must be a non-negative integer: -1",
+    );
+    expect(loader.loadChunk).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+
+  it("rejects out-of-range chunk indices using loader.totalChunkCount", async () => {
+    const store = makeStore();
+    const loader = {
+      ...makeLoader({ 0: "aaaabbbb", 1: "bbbbcccc" }),
+      totalChunkCount: 2,
+    };
+    const manager = createChunkManager(store, loader);
+
+    await expect(manager.ensureLoaded(2)).rejects.toThrow("Chunk index 2 is out of range");
+    expect(loader.loadChunk).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+
+  it("rejects out-of-range chunk indices inferred from totalFileSize", async () => {
+    const store = createDocumentStore({ chunkSize: CHUNK_SIZE, totalFileSize: CHUNK_SIZE * 2 });
+    const loader = makeLoader({ 0: "aaaabbbb", 1: "bbbbcccc" });
+    const manager = createChunkManager(store, loader);
+
+    await expect(manager.ensureLoaded(2)).rejects.toThrow("Chunk index 2 is out of range");
+    expect(loader.loadChunk).not.toHaveBeenCalled();
+    manager.dispose();
+  });
 });
 
 describe("ChunkManager LRU eviction", () => {
@@ -167,6 +202,17 @@ describe("ChunkManager.prefetch", () => {
     manager.prefetch(0);
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(loader.loadChunk.mock.calls.length).toBe(callsBefore);
+    manager.dispose();
+  });
+
+  it("ignores invalid chunk indices", async () => {
+    const store = makeStore();
+    const loader = makeLoader({ 0: "aaaabbbb" });
+    const manager = createChunkManager(store, loader);
+
+    manager.prefetch(-1);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(loader.loadChunk).not.toHaveBeenCalled();
     manager.dispose();
   });
 });

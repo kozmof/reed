@@ -49,6 +49,7 @@ export function createDocumentStore(
 ): ReconcilableDocumentStore {
   // Internal mutable state
   let state = createInitialState(config);
+  const whenReconciledResolvers: Array<(state: DocumentState<"eager">) => void> = [];
   const reconcileMode = config.reconcileMode ?? "idle";
   // Listeners array with on-demand COW: mutations during an active notification clone
   // the array so the in-progress for-of iteration is not disturbed. Outside notification
@@ -63,6 +64,17 @@ export function createDocumentStore(
   function setState(nextState: DocumentState): void {
     if (nextState !== state) {
       state = nextState;
+    }
+    resolveWhenReconciledIfReady();
+  }
+
+  function resolveWhenReconciledIfReady(): void {
+    if (state.lineIndex.rebuildPending || whenReconciledResolvers.length === 0) return;
+
+    const eagerState = state as DocumentState<"eager">;
+    const resolvers = whenReconciledResolvers.splice(0);
+    for (const resolve of resolvers) {
+      resolve(eagerState);
     }
   }
 
@@ -286,6 +298,7 @@ export function createDocumentStore(
     if (newLineIndex !== state.lineIndex) {
       setState(Object.freeze({ ...state, lineIndex: newLineIndex }));
     }
+    resolveWhenReconciledIfReady();
     return state as DocumentState<"eager">;
   }
 
@@ -332,12 +345,7 @@ export function createDocumentStore(
       return Promise.resolve(state as DocumentState<"eager">);
     }
     return new Promise<DocumentState<"eager">>((resolve) => {
-      const unsub = subscribe(() => {
-        if (!state.lineIndex.rebuildPending) {
-          unsub();
-          resolve(state as DocumentState<"eager">);
-        }
-      });
+      whenReconciledResolvers.push(resolve);
     });
   }
 

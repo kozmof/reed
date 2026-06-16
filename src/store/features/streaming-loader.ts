@@ -31,10 +31,9 @@ export interface StreamingDocumentLoaderConfig {
    * viewport.  A value of 2 means the window covers
    * [startChunk - 2, endChunk + 2].  Default: 2.
    *
-   * The internal ChunkManager's maxLoadedChunks is set to
-   * `viewportSize + 2 * prefetchWindowSize + 4` so the window always fits
-   * comfortably in memory.  If you need a different cap pass
-   * `chunkManagerConfig.maxLoadedChunks` explicitly.
+   * The internal ChunkManager's default `maxLoadedChunks` assumes a one-chunk
+   * viewport: `1 + 2 * prefetchWindowSize + 4`. If your viewport can span more
+   * than one chunk, pass `chunkManagerConfig.maxLoadedChunks` explicitly.
    */
   prefetchWindowSize?: number;
 
@@ -114,7 +113,7 @@ export function createStreamingDocumentLoader(
     store.dispatch(DocumentActions.declareChunkMetadata([...metadata]));
   }
 
-  // Size the ChunkManager so the full viewport + window always fits in memory.
+  // Default to a one-chunk viewport plus the surrounding prefetch window.
   // The +4 gives some slack for chunks being loaded concurrently.
   const derivedMax = 1 + 2 * prefetchWindowSize + 4;
   const cmConfig: ChunkManagerConfig = {

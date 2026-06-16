@@ -22,7 +22,12 @@ import {
   withLineIndexNode,
 } from "./../core/state.ts";
 import { DocumentActions, serializeAction, deserializeAction } from "./actions.ts";
-import { isTextEditAction, isHistoryAction, isDocumentAction } from "../../types/actions.ts";
+import {
+  isTextEditAction,
+  isHistoryAction,
+  isDocumentAction,
+  validateAction,
+} from "../../types/actions.ts";
 import { createDocumentStore, isDocumentStore } from "./store.ts";
 import { getLineCountFromIndex } from "./../core/line-index.ts";
 import { byteOffset, byteLength, type ByteOffset } from "../../types/branded.ts";
@@ -869,6 +874,29 @@ describe("Type Guards", () => {
       expect(isDocumentAction(123)).toBe(false);
       expect(isDocumentAction({})).toBe(false);
       expect(isDocumentAction({ type: "INVALID" })).toBe(false);
+    });
+  });
+
+  describe("validateAction", () => {
+    it("should accept out-of-bounds numeric edits that the reducer clamps", () => {
+      expect(validateAction({ type: "INSERT", start: -10, text: "x" }, 5)).toEqual({
+        valid: true,
+        errors: [],
+      });
+      expect(validateAction({ type: "DELETE", start: -2, end: 99 }, 5)).toEqual({
+        valid: true,
+        errors: [],
+      });
+      expect(validateAction({ type: "REPLACE", start: 50, end: 75, text: "x" }, 5)).toEqual({
+        valid: true,
+        errors: [],
+      });
+    });
+
+    it("should still reject inverted edit ranges", () => {
+      const result = validateAction({ type: "DELETE", start: 5, end: 3 });
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain("DELETE start (5) cannot be greater than end (3)");
     });
   });
 

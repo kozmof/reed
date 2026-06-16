@@ -696,6 +696,24 @@ describe("Editor Use Cases", () => {
       assertLineIndexMatchesRebuild(store);
     });
 
+    it("should resolve whenReconciled after reconcileNow without an extra notification", async () => {
+      const store = createDocumentStore({
+        content: Array.from({ length: 40 }, (_, i) => `Line ${i}`).join("\n"),
+        reconcileMode: "none",
+      });
+      const listener = vi.fn();
+      store.subscribe(listener);
+
+      store.dispatch(DocumentActions.insert(byteOffset(0), "prefix\n"));
+      expect(store.getSnapshot().lineIndex.rebuildPending).toBe(true);
+
+      const waiting = store.whenReconciled();
+      const eager = store.reconcileNow();
+
+      await expect(waiting).resolves.toBe(eager);
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
     it("should preserve line index through rapid multiline edits with full undo/redo", () => {
       const initialContent = Array.from({ length: 25 }, (_, i) => `Base ${i}`).join("\n");
       const store = createDocumentStore({ content: initialContent });

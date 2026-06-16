@@ -135,6 +135,32 @@ export function createChunkManager(
   // Disposed flag: prevents dispatches after dispose().
   let disposed = false;
 
+  function getKnownTotalChunkCount(): number | undefined {
+    if (Number.isInteger(loader.totalChunkCount) && loader.totalChunkCount! >= 0) {
+      return loader.totalChunkCount;
+    }
+
+    const { chunkSize, totalFileSize } = store.getSnapshot().pieceTable;
+    if (chunkSize > 0 && totalFileSize > 0) {
+      return Math.ceil(totalFileSize / chunkSize);
+    }
+
+    return undefined;
+  }
+
+  function getChunkIndexError(chunkIndex: number): string | null {
+    if (!Number.isInteger(chunkIndex) || chunkIndex < 0) {
+      return `Chunk index must be a non-negative integer: ${chunkIndex}`;
+    }
+
+    const totalChunkCount = getKnownTotalChunkCount();
+    if (totalChunkCount !== undefined && chunkIndex >= totalChunkCount) {
+      return `Chunk index ${chunkIndex} is out of range for ${totalChunkCount} chunks`;
+    }
+
+    return null;
+  }
+
   // ── LRU helpers ───────────────────────────────────────────────────────────
 
   function lruTouch(chunkIndex: number): void {
@@ -221,6 +247,11 @@ export function createChunkManager(
   function ensureLoaded(chunkIndex: number): Promise<void> {
     if (disposed) return Promise.resolve();
 
+    const chunkIndexError = getChunkIndexError(chunkIndex);
+    if (chunkIndexError !== null) {
+      return Promise.reject(new RangeError(chunkIndexError));
+    }
+
     // Already in memory.
     if (store.getSnapshot().pieceTable.chunkMap.has(chunkIndex)) {
       lruTouch(chunkIndex);
@@ -238,6 +269,7 @@ export function createChunkManager(
 
   function prefetch(chunkIndex: number): void {
     if (disposed) return;
+    if (getChunkIndexError(chunkIndex) !== null) return;
     if (store.getSnapshot().pieceTable.chunkMap.has(chunkIndex)) return;
     if (inFlight.has(chunkIndex)) return;
     // Fire and forget — errors are silently swallowed for prefetch.
