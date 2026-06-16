@@ -176,7 +176,7 @@ export function createChunkManager(
 
   // ── Eviction ──────────────────────────────────────────────────────────────
 
-  function evictIfOverLimit(): void {
+  function evictIfOverLimit(protectedChunkIndex?: number): void {
     if (disposed) return;
     const snapshot = store.getSnapshot();
     let loadedCount = snapshot.pieceTable.chunkMap.size;
@@ -185,6 +185,8 @@ export function createChunkManager(
       const candidate = lruOrder[i];
       // Skip pinned chunks.
       if (activeChunks.has(candidate)) continue;
+      // Keep the just-loaded chunk resident for the ensureLoaded()/prefetch caller.
+      if (candidate === protectedChunkIndex) continue;
       // Skip chunks no longer in memory (evicted by another path).
       if (!snapshot.pieceTable.chunkMap.has(candidate)) {
         lruRemove(candidate);
@@ -224,7 +226,7 @@ export function createChunkManager(
             throw new Error(`ChunkLoader returned empty data for chunk ${chunkIndex}`);
           store.dispatch(DocumentActions.loadChunk(chunkIndex, data));
           lruTouch(chunkIndex);
-          evictIfOverLimit();
+          evictIfOverLimit(chunkIndex);
         })
         .finally(() => {
           inFlight.delete(chunkIndex);

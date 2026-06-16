@@ -62,6 +62,24 @@ describe("serializeAction / deserializeAction", () => {
       }
     });
 
+    it("LOAD_CHUNK with a large Uint8Array round-trips without stack overflow", () => {
+      const data = new Uint8Array(300_000);
+      for (let i = 0; i < data.length; i++) {
+        data[i] = i % 251;
+      }
+
+      const json = serializeAction(DocumentActions.loadChunk(2, data));
+      const deserialized = deserializeAction(json);
+
+      expect(deserialized.type).toBe("LOAD_CHUNK");
+      if (deserialized.type === "LOAD_CHUNK") {
+        expect(deserialized.data.length).toBe(data.length);
+        expect(deserialized.data[0]).toBe(data[0]);
+        expect(deserialized.data[12345]).toBe(data[12345]);
+        expect(deserialized.data[data.length - 1]).toBe(data[data.length - 1]);
+      }
+    });
+
     it("INSERT with unicode text round-trips correctly", () => {
       const action = DocumentActions.insert(byteOffset(0), "😀 hello\nworld");
       const deserialized = deserializeAction(serializeAction(action));

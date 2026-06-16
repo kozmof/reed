@@ -6,6 +6,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { createChunkManager } from "./chunk-manager.ts";
 import { createDocumentStore } from "./store.ts";
+import { DocumentActions } from "./actions.ts";
+import { byteOffset } from "../../types/branded.ts";
 
 const CHUNK_SIZE = 8;
 
@@ -174,6 +176,26 @@ describe("ChunkManager LRU eviction", () => {
 
     const snap = store.getSnapshot();
     expect(snap.pieceTable.chunkMap.has(0)).toBe(true); // pinned — must survive
+    manager.dispose();
+  });
+
+  it("keeps the requested chunk resident when an older dirty chunk cannot be evicted", async () => {
+    const store = makeStore();
+    const loader = makeLoader({ 0: "aaaabbbb", 1: "bbbbcccc" });
+    const manager = createChunkManager(store, loader, { maxLoadedChunks: 1 });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await manager.ensureLoaded(0);
+    store.dispatch(DocumentActions.delete(byteOffset(2), byteOffset(4)));
+
+    await manager.ensureLoaded(1);
+
+    const snap = store.getSnapshot();
+    expect(snap.pieceTable.chunkMap.has(0)).toBe(true);
+    expect(snap.pieceTable.chunkMap.has(1)).toBe(true);
+    expect(warn).toHaveBeenCalled();
+
+    warn.mockRestore();
     manager.dispose();
   });
 });

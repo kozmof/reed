@@ -1146,6 +1146,18 @@ describe("EVICT_CHUNK", () => {
     expect(state3).toBe(state2);
   });
 
+  it("is blocked when bytes have been deleted from the chunk with no add pieces remaining", () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const bytes = textEncoder.encode("abcdef");
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
+    const state2 = documentReducer(state1, DocumentActions.delete(byteOffset(2), byteOffset(4)));
+
+    const state3 = documentReducer(state2, DocumentActions.evictChunk(0));
+
+    expect(state3).toBe(state2);
+    expect(state3.pieceTable.chunkMap.has(0)).toBe(true);
+  });
+
   it("bumps the version on a successful eviction", () => {
     const state0 = createInitialState({ chunkSize: 64 });
     const bytes = textEncoder.encode("data");

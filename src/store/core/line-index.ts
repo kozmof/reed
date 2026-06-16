@@ -347,32 +347,30 @@ export function getLineStartOffset(
   let offset = 0;
   let current: LineIndexNode | null = root;
   let targetLine = lineNumber;
-  let foundOffset: number | null = null;
 
   while (current !== null) {
-    const leftLineCount = current.left?.subtreeLineCount ?? 0;
-    const leftByteLength = current.left?.subtreeByteLength ?? 0;
+    const left: LineIndexNode | null = current.left;
+    const leftLineCount = left?.subtreeLineCount ?? 0;
 
     if (targetLine < leftLineCount) {
       // Target is in left subtree
-      current = current.left;
-    } else if (targetLine > leftLineCount) {
+      current = left;
+      continue;
+    }
+
+    const leftByteLength = left?.subtreeByteLength ?? 0;
+    if (targetLine > leftLineCount) {
       // Target is in right subtree
       offset += leftByteLength + current.lineLength;
       targetLine -= leftLineCount + 1;
       current = current.right;
     } else {
       // This is the target line
-      foundOffset = offset + leftByteLength;
-      break;
+      return $proveCtx("O(log n)", $lift("O(log n)", (offset + leftByteLength) as ByteOffset));
     }
   }
 
-  const startOffset = $proveCtx(
-    "O(log n)",
-    $lift("O(log n)", (foundOffset ?? offset) as ByteOffset),
-  );
-  return startOffset;
+  return $proveCtx("O(log n)", $lift("O(log n)", offset as ByteOffset));
 }
 
 /**
@@ -393,29 +391,27 @@ export function getCharStartOffset(
   let offset = 0;
   let current: LineIndexNode | null = root;
   let targetLine = lineNumber;
-  let foundOffset: number | null = null;
 
   while (current !== null) {
-    const leftLineCount = current.left?.subtreeLineCount ?? 0;
-    const leftCharLength = current.left?.subtreeCharLength ?? 0;
+    const left: LineIndexNode | null = current.left;
+    const leftLineCount = left?.subtreeLineCount ?? 0;
 
     if (targetLine < leftLineCount) {
-      current = current.left;
-    } else if (targetLine > leftLineCount) {
+      current = left;
+      continue;
+    }
+
+    const leftCharLength = left?.subtreeCharLength ?? 0;
+    if (targetLine > leftLineCount) {
       offset += leftCharLength + current.charLength;
       targetLine -= leftLineCount + 1;
       current = current.right;
     } else {
-      foundOffset = offset + leftCharLength;
-      break;
+      return $proveCtx("O(log n)", $lift("O(log n)", (offset + leftCharLength) as CharOffset));
     }
   }
 
-  const startOffset = $proveCtx(
-    "O(log n)",
-    $lift("O(log n)", (foundOffset ?? offset) as CharOffset),
-  );
-  return startOffset;
+  return $proveCtx("O(log n)", $lift("O(log n)", offset as CharOffset));
 }
 
 /**

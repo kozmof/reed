@@ -128,48 +128,85 @@ function findReloadInsertionPos(root: PieceNode | null, targetChunkIndex: number
 }
 
 /**
- * Walk the tree in document order to find the contiguous document-position range
- * covered by all pieces belonging to `chunkIndex`.
+ * Return the current document range of a chunk only when its visible bytes still
+ * exactly match the original loaded chunk bytes.
  *
- * Returns `{ start, end }` byte offsets in document space, or null if the chunk
- * has no pieces in the tree (already evicted or never loaded).
+ * This blocks eviction after any local edit inside the chunk:
+ * - insert/replace => foreign piece appears inside the chunk span
+ * - delete         => chunk pieces no longer cover byte offsets [0, chunkByteLength)
  *
  * O(n) where n is the number of pieces.
  */
-function findChunkDocumentRange(
+function findPristineChunkRange(
   root: PieceNode | null,
   chunkIndex: number,
+  chunkByteLength: number,
 ): { start: ByteOffset; end: ByteOffset } | null {
   if (root === null) return null;
+
   let rangeStart = -1;
   let rangeEnd = -1;
+  let expectedChunkOffset = 0;
+  let started = false;
+  let complete = false;
+  let invalid = false;
+
   pieceTableInOrder(root, (n, pieceStart) => {
-    if (n.bufferType === "chunk" && n.chunkIndex === chunkIndex) {
-      if (rangeStart === -1) rangeStart = pieceStart;
-      rangeEnd = pieceStart + n.length;
-    } else if (rangeStart !== -1 && pieceStart >= rangeEnd) {
-      return true; // past the target chunk's range — stop
+    const isTargetChunk = n.bufferType === "chunk" && n.chunkIndex === chunkIndex;
+
+    if (!started) {
+      if (!isTargetChunk) return;
+      started = true;
+      rangeStart = pieceStart;
+    } else if (complete) {
+      if (isTargetChunk) {
+        invalid = true;
+        return true;
+      }
+      return;
     }
+
+    if (!isTargetChunk) {
+      invalid = true;
+      return true;
+    }
+
+    if (n.start !== expectedChunkOffset || expectedChunkOffset + n.length > chunkByteLength) {
+      invalid = true;
+      return true;
+    }
+
+    expectedChunkOffset += n.length;
+    rangeEnd = pieceStart + n.length;
+    complete = expectedChunkOffset === chunkByteLength;
   });
-  if (rangeStart === -1) return null;
+
+  if (invalid || !started || !complete || expectedChunkOffset !== chunkByteLength) {
+    return null;
+  }
+
   return { start: byteOffset(rangeStart), end: byteOffset(rangeEnd) };
 }
 
 /**
- * Walk the tree in document order to check whether any 'add' piece overlaps
- * the byte range [rangeStart, rangeEnd) in document space.
- *
- * O(n) where n is the number of pieces.
+ * Return true when a user-owned add piece overlaps or directly touches a chunk's
+ * current document span. Boundary-touching inserts are treated conservatively as
+ * non-evictable so re-loading the chunk cannot reorder unsaved local edits.
  */
-function hasAddPiecesInRange(
+function hasAddPieceTouchingRange(
   root: PieceNode | null,
   rangeStart: ByteOffset,
   rangeEnd: ByteOffset,
 ): boolean {
   if (root === null) return false;
+
   let found = false;
   pieceTableInOrder(root, (n, pieceStart) => {
-    if (n.bufferType === "add" && pieceStart < rangeEnd && pieceStart + n.length > rangeStart) {
+    if (
+      n.bufferType === "add" &&
+      pieceStart <= rangeEnd &&
+      pieceStart + n.length >= rangeStart
+    ) {
       found = true;
       return true;
     }
@@ -507,14 +544,11 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       // Cannot evict a chunk that is not loaded
       if (!chunkMap.has(chunkIndex)) return state;
 
-      const range = findChunkDocumentRange(state.pieceTable.root, chunkIndex);
-      // No pieces found — tree is out of sync with chunkMap; safe no-op
-      if (range === null) return state;
-
-      // Refuse eviction if user edits overlap the chunk's document range
-      if (hasAddPiecesInRange(state.pieceTable.root, range.start, range.end)) return state;
-
       const chunkBytes = chunkMap.get(chunkIndex)!;
+      const range = findPristineChunkRange(state.pieceTable.root, chunkIndex, chunkBytes.length);
+      // Refuse eviction if the chunk is missing pieces or has any local edits in its span.
+      if (range === null) return state;
+      if (hasAddPieceTouchingRange(state.pieceTable.root, range.start, range.end)) return state;
       const chunkText = textDecoder.decode(chunkBytes);
 
       const { newRoot, removedLength } = removeChunkPiecesFromTree(
