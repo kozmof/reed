@@ -23,6 +23,7 @@ import type {
 } from "../../types/actions.js";
 import type { ChunkMetadata } from "../../types/state.js";
 import { isDocumentAction } from "../../types/actions.js";
+import { asReadonlyUint8Array } from "../core/runtime-readonly.js";
 
 const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const BASE64_DECODE_TABLE = (() => {
@@ -108,6 +109,21 @@ function decodeBase64(base64: string): Uint8Array {
   return output;
 }
 
+function freezeSelection(
+  selection: readonly SelectionRange[] | undefined,
+): readonly SelectionRange[] | undefined {
+  if (selection === undefined) return undefined;
+  return Object.freeze(selection.map((range) => Object.freeze({ ...range })));
+}
+
+function freezeRemoteChanges(changes: readonly RemoteChange[]): readonly RemoteChange[] {
+  return Object.freeze(changes.map((change) => Object.freeze({ ...change })));
+}
+
+function freezeChunkMetadata(metadata: readonly ChunkMetadata[]): readonly ChunkMetadata[] {
+  return Object.freeze(metadata.map((entry) => Object.freeze({ ...entry })));
+}
+
 /**
  * Action creators for document mutations.
  * All functions return serializable action objects.
@@ -119,7 +135,13 @@ export const DocumentActions = {
    * @param text - Text to insert
    */
   insert(start: ByteOffset, text: string, selection?: readonly SelectionRange[]): InsertAction {
-    return Object.freeze({ type: "INSERT", start, text, ...(selection && { selection }) });
+    const frozenSelection = freezeSelection(selection);
+    return Object.freeze({
+      type: "INSERT",
+      start,
+      text,
+      ...(frozenSelection && { selection: frozenSelection }),
+    });
   },
 
   /**
@@ -128,7 +150,13 @@ export const DocumentActions = {
    * @param end - End position of deletion (exclusive, byte offset)
    */
   delete(start: ByteOffset, end: ByteOffset, selection?: readonly SelectionRange[]): DeleteAction {
-    return Object.freeze({ type: "DELETE", start, end, ...(selection && { selection }) });
+    const frozenSelection = freezeSelection(selection);
+    return Object.freeze({
+      type: "DELETE",
+      start,
+      end,
+      ...(frozenSelection && { selection: frozenSelection }),
+    });
   },
 
   /**
@@ -143,7 +171,14 @@ export const DocumentActions = {
     text: string,
     selection?: readonly SelectionRange[],
   ): ReplaceAction {
-    return Object.freeze({ type: "REPLACE", start, end, text, ...(selection && { selection }) });
+    const frozenSelection = freezeSelection(selection);
+    return Object.freeze({
+      type: "REPLACE",
+      start,
+      end,
+      text,
+      ...(frozenSelection && { selection: frozenSelection }),
+    });
   },
 
   /**
@@ -151,7 +186,10 @@ export const DocumentActions = {
    * @param ranges - New selection ranges
    */
   setSelection(ranges: NonEmptyReadonlyArray<SelectionRange>): SetSelectionAction {
-    return Object.freeze({ type: "SET_SELECTION", ranges });
+    return Object.freeze({
+      type: "SET_SELECTION",
+      ranges: freezeSelection(ranges) as NonEmptyReadonlyArray<SelectionRange>,
+    });
   },
 
   /**
@@ -212,7 +250,7 @@ export const DocumentActions = {
    * @param changes - Remote changes from collaboration
    */
   applyRemote(changes: readonly RemoteChange[]): ApplyRemoteAction {
-    return Object.freeze({ type: "APPLY_REMOTE", changes });
+    return Object.freeze({ type: "APPLY_REMOTE", changes: freezeRemoteChanges(changes) });
   },
 
   /**
@@ -221,7 +259,11 @@ export const DocumentActions = {
    * @param data - Chunk data
    */
   loadChunk(chunkIndex: number, data: ReadonlyUint8Array): LoadChunkAction {
-    return Object.freeze({ type: "LOAD_CHUNK", chunkIndex, data });
+    return Object.freeze({
+      type: "LOAD_CHUNK",
+      chunkIndex,
+      data: asReadonlyUint8Array(new Uint8Array(data)),
+    });
   },
 
   /**
@@ -244,7 +286,10 @@ export const DocumentActions = {
    * @param metadata - Array of chunk metadata entries
    */
   declareChunkMetadata(metadata: readonly ChunkMetadata[]): DeclareChunkMetadataAction {
-    return Object.freeze({ type: "DECLARE_CHUNK_METADATA", metadata });
+    return Object.freeze({
+      type: "DECLARE_CHUNK_METADATA",
+      metadata: freezeChunkMetadata(metadata),
+    });
   },
 };
 

@@ -415,7 +415,7 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
  *   console.log('Content changed:', event.affectedRanges);
  * });
  *
- * store.dispatch({ type: 'INSERT', position: byteOffset(5), text: ' World' });
+ * store.dispatch({ type: 'INSERT', start: byteOffset(5), text: ' World' });
  * // Event fires with affectedRanges: [5, 11]
  * ```
  *
@@ -509,6 +509,10 @@ export function createDocumentStoreWithEvents(
    * On throw (from base store), clears all pending event levels.
    */
   function commitTransaction(): void {
+    if (pendingEventLevels.length === 0) {
+      throw new Error("Cannot commit: no active transaction");
+    }
+
     const isOutermost = pendingEventLevels.length === 1;
     const events = pendingEventLevels[pendingEventLevels.length - 1];
     try {
@@ -531,6 +535,10 @@ export function createDocumentStoreWithEvents(
    * Discards the current depth's buffered events before delegating to the base store.
    */
   function rollbackTransaction(): void {
+    if (pendingEventLevels.length === 0) {
+      throw new Error("Cannot rollback: no active transaction");
+    }
+
     pendingEventLevels.pop();
     baseStore.rollbackTransaction();
   }

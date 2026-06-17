@@ -419,3 +419,17 @@ describe("Store event integration", () => {
     expect(event.isDirty).toBe(true);
   });
 });
+
+describe("Store event transaction guards", () => {
+  it("throws a clear error when committing without an active transaction", () => {
+    const store = createDocumentStoreWithEvents();
+
+    expect(() => store.commitTransaction()).toThrow(/Cannot commit: no active transaction/);
+  });
+
+  it("throws a clear error when rolling back without an active transaction", () => {
+    const store = createDocumentStoreWithEvents();
+
+    expect(() => store.rollbackTransaction()).toThrow(/Cannot rollback: no active transaction/);
+  });
+});

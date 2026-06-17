@@ -86,6 +86,59 @@ describe("serializeAction / deserializeAction", () => {
       expect(deserialized).toEqual(action);
     });
   });
+  // =============================================================================
+  // Action immutability tests
+  // =============================================================================
+
+  describe("DocumentActions immutability", () => {
+    it("snapshots and freezes selection payloads", () => {
+      const selection = [{ anchor: byteOffset(0), head: byteOffset(5) }];
+      const action = DocumentActions.insert(byteOffset(0), "x", selection);
+
+      selection[0].head = byteOffset(9);
+
+      expect(action.selection).toEqual([{ anchor: byteOffset(0), head: byteOffset(5) }]);
+      expect(Object.isFrozen(action.selection)).toBe(true);
+      expect(Object.isFrozen(action.selection?.[0])).toBe(true);
+      expect(
+        () =>
+          ((action.selection as unknown as Array<{ anchor: number; head: number }>)[0].head = 1),
+      ).toThrow(TypeError);
+    });
+
+    it("snapshots and freezes remote changes", () => {
+      const changes = [{ type: "insert" as const, start: byteOffset(1), text: "A" as string }];
+      const action = DocumentActions.applyRemote(changes);
+
+      changes[0].text = "B";
+
+      expect(action.changes).toEqual([{ type: "insert", start: byteOffset(1), text: "A" }]);
+      expect(Object.isFrozen(action.changes)).toBe(true);
+      expect(Object.isFrozen(action.changes[0])).toBe(true);
+    });
+
+    it("copies LOAD_CHUNK data and exposes it as runtime read-only", () => {
+      const data = new Uint8Array([1, 2, 3]);
+      const action = DocumentActions.loadChunk(0, data);
+
+      data[0] = 9;
+
+      expect(Array.from(action.data)).toEqual([1, 2, 3]);
+      expect(action.data).toBeInstanceOf(Uint8Array);
+      expect(() => ((action.data as Uint8Array)[0] = 7)).toThrow(TypeError);
+    });
+
+    it("snapshots and freezes chunk metadata payloads", () => {
+      const metadata = [{ chunkIndex: 0, byteLength: 10, lineCount: 2 }];
+      const action = DocumentActions.declareChunkMetadata(metadata);
+
+      metadata[0].lineCount = 99;
+
+      expect(action.metadata).toEqual([{ chunkIndex: 0, byteLength: 10, lineCount: 2 }]);
+      expect(Object.isFrozen(action.metadata)).toBe(true);
+      expect(Object.isFrozen(action.metadata[0])).toBe(true);
+    });
+  });
 
   // =============================================================================
   // Error cases

@@ -49,18 +49,14 @@ type Branded<T, B> = T & Brand<B>;
 
 /**
  * Read-only view of a Uint8Array.
- * Named properties (set, fill, copyWithin, …) and numeric index writes are
- * both blocked at the type level, preventing callers from mutating a buffer
- * after dispatching it in a LoadChunkAction.
- *
- * At runtime every instance is still a plain Uint8Array — no wrapper is
- * allocated. instanceof Uint8Array checks continue to work.
+ * Named properties (set, fill, copyWithin, ...) and numeric index writes are
+ * blocked at the type level. Values produced by Reed state builders and action
+ * creators are also wrapped in a runtime read-only proxy that rejects mutation.
  *
  * @remarks
- * This is a compile-time guarantee only. Callers that retain a reference to
- * the original `Uint8Array` can still mutate the backing data at runtime,
- * because no defensive copy is made. For true immutability, copy the buffer
- * before dispatching: `new Uint8Array(buffer)`.
+ * The type alone is compile-time only. Use the public action/state helpers, or
+ * copy and normalize external buffers before storing them, when runtime
+ * immutability matters.
  */
 export type ReadonlyUint8Array = Readonly<Uint8Array> & {
   readonly [index: number]: number;

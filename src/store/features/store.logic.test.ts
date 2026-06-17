@@ -722,7 +722,8 @@ describe("Action Creators", () => {
       const action = DocumentActions.setSelection(ranges);
 
       expect(action.type).toBe("SET_SELECTION");
-      expect(action.ranges).toBe(ranges);
+      expect(action.ranges).toEqual(ranges);
+      expect(action.ranges).not.toBe(ranges);
     });
 
     it("should create UNDO action", () => {
@@ -740,7 +741,8 @@ describe("Action Creators", () => {
       const action = DocumentActions.applyRemote(changes);
 
       expect(action.type).toBe("APPLY_REMOTE");
-      expect(action.changes).toBe(changes);
+      expect(action.changes).toEqual(changes);
+      expect(action.changes).not.toBe(changes);
     });
 
     it("should create LOAD_CHUNK action", () => {
@@ -749,7 +751,8 @@ describe("Action Creators", () => {
 
       expect(action.type).toBe("LOAD_CHUNK");
       expect(action.chunkIndex).toBe(0);
-      expect(action.data).toBe(data);
+      expect(Array.from(action.data)).toEqual(Array.from(data));
+      expect(action.data).not.toBe(data);
     });
 
     it("should create EVICT_CHUNK action", () => {
