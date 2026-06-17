@@ -5,9 +5,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { DocumentActions, serializeAction, deserializeAction } from "./actions.ts";
-import { byteOffset } from "../../types/branded.ts";
-import type { DocumentAction } from "../../types/actions.ts";
+import { DocumentActions, serializeAction, deserializeAction } from "./actions.js";
+import { byteOffset } from "../../types/branded.js";
+import type { DocumentAction } from "../../types/actions.js";
 
 // =============================================================================
 // Round-trip tests

@@ -11,8 +11,8 @@ import {
   setValue,
   setValueWithDiff,
   setValueAuto,
-} from "../store/features/diff.ts";
-export type { SetValueOptions } from "../store/features/diff.ts";
+} from "../store/features/diff.js";
+export type { SetValueOptions } from "../store/features/diff.js";
 
 export const diff = {
   diff: diffAlgorithm,

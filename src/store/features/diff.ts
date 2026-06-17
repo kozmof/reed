@@ -6,10 +6,10 @@
  * http://www.xmailserver.org/diff2.pdf
  */
 
-import type { DocumentAction } from "../../types/actions.ts";
-import { byteOffset } from "../../types/branded.ts";
-import { DocumentActions } from "./actions.ts";
-import { textEncoder } from "../core/encoding.ts";
+import type { DocumentAction } from "../../types/actions.js";
+import { byteOffset } from "../../types/branded.js";
+import { DocumentActions } from "./actions.js";
+import { textEncoder } from "../core/encoding.js";
 import {
   $prove,
   $proveCtx,
@@ -21,7 +21,7 @@ import {
   $map,
   type LinearCost,
   type QuadCost,
-} from "../../types/cost-doc.ts";
+} from "../../types/cost-doc.js";
 
 // =============================================================================
 // Types
@@ -633,9 +633,9 @@ export function computeSetValueActionsOptimized(
 // High-level setValue function
 // =============================================================================
 
-import type { DocumentState, PieceTableState } from "../../types/state.ts";
-import { documentReducer } from "./reducer.ts";
-import { getValue } from "../core/piece-table.ts";
+import type { DocumentState, PieceTableState } from "../../types/state.js";
+import { documentReducer } from "./reducer.js";
+import { getValue } from "../core/piece-table.js";
 
 function applyDocumentActions(
   state: DocumentState,

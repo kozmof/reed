@@ -13,7 +13,7 @@ import {
   lineColumnToPosition,
   selectionToCharOffsets,
   charOffsetsToSelection,
-} from "../store/features/rendering.ts";
+} from "../store/features/rendering.js";
 
 export const rendering = {
   getVisibleLineRange,

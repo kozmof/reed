@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import type { LineIndexNode } from "../../types/state.ts";
+import type { LineIndexNode } from "../../types/state.js";
 import {
   lineIndexInsert,
   lineIndexDelete,
@@ -21,9 +21,9 @@ import {
   reconcileViewport,
   mergeDirtyRanges,
   assertEagerOffsets,
-} from "./line-index.ts";
-import { createLineIndexState, createEmptyLineIndexState, withLineIndexState } from "./state.ts";
-import { byteOffset } from "../../types/branded.ts";
+} from "./line-index.js";
+import { createLineIndexState, createEmptyLineIndexState, withLineIndexState } from "./state.js";
+import { byteOffset } from "../../types/branded.js";
 
 function assertRBLineIndex(root: LineIndexNode | null): number {
   if (root === null) return 1;

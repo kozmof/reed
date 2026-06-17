@@ -4,15 +4,15 @@
  * For O(n) traversals see `scan.*`. For rendering utilities see `rendering.*`.
  */
 
-import type { DocumentState } from "../types/state.ts";
-import type { ByteOffset } from "../types/branded.ts";
-import { $constCostFn } from "../types/cost-doc.ts";
+import type { DocumentState } from "../types/state.js";
+import type { ByteOffset } from "../types/branded.js";
+import { $constCostFn } from "../types/cost-doc.js";
 import {
   getText,
   getLength,
   findPieceAtPosition,
   getBufferStats,
-} from "../store/core/piece-table.ts";
+} from "../store/core/piece-table.js";
 import {
   findLineAtPosition as findLineAtPositionFromRoot,
   findLineByNumber as findLineByNumberFromRoot,
@@ -22,9 +22,9 @@ import {
   getLineCountFromIndex as getLineCountFromIndexState,
   getCharStartOffset as getCharStartOffsetFromRoot,
   findLineAtCharPosition as findLineAtCharPositionFromRoot,
-} from "../store/core/line-index.ts";
-import { asEagerLineIndex } from "../store/core/state.ts";
-import type { QueryApi } from "./interfaces.ts";
+} from "../store/core/line-index.js";
+import { asEagerLineIndex } from "../store/core/state.js";
+import type { QueryApi } from "./interfaces.js";
 
 function isReconciledState(state: DocumentState): state is DocumentState<"eager"> {
   return state.lineIndex.rebuildPending === false && state.lineIndex.dirtyRanges.length === 0;

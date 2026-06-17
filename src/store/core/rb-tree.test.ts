@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { NodeColor, RBNode } from "../../types/state.ts";
+import type { NodeColor, RBNode } from "../../types/state.js";
 import {
   ensureBlackRoot,
   fixInsertWithPath,
@@ -11,7 +11,7 @@ import {
   type InsertionPathEntry,
   type RootToLeafInsertPath,
   type WithNodeFn,
-} from "./rb-tree.ts";
+} from "./rb-tree.js";
 
 interface TestNode extends RBNode<TestNode> {
   readonly key: number;

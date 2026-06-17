@@ -15,9 +15,9 @@ import type {
   DirtyLineRangeEntry,
   DirtyLineRangeList,
   EvaluationMode,
-} from "../../types/state.ts";
-import { $proveCtx, $lift, type NLogNCost } from "../../types/cost-doc.ts";
-import { withLineIndexNode, withLineIndexState, asEagerLineIndex } from "./state.ts";
+} from "../../types/state.js";
+import { $proveCtx, $lift, type NLogNCost } from "../../types/cost-doc.js";
+import { withLineIndexNode, withLineIndexState, asEagerLineIndex } from "./state.js";
 
 // =============================================================================
 // Dirty Range Management

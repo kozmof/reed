@@ -3,8 +3,8 @@
  * Provides efficient computation of visible lines and viewport management.
  */
 
-import type { DocumentState, SelectionRange, CharSelectionRange } from "../../types/state.ts";
-import { byteOffset, charOffset, addByteOffset, type ByteOffset } from "../../types/branded.ts";
+import type { DocumentState, SelectionRange, CharSelectionRange } from "../../types/state.js";
+import { byteOffset, charOffset, addByteOffset, type ByteOffset } from "../../types/branded.js";
 import {
   $prove,
   $proveCtx,
@@ -18,16 +18,16 @@ import {
   type ConstCost,
   type CostFn,
   type LinearCost,
-} from "../../types/cost-doc.ts";
+} from "../../types/cost-doc.js";
 import {
   findLineAtPosition,
   getCharStartOffset,
   findLineAtCharPosition,
   getLineRangePrecise,
   getLineCountFromIndex,
-} from "../core/line-index.ts";
-import { getText, charToByteOffset } from "../core/piece-table.ts";
-import { textEncoder } from "../core/encoding.ts";
+} from "../core/line-index.js";
+import { getText, charToByteOffset } from "../core/piece-table.js";
+import { textEncoder } from "../core/encoding.js";
 
 // =============================================================================
 // Types

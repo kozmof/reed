@@ -9,9 +9,9 @@ import {
   computeSetValueActionsOptimized,
   setValue,
   setValueWithDiff,
-} from "./diff.ts";
-import { createInitialState } from "../core/state.ts";
-import { getValue, charToByteOffset, byteToCharOffset } from "../core/piece-table.ts";
+} from "./diff.js";
+import { createInitialState } from "../core/state.js";
+import { getValue, charToByteOffset, byteToCharOffset } from "../core/piece-table.js";
 
 describe("Diff Algorithm", () => {
   describe("diff", () => {

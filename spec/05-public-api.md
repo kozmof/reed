@@ -108,7 +108,7 @@ Modes: `'idle'`, `'sync'`, `'none'`.
 - `store.isDocumentStore(value)`
 - `store.DocumentActions`
 - `store.serializeAction` / `store.deserializeAction`
-- `store.documentReducer`
+- `store.unsafe.documentReducer`
 - immutable state factories/builders
 - piece-table and line-index core mutation helpers
 - reconciliation helpers (`reconcileRange`, `reconcileFull`, `reconcileViewport`)
@@ -170,7 +170,7 @@ Traversal namespace for O(n) operations:
 
 ## 5. Write APIs
 
-- `store.documentReducer(state, action)` is pure and immutable.
+- `store.unsafe.documentReducer(state, action)` is pure and immutable.
 - `diff.setValue(state, newContent, options?)` returns a new `DocumentState`.
 - `diff.computeSetValueActions*` helpers return action lists/diff metadata.
 

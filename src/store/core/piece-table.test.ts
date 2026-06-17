@@ -15,9 +15,9 @@ import {
   getBufferStats,
   compactAddBuffer,
   byteToCharOffset,
-} from "./piece-table.ts";
-import { createEmptyPieceTableState, createPieceTableState } from "./state.ts";
-import { byteOffset } from "../../types/branded.ts";
+} from "./piece-table.js";
+import { createEmptyPieceTableState, createPieceTableState } from "./state.js";
+import { byteOffset } from "../../types/branded.js";
 
 describe("Piece Table Operations", () => {
   describe("getValue", () => {

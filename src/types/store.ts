@@ -4,14 +4,14 @@
  * Redux, Zustand, Vue, Svelte, and vanilla JavaScript.
  */
 
-import type { DocumentState } from "./state.ts";
-import type { DocumentAction } from "./actions.ts";
+import type { DocumentState } from "./state.js";
+import type { DocumentAction } from "./actions.js";
 import type {
   DocumentEventEmitter,
   DocumentEventMap,
   EventHandler,
   Unsubscribe,
-} from "../store/features/events.ts";
+} from "../store/features/events.js";
 
 // Re-export so the public API surface (types/index.ts) can import from one place.
 export type { Unsubscribe };

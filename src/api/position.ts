@@ -27,10 +27,10 @@ import {
   COLUMN_ZERO,
   rawByteOffset,
   rawCharOffset,
-} from "../types/branded.ts";
-import { charOffsetsToSelection } from "../store/features/rendering.ts";
-import type { DocumentState, SelectionRange } from "../types/state.ts";
-import type { LinearCost } from "../types/cost-doc.ts";
+} from "../types/branded.js";
+import { charOffsetsToSelection } from "../store/features/rendering.js";
+import type { DocumentState, SelectionRange } from "../types/state.js";
+import type { LinearCost } from "../types/cost-doc.js";
 
 /**
  * Build a `SelectionRange` (byte offsets) from character (UTF-16 code unit) offsets.

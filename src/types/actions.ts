@@ -4,10 +4,10 @@
  * Actions are serializable for debugging, time-travel, and collaboration.
  */
 
-import type { SelectionRange, ChunkMetadata } from "./state.ts";
-import type { ByteOffset, ByteLength, ReadonlyUint8Array } from "./branded.ts";
-import type { NonEmptyReadonlyArray } from "./utils.ts";
-import { strEnum } from "./str-enum.ts";
+import type { SelectionRange, ChunkMetadata } from "./state.js";
+import type { ByteOffset, ByteLength, ReadonlyUint8Array } from "./branded.js";
+import type { NonEmptyReadonlyArray } from "./utils.js";
+import { strEnum } from "./str-enum.js";
 
 // =============================================================================
 // Text Editing Actions

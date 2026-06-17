@@ -23,7 +23,7 @@ import {
   $forEachN,
   $mapN,
   $value,
-} from "../types/cost-doc.ts";
+} from "../types/cost-doc.js";
 
 export const cost = {
   $declare,

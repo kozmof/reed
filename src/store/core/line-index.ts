@@ -13,16 +13,16 @@ import type {
   DirtyLineRangeEntry,
   DirtyLineRangeList,
   EvaluationMode,
-} from "../../types/state.ts";
-import { END_OF_DOCUMENT } from "../../types/state.ts";
+} from "../../types/state.js";
+import { END_OF_DOCUMENT } from "../../types/state.js";
 import {
   byteOffset,
   byteLength as toByteLengthBrand,
   type ByteOffset,
   type ByteLength,
   type CharOffset,
-} from "../../types/branded.ts";
-import type { ReadTextFn, DeleteBoundaryContext } from "../../types/operations.ts";
+} from "../../types/branded.js";
+import type { ReadTextFn, DeleteBoundaryContext } from "../../types/operations.js";
 import {
   $prove,
   $proveCtx,
@@ -37,8 +37,8 @@ import {
   type LinearCost,
   type LogCost,
   type NLogNCost,
-} from "../../types/cost-doc.ts";
-import { createLineIndexNode, withLineIndexNode, withLineIndexState } from "./state.ts";
+} from "../../types/cost-doc.js";
+import { createLineIndexNode, withLineIndexNode, withLineIndexState } from "./state.js";
 import {
   fixInsertWithPath,
   fixRedViolations,
@@ -46,15 +46,15 @@ import {
   type WithNodeFn,
   type InsertionPathEntry,
   type RootToLeafInsertPath,
-} from "./rb-tree.ts";
+} from "./rb-tree.js";
 import {
   mergeDirtyRanges,
   reconcileRange,
   reconcileFull,
   reconcileViewport,
   type ReconciliationConfig,
-} from "./reconcile.ts";
-import { isSurrogatePairAt } from "./encoding.ts";
+} from "./reconcile.js";
+import { isSurrogatePairAt } from "./encoding.js";
 
 const withLine: WithNodeFn<LineIndexNode> = withLineIndexNode;
 

@@ -1,5 +1,5 @@
-import type { ReadonlyUint8Array } from "../../types/branded.ts";
-import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "./runtime-readonly.ts";
+import type { ReadonlyUint8Array } from "../../types/branded.js";
+import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "./runtime-readonly.js";
 
 /**
  * Append-only growable buffer that encapsulates the mutation invariant

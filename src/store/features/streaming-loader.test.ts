@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { createDocumentStore } from "./store.ts";
-import { createStreamingDocumentLoader } from "./streaming-loader.ts";
+import { createDocumentStore } from "./store.js";
+import { createStreamingDocumentLoader } from "./streaming-loader.js";
 
 describe("StreamingDocumentLoader", () => {
   it("suppresses stale prefetches after a newer viewport supersedes an older one", async () => {

@@ -7,10 +7,10 @@ export {
   createDocumentStore,
   createDocumentStoreWithEvents,
   isDocumentStore,
-} from "./features/store.ts";
+} from "./features/store.js";
 
 // Action creators
-export { DocumentActions, serializeAction, deserializeAction } from "./features/actions.ts";
+export { DocumentActions, serializeAction, deserializeAction } from "./features/actions.js";
 
 // State factories
 export {
@@ -27,10 +27,10 @@ export {
   withState,
   withPieceNode,
   withLineIndexNode,
-} from "./core/state.ts";
+} from "./core/state.js";
 
 // Reducer
-export { documentReducer } from "./features/reducer.ts";
+export { documentReducer } from "./features/reducer.js";
 
 // Piece table operations
 export {
@@ -50,8 +50,8 @@ export {
   getBuffer,
   getBufferSlice,
   getPieceBuffer,
-} from "./core/piece-table.ts";
-export type { StreamOptions, DocumentChunk, PieceTableInsertResult } from "./core/piece-table.ts";
+} from "./core/piece-table.js";
+export type { StreamOptions, DocumentChunk, PieceTableInsertResult } from "./core/piece-table.js";
 
 // Line index operations
 export {
@@ -83,7 +83,7 @@ export {
   type ReconciliationConfig,
   // Debug utilities
   assertEagerOffsets,
-} from "./core/line-index.ts";
+} from "./core/line-index.js";
 
 // Diff and setValue operations
 export {
@@ -95,8 +95,8 @@ export {
   setValue,
   setValueWithDiff,
   setValueAuto,
-} from "./features/diff.ts";
-export type { DiffEdit, DiffResult, SetValueOptions } from "./features/diff.ts";
+} from "./features/diff.js";
+export type { DiffEdit, DiffResult, SetValueOptions } from "./features/diff.js";
 
 // Event system
 export {
@@ -107,7 +107,7 @@ export {
   createSaveEvent,
   createDirtyChangeEvent,
   getAffectedRanges,
-} from "./features/events.ts";
+} from "./features/events.js";
 export type {
   DocumentEvent,
   ContentChangeEvent,
@@ -120,7 +120,7 @@ export type {
   EventHandler,
   Unsubscribe,
   DocumentEventEmitter,
-} from "./features/events.ts";
+} from "./features/events.js";
 
 // Rendering utilities
 export {
@@ -134,18 +134,18 @@ export {
   lineColumnToPosition,
   selectionToCharOffsets,
   charOffsetsToSelection,
-} from "./features/rendering.ts";
+} from "./features/rendering.js";
 export type {
   VisibleLine,
   ViewportConfig,
   VisibleLinesResult,
   ScrollPosition,
   LineHeightConfig,
-} from "./features/rendering.ts";
+} from "./features/rendering.js";
 
 // Transaction management
-export { createTransactionManager } from "./features/transaction.ts";
-export type { TransactionManager, TransactionResult } from "./features/transaction.ts";
+export { createTransactionManager } from "./features/transaction.js";
+export type { TransactionManager, TransactionResult } from "./features/transaction.js";
 
 // History helpers
 export {
@@ -154,22 +154,22 @@ export {
   getUndoCount,
   getRedoCount,
   isHistoryEmpty,
-} from "./features/history.ts";
+} from "./features/history.js";
 
 // Chunk manager — async chunk fetch subsystem for large-file streaming
-export { createChunkManager } from "./features/chunk-manager.ts";
-export type { ChunkLoader, ChunkManagerConfig, ChunkManager } from "./features/chunk-manager.ts";
+export { createChunkManager } from "./features/chunk-manager.js";
+export type { ChunkLoader, ChunkManagerConfig, ChunkManager } from "./features/chunk-manager.js";
 
 // Streaming document loader — high-level chunk lifecycle wrapper
-export { createStreamingDocumentLoader } from "./features/streaming-loader.ts";
+export { createStreamingDocumentLoader } from "./features/streaming-loader.js";
 export type {
   StreamingDocumentLoaderConfig,
   StreamingDocumentLoader,
-} from "./features/streaming-loader.ts";
+} from "./features/streaming-loader.js";
 
 // Reconciliation scheduler
-export { createReconciliationScheduler } from "./features/reconciliation-scheduler.ts";
+export { createReconciliationScheduler } from "./features/reconciliation-scheduler.js";
 export type {
   ReconciliationScheduler,
   ReconciliationSchedulerOptions,
-} from "./features/reconciliation-scheduler.ts";
+} from "./features/reconciliation-scheduler.js";

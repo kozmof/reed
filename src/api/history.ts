@@ -2,15 +2,15 @@
  * History namespace — undo/redo state queries.
  */
 
-import { $constCostFn } from "../types/cost-doc.ts";
+import { $constCostFn } from "../types/cost-doc.js";
 import {
   canUndo,
   canRedo,
   getUndoCount,
   getRedoCount,
   isHistoryEmpty,
-} from "../store/features/history.ts";
-import type { HistoryApi } from "./interfaces.ts";
+} from "../store/features/history.js";
+import type { HistoryApi } from "./interfaces.js";
 
 export const history = {
   canUndo: $constCostFn(canUndo),

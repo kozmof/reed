@@ -3,10 +3,10 @@
  * Provides a pub/sub mechanism for document changes and editor events.
  */
 
-import type { DocumentState } from "../../types/state.ts";
-import type { ContentChangeAction, DocumentAction } from "../../types/actions.ts";
-import { byteOffset, type ByteOffset } from "../../types/branded.ts";
-import { utf8ByteLength } from "../core/encoding.ts";
+import type { DocumentState } from "../../types/state.js";
+import type { ContentChangeAction, DocumentAction } from "../../types/actions.js";
+import { byteOffset, type ByteOffset } from "../../types/branded.js";
+import { utf8ByteLength } from "../core/encoding.js";
 
 // =============================================================================
 // Event Types

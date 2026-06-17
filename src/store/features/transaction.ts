@@ -3,9 +3,9 @@
  * Extracted from store.ts for testability, reusability, and composability.
  */
 
-import type { DocumentState } from "../../types/state.ts";
-import type { DocumentAction } from "../../types/actions.ts";
-import type { TransactionControl } from "../../types/store.ts";
+import type { DocumentState } from "../../types/state.js";
+import type { DocumentAction } from "../../types/actions.js";
+import type { TransactionControl } from "../../types/store.js";
 
 /**
  * Result of a commit operation.

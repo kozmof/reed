@@ -1,4 +1,4 @@
-import type { ReadonlyUint8Array } from "../../types/branded.ts";
+import type { ReadonlyUint8Array } from "../../types/branded.js";
 
 const READONLY_UINT8_ARRAY_ERROR = "Cannot mutate a read-only Uint8Array";
 

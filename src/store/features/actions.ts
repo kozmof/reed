@@ -3,9 +3,9 @@
  * Provides type-safe factory functions for creating document actions.
  */
 
-import type { SelectionRange } from "../../types/state.ts";
-import type { ByteOffset, ReadonlyUint8Array } from "../../types/branded.ts";
-import type { NonEmptyReadonlyArray } from "../../types/utils.ts";
+import type { SelectionRange } from "../../types/state.js";
+import type { ByteOffset, ReadonlyUint8Array } from "../../types/branded.js";
+import type { NonEmptyReadonlyArray } from "../../types/utils.js";
 import type {
   DocumentAction,
   InsertAction,
@@ -20,9 +20,9 @@ import type {
   LoadChunkAction,
   EvictChunkAction,
   DeclareChunkMetadataAction,
-} from "../../types/actions.ts";
-import type { ChunkMetadata } from "../../types/state.ts";
-import { isDocumentAction } from "../../types/actions.ts";
+} from "../../types/actions.js";
+import type { ChunkMetadata } from "../../types/state.js";
+import { isDocumentAction } from "../../types/actions.js";
 
 const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const BASE64_DECODE_TABLE = (() => {

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { createInitialState } from "./../core/state.ts";
+import { createInitialState } from "./../core/state.js";
 import {
   getVisibleLineRange,
   getVisibleLines,
@@ -13,9 +13,9 @@ import {
   estimateTotalHeight,
   positionToLineColumn,
   lineColumnToPosition,
-} from "./rendering.ts";
-import type { ScrollPosition, LineHeightConfig, VisibleLine } from "./rendering.ts";
-import { byteOffset } from "../../types/branded.ts";
+} from "./rendering.js";
+import type { ScrollPosition, LineHeightConfig, VisibleLine } from "./rendering.js";
+import { byteOffset } from "../../types/branded.js";
 
 describe("getVisibleLineRange", () => {
   it("should calculate visible lines from scroll position", () => {

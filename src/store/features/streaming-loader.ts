@@ -13,10 +13,10 @@
  * control; use StreamingDocumentLoader for the common streaming use case.
  */
 
-import type { DocumentStore } from "../../types/store.ts";
-import type { ChunkMetadata } from "../../types/state.ts";
-import { DocumentActions } from "./actions.ts";
-import { createChunkManager, type ChunkLoader, type ChunkManagerConfig } from "./chunk-manager.ts";
+import type { DocumentStore } from "../../types/store.js";
+import type { ChunkMetadata } from "../../types/state.js";
+import { DocumentActions } from "./actions.js";
+import { createChunkManager, type ChunkLoader, type ChunkManagerConfig } from "./chunk-manager.js";
 
 // =============================================================================
 // Public interfaces

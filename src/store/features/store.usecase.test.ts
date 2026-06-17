@@ -4,12 +4,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { pstackSize } from "../../types/state.ts";
-import { createDocumentStore, withTransaction } from "./store.ts";
-import { DocumentActions } from "./actions.ts";
-import { byteOffset, byteLength } from "../../types/branded.ts";
-import { rebuildLineIndex, getLineStartOffset, getCharStartOffset } from "../core/line-index.ts";
-import { getText } from "../core/piece-table.ts";
+import { pstackSize } from "../../types/state.js";
+import { createDocumentStore, withTransaction } from "./store.js";
+import { DocumentActions } from "./actions.js";
+import { byteOffset, byteLength } from "../../types/branded.js";
+import { rebuildLineIndex, getLineStartOffset, getCharStartOffset } from "../core/line-index.js";
+import { getText } from "../core/piece-table.js";
 
 function createDeterministicRng(seed: number): () => number {
   let state = seed >>> 0;

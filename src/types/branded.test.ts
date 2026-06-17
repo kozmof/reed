@@ -24,7 +24,7 @@ import {
   type ByteOffset,
   type CharOffset,
   type LineNumber,
-} from "./branded.ts";
+} from "./branded.js";
 import {
   $declare,
   $prove,
@@ -46,7 +46,7 @@ import {
   type CostFn,
   type LogCost,
   type LinearCost,
-} from "./cost-doc.ts";
+} from "./cost-doc.js";
 
 describe("Branded Types", () => {
   describe("constructor functions", () => {

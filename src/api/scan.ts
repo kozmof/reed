@@ -15,10 +15,10 @@
  * @see query — O(1) / O(log n) read operations
  */
 
-import { $linearCostFn } from "../types/cost-doc.ts";
-import { getValue, getValueStream, collectPieces } from "../store/core/piece-table.ts";
-import { collectLines, rebuildLineIndex } from "../store/core/line-index.ts";
-import type { ScanApi } from "./interfaces.ts";
+import { $linearCostFn } from "../types/cost-doc.js";
+import { getValue, getValueStream, collectPieces } from "../store/core/piece-table.js";
+import { collectLines, rebuildLineIndex } from "../store/core/line-index.js";
+import type { ScanApi } from "./interfaces.js";
 
 export const scan = {
   /** @complexity O(n) — collects all pieces into a single string */

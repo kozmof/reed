@@ -6,11 +6,11 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { documentReducer } from "./reducer.ts";
-import { DocumentActions } from "./actions.ts";
-import { createInitialState } from "../core/state.ts";
-import { getLineCountFromIndex } from "../core/line-index.ts";
-import { textEncoder } from "../core/encoding.ts";
+import { documentReducer } from "./reducer.js";
+import { DocumentActions } from "./actions.js";
+import { createInitialState } from "../core/state.js";
+import { getLineCountFromIndex } from "../core/line-index.js";
+import { textEncoder } from "../core/encoding.js";
 
 describe("DECLARE_CHUNK_METADATA", () => {
   it("is a no-op in non-chunked mode (chunkSize === 0)", () => {

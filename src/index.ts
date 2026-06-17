@@ -50,7 +50,7 @@ export type {
   DocumentStoreConfigBase,
   DocumentStoreConfig,
   ChunkMetadata,
-} from "./types/index.ts";
+} from "./types/index.js";
 
 // Action types
 export type {
@@ -69,7 +69,7 @@ export type {
   DocumentAction,
   DocumentActionType,
   ActionValidationResult,
-} from "./types/index.ts";
+} from "./types/index.js";
 
 // Store types
 export type {
@@ -81,7 +81,7 @@ export type {
   DocumentStoreWithEvents,
   ReadonlyDocumentStore,
   DocumentReducer,
-} from "./types/index.ts";
+} from "./types/index.js";
 
 // Branded position types
 export type {
@@ -90,7 +90,7 @@ export type {
   CharOffset,
   LineNumber,
   ColumnNumber,
-} from "./types/index.ts";
+} from "./types/index.js";
 
 // Cost algebra types
 export type {
@@ -116,25 +116,25 @@ export type {
   LinearCost,
   NLogNCost,
   QuadCost,
-} from "./types/index.ts";
+} from "./types/index.js";
 
 // Piece table types
-export type { StreamOptions, DocumentChunk } from "./store/index.ts";
+export type { StreamOptions, DocumentChunk } from "./store/index.js";
 
 // Chunk manager types
-export type { ChunkLoader, ChunkManagerConfig, ChunkManager } from "./store/index.ts";
-export { createChunkManager } from "./store/index.ts";
+export type { ChunkLoader, ChunkManagerConfig, ChunkManager } from "./store/index.js";
+export { createChunkManager } from "./store/index.js";
 
 // Streaming document loader types
-export type { StreamingDocumentLoaderConfig, StreamingDocumentLoader } from "./store/index.ts";
-export { createStreamingDocumentLoader } from "./store/index.ts";
+export type { StreamingDocumentLoaderConfig, StreamingDocumentLoader } from "./store/index.js";
+export { createStreamingDocumentLoader } from "./store/index.js";
 
 // Reconciliation scheduler
-export type { ReconciliationScheduler, ReconciliationSchedulerOptions } from "./store/index.ts";
-export { createReconciliationScheduler } from "./store/index.ts";
+export type { ReconciliationScheduler, ReconciliationSchedulerOptions } from "./store/index.js";
+export { createReconciliationScheduler } from "./store/index.js";
 
 // Diff types
-export type { DiffEdit, DiffResult, SetValueOptions } from "./store/index.ts";
+export type { DiffEdit, DiffResult, SetValueOptions } from "./store/index.js";
 
 // Event types
 export type {
@@ -148,7 +148,7 @@ export type {
   DocumentEventMap,
   EventHandler,
   DocumentEventEmitter,
-} from "./store/index.ts";
+} from "./store/index.js";
 
 // Rendering types
 export type {
@@ -157,10 +157,10 @@ export type {
   VisibleLinesResult,
   ScrollPosition,
   LineHeightConfig,
-} from "./store/index.ts";
+} from "./store/index.js";
 
 // Line index types
-export type { ReconciliationConfig } from "./store/index.ts";
+export type { ReconciliationConfig } from "./store/index.js";
 
 // =============================================================================
 // Namespaced runtime exports
@@ -176,4 +176,4 @@ export {
   diff,
   position,
   cost,
-} from "./api/index.ts";
+} from "./api/index.js";

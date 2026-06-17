@@ -23,12 +23,12 @@
  */
 
 import { performance } from "perf_hooks";
-import { createDocumentStoreWithEvents } from "../store/features/store.ts";
-import { createInitialState } from "../store/core/state.ts";
-import { DocumentActions } from "../store/features/actions.ts";
-import { byteOffset } from "../types/branded.ts";
-import { getLineStartOffset } from "../store/core/line-index.ts";
-import { generateLargeContent } from "../test-utils/large-content.ts";
+import { createDocumentStoreWithEvents } from "../store/features/store.js";
+import { createInitialState } from "../store/core/state.js";
+import { DocumentActions } from "../store/features/actions.js";
+import { byteOffset } from "../types/branded.js";
+import { getLineStartOffset } from "../store/core/line-index.js";
+import { generateLargeContent } from "../test-utils/large-content.js";
 
 // ---------------------------------------------------------------------------
 // Harness utilities

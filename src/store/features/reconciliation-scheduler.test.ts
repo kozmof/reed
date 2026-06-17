@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createReconciliationScheduler } from "./reconciliation-scheduler.ts";
+import { createReconciliationScheduler } from "./reconciliation-scheduler.js";
 
 const g = globalThis as typeof globalThis & {
   requestIdleCallback?: (

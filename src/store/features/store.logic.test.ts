@@ -4,9 +4,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { pstackSize, pstackPeek } from "../../types/state.ts";
-import type { DocumentStoreConfig } from "../../types/state.ts";
-import { documentReducer } from "./reducer.ts";
+import { pstackSize, pstackPeek } from "../../types/state.js";
+import type { DocumentStoreConfig } from "../../types/state.js";
+import { documentReducer } from "./reducer.js";
 import {
   createInitialState,
   createEmptyPieceTableState,
@@ -21,17 +21,17 @@ import {
   withState,
   withPieceNode,
   withLineIndexNode,
-} from "./../core/state.ts";
-import { DocumentActions, serializeAction, deserializeAction } from "./actions.ts";
+} from "./../core/state.js";
+import { DocumentActions, serializeAction, deserializeAction } from "./actions.js";
 import {
   isTextEditAction,
   isHistoryAction,
   isDocumentAction,
   validateAction,
-} from "../../types/actions.ts";
-import { createDocumentStore, isDocumentStore } from "./store.ts";
-import { getLineCountFromIndex } from "./../core/line-index.ts";
-import { byteOffset, byteLength, type ByteOffset } from "../../types/branded.ts";
+} from "../../types/actions.js";
+import { createDocumentStore, isDocumentStore } from "./store.js";
+import { getLineCountFromIndex } from "./../core/line-index.js";
+import { byteOffset, byteLength, type ByteOffset } from "../../types/branded.js";
 
 // =============================================================================
 // State Factory Tests
@@ -1099,9 +1099,9 @@ describe("Store getSnapshot Identity", () => {
 // Chunk Loading Tests (Phase 3)
 // =============================================================================
 
-import { textEncoder } from "../core/encoding.ts";
-import { getText } from "../core/piece-table.ts";
-import { reconcileFull } from "../core/line-index.ts";
+import { textEncoder } from "../core/encoding.js";
+import { getText } from "../core/piece-table.js";
+import { reconcileFull } from "../core/line-index.js";
 
 describe("LOAD_CHUNK", () => {
   it("is a no-op when chunkSize is 0 (non-chunked mode)", () => {

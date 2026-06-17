@@ -12,13 +12,13 @@
  * - `cost.*`      — cost algebra for annotating algorithmic complexity
  */
 
-export type { QueryApi, QueryLineIndexApi, ScanApi, HistoryApi } from "./interfaces.ts";
-export { store } from "./store.ts";
-export { query } from "./query.ts";
-export { scan } from "./scan.ts";
-export { events } from "./events.ts";
-export { rendering } from "./rendering.ts";
-export { history } from "./history.ts";
-export { diff } from "./diff.ts";
-export { position } from "./position.ts";
-export { cost } from "./cost-doc.ts";
+export type { QueryApi, QueryLineIndexApi, ScanApi, HistoryApi } from "./interfaces.js";
+export { store } from "./store.js";
+export { query } from "./query.js";
+export { scan } from "./scan.js";
+export { events } from "./events.js";
+export { rendering } from "./rendering.js";
+export { history } from "./history.js";
+export { diff } from "./diff.js";
+export { position } from "./position.js";
+export { cost } from "./cost-doc.js";

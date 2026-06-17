@@ -8,7 +8,7 @@
  *   export const query = { ... } satisfies QueryApi;
  */
 
-import type { ConstCost, LogCost, LinearCost } from "../types/cost-doc.ts";
+import type { ConstCost, LogCost, LinearCost } from "../types/cost-doc.js";
 import type {
   DocumentState,
   HistoryState,
@@ -16,15 +16,15 @@ import type {
   LineIndexNode,
   PieceTableState,
   PieceNode,
-} from "../types/state.ts";
-import type { ByteOffset, ByteLength, CharOffset } from "../types/branded.ts";
-import type { LineLocation } from "../store/core/line-index.ts";
+} from "../types/state.js";
+import type { ByteOffset, ByteLength, CharOffset } from "../types/branded.js";
+import type { LineLocation } from "../store/core/line-index.js";
 import type {
   PieceLocation,
   BufferStats,
   DocumentChunk,
   StreamOptions,
-} from "../store/core/piece-table.ts";
+} from "../store/core/piece-table.js";
 
 // =============================================================================
 // Query namespace interfaces

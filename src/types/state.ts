@@ -3,12 +3,12 @@
  * All state structures are read-only and use structural sharing for efficiency.
  */
 
-import type { ByteOffset, ByteLength, CharOffset, ReadonlyUint8Array } from "./branded.ts";
-import type { GrowableBuffer } from "../store/core/growable-buffer.ts";
-import type { NonEmptyReadonlyArray } from "./utils.ts";
-import type { ReconciliationScheduler } from "../store/features/reconciliation-scheduler.ts";
-export type { NonEmptyReadonlyArray } from "./utils.ts";
-export type { ReadTextFn, DeleteBoundaryContext } from "./operations.ts";
+import type { ByteOffset, ByteLength, CharOffset, ReadonlyUint8Array } from "./branded.js";
+import type { GrowableBuffer } from "../store/core/growable-buffer.js";
+import type { NonEmptyReadonlyArray } from "./utils.js";
+import type { ReconciliationScheduler } from "../store/features/reconciliation-scheduler.js";
+export type { NonEmptyReadonlyArray } from "./utils.js";
+export type { ReadTextFn, DeleteBoundaryContext } from "./operations.js";
 
 // =============================================================================
 // Piece Table Types

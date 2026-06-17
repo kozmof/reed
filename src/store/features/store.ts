@@ -3,20 +3,20 @@
  * Factory function that creates a DocumentStore with encapsulated state.
  */
 
-import type { DocumentState, DocumentStoreConfig } from "../../types/state.ts";
-import type { DocumentAction } from "../../types/actions.ts";
+import type { DocumentState, DocumentStoreConfig } from "../../types/state.js";
+import type { DocumentAction } from "../../types/actions.js";
 import type {
   DocumentStore,
   ReconcilableDocumentStore,
   DocumentStoreWithEvents,
   StoreListener,
   Unsubscribe,
-} from "../../types/store.ts";
-import { createInitialState, withState } from "../core/state.ts";
-import { documentReducer } from "./reducer.ts";
-import { reconcileFull, reconcileViewport } from "../core/line-index.ts";
-import { getBufferStats, compactAddBuffer } from "../core/piece-table.ts";
-import { createTransactionManager, makeBatch } from "./transaction.ts";
+} from "../../types/store.js";
+import { createInitialState, withState } from "../core/state.js";
+import { documentReducer } from "./reducer.js";
+import { reconcileFull, reconcileViewport } from "../core/line-index.js";
+import { getBufferStats, compactAddBuffer } from "../core/piece-table.js";
+import { createTransactionManager, makeBatch } from "./transaction.js";
 import {
   createEventEmitter,
   createContentChangeEvent,
@@ -24,9 +24,9 @@ import {
   createHistoryChangeEvent,
   createDirtyChangeEvent,
   getAffectedRanges,
-} from "./events.ts";
-import { isTextEditAction } from "../../types/actions.ts";
-import { createReconciliationScheduler } from "./reconciliation-scheduler.ts";
+} from "./events.js";
+import { isTextEditAction } from "../../types/actions.js";
+import { createReconciliationScheduler } from "./reconciliation-scheduler.js";
 
 // Automatically compact the add buffer when more than this fraction of allocated bytes
 // are unreferenced waste AND the buffer exceeds AUTO_COMPACT_MIN_BYTES.

@@ -16,19 +16,19 @@ import type {
   HistoryState,
   DocumentMetadata,
   ChunkMetadata,
-} from "../../types/state.ts";
-import type { ReadonlyUint8Array } from "../../types/branded.ts";
-import { byteOffset, byteLength } from "../../types/branded.ts";
-import type { ByteOffset, ByteLength } from "../../types/branded.ts";
-import { textEncoder } from "./encoding.ts";
-import { GrowableBuffer } from "./growable-buffer.ts";
+} from "../../types/state.js";
+import type { ReadonlyUint8Array } from "../../types/branded.js";
+import { byteOffset, byteLength } from "../../types/branded.js";
+import type { ByteOffset, ByteLength } from "../../types/branded.js";
+import { textEncoder } from "./encoding.js";
+import { GrowableBuffer } from "./growable-buffer.js";
 import {
   asReadonlyMap,
   asReadonlySet,
   asReadonlyUint8Array,
   isReadonlyMapView,
   isReadonlySetView,
-} from "./runtime-readonly.ts";
+} from "./runtime-readonly.js";
 
 /**
  * Default configuration values.

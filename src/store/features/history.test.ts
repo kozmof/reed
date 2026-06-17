@@ -4,14 +4,14 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { canUndo, canRedo, getUndoCount, getRedoCount, isHistoryEmpty } from "./history.ts";
-import { createInitialState, withState } from "./../core/state.ts";
-import { documentReducer } from "./reducer.ts";
-import { DocumentActions } from "./actions.ts";
-import type { HistoryState } from "../../types/state.ts";
-import { pstackFromArray, pstackPush } from "../../types/state.ts";
-import { byteOffset, byteLength } from "../../types/branded.ts";
-import { makeInsertChange, makeDeleteChange } from "./edit.ts";
+import { canUndo, canRedo, getUndoCount, getRedoCount, isHistoryEmpty } from "./history.js";
+import { createInitialState, withState } from "./../core/state.js";
+import { documentReducer } from "./reducer.js";
+import { DocumentActions } from "./actions.js";
+import type { HistoryState } from "../../types/state.js";
+import { pstackFromArray, pstackPush } from "../../types/state.js";
+import { byteOffset, byteLength } from "../../types/branded.js";
+import { makeInsertChange, makeDeleteChange } from "./edit.js";
 
 // =============================================================================
 // canUndo Tests

@@ -12,8 +12,8 @@
  * store.dispatch(DocumentActions.*).
  */
 
-import type { DocumentStore } from "../../types/store.ts";
-import { DocumentActions } from "./actions.ts";
+import type { DocumentStore } from "../../types/store.js";
+import { DocumentActions } from "./actions.js";
 
 // =============================================================================
 // Public interfaces

@@ -11,11 +11,11 @@ import {
   createSaveEvent,
   createDirtyChangeEvent,
   getAffectedRanges,
-} from "./events.ts";
-import { createInitialState } from "./../core/state.ts";
-import { DocumentActions } from "./actions.ts";
-import { createDocumentStoreWithEvents } from "./store.ts";
-import { byteOffset, byteLength } from "../../types/branded.ts";
+} from "./events.js";
+import { createInitialState } from "./../core/state.js";
+import { DocumentActions } from "./actions.js";
+import { createDocumentStoreWithEvents } from "./store.js";
+import { byteOffset, byteLength } from "../../types/branded.js";
 
 describe("Event Emitter", () => {
   describe("addEventListener", () => {

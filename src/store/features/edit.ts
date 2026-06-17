@@ -20,27 +20,27 @@ import type {
   SelectionState,
   SelectionRange,
   NonEmptyReadonlyArray,
-} from "../../types/state.ts";
-import { pstackPush, pstackPeek, pstackPop, pstackTrimToSize } from "../../types/state.ts";
-import type { ByteOffset } from "../../types/branded.ts";
-import type { DeleteBoundaryContext, ReadTextFn } from "../../types/operations.ts";
-import { byteOffset, byteLength } from "../../types/branded.ts";
-import { withState, withLineIndexState } from "../core/state.ts";
-import { asEagerLineIndex } from "../core/state.ts";
+} from "../../types/state.js";
+import { pstackPush, pstackPeek, pstackPop, pstackTrimToSize } from "../../types/state.js";
+import type { ByteOffset } from "../../types/branded.js";
+import type { DeleteBoundaryContext, ReadTextFn } from "../../types/operations.js";
+import { byteOffset, byteLength } from "../../types/branded.js";
+import { withState, withLineIndexState } from "../core/state.js";
+import { asEagerLineIndex } from "../core/state.js";
 import {
   pieceTableInsert as ptInsert,
   pieceTableDelete as ptDelete,
   getText,
   getRawByte,
-} from "../core/piece-table.ts";
+} from "../core/piece-table.js";
 import {
   lineIndexInsert as liInsert,
   lineIndexDelete as liDelete,
   lineIndexInsertLazy as liInsertLazy,
   lineIndexDeleteLazy as liDeleteLazy,
   rebuildLineIndex,
-} from "../core/line-index.ts";
-import { textEncoder } from "../core/encoding.ts";
+} from "../core/line-index.js";
+import { textEncoder } from "../core/encoding.js";
 
 // =============================================================================
 // Position Validation

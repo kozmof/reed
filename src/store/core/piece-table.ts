@@ -6,8 +6,8 @@
  * for compute regions (see `src/types/cost-doc.ts`).
  */
 
-import type { PieceNode, PieceTableState, BufferReference } from "../../types/state.ts";
-import { byteOffset, byteLength, type ByteOffset, type ByteLength } from "../../types/branded.ts";
+import type { PieceNode, PieceTableState, BufferReference } from "../../types/state.js";
+import { byteOffset, byteLength, type ByteOffset, type ByteLength } from "../../types/branded.js";
 import {
   $prove,
   $proveCtx,
@@ -20,14 +20,14 @@ import {
   type ConstCost,
   type LogCost,
   type LinearCost,
-} from "../../types/cost-doc.ts";
+} from "../../types/cost-doc.js";
 import {
   createPieceNode,
   createChunkPieceNode,
   withPieceNode,
   freezePieceTableState,
-} from "./state.ts";
-import { unwrapReadonlyUint8Array } from "./runtime-readonly.ts";
+} from "./state.js";
+import { unwrapReadonlyUint8Array } from "./runtime-readonly.js";
 import {
   fixInsertWithPath,
   fixRedViolations,
@@ -35,9 +35,9 @@ import {
   type WithNodeFn,
   type InsertionPathEntry,
   type RootToLeafInsertPath,
-} from "./rb-tree.ts";
-import { textEncoder, textDecoder } from "./encoding.ts";
-import { GrowableBuffer } from "./growable-buffer.ts";
+} from "./rb-tree.js";
+import { textEncoder, textDecoder } from "./encoding.js";
+import { GrowableBuffer } from "./growable-buffer.js";
 
 // =============================================================================
 // In-Order Traversal Helpers

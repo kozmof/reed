@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { query } from "./query.ts";
-import { createDocumentStore } from "../store/features/store.ts";
-import { DocumentActions } from "../store/features/actions.ts";
-import { byteOffset } from "../types/branded.ts";
+import { query } from "./query.js";
+import { createDocumentStore } from "../store/features/store.js";
+import { DocumentActions } from "../store/features/actions.js";
+import { byteOffset } from "../types/branded.js";
 
 describe("query mode contracts", () => {
   it("should expose reconciled state guards for mode-sensitive selectors", () => {

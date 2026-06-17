@@ -4,10 +4,10 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { createChunkManager } from "./chunk-manager.ts";
-import { createDocumentStore } from "./store.ts";
-import { DocumentActions } from "./actions.ts";
-import { byteOffset } from "../../types/branded.ts";
+import { createChunkManager } from "./chunk-manager.js";
+import { createDocumentStore } from "./store.js";
+import { DocumentActions } from "./actions.js";
+import { byteOffset } from "../../types/branded.js";
 
 const CHUNK_SIZE = 8;
 

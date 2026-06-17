@@ -4,11 +4,11 @@
  * historyUndo / historyRedo operations that apply stored changes.
  */
 
-import type { DocumentState, HistoryState, LineIndexState } from "../../types/state.ts";
-import { pstackSize, pstackPush, pstackPop } from "../../types/state.ts";
-import { withState } from "../core/state.ts";
-import { reconcileFull } from "../core/line-index.ts";
-import { applyChange, applyInverseChange } from "./edit.ts";
+import type { DocumentState, HistoryState, LineIndexState } from "../../types/state.js";
+import { pstackSize, pstackPush, pstackPop } from "../../types/state.js";
+import { withState } from "../core/state.js";
+import { reconcileFull } from "../core/line-index.js";
+import { applyChange, applyInverseChange } from "./edit.js";
 
 /**
  * Check if undo is available.

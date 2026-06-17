@@ -10,14 +10,14 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { createDocumentStore } from "./store.ts";
-import { createInitialState } from "../core/state.ts";
-import { DocumentActions } from "./actions.ts";
-import { byteOffset } from "../../types/branded.ts";
-import { query } from "../../api/query.ts";
-import { rebuildLineIndex, getLineStartOffset, getCharStartOffset } from "../core/line-index.ts";
-import { getText } from "../core/piece-table.ts";
-import { generateLargeContent, makeDeterministicRng } from "../../test-utils/large-content.ts";
+import { createDocumentStore } from "./store.js";
+import { createInitialState } from "../core/state.js";
+import { DocumentActions } from "./actions.js";
+import { byteOffset } from "../../types/branded.js";
+import { query } from "../../api/query.js";
+import { rebuildLineIndex, getLineStartOffset, getCharStartOffset } from "../core/line-index.js";
+import { getText } from "../core/piece-table.js";
+import { generateLargeContent, makeDeterministicRng } from "../../test-utils/large-content.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

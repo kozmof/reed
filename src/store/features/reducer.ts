@@ -13,24 +13,24 @@ import type {
   SelectionRange,
   NonEmptyReadonlyArray,
   PieceNode,
-} from "../../types/state.ts";
-import type { DocumentAction } from "../../types/actions.ts";
-import type { ByteOffset } from "../../types/branded.ts";
-import { byteOffset, byteLength } from "../../types/branded.ts";
+} from "../../types/state.js";
+import type { DocumentAction } from "../../types/actions.js";
+import type { ByteOffset } from "../../types/branded.js";
+import { byteOffset, byteLength } from "../../types/branded.js";
 import {
   withState,
   createChunkPieceNode,
   withPieceNode,
   withLineIndexState,
-} from "../core/state.ts";
-import { unwrapReadonlyUint8Array } from "../core/runtime-readonly.ts";
-import { appendToRightmost } from "../core/rb-tree.ts";
-import { getText, insertChunkPieceAt, pieceTableInOrder } from "../core/piece-table.ts";
+} from "../core/state.js";
+import { unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
+import { appendToRightmost } from "../core/rb-tree.js";
+import { getText, insertChunkPieceAt, pieceTableInOrder } from "../core/piece-table.js";
 import {
   lineIndexInsertLazy as liInsertLazy,
   lineIndexDeleteLazy as liDeleteLazy,
-} from "../core/line-index.ts";
-import { textDecoder } from "../core/encoding.ts";
+} from "../core/line-index.js";
+import { textDecoder } from "../core/encoding.js";
 import {
   validatePosition,
   validateRange,
@@ -41,8 +41,8 @@ import {
   getDeleteBoundaryContext,
   shouldRebuildLineIndexForDelete,
   rebuildLineIndexFromPieceTableState,
-} from "./edit.ts";
-import { historyUndo, historyRedo } from "./history.ts";
+} from "./edit.js";
+import { historyUndo, historyRedo } from "./history.js";
 
 /**
  * Normalize line endings in `text` to match `lineEnding`.
