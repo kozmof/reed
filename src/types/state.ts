@@ -469,7 +469,7 @@ export type PStack<T> = null | (PStackCons<T> & { readonly [_pstackBrand]: never
 
 export const pstackEmpty = <T>(): PStack<T> => null;
 export const pstackPush = <T>(s: PStack<T>, v: T): PStack<T> =>
-  new PStackCons(v, s, (s?.size ?? 0) + 1) as unknown as NonNullable<PStack<T>>;
+  Object.freeze(new PStackCons(v, s, (s?.size ?? 0) + 1)) as unknown as NonNullable<PStack<T>>;
 export const pstackPeek = <T>(s: PStack<T>): T | undefined => s?.top;
 export const pstackPop = <T>(s: NonNullable<PStack<T>>): [T, PStack<T>] => [s.top, s.rest];
 export const pstackSize = <T>(s: PStack<T>): number => s?.size ?? 0;
@@ -511,7 +511,9 @@ export const pstackTrimToSize = <T>(stack: PStack<T>, maxSize: number): PStack<T
   // Rebuild cons-list from oldest→newest so top is the newest item
   let result: PStack<T> = null;
   for (let i = maxSize - 1; i >= 0; i--) {
-    result = new PStackCons(items[i], result, maxSize - i) as unknown as NonNullable<PStack<T>>;
+    result = Object.freeze(new PStackCons(items[i], result, maxSize - i)) as unknown as NonNullable<
+      PStack<T>
+    >;
   }
   return result;
 };

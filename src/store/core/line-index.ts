@@ -1035,22 +1035,29 @@ function buildLineIndexFromText(text: string, startOffset: number): LineIndexSta
 }
 
 /**
- * Build a balanced tree from sorted line data with char lengths.
+ * Build a balanced Red-Black tree from sorted line data with char lengths.
+ *
+ * Median-split recursion creates a near-complete tree. Coloring the deepest
+ * real nodes red equalizes black-height across paths while keeping red nodes
+ * childless.
  */
 function buildBalancedTreeWithChars(
   lines: { offset: number; length: number; charLength: number }[],
   start: number,
   end: number,
+  depth: number = 0,
+  deepestDepth: number = Math.floor(Math.log2(lines.length)),
 ): LineIndexNode | null {
   if (start > end) return null;
 
   const mid = Math.floor((start + end) / 2);
   const line = lines[mid];
 
-  const left = buildBalancedTreeWithChars(lines, start, mid - 1);
-  const right = buildBalancedTreeWithChars(lines, mid + 1, end);
+  const left = buildBalancedTreeWithChars(lines, start, mid - 1, depth + 1, deepestDepth);
+  const right = buildBalancedTreeWithChars(lines, mid + 1, end, depth + 1, deepestDepth);
 
-  return createLineIndexNode(line.offset, line.length, "black", left, right, line.charLength);
+  const color = depth > 0 && depth === deepestDepth ? "red" : "black";
+  return createLineIndexNode(line.offset, line.length, color, left, right, line.charLength);
 }
 
 // =============================================================================

@@ -388,13 +388,11 @@ export function createLineIndexState(content: string, maxDirtyRanges: number = 3
 
 /**
  * Build a balanced Red-Black tree from sorted line data.
- * Uses iterative approach with explicit parent tracking.
  *
- * All nodes are colored `'black'`. This is safe because the median-split recursion
- * produces a perfectly balanced (or near-perfectly balanced) tree, which satisfies
- * the RB black-height invariant without requiring any red nodes. Callers should not
- * interpret the all-black initial state as a violation — it is a valid RB tree for
- * any balanced topology.
+ * Median-split recursion creates a near-complete tree whose leaves appear on the
+ * deepest level or the one above it. Coloring the deepest real nodes red gives
+ * both leaf depths the same black-height while preserving the red-parent rule
+ * because those deepest nodes have no children.
  *
  * Follow-on insert/delete operations use the standard `fixInsertWithPath` rebalancer,
  * which handles arbitrary topologies and introduces red nodes as needed.
@@ -403,6 +401,8 @@ function buildLineIndexTree(
   lines: { offset: number; length: number; charLength: number }[],
   start: number,
   end: number,
+  depth: number = 0,
+  deepestDepth: number = Math.floor(Math.log2(lines.length)),
 ): LineIndexNode | null {
   if (start > end) {
     return null;
@@ -412,10 +412,11 @@ function buildLineIndexTree(
   const mid = Math.floor((start + end) / 2);
   const line = lines[mid];
 
-  const left = buildLineIndexTree(lines, start, mid - 1);
-  const right = buildLineIndexTree(lines, mid + 1, end);
+  const left = buildLineIndexTree(lines, start, mid - 1, depth + 1, deepestDepth);
+  const right = buildLineIndexTree(lines, mid + 1, end, depth + 1, deepestDepth);
 
-  return createLineIndexNode(line.offset, line.length, "black", left, right, line.charLength);
+  const color = depth > 0 && depth === deepestDepth ? "red" : "black";
+  return createLineIndexNode(line.offset, line.length, color, left, right, line.charLength);
 }
 
 /**

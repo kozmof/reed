@@ -391,6 +391,9 @@ describe("HISTORY_CLEAR action", () => {
   it("should return frozen history state", () => {
     let state = createInitialState();
     state = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
+
+    expect(Object.isFrozen(state.history.undoStack)).toBe(true);
+
     state = documentReducer(state, DocumentActions.historyClear());
 
     expect(Object.isFrozen(state.history)).toBe(true);

@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import type { LineIndexNode } from "../../types/state.ts";
 import {
   lineIndexInsert,
   lineIndexDelete,
@@ -24,7 +25,38 @@ import {
 import { createLineIndexState, createEmptyLineIndexState, withLineIndexState } from "./state.ts";
 import { byteOffset } from "../../types/branded.ts";
 
+function assertRBLineIndex(root: LineIndexNode | null): number {
+  if (root === null) return 1;
+
+  if (root.color === "red") {
+    expect(root.left?.color).not.toBe("red");
+    expect(root.right?.color).not.toBe("red");
+  }
+
+  const leftBlackHeight = assertRBLineIndex(root.left);
+  const rightBlackHeight = assertRBLineIndex(root.right);
+  expect(leftBlackHeight).toBe(rightBlackHeight);
+
+  return leftBlackHeight + (root.color === "black" ? 1 : 0);
+}
+
 describe("Line Index Operations", () => {
+  describe("red-black invariants", () => {
+    it("builds valid trees for initial and rebuilt line indexes", () => {
+      for (let lineCount = 1; lineCount <= 128; lineCount++) {
+        const text = Array.from({ length: lineCount }, (_, i) => "L" + i).join("\n");
+
+        const initial = createLineIndexState(text);
+        expect(initial.root?.color).toBe("black");
+        assertRBLineIndex(initial.root);
+
+        const rebuilt = rebuildLineIndex(text);
+        expect(rebuilt.root?.color).toBe("black");
+        assertRBLineIndex(rebuilt.root);
+      }
+    });
+  });
+
   describe("rebuildLineIndex", () => {
     it("should create index for empty content", () => {
       const state = rebuildLineIndex("");
