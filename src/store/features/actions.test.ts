@@ -108,6 +108,15 @@ describe("serializeAction / deserializeAction", () => {
       );
     });
 
+    it("throws on invalid numeric invariants", () => {
+      expect(() =>
+        deserializeAction(JSON.stringify({ type: "INSERT", start: 1.5, text: "x" })),
+      ).toThrow(/Invalid deserialized action/);
+      expect(() =>
+        deserializeAction(JSON.stringify({ type: "LOAD_CHUNK", chunkIndex: -1, data: "" })),
+      ).toThrow(/Invalid deserialized action/);
+    });
+
     it("throws on non-object input", () => {
       expect(() => deserializeAction(JSON.stringify(null))).toThrow();
       expect(() => deserializeAction(JSON.stringify(42))).toThrow();

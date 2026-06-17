@@ -855,7 +855,10 @@ describe("Type Guards", () => {
     });
 
     it("should validate SET_SELECTION action", () => {
-      expect(isDocumentAction({ type: "SET_SELECTION", ranges: [] })).toBe(true);
+      expect(isDocumentAction({ type: "SET_SELECTION", ranges: [{ anchor: 0, head: 1 }] })).toBe(
+        true,
+      );
+      expect(isDocumentAction({ type: "SET_SELECTION", ranges: [] })).toBe(false);
       expect(isDocumentAction({ type: "SET_SELECTION" })).toBe(false);
     });
 
@@ -897,7 +900,7 @@ describe("Type Guards", () => {
   });
 
   describe("validateAction", () => {
-    it("should accept out-of-bounds numeric edits that the reducer clamps", () => {
+    it("should accept out-of-bounds integer edits that the reducer clamps", () => {
       expect(validateAction({ type: "INSERT", start: -10, text: "x" }, 5)).toEqual({
         valid: true,
         errors: [],
@@ -910,6 +913,42 @@ describe("Type Guards", () => {
         valid: true,
         errors: [],
       });
+    });
+
+    it("should reject non-integral and non-finite edit positions", () => {
+      expect(validateAction({ type: "INSERT", start: 1.5, text: "x" }).valid).toBe(false);
+      expect(validateAction({ type: "DELETE", start: Number.NaN, end: 2 }).valid).toBe(false);
+      expect(validateAction({ type: "REPLACE", start: 0, end: Infinity, text: "x" }).valid).toBe(
+        false,
+      );
+    });
+
+    it("should reject malformed selection ranges", () => {
+      expect(validateAction({ type: "SET_SELECTION", ranges: [] }).valid).toBe(false);
+      expect(
+        validateAction({ type: "SET_SELECTION", ranges: [{ anchor: 0.5, head: 1 }] }).valid,
+      ).toBe(false);
+      expect(validateAction({ type: "INSERT", start: 0, text: "x", selection: [] }).valid).toBe(
+        false,
+      );
+    });
+
+    it("should reject malformed remote changes and chunk metadata", () => {
+      expect(
+        validateAction({
+          type: "APPLY_REMOTE",
+          changes: [{ type: "delete", start: 0, length: 1.5 }],
+        }).valid,
+      ).toBe(false);
+      expect(
+        validateAction({ type: "LOAD_CHUNK", chunkIndex: -1, data: new Uint8Array() }).valid,
+      ).toBe(false);
+      expect(
+        validateAction({
+          type: "DECLARE_CHUNK_METADATA",
+          metadata: [{ chunkIndex: 0, byteLength: 10, lineCount: Number.NaN }],
+        }).valid,
+      ).toBe(false);
     });
 
     it("should still reject inverted edit ranges", () => {

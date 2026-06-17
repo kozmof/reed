@@ -240,6 +240,48 @@ export type DocumentActionType = keyof typeof DocumentActionTypes;
  */
 export type ContentChangeAction = InsertAction | DeleteAction | ReplaceAction | ApplyRemoteAction;
 
+function isInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value);
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return isInteger(value) && value >= 0;
+}
+
+function isValidEditPosition(value: unknown): value is number {
+  // Local edit positions may be outside document bounds; the reducer clamps them.
+  // They still must be integral and finite so branded offset construction is safe.
+  return isInteger(value);
+}
+
+function isValidTimestamp(value: unknown): boolean {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value));
+}
+
+function isSelectionRange(value: unknown): value is SelectionRange {
+  if (typeof value !== "object" || value === null) return false;
+  const range = value as Partial<SelectionRange>;
+  return isNonNegativeInteger(range.anchor) && isNonNegativeInteger(range.head);
+}
+
+function isSelectionRangeArray(value: unknown): value is readonly SelectionRange[] {
+  return Array.isArray(value) && value.length > 0 && value.every(isSelectionRange);
+}
+
+function isOptionalSelection(value: unknown): value is readonly SelectionRange[] | undefined {
+  return value === undefined || isSelectionRangeArray(value);
+}
+
+function isChunkMetadata(value: unknown): value is ChunkMetadata {
+  if (typeof value !== "object" || value === null) return false;
+  const metadata = value as Partial<ChunkMetadata>;
+  return (
+    isNonNegativeInteger(metadata.chunkIndex) &&
+    isNonNegativeInteger(metadata.byteLength) &&
+    isNonNegativeInteger(metadata.lineCount)
+  );
+}
+
 // =============================================================================
 // Action Type Guards
 // =============================================================================
@@ -267,73 +309,7 @@ export function isHistoryAction(
  * Useful for validating actions from external sources.
  */
 export function isDocumentAction(value: unknown): value is DocumentAction {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-
-  const action = value as { type?: unknown };
-
-  if (typeof action.type !== "string" || !(action.type in DocumentActionTypes)) {
-    return false;
-  }
-
-  const type = action.type as DocumentActionType;
-
-  switch (type) {
-    case "INSERT":
-      return (
-        typeof (action as InsertAction).start === "number" &&
-        typeof (action as InsertAction).text === "string"
-      );
-    case "DELETE":
-      return (
-        typeof (action as DeleteAction).start === "number" &&
-        typeof (action as DeleteAction).end === "number"
-      );
-    case "REPLACE":
-      return (
-        typeof (action as ReplaceAction).start === "number" &&
-        typeof (action as ReplaceAction).end === "number" &&
-        typeof (action as ReplaceAction).text === "string"
-      );
-    case "SET_SELECTION":
-      return Array.isArray((action as SetSelectionAction).ranges);
-    case "UNDO":
-    case "REDO":
-    case "HISTORY_CLEAR":
-      return true;
-    case "APPLY_REMOTE": {
-      const remote = action as ApplyRemoteAction;
-      if (!Array.isArray(remote.changes)) return false;
-      return remote.changes.every(
-        (c) =>
-          (c.type === "insert" || c.type === "delete") &&
-          typeof c.start === "number" &&
-          (c.type !== "insert" || typeof c.text === "string") &&
-          (c.type !== "delete" || typeof c.length === "number"),
-      );
-    }
-    case "LOAD_CHUNK":
-      return (
-        typeof (action as LoadChunkAction).chunkIndex === "number" &&
-        // ReadonlyUint8Array is a compile-time alias; Uint8Array is the correct runtime check.
-        (action as LoadChunkAction).data instanceof Uint8Array
-      );
-    case "EVICT_CHUNK":
-      return typeof (action as EvictChunkAction).chunkIndex === "number";
-    case "DECLARE_CHUNK_METADATA": {
-      const decl = action as DeclareChunkMetadataAction;
-      if (!Array.isArray(decl.metadata)) return false;
-      return decl.metadata.every(
-        (m) =>
-          typeof m.chunkIndex === "number" &&
-          typeof m.byteLength === "number" &&
-          typeof m.lineCount === "number",
-      );
-    }
-    default:
-      return ((_: never) => false)(type);
-  }
+  return validateAction(value).valid;
 }
 
 // =============================================================================
@@ -354,9 +330,10 @@ export interface ActionValidationResult {
  * Validate an action with detailed error messages.
  * Validates action shape and invariants that the reducer does not normalize away.
  *
- * Numeric edit positions are intentionally not rejected for being outside
- * `documentLength`: the reducer clamps them to document bounds as part of its
- * fail-soft input handling.
+ * Numeric edit positions may be outside `documentLength`: the reducer clamps
+ * them to document bounds as part of its fail-soft input handling. The validator
+ * still rejects non-integral, NaN, and infinite positions because those cannot
+ * be safely converted to branded offsets.
  *
  * @example
  * ```typescript
@@ -367,12 +344,15 @@ export interface ActionValidationResult {
  * ```
  *
  * @param value - Value to validate as an action
- * @param documentLength - Optional document length for bounds checking
+ * @param documentLength - Optional current document length; validated when provided
  * @returns Validation result with errors array
  */
 export function validateAction(value: unknown, documentLength?: number): ActionValidationResult {
   const errors: string[] = [];
-  void documentLength;
+
+  if (documentLength !== undefined && !isNonNegativeInteger(documentLength)) {
+    errors.push("documentLength must be a non-negative integer when provided");
+  }
 
   // Basic type check
   if (typeof value !== "object" || value === null) {
@@ -398,58 +378,78 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
   switch (type) {
     case "INSERT": {
       const insertAction = action as Partial<InsertAction>;
-      if (typeof insertAction.start !== "number") {
-        errors.push('INSERT action requires a numeric "start" property');
+      if (!isValidEditPosition(insertAction.start)) {
+        errors.push('INSERT action requires an integer "start" property');
       }
       if (typeof insertAction.text !== "string") {
         errors.push('INSERT action requires a string "text" property');
+      }
+      if (!isValidTimestamp(insertAction.timestamp)) {
+        errors.push('INSERT action "timestamp" must be a finite number when provided');
+      }
+      if (!isOptionalSelection(insertAction.selection)) {
+        errors.push('INSERT action "selection" must be a non-empty array of selection ranges');
       }
       break;
     }
 
     case "DELETE": {
       const deleteAction = action as Partial<DeleteAction>;
-      if (typeof deleteAction.start !== "number") {
-        errors.push('DELETE action requires a numeric "start" property');
+      if (!isValidEditPosition(deleteAction.start)) {
+        errors.push('DELETE action requires an integer "start" property');
       }
-      if (typeof deleteAction.end !== "number") {
-        errors.push('DELETE action requires a numeric "end" property');
+      if (!isValidEditPosition(deleteAction.end)) {
+        errors.push('DELETE action requires an integer "end" property');
       }
-      if (typeof deleteAction.start === "number" && typeof deleteAction.end === "number") {
+      if (isValidEditPosition(deleteAction.start) && isValidEditPosition(deleteAction.end)) {
         if (deleteAction.start > deleteAction.end) {
           errors.push(
             `DELETE start (${deleteAction.start}) cannot be greater than end (${deleteAction.end})`,
           );
         }
       }
+      if (!isValidTimestamp(deleteAction.timestamp)) {
+        errors.push('DELETE action "timestamp" must be a finite number when provided');
+      }
+      if (!isOptionalSelection(deleteAction.selection)) {
+        errors.push('DELETE action "selection" must be a non-empty array of selection ranges');
+      }
       break;
     }
 
     case "REPLACE": {
       const replaceAction = action as Partial<ReplaceAction>;
-      if (typeof replaceAction.start !== "number") {
-        errors.push('REPLACE action requires a numeric "start" property');
+      if (!isValidEditPosition(replaceAction.start)) {
+        errors.push('REPLACE action requires an integer "start" property');
       }
-      if (typeof replaceAction.end !== "number") {
-        errors.push('REPLACE action requires a numeric "end" property');
+      if (!isValidEditPosition(replaceAction.end)) {
+        errors.push('REPLACE action requires an integer "end" property');
       }
       if (typeof replaceAction.text !== "string") {
         errors.push('REPLACE action requires a string "text" property');
       }
-      if (typeof replaceAction.start === "number" && typeof replaceAction.end === "number") {
+      if (isValidEditPosition(replaceAction.start) && isValidEditPosition(replaceAction.end)) {
         if (replaceAction.start > replaceAction.end) {
           errors.push(
             `REPLACE start (${replaceAction.start}) cannot be greater than end (${replaceAction.end})`,
           );
         }
       }
+      if (!isValidTimestamp(replaceAction.timestamp)) {
+        errors.push('REPLACE action "timestamp" must be a finite number when provided');
+      }
+      if (!isOptionalSelection(replaceAction.selection)) {
+        errors.push('REPLACE action "selection" must be a non-empty array of selection ranges');
+      }
       break;
     }
 
     case "SET_SELECTION": {
       const selectionAction = action as Partial<SetSelectionAction>;
-      if (!Array.isArray(selectionAction.ranges)) {
-        errors.push('SET_SELECTION action requires an array "ranges" property');
+      if (!isSelectionRangeArray(selectionAction.ranges)) {
+        errors.push(
+          'SET_SELECTION action requires a non-empty array "ranges" property with valid selection ranges',
+        );
       }
       break;
     }
@@ -465,18 +465,25 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
         errors.push('APPLY_REMOTE action requires an array "changes" property');
       } else {
         for (let i = 0; i < remoteAction.changes.length; i++) {
-          const c = remoteAction.changes[i] as Partial<RemoteChange>;
-          if (c.type !== "insert" && c.type !== "delete") {
+          const c = remoteAction.changes[i] as unknown;
+          if (typeof c !== "object" || c === null) {
+            errors.push(`APPLY_REMOTE changes[${i}] must be an object`);
+            continue;
+          }
+          const change = c as Partial<RemoteChange>;
+          if (change.type !== "insert" && change.type !== "delete") {
             errors.push(`APPLY_REMOTE changes[${i}].type must be 'insert' or 'delete'`);
           }
-          if (typeof c.start !== "number") {
-            errors.push(`APPLY_REMOTE changes[${i}].start must be a number`);
+          if (!isNonNegativeInteger(change.start)) {
+            errors.push(`APPLY_REMOTE changes[${i}].start must be a non-negative integer`);
           }
-          if (c.type === "insert" && typeof c.text !== "string") {
+          if (change.type === "insert" && typeof change.text !== "string") {
             errors.push(`APPLY_REMOTE changes[${i}].text must be a string for insert changes`);
           }
-          if (c.type === "delete" && typeof c.length !== "number") {
-            errors.push(`APPLY_REMOTE changes[${i}].length must be a number for delete changes`);
+          if (change.type === "delete" && !isNonNegativeInteger(change.length)) {
+            errors.push(
+              `APPLY_REMOTE changes[${i}].length must be a non-negative integer for delete changes`,
+            );
           }
         }
       }
@@ -485,8 +492,8 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
 
     case "LOAD_CHUNK": {
       const loadAction = action as Partial<LoadChunkAction>;
-      if (typeof loadAction.chunkIndex !== "number") {
-        errors.push('LOAD_CHUNK action requires a numeric "chunkIndex" property');
+      if (!isNonNegativeInteger(loadAction.chunkIndex)) {
+        errors.push('LOAD_CHUNK action requires a non-negative integer "chunkIndex" property');
       }
       if (!(loadAction.data instanceof Uint8Array)) {
         errors.push('LOAD_CHUNK action requires a Uint8Array "data" property');
@@ -496,8 +503,8 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
 
     case "EVICT_CHUNK": {
       const evictAction = action as Partial<EvictChunkAction>;
-      if (typeof evictAction.chunkIndex !== "number") {
-        errors.push('EVICT_CHUNK action requires a numeric "chunkIndex" property');
+      if (!isNonNegativeInteger(evictAction.chunkIndex)) {
+        errors.push('EVICT_CHUNK action requires a non-negative integer "chunkIndex" property');
       }
       break;
     }
@@ -508,15 +515,11 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
         errors.push('DECLARE_CHUNK_METADATA action requires an array "metadata" property');
       } else {
         for (let i = 0; i < declAction.metadata.length; i++) {
-          const m = declAction.metadata[i] as Partial<ChunkMetadata>;
-          if (typeof m.chunkIndex !== "number") {
-            errors.push(`DECLARE_CHUNK_METADATA metadata[${i}].chunkIndex must be a number`);
-          }
-          if (typeof m.byteLength !== "number") {
-            errors.push(`DECLARE_CHUNK_METADATA metadata[${i}].byteLength must be a number`);
-          }
-          if (typeof m.lineCount !== "number") {
-            errors.push(`DECLARE_CHUNK_METADATA metadata[${i}].lineCount must be a number`);
+          const m = declAction.metadata[i] as unknown;
+          if (!isChunkMetadata(m)) {
+            errors.push(
+              `DECLARE_CHUNK_METADATA metadata[${i}] must include non-negative integer chunkIndex, byteLength, and lineCount`,
+            );
           }
         }
       }
