@@ -182,6 +182,12 @@ export interface ReconcilableDocumentStore extends DocumentStore, TransactionCon
    * ```
    */
   whenReconciled(): Promise<DocumentState<"eager">>;
+
+  /**
+   * Cancel any pending background maintenance owned by this store.
+   * Call when permanently discarding a store instance.
+   */
+  dispose(): void;
 }
 
 /**

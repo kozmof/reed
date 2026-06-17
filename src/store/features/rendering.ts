@@ -3,11 +3,7 @@
  * Provides efficient computation of visible lines and viewport management.
  */
 
-import type {
-  DocumentState,
-  SelectionRange,
-  CharSelectionRange,
-} from "../../types/state.ts";
+import type { DocumentState, SelectionRange, CharSelectionRange } from "../../types/state.ts";
 import { byteOffset, charOffset, addByteOffset, type ByteOffset } from "../../types/branded.ts";
 import {
   $prove,
@@ -319,7 +315,11 @@ export function estimateLineHeight(line: VisibleLine, config: LineHeightConfig):
  * Compute wrapped line height from rendered line content.
  * Uses content with any CR/LF/CRLF terminator already stripped.
  */
-function wrappedHeight(contentLength: number, charsPerLine: number, baseLineHeight: number): number {
+function wrappedHeight(
+  contentLength: number,
+  charsPerLine: number,
+  baseLineHeight: number,
+): number {
   const wrappedLines = charsPerLine > 0 ? Math.ceil(contentLength / charsPerLine) || 1 : 1;
   return wrappedLines * baseLineHeight;
 }
@@ -370,8 +370,7 @@ export function estimateTotalHeight(
     }
   }
 
-  const avgLineHeight =
-    sampledLines > 0 ? sampleHeight / sampledLines : config.baseLineHeight;
+  const avgLineHeight = sampledLines > 0 ? sampleHeight / sampledLines : config.baseLineHeight;
 
   return $proveCtx("O(n)", $lift("O(n)", Math.ceil(totalLines * avgLineHeight)));
 }

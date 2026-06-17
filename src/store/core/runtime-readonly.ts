@@ -2,13 +2,7 @@ import type { ReadonlyUint8Array } from "../../types/branded.ts";
 
 const READONLY_UINT8_ARRAY_ERROR = "Cannot mutate a read-only Uint8Array";
 
-const UINT8_ARRAY_MUTATORS = new Set([
-  "copyWithin",
-  "fill",
-  "reverse",
-  "set",
-  "sort",
-]);
+const UINT8_ARRAY_MUTATORS = new Set(["copyWithin", "fill", "reverse", "set", "sort"]);
 
 const rawBytesByReadonly = new WeakMap<ReadonlyUint8Array, Uint8Array>();
 const readonlyBytesByRaw = new WeakMap<Uint8Array, ReadonlyUint8Array>();
@@ -40,8 +34,7 @@ export function asReadonlyUint8Array(bytes: Uint8Array | ReadonlyUint8Array): Re
       }
 
       if (prop === "subarray") {
-        return (begin?: number, end?: number) =>
-          asReadonlyUint8Array(target.subarray(begin, end));
+        return (begin?: number, end?: number) => asReadonlyUint8Array(target.subarray(begin, end));
       }
 
       if (prop === "slice") {
@@ -161,10 +154,7 @@ class ReadonlySetView<T> implements ReadonlySet<T> {
     return this.#set.has(value);
   }
 
-  forEach(
-    callbackfn: (value: T, value2: T, set: ReadonlySet<T>) => void,
-    thisArg?: unknown,
-  ): void {
+  forEach(callbackfn: (value: T, value2: T, set: ReadonlySet<T>) => void, thisArg?: unknown): void {
     this.#set.forEach((value) => {
       callbackfn.call(thisArg, value, value, this);
     });

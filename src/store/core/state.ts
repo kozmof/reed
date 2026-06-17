@@ -60,9 +60,7 @@ function freezeChunkMetadata(metadata: ChunkMetadata): ChunkMetadata {
   return Object.isFrozen(metadata) ? metadata : Object.freeze({ ...metadata });
 }
 
-function normalizeChunkMap(
-  chunkMap: PieceTableState["chunkMap"],
-): PieceTableState["chunkMap"] {
+function normalizeChunkMap(chunkMap: PieceTableState["chunkMap"]): PieceTableState["chunkMap"] {
   if (isReadonlyMapView(chunkMap)) {
     return chunkMap;
   }

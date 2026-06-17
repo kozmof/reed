@@ -2,10 +2,22 @@
   "name": "reed",
   "version": "0.0.0",
   "private": true,
+  "files": [
+    "dist"
+  ],
   "type": "module",
+  "main": "./dist/reed.js",
+  "module": "./dist/reed.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/reed.js"
+    }
+  },
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && tsc -p tsconfig.types.json",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

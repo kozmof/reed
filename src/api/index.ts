@@ -1,7 +1,7 @@
 /**
  * Complexity-stratified and domain-categorized API namespaces.
  *
- * - `store.*`     — store lifecycle, state factories, mutations, reducer, actions, type guards
+ * - `store.*`     — store lifecycle, actions, type guards, and unsafe low-level helpers
  * - `query.*`     — O(1) and O(log n) read operations (tree-based lookups)
  * - `scan.*`      — O(n) operations (full document traversals)
  * - `events.*`    — event emitter and document event factories

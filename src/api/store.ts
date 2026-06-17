@@ -1,5 +1,5 @@
 /**
- * Store namespace — store lifecycle, state factories, mutations, reducer, actions, and type guards.
+ * Store namespace — store lifecycle, actions, type guards, and explicitly unsafe low-level helpers.
  */
 
 import type { DocumentState } from "../types/state.ts";
@@ -59,57 +59,10 @@ export const store = {
   isDocumentStore,
   withTransaction,
 
-  // Reducer
-  documentReducer,
-
   // Actions
   DocumentActions,
   serializeAction,
   deserializeAction,
-
-  // State factories
-  createInitialState,
-  createEmptyPieceTableState,
-  createPieceTableState,
-  createPieceNode,
-  createEmptyLineIndexState,
-  createLineIndexState,
-  createLineIndexNode,
-  createInitialSelectionState,
-  createInitialHistoryState,
-  createInitialMetadata,
-
-  // State builders
-  withState,
-  withPieceNode,
-  withLineIndexNode,
-
-  // Piece table mutations
-  pieceTableInsert,
-  pieceTableDelete,
-
-  // Line index mutations
-  lineIndexInsert,
-  lineIndexDelete,
-  lineIndexInsertLazy,
-  lineIndexDeleteLazy,
-
-  // Reconciliation — prefer reconcileNow() / setViewport() over reconcileRange() directly.
-  // reconcileRange is a low-level primitive that requires callers to understand dirty-range
-  // semantics (version parameter, line bounds). See its JSDoc for details.
-  reconcileRange,
-  reconcileFull,
-  reconcileViewport,
-
-  // Offset conversion
-  charToByteOffset,
-  byteToCharOffset,
-
-  // Buffer access
-  getPieceBufferRef,
-  getBuffer,
-  getBufferSlice,
-  getPieceBuffer,
 
   // Type guards
   isTextEditAction,
@@ -119,6 +72,58 @@ export const store = {
 
   // Eviction helpers
   didEvict,
+
+  /**
+   * Low-level primitives that can bypass store invariants when composed incorrectly.
+   * Prefer the store lifecycle, action creators, query, scan, rendering, history,
+   * and diff namespaces for application code.
+   */
+  unsafe: {
+    // Reducer
+    documentReducer,
+
+    // State factories
+    createInitialState,
+    createEmptyPieceTableState,
+    createPieceTableState,
+    createPieceNode,
+    createEmptyLineIndexState,
+    createLineIndexState,
+    createLineIndexNode,
+    createInitialSelectionState,
+    createInitialHistoryState,
+    createInitialMetadata,
+
+    // State builders
+    withState,
+    withPieceNode,
+    withLineIndexNode,
+
+    // Piece table mutations
+    pieceTableInsert,
+    pieceTableDelete,
+
+    // Line index mutations
+    lineIndexInsert,
+    lineIndexDelete,
+    lineIndexInsertLazy,
+    lineIndexDeleteLazy,
+
+    // Reconciliation primitives
+    reconcileRange,
+    reconcileFull,
+    reconcileViewport,
+
+    // Offset conversion
+    charToByteOffset,
+    byteToCharOffset,
+
+    // Buffer access
+    getPieceBufferRef,
+    getBuffer,
+    getBufferSlice,
+    getPieceBuffer,
+  },
 } as const;
 
 /**

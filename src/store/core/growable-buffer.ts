@@ -6,20 +6,20 @@ import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "./runtime-readon
  * for the piece table's add buffer.
  *
  * The buffer grows by doubling when capacity is exceeded.
- * Bytes in [0, length) are valid; bytes beyond are uninitialized.
- * Old snapshots sharing the same backing array safely ignore bytes
- * beyond their own `length` boundary.
+ * Bytes in [0, length) are valid; bytes beyond are private capacity.
+ * Public snapshots expose only a stable valid-length view, so old snapshots
+ * cannot observe later appends that reuse the private backing array.
  */
 export class GrowableBuffer {
   #rawBytes: Uint8Array;
-  /** Backing storage (may have unused capacity beyond `length`) */
+  /** Stable snapshot of the valid bytes in [0, length). */
   readonly bytes: ReadonlyUint8Array;
   /** Number of valid bytes in the buffer */
   readonly length: number;
 
   constructor(bytes: Uint8Array, length: number) {
     this.#rawBytes = bytes;
-    this.bytes = asReadonlyUint8Array(bytes);
+    this.bytes = asReadonlyUint8Array(bytes.slice(0, length));
     this.length = length;
     Object.freeze(this);
   }
@@ -50,10 +50,7 @@ export class GrowableBuffer {
   }
 
   /**
-   * Zero-copy view into the valid portion of the buffer.
-   *
-   * Callers must use `this.length` as the bound — not `this.bytes.length` —
-   * because the backing array may have uninitialized bytes beyond `length`.
+   * Zero-copy read-only view into the private backing array.
    */
   subarray(start: number, end: number): ReadonlyUint8Array {
     if (process.env.NODE_ENV !== "production") {

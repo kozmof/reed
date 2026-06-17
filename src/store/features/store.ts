@@ -44,9 +44,7 @@ const AUTO_COMPACT_MIN_BYTES = 16384; // 16 KB
  * @param config - Optional configuration for the store
  * @returns A new DocumentStore instance
  */
-export function createDocumentStore(
-  config: DocumentStoreConfig = {},
-): ReconcilableDocumentStore {
+export function createDocumentStore(config: DocumentStoreConfig = {}): ReconcilableDocumentStore {
   // Internal mutable state
   let state = createInitialState(config);
   const whenReconciledResolvers: Array<(state: DocumentState<"eager">) => void> = [];
@@ -288,6 +286,10 @@ export function createDocumentStore(
     scheduler.schedule();
   }
 
+  function dispose(): void {
+    scheduler.cancel();
+  }
+
   /**
    * Shared core: apply reconcileFull in-place and return eager state.
    * Does NOT bump version — offset resolution is content-neutral.
@@ -386,6 +388,7 @@ export function createDocumentStore(
     setViewport,
     emergencyReset,
     whenReconciled,
+    dispose,
   };
 }
 
@@ -563,6 +566,7 @@ export function createDocumentStoreWithEvents(
     reconcileIfCurrent: baseStore.reconcileIfCurrent,
     setViewport: baseStore.setViewport,
     whenReconciled: baseStore.whenReconciled,
+    dispose: baseStore.dispose,
 
     // Enhanced methods with event emission and buffer management
     dispatch,

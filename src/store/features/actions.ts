@@ -51,9 +51,7 @@ function encodeBase64(bytes: Uint8Array): string {
   if (remaining === 1) {
     const triplet = bytes[i] << 16;
     output +=
-      BASE64_ALPHABET[(triplet >> 18) & 0x3f] +
-      BASE64_ALPHABET[(triplet >> 12) & 0x3f] +
-      "==";
+      BASE64_ALPHABET[(triplet >> 18) & 0x3f] + BASE64_ALPHABET[(triplet >> 12) & 0x3f] + "==";
   } else if (remaining === 2) {
     const triplet = (bytes[i] << 16) | (bytes[i + 1] << 8);
     output +=

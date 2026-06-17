@@ -21,7 +21,12 @@ import {
   type LogCost,
   type LinearCost,
 } from "../../types/cost-doc.ts";
-import { createPieceNode, createChunkPieceNode, withPieceNode, freezePieceTableState } from "./state.ts";
+import {
+  createPieceNode,
+  createChunkPieceNode,
+  withPieceNode,
+  freezePieceTableState,
+} from "./state.ts";
 import { unwrapReadonlyUint8Array } from "./runtime-readonly.ts";
 import {
   fixInsertWithPath,
@@ -118,7 +123,9 @@ export function getBuffer(state: PieceTableState, ref: BufferReference): Uint8Ar
     case "original":
       return new Uint8Array(unwrapReadonlyUint8Array(state.originalBuffer));
     case "add":
-      return new Uint8Array(unwrapReadonlyUint8Array(state.addBuffer.bytes));
+      return new Uint8Array(
+        unwrapReadonlyUint8Array(state.addBuffer.subarray(0, state.addBuffer.length)),
+      );
     case "chunk": {
       const chunk = state.chunkMap.get(ref.chunkIndex);
       if (chunk === undefined) throw new Error(`Chunk ${ref.chunkIndex} is not loaded`);
@@ -138,9 +145,14 @@ export function getBuffer(state: PieceTableState, ref: BufferReference): Uint8Ar
 export function getBufferSlice(state: PieceTableState, ref: BufferReference): Uint8Array {
   switch (ref.bufferType) {
     case "original":
-      return unwrapReadonlyUint8Array(state.originalBuffer).slice(ref.start, ref.start + ref.length);
+      return unwrapReadonlyUint8Array(state.originalBuffer).slice(
+        ref.start,
+        ref.start + ref.length,
+      );
     case "add":
-      return unwrapReadonlyUint8Array(state.addBuffer.bytes).slice(ref.start, ref.start + ref.length);
+      return unwrapReadonlyUint8Array(
+        state.addBuffer.subarray(ref.start, ref.start + ref.length),
+      ).slice();
     case "chunk": {
       const chunk = state.chunkMap.get(ref.chunkIndex);
       if (chunk === undefined) throw new Error(`Chunk ${ref.chunkIndex} is not loaded`);
@@ -164,7 +176,9 @@ export function getPieceBuffer(state: PieceTableState, piece: PieceNode): Uint8A
     case "original":
       return new Uint8Array(unwrapReadonlyUint8Array(state.originalBuffer));
     case "add":
-      return new Uint8Array(unwrapReadonlyUint8Array(state.addBuffer.bytes));
+      return new Uint8Array(
+        unwrapReadonlyUint8Array(state.addBuffer.subarray(0, state.addBuffer.length)),
+      );
     case "chunk": {
       const chunk = state.chunkMap.get(piece.chunkIndex);
       if (chunk === undefined) throw new Error(`Chunk ${piece.chunkIndex} is not loaded`);
@@ -182,7 +196,7 @@ function getPieceBufferRaw(state: PieceTableState, piece: PieceNode): Uint8Array
     case "original":
       return unwrapReadonlyUint8Array(state.originalBuffer);
     case "add":
-      return unwrapReadonlyUint8Array(state.addBuffer.bytes);
+      return unwrapReadonlyUint8Array(state.addBuffer.subarray(0, state.addBuffer.length));
     case "chunk": {
       const chunk = state.chunkMap.get(piece.chunkIndex);
       if (chunk === undefined) throw new Error(`Chunk ${piece.chunkIndex} is not loaded`);
@@ -512,13 +526,13 @@ export function pieceTableInsert(
     );
     return $proveCtx(
       "O(n)",
-        $lift("O(n)", {
-          state: freezePieceTableState({
-            ...state,
-            root: newRoot,
-            addBuffer,
-            totalLength: textBytes.length,
-          }),
+      $lift("O(n)", {
+        state: freezePieceTableState({
+          ...state,
+          root: newRoot,
+          addBuffer,
+          totalLength: textBytes.length,
+        }),
         insertedByteLength: textBytes.length,
       }),
     );

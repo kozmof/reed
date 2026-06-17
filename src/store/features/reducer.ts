@@ -203,11 +203,7 @@ function hasAddPieceTouchingRange(
 
   let found = false;
   pieceTableInOrder(root, (n, pieceStart) => {
-    if (
-      n.bufferType === "add" &&
-      pieceStart <= rangeEnd &&
-      pieceStart + n.length >= rangeStart
-    ) {
+    if (n.bufferType === "add" && pieceStart <= rangeEnd && pieceStart + n.length >= rangeStart) {
       found = true;
       return true;
     }

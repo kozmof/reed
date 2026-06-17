@@ -137,10 +137,10 @@ describe("State Factories", () => {
       expect(pieceTable.root).toBeNull();
     });
 
-    it("should pre-allocate add buffer", () => {
+    it("should keep add buffer capacity private", () => {
       const pieceTable = createPieceTableState("Hi");
 
-      expect(pieceTable.addBuffer.bytes.length).toBeGreaterThan(0);
+      expect(pieceTable.addBuffer.bytes.length).toBe(0);
       expect(pieceTable.addBuffer.length).toBe(0);
     });
   });
@@ -919,6 +919,26 @@ describe("Type Guards", () => {
     });
   });
 
+  it("should cancel pending maintenance on dispose", () => {
+    let cancelCount = 0;
+    const store = createDocumentStore({
+      scheduler: {
+        schedule() {},
+        cancel() {
+          cancelCount++;
+        },
+        runNow() {},
+        get isRunning() {
+          return false;
+        },
+      },
+    });
+
+    store.dispose();
+
+    expect(cancelCount).toBe(1);
+  });
+
   describe("isDocumentStore", () => {
     it("should return true for valid store", () => {
       const store = createDocumentStore();
@@ -1004,6 +1024,20 @@ describe("Immutability", () => {
     expect(() => {
       (state.pieceTable.addBuffer.bytes as Uint8Array)[0] = 0x58;
     }).toThrow();
+  });
+
+  it("should not expose later add-buffer writes through old snapshots", () => {
+    const store = createDocumentStore();
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "ab"));
+    store.dispatch(DocumentActions.insert(byteOffset(2), "c"));
+    const snapshot = store.getSnapshot();
+
+    store.dispatch(DocumentActions.insert(byteOffset(3), "d"));
+
+    expect(snapshot.pieceTable.addBuffer.length).toBe(3);
+    expect(snapshot.pieceTable.addBuffer.bytes.length).toBe(3);
+    expect(snapshot.pieceTable.addBuffer.bytes[3]).toBeUndefined();
   });
 
   it("should defensively copy chunk bytes before storing them in state", () => {
