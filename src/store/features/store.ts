@@ -24,6 +24,8 @@ import {
   createHistoryChangeEvent,
   createDirtyChangeEvent,
   getAffectedRanges,
+  type EventHandler,
+  type DocumentEventMap,
 } from "./events.js";
 import { isTextEditAction } from "../../types/actions.js";
 import { createReconciliationScheduler } from "./reconciliation-scheduler.js";
@@ -444,6 +446,7 @@ export function createDocumentStoreWithEvents(
 ): DocumentStoreWithEvents {
   const baseStore = createDocumentStore(config);
   const emitter = createEventEmitter();
+  let disposed = false;
 
   // Depth-indexed event buffer. Each entry corresponds to one open transaction level.
   // Index 0 = outermost open transaction, last = innermost.
@@ -453,6 +456,7 @@ export function createDocumentStoreWithEvents(
    * Emit or buffer an event emit function depending on whether a transaction is active.
    */
   function bufferOrEmit(fn: () => void): void {
+    if (disposed) return;
     if (pendingEventLevels.length > 0) {
       pendingEventLevels[pendingEventLevels.length - 1].push(fn);
     } else {
@@ -468,6 +472,8 @@ export function createDocumentStoreWithEvents(
     prevState: DocumentState,
     nextState: DocumentState,
   ): void {
+    if (disposed) return;
+
     // Content change events for local text edits and remote content updates
     if (isTextEditAction(action) || action.type === "APPLY_REMOTE") {
       emitter.emit(
@@ -570,6 +576,29 @@ export function createDocumentStoreWithEvents(
     return baseStore.emergencyReset();
   }
 
+  function dispose(): void {
+    if (disposed) return;
+    disposed = true;
+    pendingEventLevels.length = 0;
+    emitter.removeAllListeners();
+    baseStore.dispose();
+  }
+
+  function addEventListener<K extends keyof DocumentEventMap>(
+    type: K,
+    handler: EventHandler<DocumentEventMap[K]>,
+  ): Unsubscribe {
+    if (disposed) return () => {};
+    return emitter.addEventListener(type, handler);
+  }
+
+  function removeEventListener<K extends keyof DocumentEventMap>(
+    type: K,
+    handler: EventHandler<DocumentEventMap[K]>,
+  ): void {
+    emitter.removeEventListener(type, handler);
+  }
+
   /**
    * Enhanced batch that emits events after all actions complete.
    * Uses the enhanced dispatch (which captures before/after for events)
@@ -593,7 +622,7 @@ export function createDocumentStoreWithEvents(
     reconcileIfCurrent: baseStore.reconcileIfCurrent,
     setViewport: baseStore.setViewport,
     whenReconciled: baseStore.whenReconciled,
-    dispose: baseStore.dispose,
+    dispose,
 
     // Enhanced methods with event emission and buffer management
     dispatch,
@@ -604,8 +633,8 @@ export function createDocumentStoreWithEvents(
     emergencyReset,
 
     // Event emitter methods
-    addEventListener: emitter.addEventListener,
-    removeEventListener: emitter.removeEventListener,
+    addEventListener,
+    removeEventListener,
     events: emitter,
   };
 }

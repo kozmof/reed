@@ -435,4 +435,32 @@ describe("Store event transaction guards", () => {
 
     expect(() => store.rollbackTransaction()).toThrow(/Cannot rollback: no active transaction/);
   });
+
+  it("removes event listeners and suppresses automatic events after dispose", () => {
+    const store = createDocumentStoreWithEvents();
+    const beforeDispose = vi.fn();
+    const afterDispose = vi.fn();
+
+    store.addEventListener("content-change", beforeDispose);
+    store.dispose();
+    store.addEventListener("content-change", afterDispose);
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "x"));
+
+    expect(beforeDispose).not.toHaveBeenCalled();
+    expect(afterDispose).not.toHaveBeenCalled();
+  });
+
+  it("drops buffered transaction events when disposed before commit", () => {
+    const store = createDocumentStoreWithEvents();
+    const handler = vi.fn();
+
+    store.addEventListener("content-change", handler);
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(0), "x"));
+    store.dispose();
+    store.commitTransaction();
+
+    expect(handler).not.toHaveBeenCalled();
+  });
 });
