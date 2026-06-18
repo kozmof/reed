@@ -622,12 +622,18 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
     newState = rebuildLineIndexFromPieceTableState(newState);
   }
 
-  // Apply inline selection so historyPush records the correct selectionBefore
+  // Apply inline selection so historyPush records the correct selectionBefore.
+  // Inline edit selections describe the pre-edit document, so clamp to the original length.
   if (op.selection) {
     newState = withState(newState, {
       selection: Object.freeze({
         ranges: Object.freeze(
-          op.selection.map((r) => Object.freeze({ ...r })),
+          op.selection.map((r) =>
+            Object.freeze({
+              anchor: validatePosition(r.anchor, state.pieceTable.totalLength),
+              head: validatePosition(r.head, state.pieceTable.totalLength),
+            }),
+          ),
         ) as NonEmptyReadonlyArray<SelectionRange>,
         primaryIndex: 0,
       }),

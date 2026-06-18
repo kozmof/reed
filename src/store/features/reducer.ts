@@ -78,7 +78,12 @@ function setSelection(state: DocumentState, ranges: readonly SelectionRange[]): 
   return withState(state, {
     selection: Object.freeze({
       ranges: Object.freeze(
-        ranges.map((r) => Object.freeze({ ...r })),
+        ranges.map((r) =>
+          Object.freeze({
+            anchor: validatePosition(r.anchor, state.pieceTable.totalLength),
+            head: validatePosition(r.head, state.pieceTable.totalLength),
+          }),
+        ),
       ) as NonEmptyReadonlyArray<SelectionRange>,
       primaryIndex: 0,
     }),
@@ -383,42 +388,43 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       let didApplyChange = false;
       for (const change of action.changes) {
         if (change.type === "insert" && change.text.length > 0) {
-          didApplyChange = true;
           // Normalize line endings on remote inserts the same way local inserts are treated,
           // so mixed-origin edits never silently introduce a different line-ending style.
           const insertText = newState.metadata.normalizeInsertedLineEndings
             ? normalizeLineEndings(change.text, newState.metadata.lineEnding)
             : change.text;
-          newState = pieceTableInsert(newState, change.start, insertText).state;
+          if (insertText.length === 0) continue;
+          didApplyChange = true;
+          const position = validatePosition(change.start, newState.pieceTable.totalLength);
+          newState = pieceTableInsert(newState, position, insertText).state;
           const readText = (start: ByteOffset, end: ByteOffset) =>
             getText(newState.pieceTable, start, end);
-          const li = liInsertLazy(
-            newState.lineIndex,
-            change.start,
-            insertText,
-            nextVersion,
-            readText,
-          );
+          const li = liInsertLazy(newState.lineIndex, position, insertText, nextVersion, readText);
           newState = withState(newState, { lineIndex: li });
         } else if (change.type === "delete" && change.length > 0) {
+          const { start, end, valid } = validateRange(
+            change.start,
+            byteOffset(change.start + change.length),
+            newState.pieceTable.totalLength,
+          );
+          if (!valid || end - start <= 0) continue;
           didApplyChange = true;
           // Capture deleted text before deleting for line index update
-          const endPosition = byteOffset(change.start + change.length);
-          const deletedText = getTextRange(newState, change.start, endPosition);
-          const deleteContext = getDeleteBoundaryContext(newState, change.start, endPosition);
+          const deletedText = getTextRange(newState, start, end);
+          const deleteContext = getDeleteBoundaryContext(newState, start, end);
           if (shouldRebuildLineIndexForDelete(deletedText, deleteContext)) {
-            newState = pieceTableDelete(newState, change.start, endPosition);
+            newState = pieceTableDelete(newState, start, end);
             newState = rebuildLineIndexFromPieceTableState(newState);
           } else {
             const li = liDeleteLazy(
               newState.lineIndex,
-              change.start,
-              endPosition,
+              start,
+              end,
               deletedText,
               nextVersion,
               deleteContext,
             );
-            newState = pieceTableDelete(newState, change.start, endPosition);
+            newState = pieceTableDelete(newState, start, end);
             newState = withState(newState, { lineIndex: li });
           }
         }

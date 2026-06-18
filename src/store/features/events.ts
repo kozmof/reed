@@ -303,6 +303,30 @@ export function createDirtyChangeEvent(isDirty: boolean, state: DocumentState): 
   });
 }
 
+function clampPosition(position: number, totalLength: number): ByteOffset {
+  if (!Number.isFinite(position)) return byteOffset(0);
+  return byteOffset(Math.max(0, Math.min(position, totalLength)));
+}
+
+function normalizeLineEndings(text: string, lineEnding: "lf" | "crlf" | "cr"): string {
+  if (!text.includes("\r") && !text.includes("\n")) return text;
+  const lf = text.replace(/\r\n|\r/g, "\n");
+  switch (lineEnding) {
+    case "lf":
+      return lf;
+    case "crlf":
+      return lf.replace(/\n/g, "\r\n");
+    case "cr":
+      return lf.replace(/\n/g, "\r");
+  }
+}
+
+function insertedTextForState(actionText: string, state: DocumentState): string {
+  return state.metadata.normalizeInsertedLineEndings
+    ? normalizeLineEndings(actionText, state.metadata.lineEnding)
+    : actionText;
+}
+
 /**
  * Determine the affected byte ranges for a document action.
  *
@@ -313,33 +337,70 @@ export function createDirtyChangeEvent(isDirty: boolean, state: DocumentState): 
  */
 export function getAffectedRanges(
   action: DocumentAction,
+  prevState?: DocumentState,
+  nextState?: DocumentState,
 ): readonly (readonly [ByteOffset, ByteOffset])[] {
   switch (action.type) {
-    case "INSERT":
-      return [[action.start, byteOffset(action.start + utf8ByteLength(action.text))]];
-    case "DELETE":
-      return [[action.start, action.end]];
+    case "INSERT": {
+      const start =
+        prevState === undefined
+          ? action.start
+          : clampPosition(action.start, prevState.pieceTable.totalLength);
+      const text =
+        prevState === undefined ? action.text : insertedTextForState(action.text, prevState);
+      return [[start, byteOffset(start + utf8ByteLength(text))]];
+    }
+    case "DELETE": {
+      if (prevState === undefined) return [[action.start, action.end]];
+      const start = clampPosition(action.start, prevState.pieceTable.totalLength);
+      const end = clampPosition(action.end, prevState.pieceTable.totalLength);
+      return [[start, end]];
+    }
     case "REPLACE": {
-      const insertLength = utf8ByteLength(action.text);
-      return [[action.start, byteOffset(action.start + insertLength)]];
+      const start =
+        prevState === undefined
+          ? action.start
+          : clampPosition(action.start, prevState.pieceTable.totalLength);
+      const text =
+        prevState === undefined ? action.text : insertedTextForState(action.text, prevState);
+      const insertLength = utf8ByteLength(text);
+      return [[start, byteOffset(start + insertLength)]];
     }
     case "APPLY_REMOTE": {
       type Entry = { start: number; size: number; byteChange: number };
       const entries: Entry[] = [];
+      let totalLength = prevState?.pieceTable.totalLength;
 
       for (const change of action.changes) {
         if (change.type === "insert" && change.text) {
-          const len = utf8ByteLength(change.text);
-          if (len > 0) entries.push({ start: change.start, size: len, byteChange: len });
+          const text =
+            prevState === undefined ? change.text : insertedTextForState(change.text, prevState);
+          const len = utf8ByteLength(text);
+          if (len > 0) {
+            const start =
+              totalLength === undefined ? change.start : clampPosition(change.start, totalLength);
+            entries.push({ start, size: len, byteChange: len });
+            if (totalLength !== undefined) totalLength += len;
+          }
         } else if (
           change.type === "delete" &&
           typeof change.length === "number" &&
           change.length > 0
         ) {
-          entries.push({ start: change.start, size: change.length, byteChange: -change.length });
+          const start =
+            totalLength === undefined ? change.start : clampPosition(change.start, totalLength);
+          const rawEnd = byteOffset(change.start + change.length);
+          const end = totalLength === undefined ? rawEnd : clampPosition(rawEnd, totalLength);
+          const size = end - start;
+          if (size > 0) {
+            entries.push({ start, size, byteChange: -size });
+            if (totalLength !== undefined) totalLength -= size;
+          }
         }
       }
 
+      if (nextState !== undefined && nextState === prevState)
+        return [[byteOffset(0), byteOffset(0)]];
       if (entries.length === 0) return [[byteOffset(0), byteOffset(0)]];
 
       // Adjust each entry's start to nextState coordinate space.

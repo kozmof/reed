@@ -478,7 +478,12 @@ export function createDocumentStoreWithEvents(
     if (isTextEditAction(action) || action.type === "APPLY_REMOTE") {
       emitter.emit(
         "content-change",
-        createContentChangeEvent(action, prevState, nextState, getAffectedRanges(action)),
+        createContentChangeEvent(
+          action,
+          prevState,
+          nextState,
+          getAffectedRanges(action, prevState, nextState),
+        ),
       );
     }
 

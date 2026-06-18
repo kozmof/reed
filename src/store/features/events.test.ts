@@ -418,6 +418,40 @@ describe("Store event integration", () => {
     const event = handler.mock.calls[0][0] as { isDirty: boolean };
     expect(event.isDirty).toBe(true);
   });
+
+  it("should not emit content-change for out-of-bounds remote deletes", () => {
+    const store = createDocumentStoreWithEvents({ content: "Hello" });
+    const handler = vi.fn();
+    store.addEventListener("content-change", handler);
+
+    const before = store.getSnapshot();
+    const after = store.dispatch(
+      DocumentActions.applyRemote([
+        { type: "delete", start: byteOffset(99), length: byteLength(5) },
+      ]),
+    );
+
+    expect(after).toBe(before);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("should emit affected ranges for normalized inserted text", () => {
+    const store = createDocumentStoreWithEvents({
+      content: "a\r\n",
+      lineEnding: "crlf",
+      normalizeInsertedLineEndings: true,
+    });
+    const handler = vi.fn();
+    store.addEventListener("content-change", handler);
+
+    store.dispatch(DocumentActions.insert(byteOffset(3), "\n"));
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const event = handler.mock.calls[0][0] as {
+      affectedRanges: readonly (readonly [number, number])[];
+    };
+    expect(event.affectedRanges).toEqual([[3, 5]]);
+  });
 });
 
 describe("Store event transaction guards", () => {

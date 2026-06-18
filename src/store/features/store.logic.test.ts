@@ -371,6 +371,20 @@ describe("Document Reducer", () => {
 
       expect(newState.pieceTable.addBuffer.length).toBeGreaterThanOrEqual(2000);
     });
+
+    it("should clamp inline edit selection to pre-edit document bounds", () => {
+      const state = createInitialState({ content: "Hello" });
+      const newState = documentReducer(
+        state,
+        DocumentActions.insert(byteOffset(5), "!", [
+          { anchor: byteOffset(99), head: byteOffset(2) },
+        ]),
+      );
+
+      const entry = pstackPeek(newState.history.undoStack)!;
+      expect(entry.selectionBefore.ranges[0].anchor).toBe(5);
+      expect(entry.selectionBefore.ranges[0].head).toBe(2);
+    });
   });
 
   describe("DELETE action", () => {
@@ -439,6 +453,17 @@ describe("Document Reducer", () => {
 
       expect(newState.selection.ranges[0].anchor).toBe(1);
       expect(newState.selection.ranges[0].head).toBe(4);
+    });
+
+    it("should clamp selection ranges to document bounds", () => {
+      const state = createInitialState({ content: "Hello" });
+      const newState = documentReducer(
+        state,
+        DocumentActions.setSelection([{ anchor: byteOffset(999), head: byteOffset(3) }]),
+      );
+
+      expect(newState.selection.ranges[0].anchor).toBe(5);
+      expect(newState.selection.ranges[0].head).toBe(3);
     });
 
     it("should increment version", () => {
@@ -643,6 +668,31 @@ describe("Document Reducer", () => {
       );
 
       expect(newState).toBe(state);
+    });
+
+    it("should return the same state for remote deletes outside document bounds", () => {
+      const state = createInitialState({ content: "Hello" });
+      const newState = documentReducer(
+        state,
+        DocumentActions.applyRemote([
+          { type: "delete", start: byteOffset(99), length: byteLength(5) },
+        ]),
+      );
+
+      expect(newState).toBe(state);
+    });
+
+    it("should use clamped positions for remote insert content and line index updates", () => {
+      const state = createInitialState({ content: "Hello" });
+      const newState = documentReducer(
+        state,
+        DocumentActions.applyRemote([{ type: "insert", start: byteOffset(99), text: "\nWorld" }]),
+      );
+
+      expect(
+        getText(newState.pieceTable, byteOffset(0), byteOffset(newState.pieceTable.totalLength)),
+      ).toBe("Hello\nWorld");
+      expect(getLineCountFromIndex(newState.lineIndex)).toBe(2);
     });
   });
 
