@@ -65,6 +65,11 @@ function encodeBase64(bytes: Uint8Array): string {
   return output;
 }
 
+function decodeBase64Char(base64: string, index: number): number {
+  const code = base64.charCodeAt(index);
+  return code <= 0xff ? BASE64_DECODE_TABLE[code] : 255;
+}
+
 function decodeBase64(base64: string): Uint8Array {
   if (base64.length % 4 !== 0) {
     throw new Error("Invalid base64 payload length");
@@ -75,8 +80,8 @@ function decodeBase64(base64: string): Uint8Array {
   let offset = 0;
 
   for (let i = 0; i < base64.length; i += 4) {
-    const c0 = BASE64_DECODE_TABLE[base64.charCodeAt(i)];
-    const c1 = BASE64_DECODE_TABLE[base64.charCodeAt(i + 1)];
+    const c0 = decodeBase64Char(base64, i);
+    const c1 = decodeBase64Char(base64, i + 1);
     const ch2 = base64[i + 2];
     const ch3 = base64[i + 3];
 
@@ -90,8 +95,8 @@ function decodeBase64(base64: string): Uint8Array {
       throw new Error("Invalid base64 payload");
     }
 
-    const c2 = ch2 === "=" ? 0 : BASE64_DECODE_TABLE[base64.charCodeAt(i + 2)];
-    const c3 = ch3 === "=" ? 0 : BASE64_DECODE_TABLE[base64.charCodeAt(i + 3)];
+    const c2 = ch2 === "=" ? 0 : decodeBase64Char(base64, i + 2);
+    const c3 = ch3 === "=" ? 0 : decodeBase64Char(base64, i + 3);
     if ((ch2 !== "=" && c2 === 255) || (ch3 !== "=" && c3 === 255)) {
       throw new Error("Invalid base64 payload");
     }
@@ -122,6 +127,51 @@ function freezeRemoteChanges(changes: readonly RemoteChange[]): readonly RemoteC
 
 function freezeChunkMetadata(metadata: readonly ChunkMetadata[]): readonly ChunkMetadata[] {
   return Object.freeze(metadata.map((entry) => Object.freeze({ ...entry })));
+}
+
+function withOptionalTimestamp<T extends InsertAction | DeleteAction | ReplaceAction>(
+  action: T,
+  timestamp: number | undefined,
+): T {
+  return timestamp === undefined
+    ? action
+    : (Object.freeze({ ...action, timestamp }) as unknown as T);
+}
+
+function normalizeDeserializedAction(action: DocumentAction): DocumentAction {
+  switch (action.type) {
+    case "INSERT":
+      return withOptionalTimestamp(
+        DocumentActions.insert(action.start, action.text, action.selection),
+        action.timestamp,
+      );
+    case "DELETE":
+      return withOptionalTimestamp(
+        DocumentActions.delete(action.start, action.end, action.selection),
+        action.timestamp,
+      );
+    case "REPLACE":
+      return withOptionalTimestamp(
+        DocumentActions.replace(action.start, action.end, action.text, action.selection),
+        action.timestamp,
+      );
+    case "SET_SELECTION":
+      return DocumentActions.setSelection(action.ranges);
+    case "UNDO":
+      return DocumentActions.undo();
+    case "REDO":
+      return DocumentActions.redo();
+    case "HISTORY_CLEAR":
+      return DocumentActions.historyClear();
+    case "APPLY_REMOTE":
+      return DocumentActions.applyRemote(action.changes);
+    case "LOAD_CHUNK":
+      return DocumentActions.loadChunk(action.chunkIndex, action.data);
+    case "EVICT_CHUNK":
+      return DocumentActions.evictChunk(action.chunkIndex);
+    case "DECLARE_CHUNK_METADATA":
+      return DocumentActions.declareChunkMetadata(action.metadata);
+  }
 }
 
 /**
@@ -313,16 +363,15 @@ export function serializeAction(action: DocumentAction): string {
  */
 export function deserializeAction(json: string): DocumentAction {
   const parsed = JSON.parse(json);
-  if (
+  const decoded =
     parsed &&
     typeof parsed === "object" &&
     parsed.type === "LOAD_CHUNK" &&
     typeof parsed.data === "string"
-  ) {
-    parsed.data = decodeBase64(parsed.data);
+      ? { ...parsed, data: decodeBase64(parsed.data) }
+      : parsed;
+  if (!isDocumentAction(decoded)) {
+    throw new Error(`Invalid deserialized action: ${JSON.stringify(decoded)}`);
   }
-  if (!isDocumentAction(parsed)) {
-    throw new Error(`Invalid deserialized action: ${JSON.stringify(parsed)}`);
-  }
-  return parsed;
+  return normalizeDeserializedAction(decoded);
 }

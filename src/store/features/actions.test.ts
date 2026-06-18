@@ -138,6 +138,46 @@ describe("serializeAction / deserializeAction", () => {
       expect(Object.isFrozen(action.metadata)).toBe(true);
       expect(Object.isFrozen(action.metadata[0])).toBe(true);
     });
+
+    it("normalizes deserialized edit actions to the same frozen shape", () => {
+      const action = deserializeAction(
+        JSON.stringify({
+          type: "INSERT",
+          start: 0,
+          text: "x",
+          timestamp: 123,
+          selection: [{ anchor: 0, head: 1 }],
+        }),
+      );
+
+      expect(action.type).toBe("INSERT");
+      expect(Object.isFrozen(action)).toBe(true);
+
+      if (action.type === "INSERT") {
+        expect(action.timestamp).toBe(123);
+        expect(action.selection).toEqual([{ anchor: byteOffset(0), head: byteOffset(1) }]);
+        expect(Object.isFrozen(action.selection)).toBe(true);
+        expect(Object.isFrozen(action.selection?.[0])).toBe(true);
+        expect(
+          () =>
+            ((action.selection as unknown as Array<{ anchor: number; head: number }>)[0].head = 2),
+        ).toThrow(TypeError);
+      }
+    });
+
+    it("normalizes deserialized LOAD_CHUNK actions to runtime read-only buffers", () => {
+      const action = deserializeAction(
+        JSON.stringify({ type: "LOAD_CHUNK", chunkIndex: 0, data: "AQID" }),
+      );
+
+      expect(action.type).toBe("LOAD_CHUNK");
+      expect(Object.isFrozen(action)).toBe(true);
+
+      if (action.type === "LOAD_CHUNK") {
+        expect(Array.from(action.data)).toEqual([1, 2, 3]);
+        expect(() => ((action.data as Uint8Array)[0] = 9)).toThrow(TypeError);
+      }
+    });
   });
 
   // =============================================================================
@@ -168,6 +208,15 @@ describe("serializeAction / deserializeAction", () => {
       expect(() =>
         deserializeAction(JSON.stringify({ type: "LOAD_CHUNK", chunkIndex: -1, data: "" })),
       ).toThrow(/Invalid deserialized action/);
+    });
+
+    it("throws on malformed base64 payloads", () => {
+      expect(() =>
+        deserializeAction(JSON.stringify({ type: "LOAD_CHUNK", chunkIndex: 0, data: "AA*A" })),
+      ).toThrow(/Invalid base64 payload/);
+      expect(() =>
+        deserializeAction(JSON.stringify({ type: "LOAD_CHUNK", chunkIndex: 0, data: "ĀAAA" })),
+      ).toThrow(/Invalid base64 payload/);
     });
 
     it("throws on non-object input", () => {

@@ -93,6 +93,7 @@ export interface TransactionControl {
   /**
    * Commit the current transaction level.
    * If this is the outermost transaction, listeners are notified and reconciliation is scheduled.
+   * If no transaction is active, this is a no-op.
    * On throw, the store has already called emergencyReset internally.
    */
   commitTransaction(): void;

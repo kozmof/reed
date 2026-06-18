@@ -421,10 +421,13 @@ describe("Store event integration", () => {
 });
 
 describe("Store event transaction guards", () => {
-  it("throws a clear error when committing without an active transaction", () => {
+  it("treats commit without an active transaction as a no-op", () => {
     const store = createDocumentStoreWithEvents();
+    const listener = vi.fn();
+    store.subscribe(listener);
 
-    expect(() => store.commitTransaction()).toThrow(/Cannot commit: no active transaction/);
+    expect(() => store.commitTransaction()).not.toThrow();
+    expect(listener).not.toHaveBeenCalled();
   });
 
   it("throws a clear error when rolling back without an active transaction", () => {

@@ -523,11 +523,13 @@ export function createDocumentStoreWithEvents(
    * Commit the current transaction level.
    * On outermost commit, flushes buffered events after the base store commits.
    * On inner commit, merges buffered events into the parent level.
+   * With no active transaction, this is a no-op to match base store semantics.
    * On throw (from base store), clears all pending event levels.
    */
   function commitTransaction(): void {
     if (pendingEventLevels.length === 0) {
-      throw new Error("Cannot commit: no active transaction");
+      baseStore.commitTransaction();
+      return;
     }
 
     const isOutermost = pendingEventLevels.length === 1;
