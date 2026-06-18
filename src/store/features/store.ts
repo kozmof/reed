@@ -510,6 +510,7 @@ export function createDocumentStoreWithEvents(
    * Enhanced dispatch that buffers or emits events depending on transaction state.
    */
   function dispatch(action: DocumentAction): DocumentState {
+    if (disposed) return baseStore.getSnapshot();
     const prevState = baseStore.getSnapshot();
     const nextState = baseStore.dispatch(action);
 
@@ -526,6 +527,7 @@ export function createDocumentStoreWithEvents(
    * Begin a transaction, pushing a new event buffer level.
    */
   function beginTransaction(): void {
+    if (disposed) return;
     baseStore.beginTransaction();
     pendingEventLevels.push([]);
   }
@@ -538,6 +540,7 @@ export function createDocumentStoreWithEvents(
    * On throw (from base store), clears all pending event levels.
    */
   function commitTransaction(): void {
+    if (disposed) return;
     if (pendingEventLevels.length === 0) {
       baseStore.commitTransaction();
       return;
@@ -565,6 +568,7 @@ export function createDocumentStoreWithEvents(
    * Discards the current depth's buffered events before delegating to the base store.
    */
   function rollbackTransaction(): void {
+    if (disposed) return;
     if (pendingEventLevels.length === 0) {
       throw new Error("Cannot rollback: no active transaction");
     }
@@ -577,6 +581,7 @@ export function createDocumentStoreWithEvents(
    * Emergency reset: clears all pending event levels in addition to base store reset.
    */
   function emergencyReset(): DocumentState | null {
+    if (disposed) return null;
     pendingEventLevels.length = 0;
     return baseStore.emergencyReset();
   }

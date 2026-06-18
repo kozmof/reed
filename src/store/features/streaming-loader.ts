@@ -129,6 +129,15 @@ export function createStreamingDocumentLoader(
 
   async function setViewport(startChunkIndex: number, endChunkIndex: number): Promise<void> {
     if (disposed) return;
+    if (
+      !Number.isInteger(startChunkIndex) ||
+      !Number.isInteger(endChunkIndex) ||
+      startChunkIndex > endChunkIndex
+    ) {
+      throw new RangeError(
+        `setViewport: invalid chunk range [${startChunkIndex}, ${endChunkIndex}]`,
+      );
+    }
     const requestId = ++latestViewportRequestId;
 
     const start = Math.max(0, startChunkIndex);
