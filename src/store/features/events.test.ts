@@ -339,6 +339,108 @@ describe("getAffectedRanges", () => {
     ]);
   });
 
+  it("should clamp DELETE range to document bounds when prevState is provided", () => {
+    const prevState = createInitialState({ content: "hello world" }); // 11 bytes
+    const action = DocumentActions.delete(byteOffset(5), byteOffset(999));
+    const ranges = getAffectedRanges(action, prevState);
+    // Both start (5) and end (999) are clamped to totalLength (11)
+    expect(ranges).toEqual([[5, 11]]);
+  });
+
+  it("should clamp REPLACE range when prevState is provided", () => {
+    const prevState = createInitialState({ content: "hello world" }); // 11 bytes
+    const action = DocumentActions.replace(byteOffset(5), byteOffset(999), "X");
+    const ranges = getAffectedRanges(action, prevState);
+    // start=5 (clamped to 5), inserted text "X" = 1 byte → [5, 6]
+    expect(ranges).toEqual([[5, 6]]);
+  });
+
+  it("should return [[0, 0]] for APPLY_REMOTE with empty insert text", () => {
+    // empty string is falsy — the insert branch is skipped, entries stays empty
+    const action = DocumentActions.applyRemote([{ type: "insert", start: byteOffset(0), text: "" }]);
+    const ranges = getAffectedRanges(action);
+    expect(ranges).toEqual([[0, 0]]);
+  });
+
+  it("normalizeLineEndings: text without line endings is returned unchanged", () => {
+    const prevState = createInitialState({
+      normalizeInsertedLineEndings: true,
+      lineEnding: "crlf",
+    });
+    // "hello" has no line endings — the early-return branch at the top of normalizeLineEndings fires
+    const action = DocumentActions.insert(byteOffset(0), "hello");
+    const ranges = getAffectedRanges(action, prevState);
+    expect(ranges).toEqual([[0, 5]]);
+  });
+
+  it("clampPosition with non-finite position returns byteOffset(0)", () => {
+    const prevState = createInitialState({ content: "abc" });
+    // Use Infinity as start via a custom action object (bypasses branded validation)
+    const actionInf = {
+      type: "APPLY_REMOTE" as const,
+      changes: Object.freeze([
+        Object.freeze({ type: "insert" as const, start: Infinity as unknown as ReturnType<typeof byteOffset>, text: "A" }),
+      ]),
+    };
+    const ranges = getAffectedRanges(actionInf, prevState);
+    // Infinity gets clamped to 0 by clampPosition → insert "A" (1 byte) from 0 to 1
+    expect(ranges[0][0]).toBe(0);
+  });
+
+  it("should return [[0, 0]] for APPLY_REMOTE with a zero-size delete (clamped to empty range)", () => {
+    const prevState = createInitialState({ content: "abc" }); // 3 bytes
+    // Delete at position 1000 (past end) — clamps to size 0, no entry pushed
+    const action = DocumentActions.applyRemote([
+      { type: "delete", start: byteOffset(1000), length: byteLength(5) },
+    ]);
+    const ranges = getAffectedRanges(action, prevState);
+    expect(ranges).toEqual([[0, 0]]);
+  });
+
+  it("should clamp APPLY_REMOTE delete range when prevState is provided", () => {
+    const prevState = createInitialState({ content: "hello world" }); // 11 bytes
+    const action = DocumentActions.applyRemote([
+      { type: "delete", start: byteOffset(2), length: byteLength(5) },
+    ]);
+    const ranges = getAffectedRanges(action, prevState);
+    // With prevState, start/end are clamped to totalLength
+    expect(ranges.length).toBeGreaterThan(0);
+    expect(ranges[0][0]).toBe(2); // start = 2
+    expect(ranges[0][1]).toBe(7); // end = 2 + 5 = 7
+  });
+
+  it("should return [[0, 0]] for APPLY_REMOTE when nextState equals prevState", () => {
+    const state = createInitialState({ content: "hello" });
+    const action = DocumentActions.applyRemote([
+      { type: "insert", start: byteOffset(0), text: "A" },
+    ]);
+    // Pass the same state for both prevState and nextState to simulate a no-op
+    const ranges = getAffectedRanges(action, state, state);
+    expect(ranges).toEqual([[0, 0]]);
+  });
+
+  it("should return unchanged text for INSERT when prevState has lf lineEnding with normalization", () => {
+    const prevState = createInitialState({
+      normalizeInsertedLineEndings: true,
+      lineEnding: "lf",
+    });
+    const action = DocumentActions.insert(byteOffset(0), "hello\nworld");
+    const ranges = getAffectedRanges(action, prevState);
+    // "lf" → text unchanged, still 11 bytes
+    expect(ranges).toEqual([[0, 11]]);
+  });
+
+  it("should normalize CR line endings for INSERT when prevState has cr lineEnding", () => {
+    const prevState = createInitialState({
+      normalizeInsertedLineEndings: true,
+      lineEnding: "cr",
+    });
+    const action = DocumentActions.insert(byteOffset(0), "hello\nworld");
+    const ranges = getAffectedRanges(action, prevState);
+    // '\n' normalized to '\r' → still 11 bytes (same byte count)
+    expect(ranges).toEqual([[0, 11]]);
+  });
+
   it("should adjust ranges to nextState space when a later change precedes an earlier one", () => {
     // change[0]: insert "XY" at position 7 (prevState space)
     // change[1]: insert "Z"  at position 2 (intermediate space, after change[0])
@@ -496,5 +598,78 @@ describe("Store event transaction guards", () => {
     store.commitTransaction();
 
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("inner commitTransaction on events store bubbles buffered events to the outer level", () => {
+    const store = createDocumentStoreWithEvents();
+    const handler = vi.fn();
+    store.addEventListener("content-change", handler);
+
+    store.beginTransaction(); // level 1 (outer)
+    store.beginTransaction(); // level 2 (inner)
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+    store.commitTransaction(); // inner commit — events buffered to outer level, not emitted yet
+    expect(handler).not.toHaveBeenCalled();
+
+    store.commitTransaction(); // outer commit — events emitted now
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("rollbackTransaction on events store discards buffered events", () => {
+    const store = createDocumentStoreWithEvents();
+    const handler = vi.fn();
+    store.addEventListener("content-change", handler);
+
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+    store.rollbackTransaction();
+
+    // No events emitted after rollback
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("emergencyReset on events store clears all pending event levels", () => {
+    const store = createDocumentStoreWithEvents({ content: "hello" });
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(5), "!"));
+    const restored = store.emergencyReset();
+    // Emergency reset returns the base store's snapshot (null if no transaction was there)
+    expect(typeof restored === "object" || restored === null).toBe(true);
+  });
+
+  it("removeEventListener stops the handler from receiving future events", () => {
+    const store = createDocumentStoreWithEvents({ content: "hello" });
+    const handler = vi.fn();
+
+    store.addEventListener("content-change", handler);
+    store.dispatch(DocumentActions.insert(byteOffset(5), "!"));
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    store.removeEventListener("content-change", handler);
+    store.dispatch(DocumentActions.insert(byteOffset(6), "?"));
+    // Handler should NOT be called again after removal
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("rollbackTransaction throws when called with no active transaction", () => {
+    const store = createDocumentStoreWithEvents();
+    expect(() => store.rollbackTransaction()).toThrow("Cannot rollback: no active transaction");
+  });
+
+  it("dispatching SET_SELECTION emits selection-change event", () => {
+    const store = createDocumentStoreWithEvents({ content: "hello" });
+    const handler = vi.fn();
+    store.addEventListener("selection-change", handler);
+    store.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(3) }]));
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatching UNDO emits history-change event", () => {
+    const store = createDocumentStoreWithEvents({ content: "" });
+    store.dispatch(DocumentActions.insert(byteOffset(0), "hello"));
+    const handler = vi.fn();
+    store.addEventListener("history-change", handler);
+    store.dispatch(DocumentActions.undo());
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 });

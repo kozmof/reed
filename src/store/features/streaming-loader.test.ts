@@ -3,6 +3,23 @@ import { createDocumentStore } from "./store.js";
 import { createStreamingDocumentLoader } from "./streaming-loader.js";
 
 describe("StreamingDocumentLoader", () => {
+  it("setViewport throws on invalid chunk range (start > end)", async () => {
+    const store = createDocumentStore({ chunkSize: 1 });
+    const metadata = [
+      { chunkIndex: 0, byteLength: 1, lineCount: 1 },
+      { chunkIndex: 1, byteLength: 1, lineCount: 1 },
+    ];
+    const loader = createStreamingDocumentLoader(
+      store,
+      { loadChunk: async () => new Uint8Array([0]), totalChunkCount: 2 },
+      metadata,
+    );
+    await expect(loader.setViewport(3, 1)).rejects.toThrow(
+      "setViewport: invalid chunk range [3, 1]",
+    );
+    loader.dispose();
+  });
+
   it("rejects non-chunked stores at construction time", () => {
     const store = createDocumentStore();
     const loader = { loadChunk: vi.fn(async () => new Uint8Array([0])) };

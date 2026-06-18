@@ -223,5 +223,58 @@ describe("serializeAction / deserializeAction", () => {
       expect(() => deserializeAction(JSON.stringify(null))).toThrow();
       expect(() => deserializeAction(JSON.stringify(42))).toThrow();
     });
+
+    it("throws on base64 with invalid length (not a multiple of 4)", () => {
+      expect(() =>
+        deserializeAction(JSON.stringify({ type: "LOAD_CHUNK", chunkIndex: 0, data: "ABCDE" })),
+      ).toThrow("Invalid base64 payload length");
+    });
+
+    it("throws on base64 with padding in a non-final block", () => {
+      // "AB==" is valid as a final block but invalid in the middle of a multi-block payload
+      expect(() =>
+        deserializeAction(JSON.stringify({ type: "LOAD_CHUNK", chunkIndex: 0, data: "AB==ABCD" })),
+      ).toThrow("Invalid base64 payload");
+    });
+
+    it("throws on base64 with single '=' without matching '='", () => {
+      // "AB=C": ch2='=' but ch3='C' (not '=') — malformed single-pad
+      expect(() =>
+        deserializeAction(JSON.stringify({ type: "LOAD_CHUNK", chunkIndex: 0, data: "AB=C" })),
+      ).toThrow("Invalid base64 payload");
+    });
+
+    it("deserializes DECLARE_CHUNK_METADATA correctly", () => {
+      const metadata = [{ chunkIndex: 0, byteLength: 100, lineCount: 5 }];
+      const action = deserializeAction(
+        JSON.stringify({ type: "DECLARE_CHUNK_METADATA", metadata }),
+      );
+      expect(action.type).toBe("DECLARE_CHUNK_METADATA");
+      if (action.type === "DECLARE_CHUNK_METADATA") {
+        expect(action.metadata).toEqual(metadata);
+      }
+    });
+  });
+
+  describe("DocumentActions.insertComposed", () => {
+    it("returns a REPLACE action with the composed text", () => {
+      const action = DocumentActions.insertComposed(byteOffset(0), byteOffset(3), "hello");
+      expect(action.type).toBe("REPLACE");
+      expect(action.start).toBe(0);
+      expect(action.end).toBe(3);
+      expect(action.text).toBe("hello");
+    });
+
+    it("passes selection through to the REPLACE action", () => {
+      const selection = [{ anchor: byteOffset(0), head: byteOffset(5) }];
+      const action = DocumentActions.insertComposed(
+        byteOffset(1),
+        byteOffset(4),
+        "日本語",
+        selection,
+      );
+      expect(action.type).toBe("REPLACE");
+      expect(action.selection).toEqual(selection);
+    });
   });
 });

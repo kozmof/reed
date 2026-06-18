@@ -6,13 +6,19 @@ import { describe, it, expect } from "vitest";
 import {
   byteOffset,
   charOffset,
+  byteLength,
   lineNumber,
   columnNumber,
+  rawByteOffset,
+  rawCharOffset,
   isValidOffset,
   isValidLineNumber,
   addByteOffset,
   diffByteOffset,
   addCharOffset,
+  diffCharOffset,
+  compareByteOffsets,
+  compareCharOffsets,
   nextLine,
   prevLine,
   clampByteOffset,
@@ -149,6 +155,98 @@ describe("Branded Types", () => {
 
       expect(clampCharOffset(charOffset(50), min, max)).toBe(50);
       expect(clampCharOffset(charOffset(200), min, max)).toBe(100);
+    });
+  });
+
+  describe("charOffset error throw", () => {
+    it("should throw RangeError for invalid charOffset", () => {
+      expect(() => charOffset(-1)).toThrow(RangeError);
+      expect(() => charOffset(NaN)).toThrow(RangeError);
+    });
+  });
+
+  describe("lineNumber and columnNumber error throws", () => {
+    it("should throw RangeError for invalid lineNumber", () => {
+      expect(() => lineNumber(-1)).toThrow(RangeError);
+      expect(() => lineNumber(1.5)).toThrow(RangeError);
+      expect(() => lineNumber(NaN)).toThrow(RangeError);
+    });
+
+    it("should throw RangeError for invalid columnNumber", () => {
+      expect(() => columnNumber(-1)).toThrow(RangeError);
+      expect(() => columnNumber(0.5)).toThrow(RangeError);
+    });
+  });
+
+  describe("rawByteOffset and rawCharOffset", () => {
+    it("should extract the underlying number from a ByteOffset", () => {
+      const offset = byteOffset(42);
+      expect(rawByteOffset(offset)).toBe(42);
+    });
+
+    it("should extract the underlying number from a CharOffset", () => {
+      const offset = charOffset(17);
+      expect(rawCharOffset(offset)).toBe(17);
+    });
+  });
+
+  describe("byteLength constructor", () => {
+    it("should create ByteLength from valid number", () => {
+      expect(byteLength(0)).toBe(0);
+      expect(byteLength(42)).toBe(42);
+    });
+
+    it("should throw for invalid values", () => {
+      expect(() => byteLength(-1)).toThrow(RangeError);
+      expect(() => byteLength(1.5)).toThrow(RangeError);
+      expect(() => byteLength(NaN)).toThrow(RangeError);
+    });
+  });
+
+  describe("diffCharOffset", () => {
+    it("should compute CharOffset difference", () => {
+      const a = charOffset(20);
+      const b = charOffset(15);
+      expect(diffCharOffset(a, b)).toBe(5);
+    });
+
+    it("should return negative when a < b", () => {
+      const a = charOffset(5);
+      const b = charOffset(10);
+      expect(diffCharOffset(a, b)).toBe(-5);
+    });
+
+    it("should return zero for equal offsets", () => {
+      const a = charOffset(7);
+      expect(diffCharOffset(a, a)).toBe(0);
+    });
+  });
+
+  describe("compareByteOffsets", () => {
+    it("should return negative when a < b", () => {
+      expect(compareByteOffsets(byteOffset(3), byteOffset(10))).toBeLessThan(0);
+    });
+
+    it("should return zero for equal offsets", () => {
+      expect(compareByteOffsets(byteOffset(5), byteOffset(5))).toBe(0);
+    });
+
+    it("should return positive when a > b", () => {
+      expect(compareByteOffsets(byteOffset(10), byteOffset(3))).toBeGreaterThan(0);
+    });
+  });
+
+  describe("compareCharOffsets", () => {
+    it("should return negative when a < b", () => {
+      expect(compareCharOffsets(charOffset(1), charOffset(9))).toBeLessThan(0);
+    });
+
+    it("should return zero for equal offsets", () => {
+      expect(compareCharOffsets(charOffset(4), charOffset(4))).toBe(0);
+    });
+
+    it("should return positive when a > b", () => {
+      expect(compareCharOffsets(charOffset(9), charOffset(1))).toBeGreaterThan(0);
     });
   });
 

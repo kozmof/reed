@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { createTransactionManager } from "./transaction.js";
+import { createTransactionManager, withTransactionBatch } from "./transaction.js";
 import { createInitialState } from "./../core/state.js";
 import { documentReducer } from "./reducer.js";
 import { DocumentActions } from "./actions.js";
@@ -249,5 +249,68 @@ describe("TransactionManager", () => {
       expect(result.snapshot).toBe(fresh);
       expect(tm.depth).toBe(0);
     });
+  });
+});
+
+// =============================================================================
+// withTransactionBatch
+// =============================================================================
+
+describe("withTransactionBatch", () => {
+  it("commits when all actions succeed", () => {
+    let state = makeState("hello");
+    const txControl = {
+      beginTransaction() {},
+      commitTransaction() {},
+      rollbackTransaction() {},
+      emergencyReset() { return null; },
+    };
+    let dispatched = 0;
+    withTransactionBatch(
+      txControl,
+      (_action) => {
+        dispatched++;
+        return state;
+      },
+      [DocumentActions.insert(byteOffset(0), "!")],
+    );
+    expect(dispatched).toBe(1);
+  });
+
+  it("calls rollback when actionDispatch throws, then rethrows", () => {
+    let rolledBack = false;
+    const txControl = {
+      beginTransaction() {},
+      commitTransaction() {},
+      rollbackTransaction() { rolledBack = true; },
+      emergencyReset() { return null; },
+    };
+    const boom = new Error("dispatch failed");
+    expect(() =>
+      withTransactionBatch(
+        txControl,
+        () => { throw boom; },
+        [DocumentActions.insert(byteOffset(0), "!")],
+      ),
+    ).toThrow("dispatch failed");
+    expect(rolledBack).toBe(true);
+  });
+
+  it("calls emergencyReset when both actionDispatch and rollback throw", () => {
+    let reset = false;
+    const txControl = {
+      beginTransaction() {},
+      commitTransaction() {},
+      rollbackTransaction() { throw new Error("rollback failed"); },
+      emergencyReset() { reset = true; return null; },
+    };
+    expect(() =>
+      withTransactionBatch(
+        txControl,
+        () => { throw new Error("dispatch failed"); },
+        [DocumentActions.insert(byteOffset(0), "!")],
+      ),
+    ).toThrow("dispatch failed");
+    expect(reset).toBe(true);
   });
 });

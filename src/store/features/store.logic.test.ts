@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { pstackSize, pstackPeek } from "../../types/state.js";
+import { pstackSize, pstackPeek, pstackEmpty, pstackPush, pstackToArray } from "../../types/state.js";
 import type { DocumentStoreConfig } from "../../types/state.js";
 import { documentReducer } from "./reducer.js";
 import {
@@ -102,6 +102,60 @@ describe("State Factories", () => {
           reconcileMode: "sync",
         } as unknown as DocumentStoreConfig),
       ).toThrow("cannot include both 'scheduler' and 'reconcileMode'");
+    });
+  });
+
+  describe("assertValidDocumentStoreConfig validation throws", () => {
+    it("throws for negative chunkSize", () => {
+      expect(() => createInitialState({ chunkSize: -1 })).toThrow(
+        "chunkSize must be a non-negative integer",
+      );
+    });
+
+    it("throws for fractional chunkSize", () => {
+      expect(() => createInitialState({ chunkSize: 0.5 })).toThrow(
+        "chunkSize must be a non-negative integer",
+      );
+    });
+
+    it("throws for negative totalFileSize", () => {
+      expect(() => createInitialState({ totalFileSize: -1 })).toThrow(
+        "totalFileSize must be a non-negative number",
+      );
+    });
+
+    it("throws for non-positive historyLimit", () => {
+      expect(() => createInitialState({ historyLimit: 0 })).toThrow(
+        "historyLimit must be a positive integer",
+      );
+    });
+
+    it("throws for negative undoGroupTimeout", () => {
+      expect(() => createInitialState({ undoGroupTimeout: -1 })).toThrow(
+        "undoGroupTimeout must be a non-negative number",
+      );
+    });
+
+    it("throws for non-positive maxDirtyRanges", () => {
+      expect(() => createInitialState({ maxDirtyRanges: 0 })).toThrow(
+        "maxDirtyRanges must be a positive integer",
+      );
+    });
+  });
+
+  describe("pstackToArray", () => {
+    it("returns an empty array for an empty stack", () => {
+      expect(pstackToArray(pstackEmpty())).toEqual([]);
+    });
+
+    it("returns items in FIFO order (bottom to top)", () => {
+      const s = pstackPush(pstackPush(pstackPush(pstackEmpty<number>(), 1), 2), 3);
+      expect(pstackToArray(s)).toEqual([1, 2, 3]);
+    });
+
+    it("round-trips through pstackToArray for a single-element stack", () => {
+      const s = pstackPush(pstackEmpty<string>(), "hello");
+      expect(pstackToArray(s)).toEqual(["hello"]);
     });
   });
 
@@ -1008,6 +1062,115 @@ describe("Type Guards", () => {
       const result = validateAction({ type: "DELETE", start: 5, end: 3 });
       expect(result.valid).toBe(false);
       expect(result.errors).toContain("DELETE start (5) cannot be greater than end (3)");
+    });
+
+    it("should reject DELETE with invalid timestamp", () => {
+      const result = validateAction({ type: "DELETE", start: 0, end: 5, timestamp: NaN });
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("timestamp"))).toBe(true);
+    });
+
+    it("should reject DELETE with empty selection array", () => {
+      const result = validateAction({ type: "DELETE", start: 0, end: 5, selection: [] });
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("selection"))).toBe(true);
+    });
+
+    it("should reject INSERT with invalid timestamp", () => {
+      const result = validateAction({ type: "INSERT", start: 0, text: "x", timestamp: NaN });
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("timestamp"))).toBe(true);
+    });
+
+    it("should reject when documentLength is not a non-negative integer", () => {
+      const result = validateAction({ type: "INSERT", start: 0, text: "x" }, 1.5);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("documentLength"))).toBe(true);
+    });
+
+    it("should reject REPLACE with non-integer start", () => {
+      const result = validateAction({ type: "REPLACE", start: 1.5, end: 5, text: "x" });
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes('REPLACE action requires an integer "start"'))).toBe(
+        true,
+      );
+    });
+
+    it("should reject REPLACE with inverted range", () => {
+      const result = validateAction({ type: "REPLACE", start: 10, end: 5, text: "x" });
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("cannot be greater than end"))).toBe(true);
+    });
+
+    it("should reject REPLACE with invalid timestamp", () => {
+      const result = validateAction({
+        type: "REPLACE",
+        start: 0,
+        end: 5,
+        text: "x",
+        timestamp: NaN,
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("timestamp"))).toBe(true);
+    });
+
+    it("should reject REPLACE with empty selection array", () => {
+      const result = validateAction({
+        type: "REPLACE",
+        start: 0,
+        end: 5,
+        text: "x",
+        selection: [],
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("selection"))).toBe(true);
+    });
+
+    it("should reject APPLY_REMOTE insert change when text is not a string", () => {
+      const result = validateAction({
+        type: "APPLY_REMOTE",
+        changes: [{ type: "insert", start: 0, text: 42 }],
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("text must be a string"))).toBe(true);
+    });
+
+    it("should reject APPLY_REMOTE when a change is null (non-object)", () => {
+      const result = validateAction({
+        type: "APPLY_REMOTE",
+        changes: [null],
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("must be an object"))).toBe(true);
+    });
+
+    it("should reject APPLY_REMOTE when a change has unknown type", () => {
+      const result = validateAction({
+        type: "APPLY_REMOTE",
+        changes: [{ type: "update", start: 0 }],
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("type must be"))).toBe(true);
+    });
+
+    it("should reject APPLY_REMOTE when change.start is not a non-negative integer", () => {
+      const result = validateAction({
+        type: "APPLY_REMOTE",
+        changes: [{ type: "insert", start: -1, text: "A" }],
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("start must be a non-negative integer"))).toBe(
+        true,
+      );
+    });
+
+    it("should reject DECLARE_CHUNK_METADATA when metadata is not an array", () => {
+      const result = validateAction({
+        type: "DECLARE_CHUNK_METADATA",
+        metadata: "not-an-array",
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("metadata"))).toBe(true);
     });
   });
 

@@ -534,6 +534,22 @@ describe("Editor Use Cases", () => {
       // Listeners notified once for the rollback
       expect(listener).toHaveBeenCalledTimes(1);
     });
+
+    it("withTransaction calls emergencyReset when fn throws and rollback also fails", () => {
+      const store = createDocumentStore({ content: "hello" });
+      // Begin a transaction inside fn, then rollback it so the outer rollback has nothing to pop
+      expect(() =>
+        withTransaction(store, (s) => {
+          // Consume the transaction begun by withTransaction by rolling it back inside fn
+          s.rollbackTransaction();
+          throw new Error("fn error");
+          // Now the outer withTransaction catch will call rollbackTransaction at depth=0,
+          // which throws, triggering emergencyReset (store.ts line 691).
+        }),
+      ).toThrow("fn error");
+      // Store should still be functional after emergencyReset
+      expect(() => store.getSnapshot()).not.toThrow();
+    });
   });
 
   describe("Multiline Editing", () => {
@@ -1247,6 +1263,22 @@ describe("Editor Use Cases", () => {
 
       const state = store.getSnapshot();
       expect(state.lineIndex.lineCount).toBe(3);
+    });
+  });
+
+  describe("getEagerSnapshot and whenReconciled", () => {
+    it("getEagerSnapshot should return reconciled state immediately", () => {
+      const store = createDocumentStore({ content: "hello\nworld" });
+      const eager = store.getEagerSnapshot();
+      expect(eager.lineIndex.rebuildPending).toBe(false);
+      expect(eager.lineIndex.lineCount).toBe(2);
+    });
+
+    it("whenReconciled should resolve immediately when state is already clean", async () => {
+      const store = createDocumentStore({ content: "hello", reconcileMode: "none" });
+      // Fresh state is clean (no edits)
+      const eager = await store.whenReconciled();
+      expect(eager.lineIndex.rebuildPending).toBe(false);
     });
   });
 });

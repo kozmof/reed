@@ -13,9 +13,11 @@ import {
   estimateTotalHeight,
   positionToLineColumn,
   lineColumnToPosition,
+  selectionToCharOffsets,
+  charOffsetsToSelection,
 } from "./rendering.js";
 import type { ScrollPosition, LineHeightConfig, VisibleLine } from "./rendering.js";
-import { byteOffset } from "../../types/branded.js";
+import { byteOffset, charOffset } from "../../types/branded.js";
 
 describe("getVisibleLineRange", () => {
   it("should calculate visible lines from scroll position", () => {
@@ -415,6 +417,163 @@ describe("lineColumnToPosition", () => {
     // Line index uses byte positions (UTF-8)
     // '世界\n' is 7 bytes (3+3+1), so line 1 starts at byte position 7
     expect(lineColumnToPosition(state, 1, 0)).toBe(7);
+  });
+});
+
+describe("estimateTotalHeight (large document sampling)", () => {
+  it("should sample lines for documents with more than 100 lines", () => {
+    const lines = Array.from({ length: 150 }, (_, i) => `line${i}`).join("\n");
+    const state = createInitialState({ content: lines });
+
+    const config: LineHeightConfig = {
+      baseLineHeight: 20,
+      charWidth: 8,
+      viewportWidth: 400,
+      softWrap: true,
+    };
+
+    const height = estimateTotalHeight(state, config);
+    expect(height).toBeGreaterThan(0);
+    expect(typeof height).toBe("number");
+  });
+
+  it("should return integer result for large document", () => {
+    const lines = Array.from({ length: 200 }, () => "A".repeat(10)).join("\n");
+    const state = createInitialState({ content: lines });
+
+    const config: LineHeightConfig = {
+      baseLineHeight: 16,
+      charWidth: 8,
+      viewportWidth: 80,
+      softWrap: true,
+    };
+
+    const height = estimateTotalHeight(state, config);
+    expect(Number.isFinite(height)).toBe(true);
+    expect(height).toBeGreaterThan(0);
+  });
+});
+
+describe("positionToLineColumn edge cases", () => {
+  it("should clamp position past document end to end of last line", () => {
+    const state = createInitialState({ content: "Hi" });
+    // Position past document end - implementation clamps to end of last line
+    const result = positionToLineColumn(state, byteOffset(1000));
+    expect(result).toEqual({ line: 0, column: 2 });
+  });
+
+  it("should handle position at exact document end", () => {
+    const state = createInitialState({ content: "Hello" });
+    // "Hello" is 5 bytes; position 5 is the end of the document
+    const result = positionToLineColumn(state, byteOffset(5));
+    expect(result).toEqual({ line: 0, column: 5 });
+  });
+
+  it("should return position in second line when position is on that line", () => {
+    const state = createInitialState({ content: "Hi\nWorld" });
+    // "Hi\n" is 3 bytes, "World" starts at byte 3
+    const result = positionToLineColumn(state, byteOffset(4));
+    expect(result).toEqual({ line: 1, column: 1 });
+  });
+});
+
+describe("selectionToCharOffsets", () => {
+  it("should convert byte-offset selection to char offsets for ASCII", () => {
+    const state = createInitialState({ content: "Hello\nWorld" });
+    const result = selectionToCharOffsets(state, {
+      anchor: byteOffset(0),
+      head: byteOffset(5),
+    });
+    expect(result.anchor).toBe(0);
+    expect(result.head).toBe(5);
+  });
+
+  it("should convert unicode byte-offset selection to char offsets", () => {
+    const state = createInitialState({ content: "世界\nHello" });
+    // '世界\n' = 7 bytes; char offsets 0..2
+    const result = selectionToCharOffsets(state, {
+      anchor: byteOffset(0),
+      head: byteOffset(6),
+    });
+    expect(result.anchor).toBe(0);
+    expect(result.head).toBe(2);
+  });
+
+  it("should handle zero-length selection at start", () => {
+    const state = createInitialState({ content: "abc" });
+    const result = selectionToCharOffsets(state, {
+      anchor: byteOffset(0),
+      head: byteOffset(0),
+    });
+    expect(result.anchor).toBe(0);
+    expect(result.head).toBe(0);
+  });
+
+  it("should handle position within a line (non-zero offsetInLine)", () => {
+    const state = createInitialState({ content: "Hello\nWorld" });
+    const result = selectionToCharOffsets(state, {
+      anchor: byteOffset(7),
+      head: byteOffset(11),
+    });
+    expect(result.anchor).toBe(7);
+    expect(result.head).toBe(11);
+  });
+
+  it("should return char start of line for a position exactly at line start (offsetInLine=0)", () => {
+    const state = createInitialState({ content: "Hello\nWorld" });
+    // byteOffset(6) is the start of 'World' (line 1, offsetInLine = 0)
+    const result = selectionToCharOffsets(state, {
+      anchor: byteOffset(6),
+      head: byteOffset(6),
+    });
+    // 'Hello\n' is 6 chars; line 1 starts at char offset 6
+    expect(result.anchor).toBe(6);
+    expect(result.head).toBe(6);
+  });
+});
+
+describe("charOffsetsToSelection", () => {
+  it("should convert char-offset selection to byte offsets for ASCII", () => {
+    const state = createInitialState({ content: "Hello\nWorld" });
+    const result = charOffsetsToSelection(state, {
+      anchor: charOffset(0),
+      head: charOffset(5),
+    });
+    expect(result.anchor).toBe(0);
+    expect(result.head).toBe(5);
+  });
+
+  it("should convert unicode char-offset selection to byte offsets", () => {
+    const state = createInitialState({ content: "世界\nHello" });
+    // chars 0-2 correspond to '世界' (6 bytes each 3)
+    const result = charOffsetsToSelection(state, {
+      anchor: charOffset(0),
+      head: charOffset(2),
+    });
+    expect(result.anchor).toBe(0);
+    expect(result.head).toBe(6);
+  });
+
+  it("should handle zero char offset", () => {
+    const state = createInitialState({ content: "abc" });
+    const result = charOffsetsToSelection(state, {
+      anchor: charOffset(0),
+      head: charOffset(0),
+    });
+    expect(result.anchor).toBe(0);
+    expect(result.head).toBe(0);
+  });
+
+  it("should clamp char offset past end of line to line length", () => {
+    const state = createInitialState({ content: "abc" });
+    // charOffset(100) is past end; should land at end of last line
+    const result = charOffsetsToSelection(state, {
+      anchor: charOffset(100),
+      head: charOffset(100),
+    });
+    // Should return totalLength (3 bytes for "abc")
+    expect(result.anchor).toBe(3);
+    expect(result.head).toBe(3);
   });
 });
 

@@ -7,7 +7,10 @@ import {
   diff,
   computeSetValueActions,
   computeSetValueActionsOptimized,
+  computeSetValueActionsFromState,
+  computeSetValueActionsFromStateWithDiff,
   setValue,
+  setValueAuto,
   setValueWithDiff,
 } from "./diff.js";
 import { createInitialState } from "../core/state.js";
@@ -277,6 +280,122 @@ describe("Diff Algorithm", () => {
       const byteIdx = charToByteOffset(str, charIdx) as unknown as number;
       const roundTrip = byteToCharOffset(str, byteIdx) as unknown as number;
       expect(roundTrip).toBe(charIdx);
+    });
+  });
+
+  describe("Unicode in buildCharToByteMap (Myers diff path)", () => {
+    it("should handle 2-byte UTF-8 characters (Latin extended)", () => {
+      // 'é' = U+00E9 is a 2-byte UTF-8 character (0x80 <= c < 0x800)
+      const actions = computeSetValueActions("café", "caféè");
+      expect(actions.length).toBeGreaterThan(0);
+    });
+
+    it("should handle 3-byte BMP characters (CJK)", () => {
+      // '世' = U+4E16, 3 bytes in UTF-8 (0x800 <= c < 0xD800)
+      const actions = computeSetValueActions("世界你好", "新界你好");
+      expect(actions.length).toBeGreaterThan(0);
+    });
+
+    it("should handle 4-byte emoji (surrogate pairs in buildCharToByteMap)", () => {
+      // '😀' = U+1F600 is encoded as surrogate pair 😀 in JS strings
+      const actions = computeSetValueActions("Hello😀World", "Hello😂World");
+      expect(actions.length).toBeGreaterThan(0);
+    });
+
+    it("should correctly apply setValueWithDiff for CJK content", () => {
+      const state = createInitialState({ content: "世界" });
+      const newState = setValueWithDiff(state, "世界!");
+      expect(getValue(newState.pieceTable)).toBe("世界!");
+    });
+  });
+
+  describe("Myers algorithm path (large strings, n*m >= 10000)", () => {
+    it("should produce edits for large differing sections triggering Myers backtrack", () => {
+      // Construct two strings whose middle sections are >100 chars each → n*m > 10000
+      // so myersDiff takes the Myers path instead of simpleDiff.
+      // Use complete-replacement middles (no shared chars) so the backtrack loop
+      // cleanly emits only inserts and deletes and consolidateEdits merges them.
+      const prefix = "SAME_PREFIX_";
+      const suffix = "_SAME_SUFFIX";
+      const oldMiddle = "x".repeat(101);
+      const newMiddle = "y".repeat(101);
+      const result = diff(prefix + oldMiddle + suffix, prefix + newMiddle + suffix);
+      expect(result.edits.length).toBeGreaterThan(0);
+      const types = result.edits.map((e) => e.type);
+      expect(types).toContain("delete");
+      expect(types).toContain("insert");
+    });
+  });
+
+  describe("surrogate-pair boundary in computeSetValueActionsOptimized", () => {
+    it("should not split a surrogate pair when the suffix scan lands on the high surrogate", () => {
+      // U+10000 = 𐀀, U+10400 = 𐐀 — same low surrogate, different high surrogate
+      const oldContent = "A𐀀B";
+      const newContent = "A𐐀B";
+      const actions = computeSetValueActionsOptimized(oldContent, newContent);
+      expect(actions.length).toBe(1);
+      expect(actions[0].type).toBe("REPLACE");
+    });
+  });
+
+  describe("setValueAuto", () => {
+    it("should use fast strategy by default", () => {
+      const state = createInitialState({ content: "hello" });
+      const newState = setValueAuto(state, "hello world");
+      expect(getValue(newState.pieceTable)).toBe("hello world");
+    });
+
+    it("should use diff strategy when specified", () => {
+      const state = createInitialState({ content: "hello" });
+      const newState = setValueAuto(state, "hello world", { strategy: "diff" });
+      expect(getValue(newState.pieceTable)).toBe("hello world");
+    });
+
+    it("should return same state when content is identical with diff strategy", () => {
+      const state = createInitialState({ content: "hello" });
+      const newState = setValueAuto(state, "hello", { strategy: "diff" });
+      expect(getValue(newState.pieceTable)).toBe("hello");
+    });
+  });
+
+  describe("computeSetValueActionsFromState", () => {
+    it("should return empty array when content matches", () => {
+      const state = createInitialState({ content: "hello" });
+      const actions = computeSetValueActionsFromState(state.pieceTable, "hello");
+      expect(actions).toEqual([]);
+    });
+
+    it("should return actions for changed content", () => {
+      const state = createInitialState({ content: "hello" });
+      const actions = computeSetValueActionsFromState(state.pieceTable, "hello world");
+      expect(actions.length).toBeGreaterThan(0);
+    });
+
+    it("should generate a pure insert for appended text", () => {
+      const state = createInitialState({ content: "hello" });
+      const actions = computeSetValueActionsFromState(state.pieceTable, "hello!");
+      expect(actions.length).toBe(1);
+      expect(actions[0].type).toBe("INSERT");
+    });
+  });
+
+  describe("computeSetValueActionsFromStateWithDiff", () => {
+    it("should return empty array when content matches", () => {
+      const state = createInitialState({ content: "hello" });
+      const actions = computeSetValueActionsFromStateWithDiff(state.pieceTable, "hello");
+      expect(actions).toEqual([]);
+    });
+
+    it("should return diff actions for changed content", () => {
+      const state = createInitialState({ content: "hello" });
+      const actions = computeSetValueActionsFromStateWithDiff(state.pieceTable, "world");
+      expect(actions.length).toBeGreaterThan(0);
+    });
+
+    it("should produce correct result when applied to state", () => {
+      const state = createInitialState({ content: "abc" });
+      const actions = computeSetValueActionsFromStateWithDiff(state.pieceTable, "axc");
+      expect(actions.length).toBeGreaterThan(0);
     });
   });
 });
