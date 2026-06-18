@@ -696,6 +696,25 @@ describe("Editor Use Cases", () => {
       assertLineIndexMatchesRebuild(store);
     });
 
+    it("should notify subscribers when setViewport reconciles visible lines", () => {
+      const store = createDocumentStore({
+        content: Array.from({ length: 20 }, (_, i) => `Line ${i}`).join("\n"),
+        reconcileMode: "none",
+      });
+      const listener = vi.fn();
+      store.subscribe(listener);
+
+      store.dispatch(DocumentActions.insert(byteOffset(0), "prefix\n"));
+      expect(store.getSnapshot().lineIndex.rebuildPending).toBe(true);
+      listener.mockClear();
+
+      const before = store.getSnapshot();
+      store.setViewport(0, 4);
+
+      expect(store.getSnapshot()).not.toBe(before);
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
     it("should resolve whenReconciled after reconcileNow without an extra notification", async () => {
       const store = createDocumentStore({
         content: Array.from({ length: 40 }, (_, i) => `Line ${i}`).join("\n"),
@@ -728,6 +747,30 @@ describe("Editor Use Cases", () => {
       expect(eager.lineIndex.rebuildPending).toBe(false);
       expect(getLineStartOffset(eager.lineIndex.root, 1)).toBe(4);
       expect(getLineStartOffset(eager.lineIndex.root, 2)).toBe(11);
+    });
+
+    it("should reject pending whenReconciled waits on dispose", async () => {
+      const store = createDocumentStore({
+        content: Array.from({ length: 10 }, (_, i) => `Line ${i}`).join("\n"),
+        scheduler: {
+          schedule() {},
+          cancel() {},
+          runNow() {},
+          get isRunning() {
+            return false;
+          },
+        },
+      });
+
+      store.dispatch(DocumentActions.insert(byteOffset(0), "prefix\n"));
+      expect(store.getSnapshot().lineIndex.rebuildPending).toBe(true);
+
+      const waiting = store.whenReconciled();
+      store.dispose();
+
+      await expect(waiting).rejects.toThrow(
+        "DocumentStore was disposed before reconciliation completed",
+      );
     });
 
     it("should preserve line index through rapid multiline edits with full undo/redo", () => {

@@ -69,6 +69,7 @@ export interface ChunkManager {
    * Resolves when LOAD_CHUNK has been dispatched and the chunk is in memory.
    * If the chunk is already loaded, resolves immediately without fetching.
    * Concurrent calls for the same index share a single in-flight fetch.
+   * Rejects if the store is not configured for chunked mode.
    */
   ensureLoaded(chunkIndex: number): Promise<void>;
 
@@ -134,6 +135,12 @@ export function createChunkManager(
 
   // Disposed flag: prevents dispatches after dispose().
   let disposed = false;
+
+  function getChunkedModeError(): string | null {
+    return store.getSnapshot().pieceTable.chunkSize > 0
+      ? null
+      : "ChunkManager requires a store configured with chunkSize > 0";
+  }
 
   function getKnownTotalChunkCount(): number | undefined {
     if (Number.isInteger(loader.totalChunkCount) && loader.totalChunkCount! >= 0) {
@@ -225,6 +232,11 @@ export function createChunkManager(
           if (data.length === 0)
             throw new Error(`ChunkLoader returned empty data for chunk ${chunkIndex}`);
           store.dispatch(DocumentActions.loadChunk(chunkIndex, data));
+          if (!store.getSnapshot().pieceTable.chunkMap.has(chunkIndex)) {
+            throw new Error(
+              `Chunk ${chunkIndex} was fetched but the store did not retain it after LOAD_CHUNK dispatch`,
+            );
+          }
           lruTouch(chunkIndex);
           evictIfOverLimit(chunkIndex);
         })
@@ -249,6 +261,11 @@ export function createChunkManager(
   function ensureLoaded(chunkIndex: number): Promise<void> {
     if (disposed) return Promise.resolve();
 
+    const chunkedModeError = getChunkedModeError();
+    if (chunkedModeError !== null) {
+      return Promise.reject(new Error(chunkedModeError));
+    }
+
     const chunkIndexError = getChunkIndexError(chunkIndex);
     if (chunkIndexError !== null) {
       return Promise.reject(new RangeError(chunkIndexError));
@@ -271,6 +288,7 @@ export function createChunkManager(
 
   function prefetch(chunkIndex: number): void {
     if (disposed) return;
+    if (getChunkedModeError() !== null) return;
     if (getChunkIndexError(chunkIndex) !== null) return;
     if (store.getSnapshot().pieceTable.chunkMap.has(chunkIndex)) return;
     if (inFlight.has(chunkIndex)) return;

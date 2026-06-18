@@ -180,12 +180,15 @@ export interface ReconcilableDocumentStore extends DocumentStore, TransactionCon
    * const eager = await store.whenReconciled();
    * const range = query.getLineRange(eager, 0);
    * ```
+   *
+   * Rejects if `dispose()` is called before reconciliation completes.
    */
   whenReconciled(): Promise<DocumentState<"eager">>;
 
   /**
    * Cancel any pending background maintenance owned by this store.
    * Call when permanently discarding a store instance.
+   * Pending `whenReconciled()` callers are rejected during disposal.
    */
   dispose(): void;
 }

@@ -8,6 +8,7 @@ import { createChunkManager } from "./chunk-manager.js";
 import { createDocumentStore } from "./store.js";
 import { DocumentActions } from "./actions.js";
 import { byteOffset } from "../../types/branded.js";
+import type { DocumentStore } from "../../types/store.js";
 
 const CHUNK_SIZE = 8;
 
@@ -144,6 +145,38 @@ describe("ChunkManager.ensureLoaded", () => {
 
     await expect(manager.ensureLoaded(2)).rejects.toThrow("Chunk index 2 is out of range");
     expect(loader.loadChunk).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+
+  it("rejects immediately when the store is not configured for chunked mode", async () => {
+    const store = createDocumentStore();
+    const loader = makeLoader({ 0: "aaaabbbb" });
+    const manager = createChunkManager(store, loader);
+
+    await expect(manager.ensureLoaded(0)).rejects.toThrow(
+      "ChunkManager requires a store configured with chunkSize > 0",
+    );
+    expect(loader.loadChunk).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+
+  it("rejects if LOAD_CHUNK does not leave the chunk resident in the store", async () => {
+    const backingStore = makeStore();
+    const state = backingStore.getSnapshot();
+    const fakeStore = {
+      subscribe: () => () => {},
+      getSnapshot: () => state,
+      isCurrentSnapshot: (snapshot: typeof state) => snapshot === state,
+      dispatch: vi.fn(() => state),
+      batch: vi.fn(() => state),
+    } as unknown as DocumentStore;
+    const loader = makeLoader({ 0: "aaaabbbb" });
+    const manager = createChunkManager(fakeStore, loader);
+
+    await expect(manager.ensureLoaded(0)).rejects.toThrow(
+      "Chunk 0 was fetched but the store did not retain it after LOAD_CHUNK dispatch",
+    );
+    expect(loader.loadChunk).toHaveBeenCalledTimes(1);
     manager.dispose();
   });
 });

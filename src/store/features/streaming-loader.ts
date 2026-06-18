@@ -103,6 +103,10 @@ export function createStreamingDocumentLoader(
   metadata: readonly ChunkMetadata[],
   config: StreamingDocumentLoaderConfig = {},
 ): StreamingDocumentLoader {
+  if (store.getSnapshot().pieceTable.chunkSize === 0) {
+    throw new Error("StreamingDocumentLoader requires a store configured with chunkSize > 0");
+  }
+
   const prefetchWindowSize = Math.max(0, config.prefetchWindowSize ?? 2);
   const totalChunks = metadata.length;
   let disposed = false;

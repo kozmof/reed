@@ -3,8 +3,17 @@ import { createDocumentStore } from "./store.js";
 import { createStreamingDocumentLoader } from "./streaming-loader.js";
 
 describe("StreamingDocumentLoader", () => {
-  it("suppresses stale prefetches after a newer viewport supersedes an older one", async () => {
+  it("rejects non-chunked stores at construction time", () => {
     const store = createDocumentStore();
+    const loader = { loadChunk: vi.fn(async () => new Uint8Array([0])) };
+
+    expect(() => createStreamingDocumentLoader(store, loader, [])).toThrow(
+      "StreamingDocumentLoader requires a store configured with chunkSize > 0",
+    );
+  });
+
+  it("suppresses stale prefetches after a newer viewport supersedes an older one", async () => {
+    const store = createDocumentStore({ chunkSize: 1 });
     let resolveChunk0: (() => void) | undefined;
     let resolveChunk4: (() => void) | undefined;
 

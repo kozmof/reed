@@ -47,7 +47,10 @@ const AUTO_COMPACT_MIN_BYTES = 16384; // 16 KB
 export function createDocumentStore(config: DocumentStoreConfig = {}): ReconcilableDocumentStore {
   // Internal mutable state
   let state = createInitialState(config);
-  const whenReconciledResolvers: Array<(state: DocumentState<"eager">) => void> = [];
+  const whenReconciledWaiters: Array<{
+    resolve(state: DocumentState<"eager">): void;
+    reject(error: Error): void;
+  }> = [];
   const reconcileMode = config.reconcileMode ?? "idle";
   // Listeners array with on-demand COW: mutations during an active notification clone
   // the array so the in-progress for-of iteration is not disturbed. Outside notification
@@ -67,12 +70,20 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
   }
 
   function resolveWhenReconciledIfReady(): void {
-    if (state.lineIndex.rebuildPending || whenReconciledResolvers.length === 0) return;
+    if (state.lineIndex.rebuildPending || whenReconciledWaiters.length === 0) return;
 
     const eagerState = state as DocumentState<"eager">;
-    const resolvers = whenReconciledResolvers.splice(0);
-    for (const resolve of resolvers) {
-      resolve(eagerState);
+    const waiters = whenReconciledWaiters.splice(0);
+    for (const waiter of waiters) {
+      waiter.resolve(eagerState);
+    }
+  }
+
+  function rejectWhenReconciledWaiters(error: Error): void {
+    if (whenReconciledWaiters.length === 0) return;
+    const waiters = whenReconciledWaiters.splice(0);
+    for (const waiter of waiters) {
+      waiter.reject(error);
     }
   }
 
@@ -288,6 +299,9 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
 
   function dispose(): void {
     scheduler.cancel();
+    rejectWhenReconciledWaiters(
+      new Error("DocumentStore was disposed before reconciliation completed"),
+    );
   }
 
   /**
@@ -352,8 +366,8 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
       return Promise.resolve(reconcileNow());
     }
     scheduleReconciliation();
-    return new Promise<DocumentState<"eager">>((resolve) => {
-      whenReconciledResolvers.push(resolve);
+    return new Promise<DocumentState<"eager">>((resolve, reject) => {
+      whenReconciledWaiters.push({ resolve, reject });
     });
   }
 
@@ -364,6 +378,9 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
     const newLineIndex = reconcileViewport(state.lineIndex, startLine, endLine, state.version);
     if (newLineIndex !== state.lineIndex) {
       setState(withState(state, { lineIndex: newLineIndex }));
+      if (!transaction.isActive) {
+        notifyListeners();
+      }
     }
 
     // Schedule background reconciliation for remaining dirty ranges
