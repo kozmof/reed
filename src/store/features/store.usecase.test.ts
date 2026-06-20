@@ -3,7 +3,7 @@
  * Tests simulate real-world editing scenarios and workflows.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { pstackSize } from "../../types/state.js";
 import { createDocumentStore, withTransaction } from "./store.js";
 import { DocumentActions } from "./actions.js";
@@ -1105,13 +1105,6 @@ describe("Editor Use Cases", () => {
   });
 
   describe("Subscriber Notifications", () => {
-    beforeEach(() => {
-      vi.spyOn(console, "error").mockImplementation(() => {});
-    });
-    afterEach(() => {
-      vi.restoreAllMocks();
-    });
-
     it("should notify all subscribers on state change", () => {
       const store = createDocumentStore({ content: "" });
       const listener1 = vi.fn();
@@ -1151,7 +1144,8 @@ describe("Editor Use Cases", () => {
     });
 
     it("should handle listener errors gracefully", () => {
-      const store = createDocumentStore({ content: "" });
+      const error = vi.fn();
+      const store = createDocumentStore({ content: "", logger: { error } });
       const errorListener = vi.fn(() => {
         throw new Error("Listener error");
       });
@@ -1166,6 +1160,7 @@ describe("Editor Use Cases", () => {
       }).not.toThrow();
 
       expect(normalListener).toHaveBeenCalled();
+      expect(error).toHaveBeenCalledTimes(1);
     });
 
     it("should deliver to listeners registered at dispatch start even if removed mid-notify", () => {

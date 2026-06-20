@@ -33,7 +33,7 @@ import {
 /**
  * Default configuration values.
  */
-const DEFAULT_CONFIG: Required<DocumentStoreConfigBase> & {
+const DEFAULT_CONFIG: Required<Omit<DocumentStoreConfigBase, "logger">> & {
   reconcileMode: "idle" | "sync" | "none";
 } = {
   content: "",
@@ -54,19 +54,34 @@ function assertValidDocumentStoreConfig(config: DocumentStoreConfig): void {
       "DocumentStoreConfig cannot include both 'scheduler' and 'reconcileMode' at the same time",
     );
   }
-  if (config.chunkSize !== undefined && (!Number.isInteger(config.chunkSize) || config.chunkSize < 0)) {
+  if (
+    config.chunkSize !== undefined &&
+    (!Number.isInteger(config.chunkSize) || config.chunkSize < 0)
+  ) {
     throw new Error("chunkSize must be a non-negative integer");
   }
-  if (config.totalFileSize !== undefined && (!Number.isFinite(config.totalFileSize) || config.totalFileSize < 0)) {
+  if (
+    config.totalFileSize !== undefined &&
+    (!Number.isFinite(config.totalFileSize) || config.totalFileSize < 0)
+  ) {
     throw new Error("totalFileSize must be a non-negative number");
   }
-  if (config.historyLimit !== undefined && (!Number.isInteger(config.historyLimit) || config.historyLimit < 1)) {
+  if (
+    config.historyLimit !== undefined &&
+    (!Number.isInteger(config.historyLimit) || config.historyLimit < 1)
+  ) {
     throw new Error("historyLimit must be a positive integer");
   }
-  if (config.undoGroupTimeout !== undefined && (!Number.isFinite(config.undoGroupTimeout) || config.undoGroupTimeout < 0)) {
+  if (
+    config.undoGroupTimeout !== undefined &&
+    (!Number.isFinite(config.undoGroupTimeout) || config.undoGroupTimeout < 0)
+  ) {
     throw new Error("undoGroupTimeout must be a non-negative number");
   }
-  if (config.maxDirtyRanges !== undefined && (!Number.isInteger(config.maxDirtyRanges) || config.maxDirtyRanges < 1)) {
+  if (
+    config.maxDirtyRanges !== undefined &&
+    (!Number.isInteger(config.maxDirtyRanges) || config.maxDirtyRanges < 1)
+  ) {
     throw new Error("maxDirtyRanges must be a positive integer");
   }
 }

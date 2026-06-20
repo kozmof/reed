@@ -3,7 +3,7 @@
  * Provides a pub/sub mechanism for document changes and editor events.
  */
 
-import type { DocumentState } from "../../types/state.js";
+import type { DocumentState, ReedLogger } from "../../types/state.js";
 import type { ContentChangeAction, DocumentAction } from "../../types/actions.js";
 import { byteOffset, type ByteOffset } from "../../types/branded.js";
 import { utf8ByteLength } from "../core/encoding.js";
@@ -168,7 +168,7 @@ export interface DocumentEventEmitter {
 /**
  * Create a new document event emitter.
  */
-export function createEventEmitter(): DocumentEventEmitter {
+export function createEventEmitter(logger?: Pick<ReedLogger, "error">): DocumentEventEmitter {
   const handlers = new Map<string, Set<EventHandler<AnyDocumentEvent>>>();
 
   return {
@@ -213,7 +213,7 @@ export function createEventEmitter(): DocumentEventEmitter {
           try {
             handler(event);
           } catch (error) {
-            console.error(`Event handler error for '${type}':`, error);
+            logger?.error?.(`Event handler error for '${type}':`, error);
           }
         }
       }

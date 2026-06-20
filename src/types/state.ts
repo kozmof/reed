@@ -601,9 +601,16 @@ type ReconcileModeConfig = { reconcileMode?: "idle" | "sync" | "none"; scheduler
 type CustomSchedulerConfig = { scheduler: ReconciliationScheduler; reconcileMode?: never };
 type ReconcileOptions = ReconcileModeConfig | CustomSchedulerConfig;
 
+export interface ReedLogger {
+  warn?(message: string, ...args: readonly unknown[]): void;
+  error?(message: string, ...args: readonly unknown[]): void;
+}
+
 export interface DocumentStoreConfigBase {
   /** Initial document content */
   content?: string;
+  /** Optional diagnostics sink. Omit to keep the library silent. */
+  logger?: ReedLogger;
   /** Maximum history entries (default: 1000) */
   historyLimit?: number;
   /** Chunk size for large file handling (default: 65536) */

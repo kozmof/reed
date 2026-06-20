@@ -12,6 +12,7 @@
  * store.dispatch(DocumentActions.*).
  */
 
+import type { ReedLogger } from "../../types/state.js";
 import type { DocumentStore } from "../../types/store.js";
 import { DocumentActions } from "./actions.js";
 
@@ -57,6 +58,8 @@ export interface ChunkManagerConfig {
    * - 'queue'     — serialise fetches one at a time (lower peak I/O)
    */
   fetchStrategy?: "parallel" | "queue";
+  /** Optional diagnostics sink. Omit to keep the manager silent. */
+  logger?: Pick<ReedLogger, "warn">;
 }
 
 /**
@@ -119,6 +122,7 @@ export function createChunkManager(
 ): ChunkManager {
   const maxLoadedChunks = Math.max(1, config.maxLoadedChunks ?? 8);
   const fetchStrategy = config.fetchStrategy ?? "parallel";
+  const logger = config.logger;
 
   // In-flight fetch promises keyed by chunk index.
   // Removed once the fetch resolves or rejects.
@@ -214,7 +218,7 @@ export function createChunkManager(
     }
 
     if (loadedCount > maxLoadedChunks) {
-      console.warn(
+      logger?.warn?.(
         `[ChunkManager] eviction pressure: ${loadedCount} chunks loaded but all non-pinned ` +
           `candidates have overlapping user edits. Memory limit (${maxLoadedChunks}) exceeded.`,
       );

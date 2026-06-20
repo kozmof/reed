@@ -263,7 +263,9 @@ describe("withTransactionBatch", () => {
       beginTransaction() {},
       commitTransaction() {},
       rollbackTransaction() {},
-      emergencyReset() { return null; },
+      emergencyReset() {
+        return null;
+      },
     };
     let dispatched = 0;
     withTransactionBatch(
@@ -282,16 +284,18 @@ describe("withTransactionBatch", () => {
     const txControl = {
       beginTransaction() {},
       commitTransaction() {},
-      rollbackTransaction() { rolledBack = true; },
-      emergencyReset() { return null; },
+      rollbackTransaction() {
+        rolledBack = true;
+      },
+      emergencyReset() {
+        return null;
+      },
     };
     const boom = new Error("dispatch failed");
     expect(() =>
-      withTransactionBatch(
-        txControl,
-        () => { throw boom; },
-        [DocumentActions.insert(byteOffset(0), "!")],
-      ),
+      withTransactionBatch(txControl, () => {
+        throw boom;
+      }, [DocumentActions.insert(byteOffset(0), "!")]),
     ).toThrow("dispatch failed");
     expect(rolledBack).toBe(true);
   });
@@ -301,15 +305,18 @@ describe("withTransactionBatch", () => {
     const txControl = {
       beginTransaction() {},
       commitTransaction() {},
-      rollbackTransaction() { throw new Error("rollback failed"); },
-      emergencyReset() { reset = true; return null; },
+      rollbackTransaction() {
+        throw new Error("rollback failed");
+      },
+      emergencyReset() {
+        reset = true;
+        return null;
+      },
     };
     expect(() =>
-      withTransactionBatch(
-        txControl,
-        () => { throw new Error("dispatch failed"); },
-        [DocumentActions.insert(byteOffset(0), "!")],
-      ),
+      withTransactionBatch(txControl, () => {
+        throw new Error("dispatch failed");
+      }, [DocumentActions.insert(byteOffset(0), "!")]),
     ).toThrow("dispatch failed");
     expect(reset).toBe(true);
   });

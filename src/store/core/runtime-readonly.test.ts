@@ -169,7 +169,7 @@ describe("asReadonlyMap", () => {
   it("should report Symbol.toStringTag as Map", () => {
     const m = new Map<string, number>();
     const ro = asReadonlyMap(m);
-    expect(ro[Symbol.toStringTag]).toBe("Map");
+    expect(Object.prototype.toString.call(ro)).toBe("[object Map]");
   });
 });
 
@@ -243,7 +243,7 @@ describe("asReadonlySet", () => {
   it("should report Symbol.toStringTag as Set", () => {
     const s = new Set<number>();
     const ro = asReadonlySet(s);
-    expect(ro[Symbol.toStringTag]).toBe("Set");
+    expect(Object.prototype.toString.call(ro)).toBe("[object Set]");
   });
 });
 

@@ -52,7 +52,6 @@ import { textEncoder } from "../core/encoding.js";
  */
 export function validatePosition(position: number, totalLength: number): ByteOffset {
   if (!Number.isFinite(position)) {
-    console.warn(`Invalid position: ${position}, defaulting to 0`);
     return byteOffset(0);
   }
   return byteOffset(Math.max(0, Math.min(position, totalLength)));

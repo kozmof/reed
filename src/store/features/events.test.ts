@@ -2,7 +2,7 @@
  * Tests for the event system.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   createEventEmitter,
   createContentChangeEvent,
@@ -114,15 +114,9 @@ describe("Event Emitter", () => {
   });
 
   describe("emit", () => {
-    beforeEach(() => {
-      vi.spyOn(console, "error").mockImplementation(() => {});
-    });
-    afterEach(() => {
-      vi.restoreAllMocks();
-    });
-
     it("should handle errors in handlers gracefully", () => {
-      const emitter = createEventEmitter();
+      const error = vi.fn();
+      const emitter = createEventEmitter({ error });
       const errorHandler = vi.fn(() => {
         throw new Error("Handler error");
       });
@@ -140,6 +134,7 @@ describe("Event Emitter", () => {
 
       // Good handler should still be called
       expect(goodHandler).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledTimes(1);
     });
 
     it("should deliver to handlers registered at emit start even if removed mid-emit", () => {
@@ -357,7 +352,9 @@ describe("getAffectedRanges", () => {
 
   it("should return [[0, 0]] for APPLY_REMOTE with empty insert text", () => {
     // empty string is falsy — the insert branch is skipped, entries stays empty
-    const action = DocumentActions.applyRemote([{ type: "insert", start: byteOffset(0), text: "" }]);
+    const action = DocumentActions.applyRemote([
+      { type: "insert", start: byteOffset(0), text: "" },
+    ]);
     const ranges = getAffectedRanges(action);
     expect(ranges).toEqual([[0, 0]]);
   });
@@ -379,7 +376,11 @@ describe("getAffectedRanges", () => {
     const actionInf = {
       type: "APPLY_REMOTE" as const,
       changes: Object.freeze([
-        Object.freeze({ type: "insert" as const, start: Infinity as unknown as ReturnType<typeof byteOffset>, text: "A" }),
+        Object.freeze({
+          type: "insert" as const,
+          start: Infinity as unknown as ReturnType<typeof byteOffset>,
+          text: "A",
+        }),
       ]),
     };
     const ranges = getAffectedRanges(actionInf, prevState);

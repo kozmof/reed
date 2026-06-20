@@ -4,7 +4,13 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { pstackSize, pstackPeek, pstackEmpty, pstackPush, pstackToArray } from "../../types/state.js";
+import {
+  pstackSize,
+  pstackPeek,
+  pstackEmpty,
+  pstackPush,
+  pstackToArray,
+} from "../../types/state.js";
 import type { DocumentStoreConfig } from "../../types/state.js";
 import { documentReducer } from "./reducer.js";
 import {
@@ -1091,9 +1097,9 @@ describe("Type Guards", () => {
     it("should reject REPLACE with non-integer start", () => {
       const result = validateAction({ type: "REPLACE", start: 1.5, end: 5, text: "x" });
       expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.includes('REPLACE action requires an integer "start"'))).toBe(
-        true,
-      );
+      expect(
+        result.errors.some((e) => e.includes('REPLACE action requires an integer "start"')),
+      ).toBe(true);
     });
 
     it("should reject REPLACE with inverted range", () => {

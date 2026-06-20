@@ -54,6 +54,7 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
     reject(error: Error): void;
   }> = [];
   const reconcileMode = config.reconcileMode ?? "idle";
+  const logger = config.logger;
   // Listeners array with on-demand COW: mutations during an active notification clone
   // the array so the in-progress for-of iteration is not disturbed. Outside notification
   // (the common case) push/splice mutate in place — O(1) add, O(n) remove (n ≈ 2–3).
@@ -143,7 +144,7 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
           listener();
         } catch (error) {
           // Don't let one listener's error affect others
-          console.error("Store listener threw an error:", error);
+          logger?.error?.("Store listener threw an error:", error);
         }
       }
     } finally {
@@ -445,7 +446,7 @@ export function createDocumentStoreWithEvents(
   config: DocumentStoreConfig = {},
 ): DocumentStoreWithEvents {
   const baseStore = createDocumentStore(config);
-  const emitter = createEventEmitter();
+  const emitter = createEventEmitter(config.logger);
   let disposed = false;
 
   // Depth-indexed event buffer. Each entry corresponds to one open transaction level.

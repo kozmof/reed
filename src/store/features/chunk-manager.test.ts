@@ -216,7 +216,6 @@ describe("ChunkManager LRU eviction", () => {
     const store = createDocumentStore({ chunkSize: CHUNK_SIZE, totalFileSize: CHUNK_SIZE * 3 });
     const loader = makeLoader({ 0: "aaaabbbb", 1: "bbbbcccc", 2: "ccccdddd" });
     const manager = createChunkManager(store, loader, { maxLoadedChunks: 2 });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     manager.setActiveChunks([0, 1, 2]);
     await manager.ensureLoaded(0);
@@ -231,15 +230,14 @@ describe("ChunkManager LRU eviction", () => {
     expect(snap.pieceTable.chunkMap.has(2)).toBe(true);
     expect(snap.pieceTable.chunkMap.has(0)).toBe(false);
 
-    warn.mockRestore();
     manager.dispose();
   });
 
   it("keeps the requested chunk resident when an older dirty chunk cannot be evicted", async () => {
     const store = makeStore();
     const loader = makeLoader({ 0: "aaaabbbb", 1: "bbbbcccc" });
-    const manager = createChunkManager(store, loader, { maxLoadedChunks: 1 });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warn = vi.fn();
+    const manager = createChunkManager(store, loader, { maxLoadedChunks: 1, logger: { warn } });
 
     await manager.ensureLoaded(0);
     store.dispatch(DocumentActions.delete(byteOffset(2), byteOffset(4)));
@@ -251,7 +249,6 @@ describe("ChunkManager LRU eviction", () => {
     expect(snap.pieceTable.chunkMap.has(1)).toBe(true);
     expect(warn).toHaveBeenCalled();
 
-    warn.mockRestore();
     manager.dispose();
   });
 });
