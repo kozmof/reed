@@ -1,6 +1,10 @@
 import type { ReadonlyUint8Array } from "../../types/branded.js";
 import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "./runtime-readonly.js";
 
+function isProductionRuntime(): boolean {
+  return typeof process !== "undefined" && process.env.NODE_ENV === "production";
+}
+
 /**
  * Append-only growable buffer that encapsulates the mutation invariant
  * for the piece table's add buffer.
@@ -53,7 +57,7 @@ export class GrowableBuffer {
    * Zero-copy read-only view into the private backing array.
    */
   subarray(start: number, end: number): ReadonlyUint8Array {
-    if (process.env.NODE_ENV !== "production") {
+    if (!isProductionRuntime()) {
       if (start < 0 || end > this.length) {
         throw new Error(
           `GrowableBuffer: out-of-bounds read [${start}, ${end}) exceeds valid length ${this.length}`,
