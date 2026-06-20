@@ -96,6 +96,34 @@ describe("ReconciliationScheduler", () => {
     expect(cancelCount).toBe(0);
   });
 
+  it("mode 'idle' runs work when the idle callback times out", () => {
+    const callbacks: IdleRequestCallback[] = [];
+    let workCount = 0;
+
+    g.requestIdleCallback = (callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+
+    const scheduler = createReconciliationScheduler("idle", {
+      hasPendingWork: () => true,
+      shouldDefer: () => false,
+      performWork: () => {
+        workCount++;
+      },
+    });
+
+    scheduler.schedule();
+
+    callbacks[0]({
+      didTimeout: true,
+      timeRemaining: () => 0,
+    } as IdleDeadline);
+
+    expect(workCount).toBe(1);
+    expect(callbacks).toHaveLength(1);
+  });
+
   it("mode 'idle' cancels the scheduled callback and reschedules after deferral", () => {
     const callbacks: IdleRequestCallback[] = [];
     let cancelCount = 0;

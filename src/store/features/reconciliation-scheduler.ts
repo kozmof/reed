@@ -146,7 +146,7 @@ export function createReconciliationScheduler(
         return;
       }
 
-      const hasTime = !deadline || deadline.timeRemaining() > 5;
+      const hasTime = !deadline || deadline.didTimeout || deadline.timeRemaining() > 5;
       if (!hasTime) {
         scheduleIdle();
         return;

@@ -55,6 +55,7 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
   }> = [];
   const reconcileMode = config.reconcileMode ?? "idle";
   const logger = config.logger;
+  let disposed = false;
   // Listeners array with on-demand COW: mutations during an active notification clone
   // the array so the in-progress for-of iteration is not disturbed. Outside notification
   // (the common case) push/splice mutate in place — O(1) add, O(n) remove (n ≈ 2–3).
@@ -207,6 +208,7 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
    * suppressed and delivered as a single call on outermost commit or outermost rollback.
    */
   function dispatch(action: DocumentAction): DocumentState {
+    if (disposed) return state;
     const newState = documentReducer(state, action);
     if (newState !== state) {
       setState(newState);
@@ -225,6 +227,7 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
    * On invariant violation the store calls emergencyReset before rethrowing.
    */
   function beginTransaction(): void {
+    if (disposed) return;
     try {
       transaction.begin(state);
     } catch (e) {
@@ -240,6 +243,7 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
    * The caller must NOT attempt rollback after a commitTransaction throw.
    */
   function commitTransaction(): void {
+    if (disposed) return;
     try {
       const result = transaction.commit();
       if (result.isOutermost) {
@@ -260,6 +264,7 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
    * @throws if called with no active transaction (depth is 0).
    */
   function rollbackTransaction(): void {
+    if (disposed) return;
     const result = transaction.rollback();
     if (result.snapshot) {
       setState(result.snapshot);
@@ -288,6 +293,7 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
    * Clears all transaction state, restores the earliest snapshot, and notifies listeners.
    */
   function emergencyReset(): DocumentState | null {
+    if (disposed) return null;
     const earliest = transaction.emergencyReset();
     if (earliest) {
       setState(earliest);
@@ -297,10 +303,13 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
   }
 
   function scheduleReconciliation(): void {
+    if (disposed) return;
     scheduler.schedule();
   }
 
   function dispose(): void {
+    if (disposed) return;
+    disposed = true;
     scheduler.cancel();
     rejectWhenReconciledWaiters(
       new Error("DocumentStore was disposed before reconciliation completed"),
@@ -362,6 +371,9 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
    * because there is no background scheduler to make forward progress.
    */
   function whenReconciled(): Promise<DocumentState<"eager">> {
+    if (disposed) {
+      return Promise.reject(new Error("DocumentStore has been disposed"));
+    }
     if (!state.lineIndex.rebuildPending) {
       return Promise.resolve(state as DocumentState<"eager">);
     }
@@ -378,6 +390,7 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
    * Set viewport bounds and ensure those lines are accurate.
    */
   function setViewport(startLine: number, endLine: number): void {
+    if (disposed) return;
     const newLineIndex = reconcileViewport(state.lineIndex, startLine, endLine, state.version);
     if (newLineIndex !== state.lineIndex) {
       setState(withState(state, { lineIndex: newLineIndex }));

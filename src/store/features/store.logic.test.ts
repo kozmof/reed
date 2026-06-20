@@ -1200,6 +1200,38 @@ describe("Type Guards", () => {
     expect(cancelCount).toBe(1);
   });
 
+  it("should ignore mutation and scheduling APIs after dispose", async () => {
+    let scheduleCount = 0;
+    const store = createDocumentStore({
+      content: "Hello",
+      scheduler: {
+        schedule() {
+          scheduleCount++;
+        },
+        cancel() {},
+        runNow() {},
+        get isRunning() {
+          return false;
+        },
+      },
+    });
+    const snapshot = store.getSnapshot();
+
+    store.dispose();
+    const afterDispatch = store.dispatch(DocumentActions.insert(byteOffset(5), "!"));
+    store.scheduleReconciliation();
+    store.setViewport(0, 1);
+    store.beginTransaction();
+    store.commitTransaction();
+    store.rollbackTransaction();
+
+    expect(afterDispatch).toBe(snapshot);
+    expect(store.getSnapshot()).toBe(snapshot);
+    expect(store.getSnapshot().pieceTable.totalLength).toBe(5);
+    expect(scheduleCount).toBe(0);
+    await expect(store.whenReconciled()).rejects.toThrow("DocumentStore has been disposed");
+  });
+
   describe("isDocumentStore", () => {
     it("should return true for valid store", () => {
       const store = createDocumentStore();
