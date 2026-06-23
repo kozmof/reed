@@ -298,7 +298,7 @@ describe("migrateSplits", () => {
     const resolved = resolveAttention(s1.root, l1, id);
     expect(resolved).not.toBeNull();
     expect(resolved!.startOffset).toBe(1); // "B" still at 1
-    expect(resolved!.endOffset).toBe(3);   // after "C" still at 3
+    expect(resolved!.endOffset).toBe(3); // after "C" still at 3
   });
 
   it("AttentionPoint on right half is migrated to new piece", () => {

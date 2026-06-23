@@ -91,10 +91,7 @@ export const emptyAttentionLayerState: AttentionLayerState = Object.freeze({
  *
  * O(log n).
  */
-export function createPoint(
-  root: PieceNode | null,
-  offset: ByteOffset,
-): AttentionPoint | null {
+export function createPoint(root: PieceNode | null, offset: ByteOffset): AttentionPoint | null {
   if (root === null) return null;
 
   // Clamp to the end of the document (boundary after last byte).
@@ -135,10 +132,7 @@ export function createPoint(
  *
  * O(n) — walks the piece tree in document order to find the piece.
  */
-export function resolvePoint(
-  root: PieceNode | null,
-  point: AttentionPoint,
-): ByteOffset | null {
+export function resolvePoint(root: PieceNode | null, point: AttentionPoint): ByteOffset | null {
   if (root === null) return null;
 
   let result: ByteOffset | null = null;
@@ -180,10 +174,7 @@ export function createAttention(
  *
  * O(1).
  */
-export function deleteAttention(
-  state: AttentionLayerState,
-  id: AttentionID,
-): AttentionLayerState {
+export function deleteAttention(state: AttentionLayerState, id: AttentionID): AttentionLayerState {
   if (!state.attentions.has(id)) return state;
   const next = new Map(state.attentions);
   next.delete(id);
@@ -195,10 +186,7 @@ export function deleteAttention(
  *
  * O(1).
  */
-export function getAttention(
-  state: AttentionLayerState,
-  id: AttentionID,
-): Attention | null {
+export function getAttention(state: AttentionLayerState, id: AttentionID): Attention | null {
   return state.attentions.get(id) ?? null;
 }
 
