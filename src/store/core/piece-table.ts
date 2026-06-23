@@ -61,7 +61,10 @@ export function* inOrderPieces(
     while (currentNode !== null) {
       nodeStack.push(currentNode);
       offsetStack.push(currentOffset);
-      currentOffset += currentNode.left?.subtreeLength ?? 0;
+      // Do NOT add left.subtreeLength here — left child's subtree starts at the
+      // same offset as the current node's subtree, so currentOffset is correct as-is.
+      // (currentOffset is updated to pieceStart + n.length after each pop, which
+      // correctly seeds the right child's offset.)
       currentNode = currentNode.left;
     }
     const n = nodeStack.pop()!;
@@ -428,19 +431,26 @@ function bstInsert(
 
 /**
  * Split a piece into two pieces at the given offset within the piece.
- * Returns [leftPiece, rightPiece] or [piece, null] if at boundary.
+ * Returns [leftPiece, rightPiece, splitRecord] or [piece, null, null] if at boundary.
+ *
+ * The left half keeps the original piece's ID; the right half gets a fresh ID.
+ * `splitRecord` is non-null whenever an actual split took place and is used by
+ * the Attention Layer to migrate AttentionPoints on the right half.
  *
  * The caller (`insertWithSplit`) is responsible for re-inserting both halves
  * into the tree: it uses `replacePieceInTree` to place the left half (which
  * restores the original children) and `rbReInsertPiece` for the right half
  * (which strips children before BST re-insertion).
  */
-export function splitPiece(piece: PieceNode, offsetInPiece: number): [PieceNode, PieceNode | null] {
+export function splitPiece(
+  piece: PieceNode,
+  offsetInPiece: number,
+): [PieceNode, PieceNode | null, SplitRecord | null] {
   if (offsetInPiece <= 0) {
-    return [piece, null];
+    return [piece, null, null];
   }
   if (offsetInPiece >= piece.length) {
-    return [piece, null];
+    return [piece, null, null];
   }
 
   let leftPiece: PieceNode;
@@ -454,6 +464,7 @@ export function splitPiece(piece: PieceNode, offsetInPiece: number): [PieceNode,
       piece.color,
       piece.left,
       null,
+      piece.id, // left half inherits the original ID
     );
     rightPiece = createChunkPieceNode(
       piece.chunkIndex,
@@ -462,6 +473,7 @@ export function splitPiece(piece: PieceNode, offsetInPiece: number): [PieceNode,
       "red",
       null,
       piece.right,
+      // right half auto-generates a fresh ID
     );
   } else {
     leftPiece = createPieceNode(
@@ -471,6 +483,7 @@ export function splitPiece(piece: PieceNode, offsetInPiece: number): [PieceNode,
       piece.color,
       piece.left,
       null,
+      piece.id, // left half inherits the original ID
     );
     rightPiece = createPieceNode(
       piece.bufferType,
@@ -479,10 +492,18 @@ export function splitPiece(piece: PieceNode, offsetInPiece: number): [PieceNode,
       "red",
       null,
       piece.right,
+      // right half auto-generates a fresh ID
     );
   }
 
-  return [leftPiece, rightPiece];
+  const splitRecord: SplitRecord = {
+    originalID: piece.id,
+    leftID: leftPiece.id,
+    rightID: rightPiece.id,
+    splitOffset: offsetInPiece,
+  };
+
+  return [leftPiece, rightPiece, splitRecord];
 }
 
 // =============================================================================
@@ -490,13 +511,40 @@ export function splitPiece(piece: PieceNode, offsetInPiece: number): [PieceNode,
 // =============================================================================
 
 /**
+ * Describes a piece split that occurred during an insert operation.
+ * Used by the Attention Layer to migrate AttentionPoints whose piece was split.
+ *
+ * When a piece is split in two:
+ * - The left half keeps `originalID` (bytes 0..splitOffset of the original)
+ * - The right half gets `rightID`   (bytes splitOffset..end of the original)
+ *
+ * Any AttentionPoint (originalID, boundary > splitOffset) must be rewritten to
+ * (rightID, boundary - splitOffset).
+ */
+export interface SplitRecord {
+  /** ID of the piece that was split (same as leftID after the split). */
+  readonly originalID: string;
+  /** ID of the new left half (equals originalID). */
+  readonly leftID: string;
+  /** ID of the new right half (fresh ID). */
+  readonly rightID: string;
+  /** Byte offset within the original piece where the split occurred. */
+  readonly splitOffset: number;
+}
+
+/**
  * Result of a piece table insert operation.
  * Includes the new state and the byte length of the inserted text,
  * avoiding the need for callers to re-encode text or diff totalLength.
+ *
+ * `splits` is non-empty only when the insert landed inside an existing piece
+ * and caused it to be split. The Attention Layer uses this to migrate
+ * AttentionPoints that referenced the split piece.
  */
 export interface PieceTableInsertResult {
   state: PieceTableState;
   insertedByteLength: number;
+  splits: readonly SplitRecord[];
 }
 
 /**
@@ -508,7 +556,8 @@ export function pieceTableInsert(
   position: ByteOffset,
   text: string,
 ): LinearCost<PieceTableInsertResult> {
-  if (text.length === 0) return $proveCtx("O(n)", $lift("O(n)", { state, insertedByteLength: 0 }));
+  if (text.length === 0)
+    return $proveCtx("O(n)", $lift("O(n)", { state, insertedByteLength: 0, splits: [] }));
 
   const textBytes = textEncoder.encode(text);
 
@@ -534,12 +583,16 @@ export function pieceTableInsert(
           totalLength: textBytes.length,
         }),
         insertedByteLength: textBytes.length,
+        splits: [],
       }),
     );
   }
 
   const location: LogCost<PieceLocation | null> =
     findPieceAtPosition(state.root, position) ?? $proveCtx("O(log n)", $lift("O(log n)", null));
+
+  // Capture any split that occurs — set from within the $andThen callback.
+  let capturedSplit: SplitRecord | null = null;
 
   return $prove(
     "O(n)",
@@ -581,15 +634,14 @@ export function pieceTableInsert(
             );
           }
           // Split path performs O(log n) insertions as well.
-          return $lift(
-            "O(log n)",
-            insertWithSplit(
-              resolvedLocation,
-              "add",
-              byteOffset(newAddStart),
-              byteLength(textBytes.length),
-            ),
+          const [splitRoot, splitRecord] = insertWithSplit(
+            resolvedLocation,
+            "add",
+            byteOffset(newAddStart),
+            byteLength(textBytes.length),
           );
+          capturedSplit = splitRecord;
+          return $lift("O(log n)", splitRoot);
         }),
         $map((newRoot) => ({
           state: freezePieceTableState({
@@ -599,6 +651,7 @@ export function pieceTableInsert(
             totalLength: state.totalLength + textBytes.length,
           }),
           insertedByteLength: textBytes.length,
+          splits: capturedSplit !== null ? [capturedSplit] : ([] as readonly SplitRecord[]),
         })),
       ),
     ),
@@ -641,19 +694,20 @@ function rbReInsertPiece(root: PieceNode, position: number, piece: PieceNode): L
 
 /**
  * Insert a new piece by splitting an existing piece.
+ * Returns the new root and the SplitRecord describing what was split.
  */
 function insertWithSplit(
   location: PieceLocation,
   bufferType: "original" | "add",
   start: ByteOffset,
   length: ByteLength,
-): PieceNode {
+): [PieceNode, SplitRecord] {
   // We need to:
   // 1. Replace the found piece with its left part
   // 2. Insert the new piece
   // 3. Insert the right part of the split
 
-  const [leftPart, rightPart] = splitPiece(location.node, location.offsetInPiece);
+  const [leftPart, rightPart, splitRecord] = splitPiece(location.node, location.offsetInPiece);
 
   // Rebuild the tree with the split
   const replaceResult = replacePieceInTree(location.path, location.node, leftPart);
@@ -669,7 +723,8 @@ function insertWithSplit(
     newRoot = rbReInsertPiece(newRoot, rightPos, rightPart);
   }
 
-  return newRoot;
+  // splitRecord is always non-null here because offsetInPiece is strictly in (0, length)
+  return [newRoot, splitRecord!];
 }
 
 /**
@@ -711,12 +766,19 @@ function replacePieceInTree(
 /**
  * Create a child-less copy of `node` with new `start` and `length`.
  * Color is a placeholder ("black") — joinByBlackHeight always overrides it.
+ *
+ * `id` defaults to a fresh ID. Pass `node.id` when the fragment represents a
+ * surviving portion of the original piece (so AttentionPoints keep tracking it).
  */
-function makePiece(node: PieceNode, start: ByteOffset, length: ByteLength): PieceNode {
+function makePiece(node: PieceNode, start: ByteOffset, length: ByteLength, id?: string): PieceNode {
   if (node.bufferType === "chunk") {
-    return createChunkPieceNode(node.chunkIndex, start, length, "black", null, null);
+    return id !== undefined
+      ? createChunkPieceNode(node.chunkIndex, start, length, "black", null, null, id)
+      : createChunkPieceNode(node.chunkIndex, start, length, "black", null, null);
   }
-  return createPieceNode(node.bufferType, start, length, "black", null, null);
+  return id !== undefined
+    ? createPieceNode(node.bufferType, start, length, "black", null, null, id)
+    : createPieceNode(node.bufferType, start, length, "black", null, null);
 }
 
 /**
@@ -742,22 +804,26 @@ function splitAt(node: PieceNode | null, offset: number): [PieceNode | null, Pie
   const pieceEnd = pieceStart + node.length;
 
   if (offset <= pieceStart) {
-    // Split falls in the left subtree; rebuild right part as join(lr, this-piece, right)
+    // Split falls in the left subtree; rebuild right part as join(lr, this-piece, right).
+    // This node is reconstructed unchanged — preserve its ID so AttentionPoints survive.
     const [ll, lr] = splitAt(node.left, offset);
-    const key = makePiece(node, node.start, byteLength(node.length));
+    const key = makePiece(node, node.start, byteLength(node.length), node.id);
     return [ll, joinByBlackHeight(lr, key, node.right)];
   }
 
   if (offset >= pieceEnd) {
-    // Split falls in the right subtree; rebuild left part as join(left, this-piece, rl)
+    // Split falls in the right subtree; rebuild left part as join(left, this-piece, rl).
+    // This node is reconstructed unchanged — preserve its ID so AttentionPoints survive.
     const [rl, rr] = splitAt(node.right, offset - pieceEnd);
-    const key = makePiece(node, node.start, byteLength(node.length));
+    const key = makePiece(node, node.start, byteLength(node.length), node.id);
     return [joinByBlackHeight(node.left, key, rl), rr];
   }
 
-  // Split falls within this piece — cut it into two child-less halves
+  // Split falls within this piece — cut it into two child-less halves.
+  // Left half inherits the original ID (same convention as insertWithSplit).
+  // Right half gets a fresh ID; callers that track pieces must handle this new ID.
   const off = offset - pieceStart;
-  const lKey = makePiece(node, node.start, byteLength(off));
+  const lKey = makePiece(node, node.start, byteLength(off), node.id);
   const rKey = makePiece(node, byteOffset(node.start + off), byteLength(node.length - off));
   return [joinByBlackHeight(node.left, lKey, null), joinByBlackHeight(null, rKey, node.right)];
 }

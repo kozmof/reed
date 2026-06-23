@@ -173,3 +173,26 @@ export type {
   ReconciliationScheduler,
   ReconciliationSchedulerOptions,
 } from "./features/reconciliation-scheduler.js";
+
+// Attention Layer — piece-attached reference system (third Reed layer)
+export {
+  emptyAttentionLayerState,
+  createPoint,
+  resolvePoint,
+  createAttention,
+  deleteAttention,
+  getAttention,
+  resolveAttention,
+  getTextForAttention,
+  findAttentionsAt,
+  findAttentionsOverlapping,
+  migrateSplits,
+} from "./core/attention.js";
+export type {
+  PieceID,
+  AttentionID,
+  AttentionPoint,
+  Attention,
+  AttentionLayerState,
+} from "./core/attention.js";
+export type { SplitRecord } from "./core/piece-table.js";

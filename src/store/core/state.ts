@@ -30,6 +30,15 @@ import {
   isReadonlySetView,
 } from "./runtime-readonly.js";
 
+// =============================================================================
+// Piece ID generation
+// =============================================================================
+
+let _nextPieceID = 0;
+function generatePieceID(): string {
+  return `p${_nextPieceID++}`;
+}
+
 /**
  * Default configuration values.
  */
@@ -187,6 +196,9 @@ export function createEmptyPieceTableState(
  * All node creation (insert, split, compaction) flows through this function,
  * ensuring subtreeAddLength is always computed correctly from the start.
  * For 'chunk' pieces use createChunkPieceNode instead.
+ *
+ * Pass an explicit `id` to preserve identity across splits (left half of a split
+ * inherits the original piece's id). Omit to auto-generate a fresh id.
  */
 export function createPieceNode(
   bufferType: "original" | "add",
@@ -195,6 +207,7 @@ export function createPieceNode(
   color: "red" | "black" = "black",
   left: PieceNode | null = null,
   right: PieceNode | null = null,
+  id: string = generatePieceID(),
 ): PieceNode {
   const leftLength = left?.subtreeLength ?? 0;
   const rightLength = right?.subtreeLength ?? 0;
@@ -204,6 +217,7 @@ export function createPieceNode(
 
   return Object.freeze({
     _nodeKind: "piece" as const,
+    id,
     color,
     left,
     right,
@@ -221,6 +235,10 @@ export function createPieceNode(
  * @param chunkIndex - Index into PieceTableState.chunkMap
  * @param offsetInChunk - Byte offset *within* the chunk (not an absolute file offset)
  * @param length - Number of bytes this piece covers
+ * @param color - RB-tree color (default: black)
+ * @param left - Left child (default: null)
+ * @param right - Right child (default: null)
+ * @param id - Stable piece identity; auto-generated if omitted
  */
 export function createChunkPieceNode(
   chunkIndex: number,
@@ -229,6 +247,7 @@ export function createChunkPieceNode(
   color: "red" | "black" = "black",
   left: PieceNode | null = null,
   right: PieceNode | null = null,
+  id: string = generatePieceID(),
 ): PieceNode {
   const leftLength = left?.subtreeLength ?? 0;
   const rightLength = right?.subtreeLength ?? 0;
@@ -237,6 +256,7 @@ export function createChunkPieceNode(
 
   return Object.freeze({
     _nodeKind: "piece" as const,
+    id,
     color,
     left,
     right,
@@ -573,8 +593,9 @@ export function asEagerLineIndex(state: LineIndexState): LineIndexState<"eager">
 
 /**
  * Settable fields on a PieceNode.
- * `bufferType` and `chunkIndex` are excluded: `bufferType` is the discriminant
- * and must never change, and `chunkIndex` only exists on ChunkPieceNode.
+ * `id`, `bufferType`, and `chunkIndex` are excluded: `id` is stable identity and
+ * must never change via withPieceNode (use createPieceNode with an explicit id for splits);
+ * `bufferType` is the discriminant; `chunkIndex` only exists on ChunkPieceNode.
  * subtreeLength and subtreeAddLength are recomputed automatically.
  */
 export type PieceNodeUpdates = Partial<

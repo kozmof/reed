@@ -106,6 +106,8 @@ export interface RBNode<T extends RBNode<T>> {
 interface PieceNodeBase extends RBNode<PieceNode> {
   /** Structural discriminant — distinguishes PieceNode from LineIndexNode in generic RB-tree contexts. */
   readonly _nodeKind: "piece";
+  /** Stable identity that survives tree rotations, rebalancing, and offset movement. */
+  readonly id: string;
   /** Start offset in the buffer (for 'chunk': offset within the chunk, not absolute file offset) */
   readonly start: ByteOffset;
   /** Length of this piece */
