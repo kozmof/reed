@@ -4,11 +4,11 @@
 
 The attention layer (`src/store/core/attention.ts`) is the third independent Reed layer, alongside the piece table (content) and the line index (navigation):
 
-| Layer       | Responsibility | Module                          |
-| ----------- | -------------- | ------------------------------- |
-| Piece Tree  | content        | `src/store/core/piece-table.ts` |
-| Line Index  | navigation     | `src/store/core/line-index.ts`  |
-| Attention   | references     | `src/store/core/attention.ts`   |
+| Layer      | Responsibility | Module                          |
+| ---------- | -------------- | ------------------------------- |
+| Piece Tree | content        | `src/store/core/piece-table.ts` |
+| Line Index | navigation     | `src/store/core/line-index.ts`  |
+| Attention  | references     | `src/store/core/attention.ts`   |
 
 It provides **piece-anchored references** into mutable text: a reference survives tree rotations, rebalancing, inserts, and deletes without the caller re-tracking offsets.
 
@@ -21,7 +21,7 @@ Exposure: it is public via the `attention` namespace on `src/index.ts` (`import 
 An offset into a document is invalidated by every edit before it. An attention point instead pins to a **piece boundary**:
 
 - `AttentionPoint = { pieceID, boundary }`
-- `boundary` is the byte count from the piece's start to the point — the gap *before* byte `boundary` and *after* byte `boundary - 1`. Valid range: `0` (before the first byte) to `piece.length` (after the last byte).
+- `boundary` is the byte count from the piece's start to the point — the gap _before_ byte `boundary` and _after_ byte `boundary - 1`. Valid range: `0` (before the first byte) to `piece.length` (after the last byte).
 
 Because a piece's ID is stable across tree rotations and rebalancing, the point keeps tracking the same character gap even as the piece's absolute document position shifts.
 

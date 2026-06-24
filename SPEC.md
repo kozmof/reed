@@ -25,12 +25,12 @@ This repository currently implements a core text engine and state runtime:
 | -------------------------------------------------------------------- | ------------- | --------------------------------------------------------------------------- |
 | [spec/01-core-architecture.md](spec/01-core-architecture.md)         | Core          | Piece table + line index architecture, reducer/store model, known core gaps |
 | [spec/02-rendering.md](spec/02-rendering.md)                         | Rendering     | Selector-level viewport/line utilities                                      |
-| [spec/03-loading-and-history.md](spec/03-loading-and-history.md)     | Data          | Streaming read support, history model, chunk loading runtime                 |
-| [spec/04-collaboration.md](spec/04-collaboration.md)                 | Collaboration | `APPLY_REMOTE` remote-change primitives and their event semantics            |
+| [spec/03-loading-and-history.md](spec/03-loading-and-history.md)     | Data          | Streaming read support, history model, chunk loading runtime                |
+| [spec/04-collaboration.md](spec/04-collaboration.md)                 | Collaboration | `APPLY_REMOTE` remote-change primitives and their event semantics           |
 | [spec/05-public-api.md](spec/05-public-api.md)                       | API           | Actual exported API surface from `src/index.ts`                             |
 | [spec/06-testing.md](spec/06-testing.md)                             | Quality       | Current test suites, latest verified run, and coverage gaps                 |
 | [spec/07-error-handling.md](spec/07-error-handling.md)               | Reliability   | Implemented fail-soft behavior and known semantic gaps                      |
-| [spec/08-implementation.md](spec/08-implementation.md)               | Status        | Implemented subsystems, subsystem notes, and near-term priorities            |
+| [spec/08-implementation.md](spec/08-implementation.md)               | Status        | Implemented subsystems, subsystem notes, and near-term priorities           |
 | [spec/09-piece-table-internals.md](spec/09-piece-table-internals.md) | Internals     | Add-buffer, chunk-buffer, and piece-table lifecycle details                 |
 | [spec/10-attention.md](spec/10-attention.md)                         | References    | Piece-anchored attention layer: points, spans, and edit migration           |
 
