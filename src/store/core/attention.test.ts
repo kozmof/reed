@@ -534,6 +534,31 @@ describe("deleteWithAttention", () => {
     expect(getTextForAttention(pieceTableState, attentionState, id)).toBe("");
   });
 
+  it("re-anchors a boundary-0 point on a fully-deleted interior piece (no dangling)", () => {
+    // Build three pieces: insert "XYZ" into "ABCDEFGH" at offset 4.
+    const s0 = createPieceTableState("ABCDEFGH");
+    const { state: s1 } = insert(s0, 4, "XYZ"); // "ABCDXYZEFGH": [ABCD][XYZ][EFGH]
+    // Anchor START at offset 4 = boundary 0 of the interior "XYZ" piece.
+    const ptStart = createPoint(s1.root, byteOffset(4))!;
+    const ptEnd = createPoint(s1.root, byteOffset(11))!; // document end
+    const [l0, id] = createAttention(emptyAttentionLayerState, ptStart, ptEnd);
+
+    // Delete the whole "XYZ" span [4,7): the interior piece is dropped entirely,
+    // so its ID vanishes — the start point cannot survive by ID, it must re-anchor.
+    const { pieceTableState, attentionState } = deleteWithAttention(
+      s1,
+      l0,
+      byteOffset(4),
+      byteOffset(7),
+    );
+    // "ABCDEFGH": start collapses to the cut (4), end shifts left to 8.
+    const resolved = resolveAttention(pieceTableState.root, attentionState, id);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.startOffset).toBe(4);
+    expect(resolved!.endOffset).toBe(8);
+    expect(getTextForAttention(pieceTableState, attentionState, id)).toBe("EFGH");
+  });
+
   it("leaves the attention layer untouched when the delete is after every attention", () => {
     const s0 = createPieceTableState("Hello, World!");
     const pt2 = createPoint(s0.root, byteOffset(2))!;

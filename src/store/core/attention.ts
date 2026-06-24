@@ -240,7 +240,9 @@ function buildPieceOffsetIndex(root: PieceNode | null): PieceOffsetIndex {
 function resolvePointWithIndex(index: PieceOffsetIndex, point: AttentionPoint): ByteOffset | null {
   const entry = index.get(point.pieceID);
   if (entry === undefined) return null;
-  if (point.boundary > entry.length) return null;
+  // Fail closed on a corrupt boundary in either direction: a negative boundary
+  // would produce an offset before the piece, an over-length one past it.
+  if (point.boundary < 0 || point.boundary > entry.length) return null;
   return byteOffset(entry.offset + point.boundary);
 }
 
@@ -391,20 +393,21 @@ export function migrateSplits(
     lookup = (pieceID) => splitMap.get(pieceID);
   }
 
-  let changed = false;
-  const next = new Map(state.attentions);
+  // Copy-on-write: only clone the map once a point actually migrates. The common
+  // case (no attention references a split piece) returns the input untouched.
+  let next: Map<AttentionID, Attention> | null = null;
 
-  for (const [id, attention] of next) {
+  for (const [id, attention] of state.attentions) {
     const migratedStart = migratePoint(attention.start, lookup);
     const migratedEnd = migratePoint(attention.end, lookup);
 
     if (migratedStart !== attention.start || migratedEnd !== attention.end) {
+      if (next === null) next = new Map(state.attentions);
       next.set(id, Object.freeze({ ...attention, start: migratedStart, end: migratedEnd }));
-      changed = true;
     }
   }
 
-  return changed ? Object.freeze({ attentions: next, nextID: state.nextID }) : state;
+  return next === null ? state : Object.freeze({ attentions: next, nextID: state.nextID });
 }
 
 function migratePoint(
@@ -468,10 +471,15 @@ export interface DeleteWithAttentionResult {
 /**
  * Re-anchor one AttentionPoint across a delete of the clamped span [start, end).
  *
- * Points at or before `start` are unaffected (their piece keeps its ID).
- * Points after `end` shift left by the deleted length. Points strictly inside
- * the span collapse to `start`. Already-dangling points (and boundary overflows)
- * are left untouched — they stay dangling rather than re-anchoring to garbage.
+ * Points strictly before `start` are unaffected (their piece keeps its ID).
+ * Points after `end` shift left by the deleted length. Points inside the span —
+ * and points exactly at `start` — collapse to `start`. Collapsing (rather than
+ * keeping) the `start`-boundary case is what saves a point anchored at boundary 0
+ * of a fully-deleted interior piece: that piece is dropped entirely (no fragment
+ * inherits its ID), so leaving the point as-is would dangle it; re-anchoring to
+ * `start` keeps it live at the same document position. Already-dangling points
+ * (and boundary overflows) are left untouched — they stay dangling rather than
+ * re-anchoring to garbage.
  */
 function migratePointForDelete(
   point: AttentionPoint,
@@ -485,7 +493,7 @@ function migratePointForDelete(
   if (entry === undefined || point.boundary > entry.length) return point; // dangling: leave as-is
 
   const offset = entry.offset + point.boundary;
-  if (offset <= start) return point; // before the cut — piece + boundary still valid
+  if (offset < start) return point; // strictly before the cut — piece + boundary still valid
 
   const newOffset = offset >= end ? offset - deletedLength : start;
   // Re-anchor against the post-delete tree. A null result (empty document) leaves
@@ -526,9 +534,9 @@ export function deleteWithAttention(
   const deletedLength = clampedEnd - clampedStart;
   const newRoot = newPieceTableState.root;
 
-  let changed = false;
-  const next = new Map(attentionState.attentions);
-  for (const [id, attention] of next) {
+  // Copy-on-write: only clone the map once a point actually re-anchors.
+  let next: Map<AttentionID, Attention> | null = null;
+  for (const [id, attention] of attentionState.attentions) {
     const migratedStart = migratePointForDelete(
       attention.start,
       oldIndex,
@@ -546,16 +554,17 @@ export function deleteWithAttention(
       deletedLength,
     );
     if (migratedStart !== attention.start || migratedEnd !== attention.end) {
+      if (next === null) next = new Map(attentionState.attentions);
       next.set(id, Object.freeze({ ...attention, start: migratedStart, end: migratedEnd }));
-      changed = true;
     }
   }
 
   return {
     pieceTableState: newPieceTableState,
-    attentionState: changed
-      ? Object.freeze({ attentions: next, nextID: attentionState.nextID })
-      : attentionState,
+    attentionState:
+      next === null
+        ? attentionState
+        : Object.freeze({ attentions: next, nextID: attentionState.nextID }),
     deletedByteLength: deletedLength,
   };
 }
