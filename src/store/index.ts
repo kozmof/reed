@@ -188,6 +188,7 @@ export {
   findAttentionsOverlapping,
   migrateSplits,
   insertWithAttention,
+  deleteWithAttention,
 } from "./core/attention.js";
 export type {
   PieceID,
@@ -196,5 +197,6 @@ export type {
   Attention,
   AttentionLayerState,
   InsertWithAttentionResult,
+  DeleteWithAttentionResult,
 } from "./core/attention.js";
 export type { SplitRecord } from "./core/piece-table.js";

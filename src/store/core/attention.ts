@@ -13,6 +13,15 @@
  *
  * When an insert causes a piece to split, call `migrateSplits` to heal any
  * AttentionPoints that fell on the right half of the split.
+ *
+ * Deletes are different: the split–join delete strategy hands surviving
+ * fragments fresh piece IDs that no `SplitRecord` describes, so points on a
+ * cut piece cannot be healed by ID rewriting. Use `deleteWithAttention`, which
+ * resolves each point against the pre-delete tree and re-anchors it against the
+ * new one (trailing points shift left, points inside the deleted span collapse
+ * to its start). Resolution is fail-closed everywhere: a point whose piece was
+ * cut away (or whose boundary now exceeds its piece) resolves to `null` rather
+ * than to a corrupt offset.
  */
 
 import type { PieceNode, PieceTableState } from "../../types/state.js";
@@ -21,7 +30,9 @@ import { byteOffset, attentionID } from "../../types/branded.js";
 import type { SplitRecord } from "./piece-table.js";
 import {
   pieceTableInsert,
+  pieceTableDelete,
   findPieceAtPosition,
+  findLastPiece,
   getText,
   inOrderPieces,
   pieceTableInOrder,
@@ -104,21 +115,11 @@ export function createPoint(root: PieceNode | null, offset: ByteOffset): Attenti
 
   if (clampedOffset < 0) return null;
 
-  // At document end: find the last piece and attach to its right boundary.
+  // At document end: attach to the rightmost piece's right boundary.
   if (clampedOffset === totalLength) {
-    // Walk to the rightmost piece.
-    let node: PieceNode = root;
-    let nodeStart = 0;
-    while (true) {
-      const leftLen = node.left?.subtreeLength ?? 0;
-      const pieceStart = nodeStart + leftLen;
-      if (node.right !== null) {
-        nodeStart = pieceStart + node.length;
-        node = node.right;
-      } else {
-        return { pieceID: node.id, boundary: node.length };
-      }
-    }
+    const last = findLastPiece(root);
+    if (last === null) return null;
+    return { pieceID: last.node.id, boundary: last.offsetInPiece };
   }
 
   const location = findPieceAtPosition(root, byteOffset(clampedOffset));
@@ -132,7 +133,9 @@ export function createPoint(root: PieceNode | null, offset: ByteOffset): Attenti
 
 /**
  * Resolve an AttentionPoint to its current document byte offset.
- * Returns null when the piece ID is not found (dangling reference).
+ * Returns null for a dangling reference: the piece ID is no longer in the tree,
+ * or the boundary now exceeds the piece's length (e.g. the piece was cut by a
+ * delete). Failing closed avoids returning a silently-wrong offset.
  *
  * O(n) — walks the piece tree in document order to find the piece.
  */
@@ -143,8 +146,10 @@ export function resolvePoint(root: PieceNode | null, point: AttentionPoint): Byt
 
   pieceTableInOrder(root, (node, pieceDocOffset) => {
     if (node.id === point.pieceID) {
-      result = byteOffset(pieceDocOffset + point.boundary);
-      return true; // stop iteration
+      if (point.boundary <= node.length) {
+        result = byteOffset(pieceDocOffset + point.boundary);
+      }
+      return true; // stop iteration: this is the only piece with this ID
     }
   });
 
@@ -198,11 +203,17 @@ export function getAttention(state: AttentionLayerState, id: AttentionID): Atten
 // Resolution API
 // =============================================================================
 
-/** Maps each live piece ID to its current document start offset. */
-type PieceOffsetIndex = ReadonlyMap<PieceID, number>;
+/** A live piece's current document start offset and its byte length. */
+interface PieceOffsetEntry {
+  readonly offset: number;
+  readonly length: number;
+}
+
+/** Maps each live piece ID to its current document position and length. */
+type PieceOffsetIndex = ReadonlyMap<PieceID, PieceOffsetEntry>;
 
 /**
- * Build a piece-ID → document-start-offset index in a single in-order pass.
+ * Build a piece-ID → {offset, length} index in a single in-order pass.
  *
  * Amortizes resolution: once built, each point resolves in O(1) instead of
  * walking the tree. Callers that resolve many points against the same tree
@@ -211,22 +222,25 @@ type PieceOffsetIndex = ReadonlyMap<PieceID, number>;
  * O(n).
  */
 function buildPieceOffsetIndex(root: PieceNode | null): PieceOffsetIndex {
-  const index = new Map<PieceID, number>();
+  const index = new Map<PieceID, PieceOffsetEntry>();
   if (root === null) return index;
   for (const { piece, docOffset } of inOrderPieces(root)) {
-    index.set(piece.id, docOffset);
+    index.set(piece.id, { offset: docOffset, length: piece.length });
   }
   return index;
 }
 
 /**
  * Resolve a single point against a prebuilt index.
- * Returns null when the piece ID is not present (dangling reference).
+ * Returns null for a dangling reference: the piece ID is absent, or the boundary
+ * exceeds the piece's length (failing closed instead of returning a corrupt
+ * offset).
  */
 function resolvePointWithIndex(index: PieceOffsetIndex, point: AttentionPoint): ByteOffset | null {
-  const pieceStart = index.get(point.pieceID);
-  if (pieceStart === undefined) return null;
-  return byteOffset(pieceStart + point.boundary);
+  const entry = index.get(point.pieceID);
+  if (entry === undefined) return null;
+  if (point.boundary > entry.length) return null;
+  return byteOffset(entry.offset + point.boundary);
 }
 
 /**
@@ -432,5 +446,105 @@ export function insertWithAttention(
     pieceTableState: result.state,
     attentionState: migrateSplits(attentionState, result.splits),
     insertedByteLength: result.insertedByteLength,
+  };
+}
+
+/** Result of an attention-aware delete: both layers advanced together. */
+export interface DeleteWithAttentionResult {
+  readonly pieceTableState: PieceTableState;
+  readonly attentionState: AttentionLayerState;
+  readonly deletedByteLength: number;
+}
+
+/**
+ * Re-anchor one AttentionPoint across a delete of the clamped span [start, end).
+ *
+ * Points at or before `start` are unaffected (their piece keeps its ID).
+ * Points after `end` shift left by the deleted length. Points strictly inside
+ * the span collapse to `start`. Already-dangling points (and boundary overflows)
+ * are left untouched — they stay dangling rather than re-anchoring to garbage.
+ */
+function migratePointForDelete(
+  point: AttentionPoint,
+  oldIndex: PieceOffsetIndex,
+  newRoot: PieceNode | null,
+  start: number,
+  end: number,
+  deletedLength: number,
+): AttentionPoint {
+  const entry = oldIndex.get(point.pieceID);
+  if (entry === undefined || point.boundary > entry.length) return point; // dangling: leave as-is
+
+  const offset = entry.offset + point.boundary;
+  if (offset <= start) return point; // before the cut — piece + boundary still valid
+
+  const newOffset = offset >= end ? offset - deletedLength : start;
+  // Re-anchor against the post-delete tree. A null result (empty document) leaves
+  // the old point, which then resolves to null — still fail-closed.
+  return createPoint(newRoot, byteOffset(newOffset)) ?? point;
+}
+
+/**
+ * Delete [start, end) and migrate the Attention Layer in one step.
+ *
+ * The split–join delete gives surviving fragments fresh piece IDs that no
+ * `SplitRecord` captures, so ID rewriting (as `migrateSplits` does for inserts)
+ * cannot heal points on a cut piece. Instead this resolves each point against
+ * the pre-delete tree and re-anchors it against the new one. The Attention Layer
+ * stays caller-owned — pass the current `attentionState` in and store the
+ * returned one.
+ *
+ * O(n + A·log n) — the delete and pre-delete indexing are O(n); each affected
+ * point re-anchors in O(log n).
+ */
+export function deleteWithAttention(
+  pieceTableState: PieceTableState,
+  attentionState: AttentionLayerState,
+  start: ByteOffset,
+  end: ByteOffset,
+): DeleteWithAttentionResult {
+  const total = pieceTableState.totalLength;
+  const clampedStart = Math.max(0, Math.min(start, total));
+  const clampedEnd = Math.max(0, Math.min(end, total));
+
+  const oldIndex = buildPieceOffsetIndex(pieceTableState.root);
+  const newPieceTableState = pieceTableDelete(pieceTableState, start, end);
+
+  if (clampedStart >= clampedEnd) {
+    return { pieceTableState: newPieceTableState, attentionState, deletedByteLength: 0 };
+  }
+
+  const deletedLength = clampedEnd - clampedStart;
+  const newRoot = newPieceTableState.root;
+
+  let changed = false;
+  const next = new Map(attentionState.attentions);
+  for (const [id, attention] of next) {
+    const migratedStart = migratePointForDelete(
+      attention.start,
+      oldIndex,
+      newRoot,
+      clampedStart,
+      clampedEnd,
+      deletedLength,
+    );
+    const migratedEnd = migratePointForDelete(
+      attention.end,
+      oldIndex,
+      newRoot,
+      clampedStart,
+      clampedEnd,
+      deletedLength,
+    );
+    if (migratedStart !== attention.start || migratedEnd !== attention.end) {
+      next.set(id, Object.freeze({ ...attention, start: migratedStart, end: migratedEnd }));
+      changed = true;
+    }
+  }
+
+  return {
+    pieceTableState: newPieceTableState,
+    attentionState: changed ? Object.freeze({ attentions: next }) : attentionState,
+    deletedByteLength: deletedLength,
   };
 }

@@ -19,6 +19,7 @@ import {
   findAttentionsOverlapping,
   migrateSplits,
   insertWithAttention,
+  deleteWithAttention,
 } from "./attention.js";
 
 // ---------------------------------------------------------------------------
@@ -434,5 +435,138 @@ describe("insertWithAttention", () => {
     // Append at the document end — no piece is split.
     const { attentionState } = insertWithAttention(s0, l0, byteOffset(5), "!");
     expect(attentionState).toBe(l0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fail-closed resolution
+// ---------------------------------------------------------------------------
+
+describe("fail-closed resolution", () => {
+  it("resolvePoint returns null when boundary exceeds the piece length", () => {
+    const state = createPieceTableState("Hello");
+    const pt = createPoint(state.root, byteOffset(2))!;
+    // Forge a boundary past the piece end — must fail closed, not return a bogus offset.
+    const overflow = { pieceID: pt.pieceID, boundary: 999 };
+    expect(resolvePoint(state.root, overflow)).toBeNull();
+  });
+
+  it("a raw delete that cuts the anchored piece dangles (null), never a corrupt offset", () => {
+    // "ABCDE" as a single piece; anchor inside it, then delete a span that cuts it.
+    const s0 = createPieceTableState("ABCDE");
+    const ptD = createPoint(s0.root, byteOffset(3))!; // boundary 3 within p0
+    const ptE = createPoint(s0.root, byteOffset(4))!;
+    const [l0, id] = createAttention(emptyAttentionLayerState, ptD, ptE);
+
+    // Raw delete (no migration) — surviving fragments get fresh IDs.
+    const s1 = del(s0, 1, 3); // remove "BC" → "ADE"
+    const resolved = resolveAttention(s1.root, l0, id);
+    // Without migration the points cannot survive a cut, but they must fail closed.
+    expect(resolved).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deleteWithAttention — atomic delete + migrate
+// ---------------------------------------------------------------------------
+
+describe("deleteWithAttention", () => {
+  it("shifts a trailing attention left by the deleted length", () => {
+    const s0 = createPieceTableState("Hello, World!");
+    const pt7 = createPoint(s0.root, byteOffset(7))!; // "W"
+    const pt12 = createPoint(s0.root, byteOffset(12))!; // "!" exclusive
+    const [l0, id] = createAttention(emptyAttentionLayerState, pt7, pt12);
+
+    // Delete "llo, " (offsets 2..7), entirely before the attention.
+    const { pieceTableState, attentionState, deletedByteLength } = deleteWithAttention(
+      s0,
+      l0,
+      byteOffset(2),
+      byteOffset(7),
+    );
+    expect(deletedByteLength).toBe(5);
+    // "HeWorld!" — "World" now starts at 2, "!" at 7.
+    const resolved = resolveAttention(pieceTableState.root, attentionState, id);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.startOffset).toBe(2);
+    expect(resolved!.endOffset).toBe(7);
+    expect(getTextForAttention(pieceTableState, attentionState, id)).toBe("World");
+  });
+
+  it("survives a delete that cuts the anchored piece (right-side survivor)", () => {
+    const s0 = createPieceTableState("ABCDE");
+    const ptD = createPoint(s0.root, byteOffset(3))!; // before "D"
+    const ptE = createPoint(s0.root, byteOffset(4))!; // before "E"
+    const [l0, id] = createAttention(emptyAttentionLayerState, ptD, ptE);
+
+    // Delete "BC" (1..3) — cuts the single piece; "DE" survives with a fresh ID.
+    const { pieceTableState, attentionState } = deleteWithAttention(
+      s0,
+      l0,
+      byteOffset(1),
+      byteOffset(3),
+    );
+    // "ADE": D at 1, E at 2.
+    const resolved = resolveAttention(pieceTableState.root, attentionState, id);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.startOffset).toBe(1);
+    expect(resolved!.endOffset).toBe(2);
+    expect(getTextForAttention(pieceTableState, attentionState, id)).toBe("D");
+  });
+
+  it("collapses a point inside the deleted span to the deletion start", () => {
+    const s0 = createPieceTableState("ABCDE");
+    const ptB = createPoint(s0.root, byteOffset(1))!; // before "B", inside [1,4)
+    const ptE = createPoint(s0.root, byteOffset(4))!; // before "E", at end of span
+    const [l0, id] = createAttention(emptyAttentionLayerState, ptB, ptE);
+
+    // Delete "BCD" (1..4) → "AE". Start (inside) collapses to 1; end (== span end) → 1.
+    const { pieceTableState, attentionState } = deleteWithAttention(
+      s0,
+      l0,
+      byteOffset(1),
+      byteOffset(4),
+    );
+    const resolved = resolveAttention(pieceTableState.root, attentionState, id);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.startOffset).toBe(1);
+    expect(resolved!.endOffset).toBe(1);
+    expect(getTextForAttention(pieceTableState, attentionState, id)).toBe("");
+  });
+
+  it("leaves the attention layer untouched when the delete is after every attention", () => {
+    const s0 = createPieceTableState("Hello, World!");
+    const pt2 = createPoint(s0.root, byteOffset(2))!;
+    const pt5 = createPoint(s0.root, byteOffset(5))!;
+    const [l0, id] = createAttention(emptyAttentionLayerState, pt2, pt5);
+
+    const { pieceTableState, attentionState } = deleteWithAttention(
+      s0,
+      l0,
+      byteOffset(7),
+      byteOffset(13),
+    );
+    expect(attentionState).toBe(l0);
+    const resolved = resolveAttention(pieceTableState.root, attentionState, id);
+    expect(resolved!.startOffset).toBe(2);
+    expect(resolved!.endOffset).toBe(5);
+  });
+
+  it("matches a plain delete for offsets when the delete misses every piece boundary", () => {
+    const s0 = createPieceTableState("ABCDEFGH");
+    const ptC = createPoint(s0.root, byteOffset(2))!;
+    const ptF = createPoint(s0.root, byteOffset(5))!;
+    const [l0, id] = createAttention(emptyAttentionLayerState, ptC, ptF);
+
+    // Delete after the attention; attention offsets unchanged.
+    const { pieceTableState, attentionState } = deleteWithAttention(
+      s0,
+      l0,
+      byteOffset(6),
+      byteOffset(8),
+    );
+    const resolved = resolveAttention(pieceTableState.root, attentionState, id);
+    expect(resolved!.startOffset).toBe(2);
+    expect(resolved!.endOffset).toBe(5);
   });
 });
