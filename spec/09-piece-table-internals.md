@@ -97,14 +97,14 @@ Three pieces now covering the original "Line1\n" region (doc order):
 reallocation occurs. When capacity is exceeded the array is reallocated at
 `max(currentSize × 2, currentSize + newDataSize)`, amortising growth to O(1) per byte.
 
-### 2.2 Snapshot safety
+### 2.3 Snapshot safety
 
 Old `PieceTableState` snapshots (e.g. undo-stack entries) hold a `GrowableBuffer` whose
 `length` was smaller at snapshot time. Because bytes are only ever appended — never
 overwritten — those snapshots remain valid indefinitely; they simply ignore bytes beyond
 their own `length` boundary.
 
-### 2.3 Deleted bytes and compaction
+### 2.4 Deleted bytes and compaction
 
 Deleted text leaves its bytes in `addBuffer` unreferenced until compaction runs.
 The core primitive is `compactAddBuffer()`, and `createDocumentStore()` can run it as

@@ -27,7 +27,6 @@ Not present in current codebase:
 - `reed/read` subpath
 - `reed/write` subpath
 - `reed/view` subpath
-- framework adapter entry points (React/Vue/Svelte)
 
 ## 2. Store API (`store` namespace)
 
@@ -55,6 +54,7 @@ Returns `ReconcilableDocumentStore` with:
 Supported config fields (`DocumentStoreConfig`):
 
 - `content`
+- `logger` — optional diagnostics sink; omit to keep the library silent
 - `historyLimit`
 - `chunkSize`
 - `encoding`
@@ -178,8 +178,3 @@ Important behavior:
 
 - `setValue` operates on `DocumentState`, not directly on a store instance.
 - For listener/event/transaction semantics, dispatch actions through store methods.
-
-## 6. Not Yet Implemented on Public Surface
-
-- Collaboration transport/provider integration
-- Framework adapters

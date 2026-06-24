@@ -2,9 +2,9 @@
 
 ## 1. Latest Verified Run
 
-- Date: 2026-06-17
+- Date: 2026-06-24
 - Functional command: `pnpm test`
-- Functional result: `18` test files, `651` tests passed
+- Functional result: `21` test files, `887` tests passed
 - Perf command: `pnpm test:perf`
 - Perf result: `1` test file, `28` tests passed
 
@@ -16,6 +16,9 @@ Functional suites (`pnpm test`):
 - `src/store/features/actions.test.ts`: action creators and (de)serialization
 - `src/store/core/streaming.test.ts`: `getValueStream` behavior
 - `src/store/core/rb-tree.test.ts`: shared Red-Black tree invariants
+- `src/store/core/attention.test.ts`: attention layer (piece-anchored boundary references) operations
+- `src/store/core/encoding.test.ts`: UTF-8 byte-length and surrogate-pair helpers
+- `src/store/core/runtime-readonly.test.ts`: readonly wrapper helpers for buffers/maps
 - `src/store/features/transaction.test.ts`: transaction manager behavior
 - `src/api/query.test.ts`: query namespace smoke/contract coverage
 - `src/store/features/diff.test.ts`: diff and `setValue`
@@ -29,6 +32,7 @@ Functional suites (`pnpm test`):
 - `src/store/features/store.usecase.test.ts`: end-to-end workflows and randomized reconciliation checks
 - `src/store/features/chunk-manager.test.ts`: ChunkManager load/evict/LRU/pin behavior
 - `src/store/features/chunk-metadata.test.ts`: DECLARE_CHUNK_METADATA and pre-declared line-count queries
+- `src/store/features/streaming-loader.test.ts`: `createStreamingDocumentLoader` viewport/prefetch lifecycle
 
 Performance suite (`pnpm test:perf`):
 
@@ -51,7 +55,6 @@ Current gaps relative to roadmap/spec ambitions:
 
 - no LOAD_CHUNK/EVICT_CHUNK cross-boundary stress tests (reducer paths covered; ChunkManager integration at scale is not)
 - `createStreamingDocumentLoader` has only a narrow direct suite today
-- no CRDT/provider/network collaboration integration tests
 - performance tests report timings but do not enforce hard budget thresholds
 
 ## 5. Guidance for Spec-Driven Testing
@@ -60,4 +63,3 @@ When adding new capabilities, keep tests in three layers:
 
 1. Pure function/reducer tests for determinism.
 2. Store workflow tests for batching, rollback, snapshot gating, and event semantics.
-3. Integration tests only after runtime layers (collab transport) exist.

@@ -30,11 +30,6 @@ Fully implemented:
   - loads visible viewport chunks
   - pins and prefetches a surrounding chunk window
 
-### 1.3 Not Implemented
-
-- Background file parsing workers
-- Disk-backed paging
-
 ## 2. History Model
 
 History is immutable and stored in `DocumentState.history`.

@@ -55,7 +55,7 @@ Implemented in:
 
 Separates query-style lookups from scan-style traversals and exposes dedicated history/diff namespaces.
 
-## 2. Partially Implemented Areas
+## 2. Subsystem Notes
 
 ### 2.1 Collaboration primitives
 
@@ -63,13 +63,6 @@ Implemented:
 
 - `RemoteChange` and `APPLY_REMOTE` reducer path
 - event-store `content-change` emission for remote edits
-
-Missing:
-
-- transport/provider bridge
-- CRDT sync engine
-- awareness/cursor presence
-- conflict/recovery UX
 
 ### 2.2 Chunk management
 
@@ -81,18 +74,23 @@ Fully implemented:
 - `createStreamingDocumentLoader` runtime: metadata declaration, viewport loading, pinned/prefetched windows
 - `chunkSize`, `totalFileSize` in config
 
-## 3. Not Implemented
+### 2.3 Attention layer
 
-- framework adapters (React/Vue/Svelte/Redux/Zustand)
+Implemented in `src/store/core/attention.ts`, with full coverage in `src/store/core/attention.test.ts`:
 
-## 4. Current Known Gaps
+- piece-anchored boundary references (`AttentionPoint` / `Attention`) that survive RB-tree rotations because they pin to stable piece IDs rather than document offsets
+- `createAttention` / `getAttention` / `deleteAttention` / `resolveAttention` / `getTextForAttention`
+- overlap queries (`findAttentionsAt`, `findAttentionsOverlapping`)
+- split/delete healing (`migrateSplits`, `insertWithAttention`, `deleteWithAttention`)
+
+Exposure: exported from the internal `src/store/index.ts` barrel but **not yet surfaced on the public `src/index.ts` entry point or any `api/*` namespace**.
+
+## 3. Current Known Gaps
 
 No currently confirmed functional-suite core reducer/store correctness blockers from earlier spec revisions.
 
-Primary remaining gaps are unimplemented collaboration/framework layers plus broader high-scale streaming/integration coverage.
+Primary remaining gap is broader high-scale streaming/integration coverage.
 
-## 5. Near-Term Priorities
+## 4. Near-Term Priorities
 
-1. Add collaboration transport/provider + synchronization recovery tests.
-2. Add ChunkManager/StreamingDocumentLoader integration stress tests (large-file load/evict at scale).
-3. Expand collaboration/provider integration tests once those runtime layers exist.
+1. Add ChunkManager/StreamingDocumentLoader integration stress tests (large-file load/evict at scale).

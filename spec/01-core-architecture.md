@@ -13,6 +13,8 @@ Reed is an **immutable state + reducer + store** system with a namespaced API su
 
 The piece table and line index remain independent structures. Piece nodes do not store line metadata.
 
+A third core layer — the **attention layer** (`src/store/core/attention.ts`) — provides piece-anchored boundary references that survive tree rebalancing. It is implemented and tested but not yet surfaced on the public API; see [08-implementation.md](08-implementation.md) §2.3.
+
 ## 2. Core Data Structures
 
 ### 2.1 Piece Table
@@ -91,7 +93,7 @@ Transaction control actions (`TRANSACTION_START/COMMIT/ROLLBACK`) are handled at
 
 `store.createDocumentStoreWithEvents()` wraps the base store with typed event emission.
 
-## 5. Implemented vs Not Implemented
+## 5. Implemented
 
 Implemented:
 
@@ -103,14 +105,8 @@ Implemented:
 - Typed events and query/scan API namespaces
 - Snapshot-gated reconciliation (`isCurrentSnapshot` + `reconcileIfCurrent(snapshot)`)
 
-Not implemented in current codebase:
-
-- File I/O layer
-- Framework adapters (React/Vue/Svelte/Redux/Zustand)
-- CRDT transport/provider bridge
-
 ## 6. Current Gap Summary
 
 Previously tracked core consistency gaps (`getLineRangePrecise` lazy offset issue, missing `batch()` reconciliation scheduling, missing remote content-change emission, incorrect `affectedRanges` for multi-change `APPLY_REMOTE` batches) are fixed in current code.
 
-Remaining gaps are roadmap/runtime scope gaps (collaboration transport, framework adapters) plus one currently failing perf-suite undo/redo benchmark around eager line-index expectations after lazy edits. Functional tests pass.
+No core consistency gaps are currently tracked. Both the functional and perf suites pass (see [06-testing.md](06-testing.md) for the latest verified run).
