@@ -10,6 +10,7 @@
  * - `diff.*`      — diff algorithm and setValue operations
  * - `position.*`  — branded position constructors, arithmetic, and constants
  * - `cost.*`      — cost algebra for annotating algorithmic complexity
+ * - `attention.*` — piece-anchored boundary references (the third Reed layer)
  */
 
 export type { QueryApi, QueryLineIndexApi, ScanApi, HistoryApi } from "./interfaces.js";
@@ -22,3 +23,4 @@ export { history } from "./history.js";
 export { diff } from "./diff.js";
 export { position } from "./position.js";
 export { cost } from "./cost-doc.js";
+export { attention } from "./attention.js";

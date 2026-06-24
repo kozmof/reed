@@ -13,7 +13,7 @@ Reed is an **immutable state + reducer + store** system with a namespaced API su
 
 The piece table and line index remain independent structures. Piece nodes do not store line metadata.
 
-A third core layer — the **attention layer** (`src/store/core/attention.ts`) — provides piece-anchored boundary references that survive tree rebalancing. It is implemented and tested but not yet surfaced on the public API; see [08-implementation.md](08-implementation.md) §2.3.
+A third core layer — the **attention layer** (`src/store/core/attention.ts`) — provides piece-anchored boundary references that survive tree rebalancing. It is implemented, tested, and exposed via the public `attention` namespace; see [10-attention.md](10-attention.md).
 
 ## 2. Core Data Structures
 

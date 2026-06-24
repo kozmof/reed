@@ -32,6 +32,7 @@ This repository currently implements a core text engine and state runtime:
 | [spec/07-error-handling.md](spec/07-error-handling.md)               | Reliability   | Implemented fail-soft behavior and known semantic gaps                      |
 | [spec/08-implementation.md](spec/08-implementation.md)               | Status        | Implemented subsystems, subsystem notes, and near-term priorities            |
 | [spec/09-piece-table-internals.md](spec/09-piece-table-internals.md) | Internals     | Add-buffer, chunk-buffer, and piece-table lifecycle details                 |
+| [spec/10-attention.md](spec/10-attention.md)                         | References    | Piece-anchored attention layer: points, spans, and edit migration           |
 
 ## Current API Snapshot
 
@@ -41,6 +42,7 @@ This repository currently implements a core text engine and state runtime:
 - Reconciliation runtime: `createReconciliationScheduler`
 - Action creators: `DocumentActions`
 - Read layers: `query.*`, `scan.*`
+- Reference layer: `attention.*` (piece-anchored references)
 - Write helpers: `documentReducer`, `setValue`, diff-based action computation
 
 ## Verification Snapshot

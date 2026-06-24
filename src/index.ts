@@ -162,6 +162,18 @@ export type {
 // Line index types
 export type { ReconciliationConfig } from "./store/index.js";
 
+// Attention layer types
+export type {
+  PieceID,
+  AttentionID,
+  AttentionPoint,
+  Attention,
+  AttentionLayerState,
+  ResolvedRange,
+  InsertWithAttentionResult,
+  DeleteWithAttentionResult,
+} from "./store/index.js";
+
 // =============================================================================
 // Namespaced runtime exports
 // =============================================================================
@@ -176,4 +188,5 @@ export {
   diff,
   position,
   cost,
+  attention,
 } from "./api/index.js";

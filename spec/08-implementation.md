@@ -76,14 +76,9 @@ Fully implemented:
 
 ### 2.3 Attention layer
 
-Implemented in `src/store/core/attention.ts`, with full coverage in `src/store/core/attention.test.ts`:
+Implemented in `src/store/core/attention.ts`, with full coverage in `src/store/core/attention.test.ts`: piece-anchored boundary references that survive RB-tree rebalancing and edit migration. Exposed publicly via the `attention` namespace (`src/api/attention.ts`).
 
-- piece-anchored boundary references (`AttentionPoint` / `Attention`) that survive RB-tree rotations because they pin to stable piece IDs rather than document offsets
-- `createAttention` / `getAttention` / `deleteAttention` / `resolveAttention` / `getTextForAttention`
-- overlap queries (`findAttentionsAt`, `findAttentionsOverlapping`)
-- split/delete healing (`migrateSplits`, `insertWithAttention`, `deleteWithAttention`)
-
-Exposure: exported from the internal `src/store/index.ts` barrel but **not yet surfaced on the public `src/index.ts` entry point or any `api/*` namespace**.
+See [10-attention.md](10-attention.md) for the full design, API, and migration semantics.
 
 ## 3. Current Known Gaps
 

@@ -13,6 +13,7 @@ Current public runtime surface is exported from `src/index.ts` as namespaces:
 - `diff`
 - `position`
 - `cost`
+- `attention`
 
 Types are exported flat from the same entry file.
 
@@ -167,6 +168,19 @@ Traversal namespace for O(n) operations:
 - `rendering.*`: viewport, visible lines, line/column and selection conversions
 - `history.*`: `canUndo`, `canRedo`, `getUndoCount`, `getRedoCount`, `isHistoryEmpty`
 - `diff.*`: diff and setValue action synthesis/application helpers
+
+### 4.4 Attention namespace (`attention`)
+
+Piece-anchored boundary references (the third Reed layer); state is immutable and caller-owned:
+
+- `attention.emptyState`: initial `AttentionLayerState`
+- points: `createPoint`, `resolvePoint`
+- attentions: `createAttention`, `getAttention`, `deleteAttention`
+- resolution/text: `resolveAttention`, `getTextForAttention`
+- queries: `findAttentionsAt`, `findAttentionsOverlapping`
+- edit support: `insertWithAttention`, `deleteWithAttention`, `migrateSplits`
+
+See [10-attention.md](10-attention.md) for the full design and migration semantics.
 
 ## 5. Write APIs
 
