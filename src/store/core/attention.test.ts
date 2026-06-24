@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { byteOffset } from "../../types/branded.js";
+import { byteOffset, pieceID, attentionID } from "../../types/branded.js";
 import { createPieceTableState, createEmptyPieceTableState } from "./state.js";
 import { pieceTableInsert, pieceTableDelete } from "./piece-table.js";
 import {
@@ -18,6 +18,7 @@ import {
   findAttentionsAt,
   findAttentionsOverlapping,
   migrateSplits,
+  insertWithAttention,
 } from "./attention.js";
 
 // ---------------------------------------------------------------------------
@@ -76,12 +77,12 @@ describe("createPoint", () => {
 describe("resolvePoint", () => {
   it("returns null for empty tree", () => {
     const state = createEmptyPieceTableState();
-    expect(resolvePoint(state.root, { pieceID: "p0", boundary: 0 })).toBeNull();
+    expect(resolvePoint(state.root, { pieceID: pieceID("p0"), boundary: 0 })).toBeNull();
   });
 
   it("returns null for unknown pieceID (dangling)", () => {
     const state = createPieceTableState("Hello");
-    expect(resolvePoint(state.root, { pieceID: "unknown-piece", boundary: 0 })).toBeNull();
+    expect(resolvePoint(state.root, { pieceID: pieceID("unknown-piece"), boundary: 0 })).toBeNull();
   });
 
   it("round-trips offset through createPoint → resolvePoint", () => {
@@ -139,7 +140,7 @@ describe("createAttention / getAttention / deleteAttention", () => {
   });
 
   it("getAttention returns null for unknown ID", () => {
-    expect(getAttention(emptyAttentionLayerState, "nonexistent")).toBeNull();
+    expect(getAttention(emptyAttentionLayerState, attentionID("nonexistent"))).toBeNull();
   });
 
   it("deleteAttention removes an attention", () => {
@@ -153,7 +154,7 @@ describe("createAttention / getAttention / deleteAttention", () => {
   });
 
   it("deleteAttention is a no-op for unknown ID", () => {
-    const result = deleteAttention(emptyAttentionLayerState, "unknown");
+    const result = deleteAttention(emptyAttentionLayerState, attentionID("unknown"));
     expect(result).toBe(emptyAttentionLayerState);
   });
 });
@@ -165,7 +166,7 @@ describe("createAttention / getAttention / deleteAttention", () => {
 describe("resolveAttention", () => {
   it("returns null for unknown attention ID", () => {
     const state = createPieceTableState("Hello");
-    expect(resolveAttention(state.root, emptyAttentionLayerState, "no")).toBeNull();
+    expect(resolveAttention(state.root, emptyAttentionLayerState, attentionID("no"))).toBeNull();
   });
 
   it("resolves to correct offsets", () => {
@@ -202,7 +203,7 @@ describe("resolveAttention", () => {
 describe("getTextForAttention", () => {
   it("returns null for unknown ID", () => {
     const state = createPieceTableState("Hello");
-    expect(getTextForAttention(state, emptyAttentionLayerState, "no")).toBeNull();
+    expect(getTextForAttention(state, emptyAttentionLayerState, attentionID("no"))).toBeNull();
   });
 
   it("extracts text for the covered range", () => {
@@ -378,5 +379,60 @@ describe("multi-piece coverage", () => {
     const resolved = resolveAttention(s1.root, layer, id);
     expect(resolved!.startOffset).toBe(1);
     expect(resolved!.endOffset).toBe(6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// insertWithAttention — atomic insert + migrate
+// ---------------------------------------------------------------------------
+
+describe("insertWithAttention", () => {
+  it("migrates a right-half AttentionPoint without a manual migrateSplits call", () => {
+    const s0 = createPieceTableState("ABCDE");
+    const ptD = createPoint(s0.root, byteOffset(3))!; // right half when split at 2
+    const ptE = createPoint(s0.root, byteOffset(4))!;
+    const [l0, id] = createAttention(emptyAttentionLayerState, ptD, ptE);
+
+    // Atomic helper performs the split-causing insert AND the migration.
+    const { pieceTableState, attentionState, insertedByteLength } = insertWithAttention(
+      s0,
+      l0,
+      byteOffset(2),
+      "XY",
+    );
+
+    expect(insertedByteLength).toBe(2);
+    // s1 = "ABXYCDE" — "CDE" starts at docOffset 4; D at 5, E at 6.
+    const resolved = resolveAttention(pieceTableState.root, attentionState, id);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.startOffset).toBe(5);
+    expect(resolved!.endOffset).toBe(6);
+  });
+
+  it("matches the manual pieceTableInsert + migrateSplits sequence", () => {
+    const s0 = createPieceTableState("ABCDE");
+    const ptD = createPoint(s0.root, byteOffset(3))!;
+    const ptE = createPoint(s0.root, byteOffset(4))!;
+    const [l0, id] = createAttention(emptyAttentionLayerState, ptD, ptE);
+
+    const { state: manualState, splits } = insert(s0, 2, "XY");
+    const manualLayer = migrateSplits(l0, splits);
+    const manual = resolveAttention(manualState.root, manualLayer, id);
+
+    const atomic = insertWithAttention(s0, l0, byteOffset(2), "XY");
+    const auto = resolveAttention(atomic.pieceTableState.root, atomic.attentionState, id);
+
+    expect(auto).toEqual(manual);
+  });
+
+  it("leaves the attention layer untouched when the insert causes no split", () => {
+    const s0 = createPieceTableState("Hello");
+    const pt0 = createPoint(s0.root, byteOffset(0))!;
+    const pt5 = createPoint(s0.root, byteOffset(5))!;
+    const [l0] = createAttention(emptyAttentionLayerState, pt0, pt5);
+
+    // Append at the document end — no piece is split.
+    const { attentionState } = insertWithAttention(s0, l0, byteOffset(5), "!");
+    expect(attentionState).toBe(l0);
   });
 });

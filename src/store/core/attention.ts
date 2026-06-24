@@ -16,20 +16,24 @@
  */
 
 import type { PieceNode, PieceTableState } from "../../types/state.js";
-import type { ByteOffset } from "../../types/branded.js";
-import { byteOffset } from "../../types/branded.js";
+import type { ByteOffset, PieceID, AttentionID } from "../../types/branded.js";
+import { byteOffset, attentionID } from "../../types/branded.js";
 import type { SplitRecord } from "./piece-table.js";
-import { findPieceAtPosition, getText, pieceTableInOrder } from "./piece-table.js";
+import {
+  pieceTableInsert,
+  findPieceAtPosition,
+  getText,
+  inOrderPieces,
+  pieceTableInOrder,
+} from "./piece-table.js";
 
 // =============================================================================
 // Types
 // =============================================================================
 
-/** Stable identifier for a piece node. Survives tree rotations and rebalancing. */
-export type PieceID = string;
-
-/** Stable identifier for an Attention. */
-export type AttentionID = string;
+// `PieceID` and `AttentionID` are branded string identities defined in branded.ts.
+// Re-exported here so the Attention Layer's public surface stays self-contained.
+export type { PieceID, AttentionID } from "../../types/branded.js";
 
 /**
  * A position anchored to a piece rather than to a document offset.
@@ -69,7 +73,7 @@ export interface AttentionLayerState {
 
 let _nextAttentionID = 0;
 function generateAttentionID(): AttentionID {
-  return `a${_nextAttentionID++}`;
+  return attentionID(`a${_nextAttentionID++}`);
 }
 
 /** Empty AttentionLayerState — use as the initial value. */
@@ -194,27 +198,71 @@ export function getAttention(state: AttentionLayerState, id: AttentionID): Atten
 // Resolution API
 // =============================================================================
 
+/** Maps each live piece ID to its current document start offset. */
+type PieceOffsetIndex = ReadonlyMap<PieceID, number>;
+
 /**
- * Resolve an Attention to its current document byte offsets.
- * Returns null when the Attention ID is unknown or a point is dangling.
+ * Build a piece-ID → document-start-offset index in a single in-order pass.
  *
- * O(n) — two tree walks (one per point).
+ * Amortizes resolution: once built, each point resolves in O(1) instead of
+ * walking the tree. Callers that resolve many points against the same tree
+ * (e.g. `findAttentionsAt`) should build this once and reuse it.
+ *
+ * O(n).
  */
-export function resolveAttention(
-  root: PieceNode | null,
+function buildPieceOffsetIndex(root: PieceNode | null): PieceOffsetIndex {
+  const index = new Map<PieceID, number>();
+  if (root === null) return index;
+  for (const { piece, docOffset } of inOrderPieces(root)) {
+    index.set(piece.id, docOffset);
+  }
+  return index;
+}
+
+/**
+ * Resolve a single point against a prebuilt index.
+ * Returns null when the piece ID is not present (dangling reference).
+ */
+function resolvePointWithIndex(index: PieceOffsetIndex, point: AttentionPoint): ByteOffset | null {
+  const pieceStart = index.get(point.pieceID);
+  if (pieceStart === undefined) return null;
+  return byteOffset(pieceStart + point.boundary);
+}
+
+/**
+ * Resolve an Attention against a prebuilt index.
+ * Returns null when the Attention ID is unknown or a point is dangling.
+ */
+function resolveAttentionWithIndex(
+  index: PieceOffsetIndex,
   state: AttentionLayerState,
   id: AttentionID,
 ): { startOffset: ByteOffset; endOffset: ByteOffset } | null {
   const attention = state.attentions.get(id);
   if (attention === undefined) return null;
 
-  const startOffset = resolvePoint(root, attention.start);
+  const startOffset = resolvePointWithIndex(index, attention.start);
   if (startOffset === null) return null;
 
-  const endOffset = resolvePoint(root, attention.end);
+  const endOffset = resolvePointWithIndex(index, attention.end);
   if (endOffset === null) return null;
 
   return { startOffset, endOffset };
+}
+
+/**
+ * Resolve an Attention to its current document byte offsets.
+ * Returns null when the Attention ID is unknown or a point is dangling.
+ *
+ * O(n) — a single tree walk resolves both points.
+ */
+export function resolveAttention(
+  root: PieceNode | null,
+  state: AttentionLayerState,
+  id: AttentionID,
+): { startOffset: ByteOffset; endOffset: ByteOffset } | null {
+  if (state.attentions.get(id) === undefined) return null;
+  return resolveAttentionWithIndex(buildPieceOffsetIndex(root), state, id);
 }
 
 // =============================================================================
@@ -245,16 +293,18 @@ export function getTextForAttention(
 /**
  * Return IDs of all Attentions whose resolved range contains `offset`.
  *
- * O(A · n) where A is the number of attentions.
+ * O(n + A) where A is the number of attentions: one tree walk to index the
+ * pieces, then an O(1) resolution per attention.
  */
 export function findAttentionsAt(
   state: AttentionLayerState,
   root: PieceNode | null,
   offset: number,
 ): AttentionID[] {
+  const index = buildPieceOffsetIndex(root);
   const results: AttentionID[] = [];
   for (const [id] of state.attentions) {
-    const offsets = resolveAttention(root, state, id);
+    const offsets = resolveAttentionWithIndex(index, state, id);
     if (offsets === null) continue;
     if (offset >= offsets.startOffset && offset < offsets.endOffset) {
       results.push(id);
@@ -267,7 +317,8 @@ export function findAttentionsAt(
  * Return IDs of all Attentions that overlap the range [start, end).
  * Two ranges overlap when one starts before the other ends.
  *
- * O(A · n) where A is the number of attentions.
+ * O(n + A) where A is the number of attentions: one tree walk to index the
+ * pieces, then an O(1) resolution per attention.
  */
 export function findAttentionsOverlapping(
   state: AttentionLayerState,
@@ -275,9 +326,10 @@ export function findAttentionsOverlapping(
   start: number,
   end: number,
 ): AttentionID[] {
+  const index = buildPieceOffsetIndex(root);
   const results: AttentionID[] = [];
   for (const [id] of state.attentions) {
-    const offsets = resolveAttention(root, state, id);
+    const offsets = resolveAttentionWithIndex(index, state, id);
     if (offsets === null) continue;
     // Overlap: not (attention ends before range OR attention starts after range)
     if (offsets.endOffset > start && offsets.startOffset < end) {
@@ -311,7 +363,7 @@ export function migrateSplits(
   if (splits.length === 0) return state;
 
   // Build a fast lookup: originalID → SplitRecord
-  const splitMap = new Map<string, SplitRecord>();
+  const splitMap = new Map<PieceID, SplitRecord>();
   for (const s of splits) {
     splitMap.set(s.originalID, s);
   }
@@ -334,13 +386,13 @@ export function migrateSplits(
 
 function migratePoint(
   point: AttentionPoint,
-  splitMap: ReadonlyMap<string, SplitRecord>,
+  splitMap: ReadonlyMap<PieceID, SplitRecord>,
 ): AttentionPoint {
   const split = splitMap.get(point.pieceID);
   if (split === undefined) return point;
 
   if (point.boundary <= split.splitOffset) {
-    // Falls in the left half — pieceID is already correct (originalID === leftID).
+    // Falls in the left half — pieceID is already correct (the left half keeps originalID).
     return point;
   }
 
@@ -349,4 +401,36 @@ function migratePoint(
     pieceID: split.rightID,
     boundary: point.boundary - split.splitOffset,
   });
+}
+
+/** Result of an attention-aware insert: both layers advanced together. */
+export interface InsertWithAttentionResult {
+  readonly pieceTableState: PieceTableState;
+  readonly attentionState: AttentionLayerState;
+  readonly insertedByteLength: number;
+}
+
+/**
+ * Insert `text` at `position` and migrate the Attention Layer in one step.
+ *
+ * `pieceTableInsert` followed by `migrateSplits` is a two-step protocol: a
+ * forgotten `migrateSplits` silently corrupts any AttentionPoint that fell on
+ * the right half of a split. This helper couples the two so callers cannot
+ * desync the layers. The Attention Layer stays caller-owned — pass the current
+ * `attentionState` in and store the returned one.
+ *
+ * O(n) — dominated by the piece-table insert and the per-attention migration.
+ */
+export function insertWithAttention(
+  pieceTableState: PieceTableState,
+  attentionState: AttentionLayerState,
+  position: ByteOffset,
+  text: string,
+): InsertWithAttentionResult {
+  const result = pieceTableInsert(pieceTableState, position, text);
+  return {
+    pieceTableState: result.state,
+    attentionState: migrateSplits(attentionState, result.splits),
+    insertedByteLength: result.insertedByteLength,
+  };
 }

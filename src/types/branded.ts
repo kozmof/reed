@@ -110,6 +110,22 @@ export type LineNumber = Branded<number, "LineNumber">;
 export type ColumnNumber = Branded<number, "ColumnNumber">;
 
 // =============================================================================
+// Identity Types
+// =============================================================================
+
+/**
+ * Stable identifier for a piece node. Survives tree rotations and rebalancing.
+ * Branded so it cannot be confused with an AttentionID or a plain string.
+ */
+export type PieceID = Branded<string, "PieceID">;
+
+/**
+ * Stable identifier for an Attention.
+ * Branded so it cannot be confused with a PieceID or a plain string.
+ */
+export type AttentionID = Branded<string, "AttentionID">;
+
+// =============================================================================
 // Constructor Functions
 // =============================================================================
 
@@ -166,6 +182,22 @@ export function columnNumber(value: number): ColumnNumber {
     throw new RangeError(`columnNumber: invalid value ${value} (must be a non-negative integer)`);
   }
   return value as ColumnNumber;
+}
+
+/**
+ * Brand a raw string as a PieceID. Identity at runtime — IDs are opaque tokens,
+ * so no validation is performed. Use when generating or deserializing IDs.
+ */
+export function pieceID(value: string): PieceID {
+  return value as PieceID;
+}
+
+/**
+ * Brand a raw string as an AttentionID. Identity at runtime — IDs are opaque
+ * tokens, so no validation is performed.
+ */
+export function attentionID(value: string): AttentionID {
+  return value as AttentionID;
 }
 
 // =============================================================================

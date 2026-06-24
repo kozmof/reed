@@ -187,6 +187,7 @@ export {
   findAttentionsAt,
   findAttentionsOverlapping,
   migrateSplits,
+  insertWithAttention,
 } from "./core/attention.js";
 export type {
   PieceID,
@@ -194,5 +195,6 @@ export type {
   AttentionPoint,
   Attention,
   AttentionLayerState,
+  InsertWithAttentionResult,
 } from "./core/attention.js";
 export type { SplitRecord } from "./core/piece-table.js";

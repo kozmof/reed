@@ -18,8 +18,8 @@ import type {
   ChunkMetadata,
 } from "../../types/state.js";
 import type { ReadonlyUint8Array } from "../../types/branded.js";
-import { byteOffset, byteLength } from "../../types/branded.js";
-import type { ByteOffset, ByteLength } from "../../types/branded.js";
+import { byteOffset, byteLength, pieceID } from "../../types/branded.js";
+import type { ByteOffset, ByteLength, PieceID } from "../../types/branded.js";
 import { textEncoder } from "./encoding.js";
 import { GrowableBuffer } from "./growable-buffer.js";
 import {
@@ -35,8 +35,8 @@ import {
 // =============================================================================
 
 let _nextPieceID = 0;
-function generatePieceID(): string {
-  return `p${_nextPieceID++}`;
+export function generatePieceID(): PieceID {
+  return pieceID(`p${_nextPieceID++}`);
 }
 
 /**
@@ -207,7 +207,7 @@ export function createPieceNode(
   color: "red" | "black" = "black",
   left: PieceNode | null = null,
   right: PieceNode | null = null,
-  id: string = generatePieceID(),
+  id: PieceID = generatePieceID(),
 ): PieceNode {
   const leftLength = left?.subtreeLength ?? 0;
   const rightLength = right?.subtreeLength ?? 0;
@@ -247,7 +247,7 @@ export function createChunkPieceNode(
   color: "red" | "black" = "black",
   left: PieceNode | null = null,
   right: PieceNode | null = null,
-  id: string = generatePieceID(),
+  id: PieceID = generatePieceID(),
 ): PieceNode {
   const leftLength = left?.subtreeLength ?? 0;
   const rightLength = right?.subtreeLength ?? 0;
@@ -621,7 +621,11 @@ export function withPieceNode<T extends PieceNode>(node: T, changes: PieceNodeUp
     const leftAddLength = base.left?.subtreeAddLength ?? 0;
     const rightAddLength = base.right?.subtreeAddLength ?? 0;
     const subtreeAddLength = selfAddLength + leftAddLength + rightAddLength;
-    return Object.freeze({ ...base, subtreeLength, subtreeAddLength }) as unknown as T;
+    return Object.freeze({
+      ...base,
+      subtreeLength,
+      subtreeAddLength,
+    }) as unknown as T;
   }
 
   return Object.freeze(base) as T;

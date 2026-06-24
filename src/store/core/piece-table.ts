@@ -7,7 +7,13 @@
  */
 
 import type { PieceNode, PieceTableState, BufferReference } from "../../types/state.js";
-import { byteOffset, byteLength, type ByteOffset, type ByteLength } from "../../types/branded.js";
+import {
+  byteOffset,
+  byteLength,
+  type ByteOffset,
+  type ByteLength,
+  type PieceID,
+} from "../../types/branded.js";
 import {
   $prove,
   $proveCtx,
@@ -24,6 +30,7 @@ import {
 import {
   createPieceNode,
   createChunkPieceNode,
+  generatePieceID,
   withPieceNode,
   freezePieceTableState,
 } from "./state.js";
@@ -111,7 +118,11 @@ export function getPieceBufferRef(piece: PieceNode): BufferReference {
       length: piece.length,
     };
   }
-  return { bufferType: piece.bufferType, start: piece.start, length: piece.length };
+  return {
+    bufferType: piece.bufferType,
+    start: piece.start,
+    length: piece.length,
+  };
 }
 
 /**
@@ -498,7 +509,6 @@ export function splitPiece(
 
   const splitRecord: SplitRecord = {
     originalID: piece.id,
-    leftID: leftPiece.id,
     rightID: rightPiece.id,
     splitOffset: offsetInPiece,
   };
@@ -522,12 +532,10 @@ export function splitPiece(
  * (rightID, boundary - splitOffset).
  */
 export interface SplitRecord {
-  /** ID of the piece that was split (same as leftID after the split). */
-  readonly originalID: string;
-  /** ID of the new left half (equals originalID). */
-  readonly leftID: string;
+  /** ID of the piece that was split; the left half retains this same ID. */
+  readonly originalID: PieceID;
   /** ID of the new right half (fresh ID). */
-  readonly rightID: string;
+  readonly rightID: PieceID;
   /** Byte offset within the original piece where the split occurred. */
   readonly splitOffset: number;
 }
@@ -687,7 +695,11 @@ export function insertChunkPieceAt(
  */
 function rbReInsertPiece(root: PieceNode, position: number, piece: PieceNode): LogCost<PieceNode> {
   // Start as red, will be fixed by fixup
-  const insertNode = withPieceNode(piece, { color: "red", left: null, right: null });
+  const insertNode = withPieceNode(piece, {
+    color: "red",
+    left: null,
+    right: null,
+  });
   const insertPath = bstInsert(root, position, insertNode);
   return $proveCtx("O(log n)", $lift("O(log n)", fixInsertWithPath(insertPath, withPiece)));
 }
@@ -770,15 +782,15 @@ function replacePieceInTree(
  * `id` defaults to a fresh ID. Pass `node.id` when the fragment represents a
  * surviving portion of the original piece (so AttentionPoints keep tracking it).
  */
-function makePiece(node: PieceNode, start: ByteOffset, length: ByteLength, id?: string): PieceNode {
-  if (node.bufferType === "chunk") {
-    return id !== undefined
-      ? createChunkPieceNode(node.chunkIndex, start, length, "black", null, null, id)
-      : createChunkPieceNode(node.chunkIndex, start, length, "black", null, null);
-  }
-  return id !== undefined
-    ? createPieceNode(node.bufferType, start, length, "black", null, null, id)
-    : createPieceNode(node.bufferType, start, length, "black", null, null);
+function makePiece(
+  node: PieceNode,
+  start: ByteOffset,
+  length: ByteLength,
+  id: PieceID = generatePieceID(),
+): PieceNode {
+  return node.bufferType === "chunk"
+    ? createChunkPieceNode(node.chunkIndex, start, length, "black", null, null, id)
+    : createPieceNode(node.bufferType, start, length, "black", null, null, id);
 }
 
 /**
@@ -893,7 +905,10 @@ function blackHeight(node: PieceNode | null): number {
 /**
  * Extract the minimum node from a tree, returning the node and the remaining tree.
  */
-function extractMin(node: PieceNode): { min: PieceNode; rest: PieceNode | null } {
+function extractMin(node: PieceNode): {
+  min: PieceNode;
+  rest: PieceNode | null;
+} {
   const path: PieceNode[] = [];
   let current = node;
   while (current.left !== null) {
@@ -1252,7 +1267,10 @@ function findLineOffsets(
               const lineEnd = docPos + 1;
               pendingCREnd = -1;
               if (currentLine === lineNumber) {
-                result = { start: byteOffset(lineStartOffset), end: byteOffset(lineEnd) };
+                result = {
+                  start: byteOffset(lineStartOffset),
+                  end: byteOffset(lineEnd),
+                };
                 return true;
               }
               currentLine++;
@@ -1263,7 +1281,10 @@ function findLineOffsets(
               const lineEnd = pendingCREnd;
               pendingCREnd = -1;
               if (currentLine === lineNumber) {
-                result = { start: byteOffset(lineStartOffset), end: byteOffset(lineEnd) };
+                result = {
+                  start: byteOffset(lineStartOffset),
+                  end: byteOffset(lineEnd),
+                };
                 return true;
               }
               currentLine++;
@@ -1278,7 +1299,10 @@ function findLineOffsets(
           } else if (b === 0x0a) {
             const lineEnd = docPos + 1;
             if (currentLine === lineNumber) {
-              result = { start: byteOffset(lineStartOffset), end: byteOffset(lineEnd) };
+              result = {
+                start: byteOffset(lineStartOffset),
+                end: byteOffset(lineEnd),
+              };
               return true;
             }
             currentLine++;
@@ -1290,7 +1314,10 @@ function findLineOffsets(
       // Trailing CR at end of document (no following byte to resolve it).
       if (result === null && pendingCREnd >= 0) {
         if (currentLine === lineNumber) {
-          result = { start: byteOffset(lineStartOffset), end: byteOffset(pendingCREnd) };
+          result = {
+            start: byteOffset(lineStartOffset),
+            end: byteOffset(pendingCREnd),
+          };
         } else {
           currentLine++;
           lineStartOffset = pendingCREnd;
@@ -1299,7 +1326,10 @@ function findLineOffsets(
 
       // Last line with no trailing newline.
       if (result === null && currentLine === lineNumber) {
-        result = { start: byteOffset(lineStartOffset), end: byteOffset(state.totalLength) };
+        result = {
+          start: byteOffset(lineStartOffset),
+          end: byteOffset(state.totalLength),
+        };
       }
 
       return $lift("O(n)", result);
