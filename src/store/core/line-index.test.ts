@@ -10,6 +10,10 @@ import {
   findLineAtPosition,
   findLineByNumber,
   getLineStartOffset,
+  getCharStartOffset,
+  findLineAtCharPosition,
+  isLineDirty,
+  getOffsetDeltaForLine,
   getLineRange,
   getLineCountFromIndex,
   collectLines,
@@ -1069,5 +1073,116 @@ describe("dirty range remapping — sequential edits", () => {
     const s1 = lineIndexInsertLazy(eager0, byteOffset(off), "W\n", 1);
     const eager1 = reconcileFull(s1, 2);
     expect(() => assertEagerOffsets(eager1)).not.toThrow();
+  });
+});
+
+// =============================================================================
+// Char-offset queries (surrogate-pair aware)
+//
+// `lineLength`/byte-start offsets are UTF-8 bytes; `charLength`/char-start
+// offsets are UTF-16 code units. They diverge on any line containing a
+// surrogate pair (e.g. an emoji = 2 UTF-16 units, 4 UTF-8 bytes), so these
+// paths must be exercised with astral-plane content, not just ASCII.
+// =============================================================================
+
+describe("char-offset queries with surrogate pairs", () => {
+  // line 0: "a😀b\n"   bytes 0..7   chars 0..5
+  // line 1: "c\n"       bytes 7..9   chars 5..7
+  // line 2: "d😀😀e"   bytes 9..19  chars 7..13
+  const CONTENT = "a😀b\nc\nd😀😀e";
+
+  it("byte and char start offsets diverge after a line with an emoji", () => {
+    const s = createLineIndexState(CONTENT);
+    expect(s.lineCount).toBe(3);
+
+    expect(getLineStartOffset(s.root, 0)).toBe(0);
+    expect(getCharStartOffset(s.root, 0)).toBe(0);
+
+    expect(getLineStartOffset(s.root, 1)).toBe(7);
+    expect(getCharStartOffset(s.root, 1)).toBe(5);
+
+    expect(getLineStartOffset(s.root, 2)).toBe(9);
+    expect(getCharStartOffset(s.root, 2)).toBe(7);
+  });
+
+  it("getCharStartOffset clamps negative and out-of-range line numbers", () => {
+    const s = createLineIndexState(CONTENT);
+    // Negative → 0
+    expect(getCharStartOffset(s.root, -1)).toBe(0);
+    // One past the last line → total char length (fall-through return)
+    expect(getCharStartOffset(s.root, 3)).toBe(13);
+    expect(getLineStartOffset(s.root, 3)).toBe(19);
+  });
+
+  it("getCharStartOffset / getLineStartOffset return 0 for a null root", () => {
+    expect(getCharStartOffset(null, 0)).toBe(0);
+    expect(getCharStartOffset(null, 5)).toBe(0);
+    expect(getLineStartOffset(null, 0)).toBe(0);
+  });
+
+  it("findLineAtCharPosition maps char offsets back to (line, offsetInLine)", () => {
+    const s = createLineIndexState(CONTENT);
+
+    expect(findLineAtCharPosition(s.root, 0)).toEqual({ lineNumber: 0, charOffsetInLine: 0 });
+    // char 4 is the '\n' at the end of line 0 (line 0 spans chars 0..4)
+    expect(findLineAtCharPosition(s.root, 4)).toEqual({ lineNumber: 0, charOffsetInLine: 4 });
+    // char 7 is the first char of line 2 (line 1 occupies chars 5..6)
+    expect(findLineAtCharPosition(s.root, 7)).toEqual({ lineNumber: 2, charOffsetInLine: 0 });
+  });
+
+  it("findLineAtCharPosition round-trips with getCharStartOffset", () => {
+    const s = createLineIndexState(CONTENT);
+    for (let line = 0; line < s.lineCount; line++) {
+      const start = getCharStartOffset(s.root, line);
+      expect(findLineAtCharPosition(s.root, start)).toEqual({
+        lineNumber: line,
+        charOffsetInLine: 0,
+      });
+    }
+  });
+
+  it("findLineAtCharPosition returns null for negative position or null root", () => {
+    const s = createLineIndexState(CONTENT);
+    expect(findLineAtCharPosition(s.root, -1)).toBeNull();
+    expect(findLineAtCharPosition(null, 0)).toBeNull();
+  });
+
+  it("findLineAtCharPosition clamps a position past the end to the last line", () => {
+    const s = createLineIndexState(CONTENT);
+    const result = findLineAtCharPosition(s.root, 9999);
+    expect(result?.lineNumber).toBe(2);
+  });
+});
+
+// =============================================================================
+// Dirty-range utilities (reconciliation bookkeeping)
+// =============================================================================
+
+describe("dirty-range utilities", () => {
+  const ranges = [
+    { startLine: 0, endLine: 2, offsetDelta: 5 },
+    { startLine: 2, endLine: 4, offsetDelta: -3 },
+  ];
+
+  it("treats the full-rebuild sentinel as dirty everywhere with no usable delta", () => {
+    expect(isLineDirty("full-rebuild-needed", 0)).toBe(true);
+    expect(isLineDirty("full-rebuild-needed", 9999)).toBe(true);
+    // Delta information is lost under full-rebuild; callers must reconcile first.
+    expect(getOffsetDeltaForLine("full-rebuild-needed", 3)).toBe(0);
+  });
+
+  it("reports membership against explicit ranges", () => {
+    expect(isLineDirty(ranges, 1)).toBe(true);
+    expect(isLineDirty(ranges, 3)).toBe(true);
+    expect(isLineDirty(ranges, 7)).toBe(false);
+  });
+
+  it("sums offset deltas of every range covering a line", () => {
+    // Line 2 is covered by both ranges → 5 + (-3) = 2
+    expect(getOffsetDeltaForLine(ranges, 2)).toBe(2);
+    // Line 0 covered only by the first range
+    expect(getOffsetDeltaForLine(ranges, 0)).toBe(5);
+    // Line outside every range
+    expect(getOffsetDeltaForLine(ranges, 9)).toBe(0);
   });
 });

@@ -15,6 +15,7 @@ import {
   getBufferStats,
   compactAddBuffer,
   byteToCharOffset,
+  getRawByte,
 } from "./piece-table.js";
 import { createEmptyPieceTableState, createPieceTableState } from "./state.js";
 import { byteOffset } from "../../types/branded.js";
@@ -774,6 +775,40 @@ describe("Piece Table Operations", () => {
       const mid = Math.floor(state.totalLength / 2);
       state = pieceTableDelete(state, byteOffset(mid - 15), byteOffset(mid + 15));
       expect(validateRB(state.root).valid).toBe(true);
+    });
+  });
+
+  describe("getRawByte", () => {
+    it("reads raw bytes from the original buffer", () => {
+      const state = createPieceTableState("Hi");
+      expect(getRawByte(state, byteOffset(0))).toBe("H".charCodeAt(0));
+      expect(getRawByte(state, byteOffset(1))).toBe("i".charCodeAt(0));
+    });
+
+    it("returns -1 for an offset past the end of the document", () => {
+      const state = createPieceTableState("Hi");
+      expect(getRawByte(state, byteOffset(2))).toBe(-1);
+      expect(getRawByte(state, byteOffset(99))).toBe(-1);
+    });
+
+    it("returns -1 for any offset in an empty document", () => {
+      const state = createEmptyPieceTableState();
+      expect(getRawByte(state, byteOffset(0))).toBe(-1);
+    });
+
+    it("reads bytes that live in the add buffer after an insert", () => {
+      // Inserted text is stored in the add buffer, exercising a different
+      // buffer-access branch than the original-buffer reads above.
+      const state = pieceTableInsert(createEmptyPieceTableState(), byteOffset(0), "Zz").state;
+      expect(getRawByte(state, byteOffset(0))).toBe("Z".charCodeAt(0));
+      expect(getRawByte(state, byteOffset(1))).toBe("z".charCodeAt(0));
+    });
+
+    it("reads the first UTF-8 byte of a multi-byte code point", () => {
+      // "é" (U+00E9) encodes to 0xC3 0xA9 in UTF-8; offset 0 is the lead byte.
+      const state = createPieceTableState("é");
+      expect(getRawByte(state, byteOffset(0))).toBe(0xc3);
+      expect(getRawByte(state, byteOffset(1))).toBe(0xa9);
     });
   });
 });
