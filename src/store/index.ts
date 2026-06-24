@@ -196,6 +196,7 @@ export type {
   AttentionPoint,
   Attention,
   AttentionLayerState,
+  ResolvedRange,
   InsertWithAttentionResult,
   DeleteWithAttentionResult,
 } from "./core/attention.js";

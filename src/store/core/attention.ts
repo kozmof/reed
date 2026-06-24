@@ -35,7 +35,6 @@ import {
   findLastPiece,
   getText,
   inOrderPieces,
-  pieceTableInOrder,
 } from "./piece-table.js";
 
 // =============================================================================
@@ -76,20 +75,28 @@ export interface Attention {
  */
 export interface AttentionLayerState {
   readonly attentions: ReadonlyMap<AttentionID, Attention>;
+  /**
+   * Monotonic counter for minting fresh AttentionIDs, scoped to this layer's
+   * history rather than the process. Keeps IDs deterministic across runs and
+   * stable for serialization. Carried forward by every state-returning op.
+   */
+  readonly nextID: number;
+}
+
+/** A resolved Attention's current document span, half-open `[startOffset, endOffset)`. */
+export interface ResolvedRange {
+  readonly startOffset: ByteOffset;
+  readonly endOffset: ByteOffset;
 }
 
 // =============================================================================
 // Helpers
 // =============================================================================
 
-let _nextAttentionID = 0;
-function generateAttentionID(): AttentionID {
-  return attentionID(`a${_nextAttentionID++}`);
-}
-
 /** Empty AttentionLayerState — use as the initial value. */
 export const emptyAttentionLayerState: AttentionLayerState = Object.freeze({
   attentions: new Map<AttentionID, Attention>(),
+  nextID: 0,
 });
 
 // =============================================================================
@@ -137,23 +144,13 @@ export function createPoint(root: PieceNode | null, offset: ByteOffset): Attenti
  * or the boundary now exceeds the piece's length (e.g. the piece was cut by a
  * delete). Failing closed avoids returning a silently-wrong offset.
  *
- * O(n) — walks the piece tree in document order to find the piece.
+ * O(n) — builds the piece-offset index in one in-order pass. Callers resolving
+ * many points against the same tree should build the index once (via
+ * `resolveAttention`) instead of calling this per point.
  */
 export function resolvePoint(root: PieceNode | null, point: AttentionPoint): ByteOffset | null {
   if (root === null) return null;
-
-  let result: ByteOffset | null = null;
-
-  pieceTableInOrder(root, (node, pieceDocOffset) => {
-    if (node.id === point.pieceID) {
-      if (point.boundary <= node.length) {
-        result = byteOffset(pieceDocOffset + point.boundary);
-      }
-      return true; // stop iteration: this is the only piece with this ID
-    }
-  });
-
-  return result;
+  return resolvePointWithIndex(buildPieceOffsetIndex(root), point);
 }
 
 // =============================================================================
@@ -164,6 +161,10 @@ export function resolvePoint(root: PieceNode | null, point: AttentionPoint): Byt
  * Create a new Attention spanning [start, end) and add it to the layer.
  * Returns [newState, id].
  *
+ * `start` and `end` are stored as given; the caller owns the `start <= end`
+ * invariant. An inverted or zero-width span simply resolves to an empty range
+ * (`getTextForAttention` returns "").
+ *
  * O(1).
  */
 export function createAttention(
@@ -171,11 +172,11 @@ export function createAttention(
   start: AttentionPoint,
   end: AttentionPoint,
 ): [AttentionLayerState, AttentionID] {
-  const id = generateAttentionID();
+  const id = attentionID(`a${state.nextID}`);
   const attention: Attention = Object.freeze({ id, start, end });
   const next = new Map(state.attentions);
   next.set(id, attention);
-  return [Object.freeze({ attentions: next }), id];
+  return [Object.freeze({ attentions: next, nextID: state.nextID + 1 }), id];
 }
 
 /**
@@ -187,7 +188,7 @@ export function deleteAttention(state: AttentionLayerState, id: AttentionID): At
   if (!state.attentions.has(id)) return state;
   const next = new Map(state.attentions);
   next.delete(id);
-  return Object.freeze({ attentions: next });
+  return Object.freeze({ attentions: next, nextID: state.nextID });
 }
 
 /**
@@ -251,7 +252,7 @@ function resolveAttentionWithIndex(
   index: PieceOffsetIndex,
   state: AttentionLayerState,
   id: AttentionID,
-): { startOffset: ByteOffset; endOffset: ByteOffset } | null {
+): ResolvedRange | null {
   const attention = state.attentions.get(id);
   if (attention === undefined) return null;
 
@@ -274,7 +275,7 @@ export function resolveAttention(
   root: PieceNode | null,
   state: AttentionLayerState,
   id: AttentionID,
-): { startOffset: ByteOffset; endOffset: ByteOffset } | null {
+): ResolvedRange | null {
   if (state.attentions.get(id) === undefined) return null;
   return resolveAttentionWithIndex(buildPieceOffsetIndex(root), state, id);
 }
@@ -376,18 +377,26 @@ export function migrateSplits(
 ): AttentionLayerState {
   if (splits.length === 0) return state;
 
-  // Build a fast lookup: originalID → SplitRecord
-  const splitMap = new Map<PieceID, SplitRecord>();
-  for (const s of splits) {
-    splitMap.set(s.originalID, s);
+  // originalID → SplitRecord lookup. The common case is a single split (one
+  // insert splits at most one piece), so skip the Map allocation there.
+  let lookup: (pieceID: PieceID) => SplitRecord | undefined;
+  if (splits.length === 1) {
+    const only = splits[0];
+    lookup = (pieceID) => (pieceID === only.originalID ? only : undefined);
+  } else {
+    const splitMap = new Map<PieceID, SplitRecord>();
+    for (const s of splits) {
+      splitMap.set(s.originalID, s);
+    }
+    lookup = (pieceID) => splitMap.get(pieceID);
   }
 
   let changed = false;
   const next = new Map(state.attentions);
 
   for (const [id, attention] of next) {
-    const migratedStart = migratePoint(attention.start, splitMap);
-    const migratedEnd = migratePoint(attention.end, splitMap);
+    const migratedStart = migratePoint(attention.start, lookup);
+    const migratedEnd = migratePoint(attention.end, lookup);
 
     if (migratedStart !== attention.start || migratedEnd !== attention.end) {
       next.set(id, Object.freeze({ ...attention, start: migratedStart, end: migratedEnd }));
@@ -395,14 +404,14 @@ export function migrateSplits(
     }
   }
 
-  return changed ? Object.freeze({ attentions: next }) : state;
+  return changed ? Object.freeze({ attentions: next, nextID: state.nextID }) : state;
 }
 
 function migratePoint(
   point: AttentionPoint,
-  splitMap: ReadonlyMap<PieceID, SplitRecord>,
+  lookup: (pieceID: PieceID) => SplitRecord | undefined,
 ): AttentionPoint {
-  const split = splitMap.get(point.pieceID);
+  const split = lookup(point.pieceID);
   if (split === undefined) return point;
 
   if (point.boundary <= split.splitOffset) {
@@ -544,7 +553,9 @@ export function deleteWithAttention(
 
   return {
     pieceTableState: newPieceTableState,
-    attentionState: changed ? Object.freeze({ attentions: next }) : attentionState,
+    attentionState: changed
+      ? Object.freeze({ attentions: next, nextID: attentionState.nextID })
+      : attentionState,
     deletedByteLength: deletedLength,
   };
 }
