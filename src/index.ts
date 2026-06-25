@@ -11,7 +11,9 @@
  * - `history.*`   — undo/redo state queries
  * - `diff.*`      — diff algorithm and setValue operations
  * - `position.*`  — branded position constructors, arithmetic, and constants
- * - `cost.*`      — cost algebra for annotating algorithmic complexity
+ *
+ * Algorithmic complexity is documented on each namespace member with
+ * `@complexity` JSDoc tags; the cost algebra itself is internal to `store/core`.
  *
  * Types are exported flat and can be imported directly:
  *   import type { DocumentState, InsertAction } from 'reed'
@@ -94,32 +96,6 @@ export type {
   ColumnNumber,
 } from "./types/index.js";
 
-// Cost algebra types
-export type {
-  Nat,
-  Cost,
-  CostLabel,
-  CostBigO,
-  CostInputLabel,
-  CostLevel,
-  NormalizeCostLabel,
-  CostOfLabel,
-  Ctx,
-  Seq,
-  Nest,
-  Leq,
-  Assert,
-  Costed,
-  CostFn,
-  JoinCostLevel,
-  CheckedPlan,
-  ConstCost,
-  LogCost,
-  LinearCost,
-  NLogNCost,
-  QuadCost,
-} from "./types/index.js";
-
 // Piece table types
 export type { StreamOptions, DocumentChunk } from "./store/index.js";
 
@@ -190,6 +166,5 @@ export {
   history,
   diff,
   position,
-  cost,
   attention,
 } from "./api/index.js";

@@ -15,20 +15,20 @@
  * @see query — O(1) / O(log n) read operations
  */
 
-import { $linearCostFn } from "../types/cost-doc.js";
+import { $uncostedFn } from "../types/cost-doc.js";
 import { getValue, getValueStream, collectPieces } from "../store/core/piece-table.js";
 import { collectLines, rebuildLineIndex } from "../store/core/line-index.js";
 import type { ScanApi } from "./interfaces.js";
 
-export const scan = {
+export const scan: ScanApi = {
   /** @complexity O(n) — collects all pieces into a single string */
-  getValue,
+  getValue: $uncostedFn(getValue),
   /** @complexity O(n) — streaming variant, yields chunks */
-  getValueStream: $linearCostFn(getValueStream),
+  getValueStream,
   /** @complexity O(n) — in-order tree walk of all piece nodes */
-  collectPieces,
+  collectPieces: $uncostedFn(collectPieces),
   /** @complexity O(n) — in-order tree walk of all line nodes */
-  collectLines,
+  collectLines: $uncostedFn(collectLines),
   /** @complexity O(n) — full rebuild of line index from content */
-  rebuildLineIndex,
-} satisfies ScanApi;
+  rebuildLineIndex: $uncostedFn(rebuildLineIndex),
+};

@@ -9,8 +9,10 @@
  * - `history.*`   — undo/redo state queries
  * - `diff.*`      — diff algorithm and setValue operations
  * - `position.*`  — branded position constructors, arithmetic, and constants
- * - `cost.*`      — cost algebra for annotating algorithmic complexity
  * - `attention.*` — piece-anchored boundary references (the third Reed layer)
+ *
+ * Algorithmic complexity is documented on each namespace member with
+ * `@complexity` JSDoc tags; the cost algebra itself is internal to `store/core`.
  */
 
 export type { QueryApi, QueryLineIndexApi, ScanApi, HistoryApi } from "./interfaces.js";
@@ -22,5 +24,4 @@ export { rendering } from "./rendering.js";
 export { history } from "./history.js";
 export { diff } from "./diff.js";
 export { position } from "./position.js";
-export { cost } from "./cost-doc.js";
 export { attention } from "./attention.js";

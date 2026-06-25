@@ -13,6 +13,11 @@
  * and attention layer together; resolution is fail-closed (a dangling point
  * resolves to `null` rather than to a corrupt offset).
  *
+ * Cost discipline is an implementation detail of `store/core`: the core ops are
+ * authored against the `cost-doc` algebra so their declared complexity is checked
+ * at composition time, but the brand is stripped at this boundary so callers get
+ * plain values. Complexity is documented here via `@complexity` tags instead.
+ *
  * @see scan — full-document traversals
  */
 
@@ -32,31 +37,46 @@ import {
   insertWithAttention,
   deleteWithAttention,
 } from "../store/core/attention.js";
+import { $uncostedFn } from "../types/cost-doc.js";
+import type { AttentionApi } from "./interfaces.js";
 
-export const attention = {
+export const attention: AttentionApi = {
   /** Empty AttentionLayerState — the initial value. */
   emptyState: emptyAttentionLayerState,
 
   // Points
-  createPoint,
-  resolvePoint,
+  /** @complexity O(log n) — tree walk to find the piece containing the offset */
+  createPoint: $uncostedFn(createPoint),
+  /** @complexity O(n) — builds the piece-offset index in one in-order pass */
+  resolvePoint: $uncostedFn(resolvePoint),
 
   // Attentions
-  createAttention,
-  getAttention,
-  deleteAttention,
+  /** @complexity O(1) — mint an ID and copy-on-write the attention map */
+  createAttention: $uncostedFn(createAttention),
+  /** @complexity O(1) — map lookup */
+  getAttention: $uncostedFn(getAttention),
+  /** @complexity O(1) — copy-on-write delete from the attention map */
+  deleteAttention: $uncostedFn(deleteAttention),
 
   // Resolution and text
-  resolveAttention,
-  getTextForAttention,
+  /** @complexity O(n) — a single tree walk resolves both points */
+  resolveAttention: $uncostedFn(resolveAttention),
+  /** @complexity O(n) — resolve the range, then read the covered text */
+  getTextForAttention: $uncostedFn(getTextForAttention),
 
   // Queries
-  findAttentionsAt,
-  findAttentionsOverlapping,
+  /** @complexity O(n + A) — one tree walk to index pieces, O(1) per attention */
+  findAttentionsAt: $uncostedFn(findAttentionsAt),
+  /** @complexity O(n + A) — one tree walk to index pieces, O(1) per attention */
+  findAttentionsOverlapping: $uncostedFn(findAttentionsOverlapping),
 
   // Edit support
-  insertWithAttention,
-  deleteWithAttention,
-  migrateSplits,
-  migrateDelete,
+  /** @complexity O(n) — piece-table insert plus per-attention split migration */
+  insertWithAttention: $uncostedFn(insertWithAttention),
+  /** @complexity O(n + A·log n) — pre-delete index plus per-point re-anchor */
+  deleteWithAttention: $uncostedFn(deleteWithAttention),
+  /** @complexity O(A·S) — A attention points across S splits (usually 0 or 1) */
+  migrateSplits: $uncostedFn(migrateSplits),
+  /** @complexity O(n + A·log n) — pre-delete index plus per-point re-anchor */
+  migrateDelete: $uncostedFn(migrateDelete),
 };

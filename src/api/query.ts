@@ -6,7 +6,7 @@
 
 import type { DocumentState } from "../types/state.js";
 import type { ByteOffset } from "../types/branded.js";
-import { $constCostFn } from "../types/cost-doc.js";
+import { $uncostedFn } from "../types/cost-doc.js";
 import {
   getText,
   getLength,
@@ -111,46 +111,46 @@ function getSelectionHead(state: DocumentState): ByteOffset | undefined {
   return state.selection.ranges[state.selection.primaryIndex]?.head;
 }
 
-export const query = {
+export const query: QueryApi = {
   /** @complexity O(log n + m) — tree traversal to collect byte range */
-  getText,
+  getText: $uncostedFn(getText),
   /** @complexity O(1) — cached totalLength on piece table state */
-  getLength,
+  getLength: $uncostedFn(getLength),
   /** @complexity O(1) — cached on piece table state */
-  getBufferStats,
+  getBufferStats: $uncostedFn(getBufferStats),
   /** @complexity O(log n) — tree walk to find piece at position */
-  findPieceAtPosition,
+  findPieceAtPosition: $uncostedFn(findPieceAtPosition),
   /** @complexity O(1) — runtime mode check for line-index cleanliness */
-  isReconciledState: $constCostFn(isReconciledState),
+  isReconciledState,
   /** @complexity O(log n) — tree walk to find line at byte position */
-  findLineAtPosition,
+  findLineAtPosition: $uncostedFn(findLineAtPosition),
   /** @complexity O(log n) — tree walk to find line by 1-based line number */
-  findLineByNumber,
+  findLineByNumber: $uncostedFn(findLineByNumber),
   /** @complexity O(log n) — byte offset of line start via prefix sum */
-  getLineStartOffset,
+  getLineStartOffset: $uncostedFn(getLineStartOffset),
   /** @complexity O(log n) — tree walk; requires eager DocumentState */
-  getLineRange,
+  getLineRange: $uncostedFn(getLineRange),
   /** @complexity O(log n) — runtime-checked eager range; throws on dirty lazy state */
-  getLineRangeChecked,
+  getLineRangeChecked: $uncostedFn(getLineRangeChecked),
   /** @complexity O(log n) — range lookup safe for eager and lazy states */
-  getLineRangePrecise,
+  getLineRangePrecise: $uncostedFn(getLineRangePrecise),
   /** @complexity O(1) — cached lineCount */
-  getLineCount,
+  getLineCount: $uncostedFn(getLineCount),
   /** @complexity O(log n) — prefix sum via subtreeCharLength */
-  getCharStartOffset,
+  getCharStartOffset: $uncostedFn(getCharStartOffset),
   /** @complexity O(log n) — tree descent via subtreeCharLength */
-  findLineAtCharPosition,
+  findLineAtCharPosition: $uncostedFn(findLineAtCharPosition),
   /** @complexity O(1) — index into selection.ranges array */
-  getSelectionHead: $constCostFn(getSelectionHead),
+  getSelectionHead,
   /** Low-level line-index selectors for callers operating directly on LineIndexState/root. */
   lineIndex: {
-    findLineAtPosition: findLineAtPositionFromRoot,
-    findLineByNumber: findLineByNumberFromRoot,
-    getLineStartOffset: getLineStartOffsetFromRoot,
-    getLineRange: getLineRangeFromIndex,
-    getLineRangePrecise: getLineRangePreciseFromIndex,
-    getLineCount: getLineCountFromIndexState,
-    getCharStartOffset: getCharStartOffsetFromRoot,
-    findLineAtCharPosition: findLineAtCharPositionFromRoot,
+    findLineAtPosition: $uncostedFn(findLineAtPositionFromRoot),
+    findLineByNumber: $uncostedFn(findLineByNumberFromRoot),
+    getLineStartOffset: $uncostedFn(getLineStartOffsetFromRoot),
+    getLineRange: $uncostedFn(getLineRangeFromIndex),
+    getLineRangePrecise: $uncostedFn(getLineRangePreciseFromIndex),
+    getLineCount: $uncostedFn(getLineCountFromIndexState),
+    getCharStartOffset: $uncostedFn(getCharStartOffsetFromRoot),
+    findLineAtCharPosition: $uncostedFn(findLineAtCharPositionFromRoot),
   },
-} satisfies QueryApi;
+};

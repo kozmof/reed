@@ -105,31 +105,6 @@ export type {
   ReadonlyUint8Array,
 } from "./branded.js";
 
-export type {
-  Nat,
-  Cost,
-  CostLabel,
-  CostBigO,
-  CostInputLabel,
-  CostLevel,
-  NormalizeCostLabel,
-  CostOfLabel,
-  Ctx,
-  Seq,
-  Nest,
-  Leq,
-  Assert,
-  Costed,
-  CostFn,
-  JoinCostLevel,
-  CheckedPlan,
-  ConstCost,
-  LogCost,
-  LinearCost,
-  NLogNCost,
-  QuadCost,
-} from "./cost-doc.js";
-
 export {
   byteOffset,
   byteLength,
@@ -154,26 +129,3 @@ export {
   LINE_ZERO,
   COLUMN_ZERO,
 } from "./branded.js";
-
-export {
-  $declare,
-  $prove,
-  $proveCtx,
-  $checked,
-  $constCostFn,
-  $logCostFn,
-  $linearCostFn,
-  $nlognCostFn,
-  $quadCostFn,
-  $from,
-  $lift,
-  $pipe,
-  $andThen,
-  $map,
-  $zipCtx,
-  $binarySearch,
-  $linearScan,
-  $forEachN,
-  $mapN,
-  $value,
-} from "./cost-doc.js";

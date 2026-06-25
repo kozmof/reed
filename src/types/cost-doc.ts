@@ -224,6 +224,32 @@ export function $value<T>(costed: Costed<CostLevel, T>): T {
 }
 
 /**
+ * Strip the cost brand from a value type, distributing over unions so that
+ * `LinearCost<T> | null` becomes `T | null`.
+ */
+export type Uncosted<R> = R extends Costed<CostLevel, infer U> ? U : R;
+
+/**
+ * Re-type a cost-branded function so it returns the plain (unbranded) value.
+ *
+ * Identity at runtime — the cost brand is compile-time only, so this is a pure
+ * type-level cast. Use it at the `api/*` boundary to keep the cost algebra an
+ * implementation detail of `store/core`: core ops stay authored against the
+ * algebra (their declared complexity is checked at composition time), while
+ * callers receive plain values. Document the complexity with an `@complexity`
+ * JSDoc tag instead. Parameter types are preserved from `fn`, so the public
+ * signature tracks `store/core` automatically.
+ *
+ * The inverse of the `$constCostFn` / `$linearCostFn` / … family, which *add* a
+ * brand to a function.
+ */
+export function $uncostedFn<Args extends readonly unknown[], R>(
+  fn: (...args: Args) => R,
+): (...args: Args) => Uncosted<R> {
+  return fn as (...args: Args) => Uncosted<R>;
+}
+
+/**
  * Explicit unchecked boundary declaration.
  * Use this when a proof plan is not modeled.
  * For checked boundaries, use `$prove` or `$proveCtx`.

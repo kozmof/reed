@@ -30,7 +30,6 @@ import {
 } from "../types/branded.js";
 import { charOffsetsToSelection } from "../store/features/rendering.js";
 import type { DocumentState, SelectionRange } from "../types/state.js";
-import type { LinearCost } from "../types/cost-doc.js";
 
 /**
  * Build a `SelectionRange` (byte offsets) from character (UTF-16 code unit) offsets.
@@ -50,7 +49,9 @@ function selectionRange(
   charAnchor: number,
   charHead: number,
   state: DocumentState,
-): LinearCost<SelectionRange> {
+): SelectionRange {
+  // charOffsetsToSelection returns a cost-branded SelectionRange; the brand is
+  // assignable to the plain type, so it strips automatically at this boundary.
   return charOffsetsToSelection(state, {
     anchor: charOffset(charAnchor),
     head: charOffset(charHead),
