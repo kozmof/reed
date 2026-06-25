@@ -159,6 +159,7 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
    * @returns Unsubscribe function
    */
   function subscribe(listener: StoreListener): Unsubscribe {
+    if (disposed) return () => {};
     // Clone only if a notification is in progress so the for-of iteration keeps
     // its snapshot; otherwise mutate in place (O(1)).
     if (notifying) {
@@ -311,6 +312,7 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
     if (disposed) return;
     disposed = true;
     scheduler.cancel();
+    listeners = [];
     rejectWhenReconciledWaiters(
       new Error("DocumentStore was disposed before reconciliation completed"),
     );
@@ -380,9 +382,12 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
     if (config.scheduler === undefined && reconcileMode === "none") {
       return Promise.resolve(reconcileNow());
     }
-    scheduleReconciliation();
     return new Promise<DocumentState<"eager">>((resolve, reject) => {
       whenReconciledWaiters.push({ resolve, reject });
+      // Register the waiter before scheduling: a custom scheduler is allowed to
+      // reconcile synchronously from schedule(), in which case setState() must
+      // be able to observe and resolve this waiter during the same call stack.
+      scheduleReconciliation();
     });
   }
 

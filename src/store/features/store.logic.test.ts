@@ -3,7 +3,7 @@
  * Unit tests for reducer, state factories, action creators, and invariants.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   pstackSize,
   pstackPeek,
@@ -1230,6 +1230,20 @@ describe("Type Guards", () => {
     expect(store.getSnapshot().pieceTable.totalLength).toBe(5);
     expect(scheduleCount).toBe(0);
     await expect(store.whenReconciled()).rejects.toThrow("DocumentStore has been disposed");
+  });
+
+  it("should release subscribers and reject new subscriptions after dispose", () => {
+    const store = createDocumentStore({ content: "Hello" });
+    const existingListener = vi.fn();
+    const lateListener = vi.fn();
+    store.subscribe(existingListener);
+
+    store.dispose();
+    store.subscribe(lateListener);
+    store.emergencyReset();
+
+    expect(existingListener).not.toHaveBeenCalled();
+    expect(lateListener).not.toHaveBeenCalled();
   });
 
   describe("isDocumentStore", () => {

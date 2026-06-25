@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createDocumentStore } from "./store.js";
 import { createStreamingDocumentLoader } from "./streaming-loader.js";
+import { getValue } from "../core/piece-table.js";
 
 describe("StreamingDocumentLoader", () => {
   it("setViewport throws on invalid chunk range (start > end)", async () => {
@@ -76,5 +77,45 @@ describe("StreamingDocumentLoader", () => {
 
     expect(loadChunk.mock.calls.map(([chunkIndex]) => chunkIndex)).toEqual([0, 4, 3]);
     streamingLoader.dispose();
+  });
+
+  it("preserves chunk order across viewport eviction and out-of-order reload", async () => {
+    const chunks = ["A\n", "B\n", "C\n", "D"];
+    const store = createDocumentStore({
+      chunkSize: 2,
+      totalFileSize: chunks.reduce((total, chunk) => total + chunk.length, 0),
+      reconcileMode: "none",
+    });
+    const loadChunk = vi.fn(async (chunkIndex: number) =>
+      new TextEncoder().encode(chunks[chunkIndex]),
+    );
+    const metadata = chunks.map((chunk, chunkIndex) => ({
+      chunkIndex,
+      byteLength: chunk.length,
+      lineCount: 1,
+    }));
+    const loader = createStreamingDocumentLoader(
+      store,
+      { loadChunk, totalChunkCount: chunks.length },
+      metadata,
+      {
+        prefetchWindowSize: 0,
+        chunkManagerConfig: { maxLoadedChunks: 2 },
+      },
+    );
+
+    await loader.setViewport(0, 1);
+    expect(getValue(store.getSnapshot().pieceTable)).toBe("A\nB\n");
+
+    await loader.setViewport(2, 3);
+    expect(getValue(store.getSnapshot().pieceTable)).toBe("C\nD");
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(2);
+
+    await loader.setViewport(1, 2);
+    expect(getValue(store.getSnapshot().pieceTable)).toBe("B\nC\n");
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(2);
+    expect(loadChunk.mock.calls.map(([chunkIndex]) => chunkIndex)).toEqual([0, 1, 2, 3, 1]);
+
+    loader.dispose();
   });
 });

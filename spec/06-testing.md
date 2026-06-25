@@ -2,9 +2,9 @@
 
 ## 1. Latest Verified Run
 
-- Date: 2026-06-24
+- Date: 2026-06-25
 - Functional command: `pnpm test`
-- Functional result: `21` test files, `887` tests passed
+- Functional result: `21` test files, `890` tests passed
 - Perf command: `pnpm test:perf`
 - Perf result: `1` test file, `28` tests passed
 
@@ -53,9 +53,10 @@ Implemented coverage is strongest in:
 
 Current gaps relative to roadmap/spec ambitions:
 
-- no LOAD_CHUNK/EVICT_CHUNK cross-boundary stress tests (reducer paths covered; ChunkManager integration at scale is not)
-- `createStreamingDocumentLoader` has only a narrow direct suite today
-- performance tests report timings but do not enforce hard budget thresholds
+- no large-scale or randomized LOAD_CHUNK/EVICT_CHUNK stress suite; deterministic viewport-boundary eviction and reload are covered
+- `createStreamingDocumentLoader` direct coverage remains focused on viewport validation, stale requests, and boundary eviction/reload
+- performance thresholds are intentionally generous and catch catastrophic regressions rather
+  than enforcing product-level latency budgets on every supported runtime
 
 ## 5. Guidance for Spec-Driven Testing
 

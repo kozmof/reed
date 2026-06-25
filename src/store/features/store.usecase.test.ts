@@ -789,6 +789,33 @@ describe("Editor Use Cases", () => {
       );
     });
 
+    it("should resolve when a custom scheduler reconciles synchronously", async () => {
+      let store: ReturnType<typeof createDocumentStore>;
+      let scheduleCount = 0;
+      const scheduler = {
+        schedule() {
+          scheduleCount++;
+          if (scheduleCount === 2) store.reconcileNow();
+        },
+        cancel() {},
+        runNow() {},
+        get isRunning() {
+          return false;
+        },
+      };
+      store = createDocumentStore({
+        content: Array.from({ length: 10 }, (_, i) => "Line " + i).join("\n"),
+        scheduler,
+      });
+
+      store.dispatch(DocumentActions.insert(byteOffset(0), "prefix\n"));
+      expect(store.getSnapshot().lineIndex.rebuildPending).toBe(true);
+
+      await expect(store.whenReconciled()).resolves.toMatchObject({
+        lineIndex: { rebuildPending: false },
+      });
+    });
+
     it("should preserve line index through rapid multiline edits with full undo/redo", () => {
       const initialContent = Array.from({ length: 25 }, (_, i) => `Base ${i}`).join("\n");
       const store = createDocumentStore({ content: initialContent });
