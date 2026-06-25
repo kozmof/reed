@@ -349,8 +349,8 @@ export const DocumentActions = {
   /**
    * Create an evict-chunk action.
    *
-   * Dispatching this action removes the chunk's text from the piece-table add-buffer.
-   * Any subsequent attempt to read text from the evicted range will throw at runtime.
+   * Dispatching this action removes the chunk's pieces and backing bytes from the
+   * current in-memory document. Loading it again restores the chunk in index order.
    * See {@link EvictChunkAction} for the full eviction contract.
    *
    * @param chunkIndex - Zero-based index of the chunk to evict

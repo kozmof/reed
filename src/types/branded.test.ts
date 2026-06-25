@@ -35,10 +35,13 @@ import {
   $declare,
   $prove,
   $proveCtx,
+  $constCostFn,
   $logCostFn,
   $linearCostFn,
   $nlognCostFn,
   $quadCostFn,
+  $uncostedFn,
+  $value,
   $zipCtx,
   $checked,
   $lift,
@@ -47,8 +50,11 @@ import {
   $andThen,
   $map,
   $binarySearch,
+  $sort,
+  $filter,
   $linearScan,
   $forEachN,
+  $mapN,
   type CostFn,
   type LogCost,
   type LinearCost,
@@ -383,6 +389,14 @@ describe("Branded Types", () => {
       expect(fn(7)).toBe("7");
     });
 
+    it("should add and remove const-cost function branding", () => {
+      const costed = $constCostFn((value: number) => value + 1);
+      const plain = $uncostedFn(costed);
+
+      expect($value(costed(4))).toBe(5);
+      expect(plain(9)).toBe(10);
+    });
+
     it("should support nlogn and quad function annotation", () => {
       const nlogn: CostFn<"nlogn", [readonly number[]], number[]> = $nlognCostFn(
         (values: readonly number[]) => [...values].sort((a, b) => a - b),
@@ -500,6 +514,28 @@ describe("Branded Types", () => {
       expect($prove("O(n)", incrementalPlan)).toBe("index:1");
       // @ts-expect-error linear is not <= log
       $prove("O(log n)", incrementalPlan);
+    });
+    it("should cover search misses and collection combinators", () => {
+      const searched = $pipe($lift("O(1)", [1, 3, 5]), $binarySearch(4));
+      const sortedDefault = $pipe($lift("O(1)", ["b", "a"]), $sort<string>());
+      const sortedNumeric = $pipe(
+        $lift("O(1)", [3, 1, 2]),
+        $sort<number>((a, b) => a - b),
+      );
+      const filtered = $pipe(
+        $lift("O(1)", [1, 2, 3, 4]),
+        $filter((value: number) => value % 2 === 0),
+      );
+      const mapped = $pipe(
+        $lift("O(1)", [1, 2, 3]),
+        $mapN((value: number) => $lift("O(1)", value * 2)),
+      );
+
+      expect($proveCtx("O(log n)", searched)).toBe(-1);
+      expect($proveCtx("O(n log n)", sortedDefault)).toEqual(["a", "b"]);
+      expect($proveCtx("O(n log n)", sortedNumeric)).toEqual([1, 2, 3]);
+      expect($proveCtx("O(n)", filtered)).toEqual([2, 4]);
+      expect($proveCtx("O(n)", mapped)).toEqual([2, 4, 6]);
     });
   });
 });

@@ -4,7 +4,7 @@
 
 - Date: 2026-06-25
 - Functional command: `pnpm test`
-- Functional result: `21` test files, `890` tests passed
+- Functional result: `22` test files, `922` tests passed
 - Perf command: `pnpm test:perf`
 - Perf result: `1` test file, `28` tests passed
 
@@ -53,7 +53,7 @@ Implemented coverage is strongest in:
 
 Current gaps relative to roadmap/spec ambitions:
 
-- no large-scale or randomized LOAD_CHUNK/EVICT_CHUNK stress suite; deterministic viewport-boundary eviction and reload are covered
+- deterministic LOAD_CHUNK/EVICT_CHUNK coverage now checks red-black invariants across chunk counts and every single-chunk eviction position; no large-scale randomized multi-operation streaming stress suite yet
 - `createStreamingDocumentLoader` direct coverage remains focused on viewport validation, stale requests, and boundary eviction/reload
 - performance thresholds are intentionally generous and catch catastrophic regressions rather
   than enforcing product-level latency budgets on every supported runtime

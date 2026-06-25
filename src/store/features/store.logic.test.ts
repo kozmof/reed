@@ -38,6 +38,24 @@ import {
 import { createDocumentStore, isDocumentStore } from "./store.js";
 import { getLineCountFromIndex } from "./../core/line-index.js";
 import { byteOffset, byteLength, type ByteOffset } from "../../types/branded.js";
+import type { PieceNode } from "../../types/state.js";
+
+function expectValidPieceTree(root: PieceNode | null): void {
+  function visit(node: PieceNode | null): number {
+    if (node === null) return 1;
+    if (node.color === "red") {
+      expect(node.left?.color).not.toBe("red");
+      expect(node.right?.color).not.toBe("red");
+    }
+    const leftBlackHeight = visit(node.left);
+    const rightBlackHeight = visit(node.right);
+    expect(leftBlackHeight).toBe(rightBlackHeight);
+    return leftBlackHeight + (node.color === "black" ? 1 : 0);
+  }
+
+  if (root !== null) expect(root.color).toBe("black");
+  visit(root);
+}
 
 // =============================================================================
 // State Factory Tests
@@ -1613,5 +1631,31 @@ describe("EVICT_CHUNK", () => {
       byteOffset(state4.pieceTable.totalLength),
     );
     expect(text).toBe("AAABBB");
+  });
+
+  it("preserves red-black invariants when eviction leaves four pieces", () => {
+    let state = createInitialState({ chunkSize: 1 });
+    for (let i = 0; i < 5; i++) {
+      state = documentReducer(state, DocumentActions.loadChunk(i, new Uint8Array([65 + i])));
+    }
+
+    state = documentReducer(state, DocumentActions.evictChunk(2));
+
+    expectValidPieceTree(state.pieceTable.root);
+  });
+
+  it("preserves red-black invariants across varied chunk counts and evictions", () => {
+    for (let chunkCount = 2; chunkCount <= 24; chunkCount++) {
+      for (let evicted = 0; evicted < chunkCount; evicted++) {
+        let state = createInitialState({ chunkSize: 1 });
+        for (let i = 0; i < chunkCount; i++) {
+          state = documentReducer(state, DocumentActions.loadChunk(i, new Uint8Array([65])));
+        }
+
+        state = documentReducer(state, DocumentActions.evictChunk(evicted));
+
+        expectValidPieceTree(state.pieceTable.root);
+      }
+    }
   });
 });

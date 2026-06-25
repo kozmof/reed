@@ -178,20 +178,17 @@ export interface LoadChunkAction {
 }
 
 /**
- * Evict a chunk from memory, freeing its text from the piece-table add-buffer.
+ * Evict a chunk from the in-memory document, freeing its pieces and backing bytes.
  *
  * ### Eviction contract
  *
- * After dispatching `EVICT_CHUNK`, the evicted chunk's text is no longer accessible:
- * - Calling `getBuffer()` for any piece that references the evicted chunk will throw
- *   `'Chunk N is not loaded'` at runtime.
- * - Read operations that span the evicted byte range (e.g. `getText`, `getLineText`)
- *   will also throw.
+ * After a successful `EVICT_CHUNK`, the chunk's pieces and bytes are removed from
+ * the current in-memory document. Offsets after the removed range shift left by the
+ * chunk's byte length. Loading the chunk again reinserts it in chunk-index order.
  *
  * **Safe operations after eviction:**
- * - Structural queries that rely only on the line index or piece-table metadata
- *   (`getLineCount`, `getLineStart`, `getByteLength`, `getSelection`).
- * - Inserting or deleting text that does not touch the evicted range.
+ * - Reading and editing the remaining resident document.
+ * - Structural queries that include pre-declared metadata for unloaded chunks.
  * - Loading the chunk again via `LOAD_CHUNK` to restore text access.
  *
  * **What callers must do before evicting:**

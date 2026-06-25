@@ -219,20 +219,21 @@ function hasAddPieceTouchingRange(
 
 /**
  * Rebuild a balanced RB-tree from an in-order array of piece nodes using median-split
- * recursion. All internal nodes are black; leaves are red to give subsequent inserts
- * RB slack.
- *
- * PRECONDITION: `arr` must be a complete, contiguous in-order list produced by a
- * single-pass traversal — the median split is only perfectly balanced in that case.
- * If called with a non-contiguous or pre-filtered slice, verify that equal
- * black-heights still hold before keeping leaf nodes red.
+ * recursion. Median splitting creates leaves on at most two adjacent depths; coloring
+ * only nodes on the deepest real level red equalizes black-height across all paths.
  */
-function buildBalancedPieceTree(arr: PieceNode[], lo: number, hi: number): PieceNode | null {
+function buildBalancedPieceTree(
+  arr: PieceNode[],
+  lo: number,
+  hi: number,
+  depth: number = 0,
+  deepestDepth: number = Math.floor(Math.log2(arr.length)),
+): PieceNode | null {
   if (lo > hi) return null;
   const mid = (lo + hi) >> 1;
   const src = arr[mid];
-  const left = buildBalancedPieceTree(arr, lo, mid - 1);
-  const right = buildBalancedPieceTree(arr, mid + 1, hi);
+  const left = buildBalancedPieceTree(arr, lo, mid - 1, depth + 1, deepestDepth);
+  const right = buildBalancedPieceTree(arr, mid + 1, hi, depth + 1, deepestDepth);
   const leftLen = left?.subtreeLength ?? 0;
   const rightLen = right?.subtreeLength ?? 0;
   const leftAdd = left?.subtreeAddLength ?? 0;
@@ -240,7 +241,7 @@ function buildBalancedPieceTree(arr: PieceNode[], lo: number, hi: number): Piece
   const selfAdd = src.bufferType === "add" ? src.length : 0;
   return Object.freeze({
     ...src,
-    color: (left === null && right === null ? "red" : "black") as "red" | "black",
+    color: depth > 0 && depth === deepestDepth ? "red" : "black",
     left,
     right,
     subtreeLength: src.length + leftLen + rightLen,
