@@ -4,7 +4,7 @@
 
 - Date: 2026-06-25
 - Functional command: `pnpm test`
-- Functional result: `22` test files, `922` tests passed
+- Functional result: `23` test files, `930` tests passed
 - Perf command: `pnpm test:perf`
 - Perf result: `1` test file, `28` tests passed
 
@@ -33,6 +33,7 @@ Functional suites (`pnpm test`):
 - `src/store/features/chunk-manager.test.ts`: ChunkManager load/evict/LRU/pin behavior
 - `src/store/features/chunk-metadata.test.ts`: DECLARE_CHUNK_METADATA and pre-declared line-count queries
 - `src/store/features/streaming-loader.test.ts`: `createStreamingDocumentLoader` viewport/prefetch lifecycle
+- `src/store/features/chunk-stress.test.ts`: seeded randomized high-scale streaming stress (load/evict/reload consistency)
 
 Performance suite (`pnpm test:perf`):
 
@@ -53,10 +54,29 @@ Implemented coverage is strongest in:
 
 Current gaps relative to roadmap/spec ambitions:
 
-- deterministic LOAD_CHUNK/EVICT_CHUNK coverage now checks red-black invariants across chunk counts and every single-chunk eviction position; no large-scale randomized multi-operation streaming stress suite yet
 - `createStreamingDocumentLoader` direct coverage remains focused on viewport validation, stale requests, and boundary eviction/reload
 - performance thresholds are intentionally generous and catch catastrophic regressions rather
   than enforcing product-level latency budgets on every supported runtime
+
+The randomized high-scale streaming stress suite (`chunk-stress.test.ts`) closes the
+previously-acknowledged gap. It drives long seeded sequences of viewport-driven
+load/evict/reload through `createStreamingDocumentLoader` over ASCII LF and CRLF
+content (chunk boundaries deliberately split `\r\n` pairs) and, after every step,
+reads the _actual_ resident chunk set and asserts the assembled text, total byte
+length, line count, and per-line byte/char offsets all match a from-scratch rebuild
+of exactly those chunks, plus subtree-aggregate exactness on the reconciled line
+index. Building it surfaced and fixed two real correctness defects:
+
+- `LOAD_CHUNK` did not pass `readText` to the lazy line-index insert, so per-line
+  char offsets drifted for any line spanning a chunk boundary.
+- `EVICT_CHUNK` did not supply delete-boundary context (and never rebuilt for the
+  cases that require it), so evicting a chunk whose boundary split a `\r\n` pair left
+  the line index reporting the wrong line count until reload.
+
+Note: strict red-black _balance_ of the line index is intentionally not asserted in
+the stress suite — the lazy insert/delete path keeps BST ordering and subtree
+aggregates exact (so every O(log n) lookup is correct) but does not guarantee strict
+height balance between reconciles, for ordinary editing as well as chunk loading.
 
 ## 5. Guidance for Spec-Driven Testing
 

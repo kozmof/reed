@@ -84,8 +84,12 @@ See [10-attention.md](10-attention.md) for the full design, API, and migration s
 
 No currently confirmed functional-suite core reducer/store correctness blockers from earlier spec revisions.
 
-Primary remaining gap is broader high-scale streaming/integration coverage.
+High-scale randomized streaming coverage is now in place (`chunk-stress.test.ts`).
+Building it fixed two chunk-path line-index defects (boundary-spanning char offsets
+on `LOAD_CHUNK`; CRLF un-merge line count on `EVICT_CHUNK`) — see
+[06-testing.md](06-testing.md). Remaining streaming work is breadth of direct
+`createStreamingDocumentLoader` coverage and product-level latency budgets.
 
 ## 4. Near-Term Priorities
 
-1. Add ChunkManager/StreamingDocumentLoader integration stress tests (large-file load/evict at scale).
+1. Broaden direct `createStreamingDocumentLoader` coverage (prefetch races, multi-chunk viewports) and consider product-level latency budgets in the perf suite.

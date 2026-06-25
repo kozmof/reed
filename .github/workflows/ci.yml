@@ -21,6 +21,58 @@ jobs:
       - run: pnpm fmt:check
       - run: pnpm lint
       - run: pnpm build
-      - run: pnpm test
       - run: pnpm coverage
       - run: pnpm test:perf
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Pack the tarball
+        run: pnpm pack --pack-destination "$RUNNER_TEMP"
+      - name: Install and import the packed package
+        run: |
+          consume="$RUNNER_TEMP/consume"
+          mkdir -p "$consume"
+          cd "$consume"
+          npm init -y >/dev/null
+          tarball="$(ls "$RUNNER_TEMP"/kozmof-reed-*.tgz | head -1)"
+          echo "Installing packed tarball: $tarball"
+          npm install "$tarball"
+          node --input-type=module -e "
+            import * as reed from '@kozmof/reed';
+            const required = ['store', 'query', 'scan', 'createChunkManager', 'createReconciliationScheduler'];
+            const missing = required.filter((name) => reed[name] === undefined);
+            if (missing.length > 0) {
+              throw new Error('Missing exports: ' + missing.join(', '));
+            }
+            console.log('Package consumption OK — export count:', Object.keys(reed).length);
+          "

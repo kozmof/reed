@@ -14,6 +14,11 @@ export function makeDeterministicRng(seed: number): () => number {
   };
 }
 
+/** Draw an integer uniformly from the inclusive range [min, max] using `rng`. */
+export function randomInt(rng: () => number, min: number, max: number): number {
+  return min + Math.floor(rng() * (max - min + 1));
+}
+
 export interface LargeContentOptions {
   /** Number of lines to generate (default: 100_000) */
   lineCount?: number;

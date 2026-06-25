@@ -3,7 +3,7 @@
  * CLI script: generate a large text fixture file for performance tests.
  *
  * Usage (via tsx / ts-node / node --import):
- *   npx tsx scripts/gen-fixture.ts [options]
+ *   npx tsx test-utils/gen-fixture.ts [options]
  *
  * Options:
  *   --lines  <n>              Number of lines     (default: 100000)
@@ -13,12 +13,12 @@
  *   --out    <path>           Output path         (default: tmp/large.txt)
  *
  * Example:
- *   npx tsx scripts/gen-fixture.ts --lines 200000 --pattern code --out tmp/code.txt
+ *   npx tsx test-utils/gen-fixture.ts --lines 200000 --pattern code --out tmp/code.txt
  */
 
 import { writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
-import { generateLargeContent, approximateByteSize } from "../src/test-utils/large-content.ts";
+import { generateLargeContent, approximateByteSize } from "./large-content.js";
 
 // ---------------------------------------------------------------------------
 // Arg parsing (no dependencies — keep this script zero-dep)

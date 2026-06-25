@@ -13,6 +13,7 @@ import type {
   SelectionRange,
   NonEmptyReadonlyArray,
   PieceNode,
+  LineIndexState,
 } from "../../types/state.js";
 import type { DocumentAction } from "../../types/actions.js";
 import type { ByteOffset } from "../../types/branded.js";
@@ -533,7 +534,20 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
         newLineIndex = withLineIndexState(newLineIndex, { unloadedLineCountsByChunk: newMap });
       }
       // The store schedules background reconciliation when lineIndex.rebuildPending is true.
-      newLineIndex = liInsertLazy(newLineIndex, insertionPos, chunkText, nextVersion);
+      // Pass a readText backed by the post-load piece table so the lazy insert can
+      // compute per-line char lengths when a chunk boundary splits a line mid-way
+      // (offsetInLine > 0) and detect cross-boundary CRLF merges — the same context
+      // the INSERT/APPLY_REMOTE paths supply. Without it, char offsets drift for any
+      // line that spans a chunk boundary.
+      const readChunkText = (start: ByteOffset, end: ByteOffset) =>
+        getText(newPieceTable, start, end);
+      newLineIndex = liInsertLazy(
+        newLineIndex,
+        insertionPos,
+        chunkText,
+        nextVersion,
+        readChunkText,
+      );
 
       return withState(state, {
         version: nextVersion,
@@ -572,13 +586,35 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       });
 
       const nextVersion = state.version + 1;
-      let newLineIndex = liDeleteLazy(
-        state.lineIndex,
-        range.start,
-        range.end,
-        chunkText,
-        nextVersion,
-      );
+
+      // Evicting a chunk whose boundary split a CRLF pair can rewrite line breaks
+      // at the eviction seam — e.g. removing the chunk that held the "\n" leaves an
+      // orphaned "\r" that re-pairs with following content. The lazy delete cannot
+      // track those merges, so mirror the DELETE path: rebuild from the post-eviction
+      // piece table for boundary cases, otherwise take the lazy delete with the
+      // boundary context (read from the pre-eviction state). Without the context the
+      // deleted-newline count at the seam is wrong and lineCount drifts.
+      const deleteContext = getDeleteBoundaryContext(state, range.start, range.end);
+      let newLineIndex: LineIndexState;
+      if (shouldRebuildLineIndexForDelete(chunkText, deleteContext)) {
+        const rebuiltState = rebuildLineIndexFromPieceTableState(
+          withState(state, { pieceTable: newPieceTable }),
+        );
+        // A from-scratch rebuild drops the unloaded-chunk side-cache; preserve it so
+        // line-count queries for still-unloaded chunks keep working.
+        newLineIndex = withLineIndexState(rebuiltState.lineIndex, {
+          unloadedLineCountsByChunk: state.lineIndex.unloadedLineCountsByChunk,
+        });
+      } else {
+        newLineIndex = liDeleteLazy(
+          state.lineIndex,
+          range.start,
+          range.end,
+          chunkText,
+          nextVersion,
+          deleteContext,
+        );
+      }
 
       // If metadata was pre-declared for this chunk, restore its line count to the
       // side-cache so getLineCountFromIndex continues to return the total expected count.

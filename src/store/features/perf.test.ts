@@ -17,7 +17,7 @@ import { byteOffset } from "../../types/branded.js";
 import { query } from "../../api/query.js";
 import { rebuildLineIndex, getLineStartOffset, getCharStartOffset } from "../core/line-index.js";
 import { getText } from "../core/piece-table.js";
-import { generateLargeContent, makeDeterministicRng } from "../../test-utils/large-content.js";
+import { generateLargeContent, makeDeterministicRng } from "../../../test-utils/large-content.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
