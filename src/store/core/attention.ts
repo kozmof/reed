@@ -42,6 +42,14 @@ import {
   getText,
   inOrderPieces,
 } from "./piece-table.js";
+import {
+  $proveCtx,
+  $lift,
+  type ConstCost,
+  type LogCost,
+  type LinearCost,
+  type NLogNCost,
+} from "../../types/cost-doc.js";
 
 // =============================================================================
 // Types
@@ -82,7 +90,10 @@ export const emptyAttentionLayerState: AttentionLayerState = Object.freeze({
  *
  * O(log n).
  */
-export function createPoint(root: PieceNode | null, offset: ByteOffset): AttentionPoint | null {
+export function createPoint(
+  root: PieceNode | null,
+  offset: ByteOffset,
+): LogCost<AttentionPoint> | null {
   if (root === null) return null;
 
   // Clamp to the end of the document (boundary after last byte).
@@ -95,16 +106,19 @@ export function createPoint(root: PieceNode | null, offset: ByteOffset): Attenti
   if (clampedOffset === totalLength) {
     const last = findLastPiece(root);
     if (last === null) return null;
-    return { pieceID: last.node.id, boundary: last.offsetInPiece };
+    return $proveCtx(
+      "O(log n)",
+      $lift("O(log n)", { pieceID: last.node.id, boundary: last.offsetInPiece }),
+    );
   }
 
   const location = findPieceAtPosition(root, byteOffset(clampedOffset));
   if (location === null) return null;
 
-  return {
-    pieceID: location.node.id,
-    boundary: location.offsetInPiece,
-  };
+  return $proveCtx(
+    "O(log n)",
+    $lift("O(log n)", { pieceID: location.node.id, boundary: location.offsetInPiece }),
+  );
 }
 
 /**
@@ -117,9 +131,14 @@ export function createPoint(root: PieceNode | null, offset: ByteOffset): Attenti
  * many points against the same tree should build the index once (via
  * `resolveAttention`) instead of calling this per point.
  */
-export function resolvePoint(root: PieceNode | null, point: AttentionPoint): ByteOffset | null {
+export function resolvePoint(
+  root: PieceNode | null,
+  point: AttentionPoint,
+): LinearCost<ByteOffset> | null {
   if (root === null) return null;
-  return resolvePointWithIndex(buildPieceOffsetIndex(root), point);
+  const offset = resolvePointWithIndex(buildPieceOffsetIndex(root), point);
+  if (offset === null) return null;
+  return $proveCtx("O(n)", $lift("O(n)", offset));
 }
 
 // =============================================================================
@@ -140,12 +159,16 @@ export function createAttention(
   state: AttentionLayerState,
   start: AttentionPoint,
   end: AttentionPoint,
-): [AttentionLayerState, AttentionID] {
+): ConstCost<[AttentionLayerState, AttentionID]> {
   const id = attentionID(`a${state.nextID}`);
   const attention: Attention = Object.freeze({ id, start, end });
   const next = new Map(state.attentions);
   next.set(id, attention);
-  return [Object.freeze({ attentions: next, nextID: state.nextID + 1 }), id];
+  const result: [AttentionLayerState, AttentionID] = [
+    Object.freeze({ attentions: next, nextID: state.nextID + 1 }),
+    id,
+  ];
+  return $proveCtx("O(1)", $lift("O(1)", result));
 }
 
 /**
@@ -153,11 +176,17 @@ export function createAttention(
  *
  * O(1).
  */
-export function deleteAttention(state: AttentionLayerState, id: AttentionID): AttentionLayerState {
-  if (!state.attentions.has(id)) return state;
+export function deleteAttention(
+  state: AttentionLayerState,
+  id: AttentionID,
+): ConstCost<AttentionLayerState> {
+  if (!state.attentions.has(id)) return $proveCtx("O(1)", $lift("O(1)", state));
   const next = new Map(state.attentions);
   next.delete(id);
-  return Object.freeze({ attentions: next, nextID: state.nextID });
+  return $proveCtx(
+    "O(1)",
+    $lift("O(1)", Object.freeze({ attentions: next, nextID: state.nextID })),
+  );
 }
 
 /**
@@ -165,8 +194,13 @@ export function deleteAttention(state: AttentionLayerState, id: AttentionID): At
  *
  * O(1).
  */
-export function getAttention(state: AttentionLayerState, id: AttentionID): Attention | null {
-  return state.attentions.get(id) ?? null;
+export function getAttention(
+  state: AttentionLayerState,
+  id: AttentionID,
+): ConstCost<Attention> | null {
+  const attention = state.attentions.get(id);
+  if (attention === undefined) return null;
+  return $proveCtx("O(1)", $lift("O(1)", attention));
 }
 
 // =============================================================================
@@ -246,9 +280,11 @@ export function resolveAttention(
   root: PieceNode | null,
   state: AttentionLayerState,
   id: AttentionID,
-): ResolvedRange | null {
+): LinearCost<ResolvedRange> | null {
   if (state.attentions.get(id) === undefined) return null;
-  return resolveAttentionWithIndex(buildPieceOffsetIndex(root), state, id);
+  const range = resolveAttentionWithIndex(buildPieceOffsetIndex(root), state, id);
+  if (range === null) return null;
+  return $proveCtx("O(n)", $lift("O(n)", range));
 }
 
 // =============================================================================
@@ -265,10 +301,10 @@ export function getTextForAttention(
   pieceTableState: PieceTableState,
   attentionState: AttentionLayerState,
   id: AttentionID,
-): string | null {
+): LinearCost<string> | null {
   const offsets = resolveAttention(pieceTableState.root, attentionState, id);
   if (offsets === null) return null;
-  if (offsets.startOffset >= offsets.endOffset) return "";
+  if (offsets.startOffset >= offsets.endOffset) return $proveCtx("O(n)", $lift("O(n)", ""));
   return getText(pieceTableState, offsets.startOffset, offsets.endOffset);
 }
 
@@ -286,7 +322,7 @@ export function findAttentionsAt(
   state: AttentionLayerState,
   root: PieceNode | null,
   offset: number,
-): AttentionID[] {
+): LinearCost<AttentionID[]> {
   const index = buildPieceOffsetIndex(root);
   const results: AttentionID[] = [];
   for (const [id] of state.attentions) {
@@ -296,7 +332,7 @@ export function findAttentionsAt(
       results.push(id);
     }
   }
-  return results;
+  return $proveCtx("O(n)", $lift("O(n)", results));
 }
 
 /**
@@ -311,7 +347,7 @@ export function findAttentionsOverlapping(
   root: PieceNode | null,
   start: number,
   end: number,
-): AttentionID[] {
+): LinearCost<AttentionID[]> {
   const index = buildPieceOffsetIndex(root);
   const results: AttentionID[] = [];
   for (const [id] of state.attentions) {
@@ -322,7 +358,7 @@ export function findAttentionsOverlapping(
       results.push(id);
     }
   }
-  return results;
+  return $proveCtx("O(n)", $lift("O(n)", results));
 }
 
 // =============================================================================
@@ -345,8 +381,8 @@ export function findAttentionsOverlapping(
 export function migrateSplits(
   state: AttentionLayerState,
   splits: readonly SplitRecord[],
-): AttentionLayerState {
-  if (splits.length === 0) return state;
+): LinearCost<AttentionLayerState> {
+  if (splits.length === 0) return $proveCtx("O(n)", $lift("O(n)", state));
 
   // originalID → SplitRecord lookup. The common case is a single split (one
   // insert splits at most one piece), so skip the Map allocation there.
@@ -376,7 +412,9 @@ export function migrateSplits(
     }
   }
 
-  return next === null ? state : Object.freeze({ attentions: next, nextID: state.nextID });
+  const migrated =
+    next === null ? state : Object.freeze({ attentions: next, nextID: state.nextID });
+  return $proveCtx("O(n)", $lift("O(n)", migrated));
 }
 
 function migratePoint(
@@ -421,13 +459,16 @@ export function insertWithAttention(
   attentionState: AttentionLayerState,
   position: ByteOffset,
   text: string,
-): InsertWithAttentionResult {
+): LinearCost<InsertWithAttentionResult> {
   const result = pieceTableInsert(pieceTableState, position, text);
-  return {
-    pieceTableState: result.state,
-    attentionState: migrateSplits(attentionState, result.splits),
-    insertedByteLength: result.insertedByteLength,
-  };
+  return $proveCtx(
+    "O(n)",
+    $lift("O(n)", {
+      pieceTableState: result.state,
+      attentionState: migrateSplits(attentionState, result.splits),
+      insertedByteLength: result.insertedByteLength,
+    }),
+  );
 }
 
 /** Result of an attention-aware delete: both layers advanced together. */
@@ -492,8 +533,8 @@ export function migrateDelete(
   newRoot: PieceNode | null,
   start: number,
   end: number,
-): AttentionLayerState {
-  if (start >= end) return state;
+): NLogNCost<AttentionLayerState> {
+  if (start >= end) return $proveCtx("O(n log n)", $lift("O(n log n)", state));
 
   const oldIndex = buildPieceOffsetIndex(oldRoot);
   const deletedLength = end - start;
@@ -523,7 +564,9 @@ export function migrateDelete(
     }
   }
 
-  return next === null ? state : Object.freeze({ attentions: next, nextID: state.nextID });
+  const migrated =
+    next === null ? state : Object.freeze({ attentions: next, nextID: state.nextID });
+  return $proveCtx("O(n log n)", $lift("O(n log n)", migrated));
 }
 
 /**
@@ -539,7 +582,7 @@ export function deleteWithAttention(
   attentionState: AttentionLayerState,
   start: ByteOffset,
   end: ByteOffset,
-): DeleteWithAttentionResult {
+): NLogNCost<DeleteWithAttentionResult> {
   const total = pieceTableState.totalLength;
   const clampedStart = Math.max(0, Math.min(start, total));
   const clampedEnd = Math.max(0, Math.min(end, total));
@@ -547,15 +590,18 @@ export function deleteWithAttention(
   const oldRoot = pieceTableState.root;
   const newPieceTableState = pieceTableDelete(pieceTableState, start, end);
 
-  return {
-    pieceTableState: newPieceTableState,
-    attentionState: migrateDelete(
-      attentionState,
-      oldRoot,
-      newPieceTableState.root,
-      clampedStart,
-      clampedEnd,
-    ),
-    deletedByteLength: clampedStart >= clampedEnd ? 0 : clampedEnd - clampedStart,
-  };
+  return $proveCtx(
+    "O(n log n)",
+    $lift("O(n log n)", {
+      pieceTableState: newPieceTableState,
+      attentionState: migrateDelete(
+        attentionState,
+        oldRoot,
+        newPieceTableState.root,
+        clampedStart,
+        clampedEnd,
+      ),
+      deletedByteLength: clampedStart >= clampedEnd ? 0 : clampedEnd - clampedStart,
+    }),
+  );
 }
