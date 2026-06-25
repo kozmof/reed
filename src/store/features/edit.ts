@@ -33,6 +33,8 @@ import {
   getText,
   getRawByte,
 } from "../core/piece-table.js";
+import type { SplitRecord } from "../core/piece-table.js";
+import { migrateSplits, migrateDelete } from "../core/attention.js";
 import {
   lineIndexInsert as liInsert,
   lineIndexDelete as liDelete,
@@ -88,33 +90,46 @@ export function validateRange(
 // =============================================================================
 
 /**
- * Insert text into piece table at position.
- * Returns new document state with updated piece table and inserted byte length.
+ * Insert text into piece table at position, migrating the attention layer.
+ * Returns new document state, the inserted byte length, and the piece splits.
+ *
+ * Centralizing attention migration here means every content-edit path that
+ * inserts (applyEdit, applyChange/undo-redo, APPLY_REMOTE) re-anchors points
+ * automatically via the split records.
  */
 export function pieceTableInsert(
   state: DocumentState,
   position: ByteOffset,
   text: string,
-): { state: DocumentState; insertedByteLength: number } {
+): { state: DocumentState; insertedByteLength: number; splits: readonly SplitRecord[] } {
   const result = ptInsert(state.pieceTable, position, text);
+  const attention = migrateSplits(state.attention, result.splits);
   return {
-    state: withState(state, { pieceTable: result.state }),
+    state: withState(state, { pieceTable: result.state, attention }),
     insertedByteLength: result.insertedByteLength,
+    splits: result.splits,
   };
 }
 
 /**
- * Delete text from piece table in range [start, end).
+ * Delete text from piece table in range [start, end), migrating the attention layer.
  * Returns new document state with updated piece table.
+ *
+ * Points are re-anchored against the post-delete tree (trailing points shift
+ * left, points inside the span collapse to its start). `start`/`end` arrive
+ * already clamped from the reducer's `validateRange` / `validatePosition`.
  */
 export function pieceTableDelete(
   state: DocumentState,
   start: ByteOffset,
   end: ByteOffset,
 ): DocumentState {
+  const oldRoot = state.pieceTable.root;
   const newPieceTable = ptDelete(state.pieceTable, start, end);
+  const attention = migrateDelete(state.attention, oldRoot, newPieceTable.root, start, end);
   return withState(state, {
     pieceTable: newPieceTable,
+    attention,
   });
 }
 

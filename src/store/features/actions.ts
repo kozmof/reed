@@ -17,10 +17,13 @@ import type {
   HistoryClearAction,
   ApplyRemoteAction,
   RemoteChange,
+  CreateAttentionAction,
+  DeleteAttentionAction,
   LoadChunkAction,
   EvictChunkAction,
   DeclareChunkMetadataAction,
 } from "../../types/actions.js";
+import type { AttentionID } from "../../types/branded.js";
 import type { ChunkMetadata } from "../../types/state.js";
 import { isDocumentAction } from "../../types/actions.js";
 import { asReadonlyUint8Array } from "../core/runtime-readonly.js";
@@ -165,6 +168,10 @@ function normalizeDeserializedAction(action: DocumentAction): DocumentAction {
       return DocumentActions.historyClear();
     case "APPLY_REMOTE":
       return DocumentActions.applyRemote(action.changes);
+    case "CREATE_ATTENTION":
+      return DocumentActions.createAttention(action.start, action.end);
+    case "DELETE_ATTENTION":
+      return DocumentActions.deleteAttention(action.id);
     case "LOAD_CHUNK":
       return DocumentActions.loadChunk(action.chunkIndex, action.data);
     case "EVICT_CHUNK":
@@ -301,6 +308,29 @@ export const DocumentActions = {
    */
   applyRemote(changes: readonly RemoteChange[]): ApplyRemoteAction {
     return Object.freeze({ type: "APPLY_REMOTE", changes: freezeRemoteChanges(changes) });
+  },
+
+  /**
+   * Create an attention spanning [start, end).
+   *
+   * Both bounds are document byte offsets; the reducer anchors them to piece
+   * boundaries against the current tree. The minted `AttentionID` is
+   * deterministic (`a{attention.nextID}` of the pre-dispatch state) — read it
+   * from the post-dispatch snapshot's `attention` layer.
+   *
+   * @param start - Start of the span (inclusive, byte offset)
+   * @param end - End of the span (exclusive, byte offset)
+   */
+  createAttention(start: ByteOffset, end: ByteOffset): CreateAttentionAction {
+    return Object.freeze({ type: "CREATE_ATTENTION", start, end });
+  },
+
+  /**
+   * Remove an attention from the layer. No-op if the ID is unknown.
+   * @param id - ID of the attention to remove
+   */
+  deleteAttention(id: AttentionID): DeleteAttentionAction {
+    return Object.freeze({ type: "DELETE_ATTENTION", id });
   },
 
   /**

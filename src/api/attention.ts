@@ -28,6 +28,7 @@ import {
   findAttentionsAt,
   findAttentionsOverlapping,
   migrateSplits,
+  migrateDelete,
   insertWithAttention,
   deleteWithAttention,
 } from "../store/core/attention.js";
@@ -57,4 +58,5 @@ export const attention = {
   insertWithAttention,
   deleteWithAttention,
   migrateSplits,
+  migrateDelete,
 };

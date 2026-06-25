@@ -104,8 +104,10 @@ export {
   createContentChangeEvent,
   createSelectionChangeEvent,
   createHistoryChangeEvent,
+  createAttentionChangeEvent,
   createSaveEvent,
   createDirtyChangeEvent,
+  diffChangedAttentionIds,
   getAffectedRanges,
 } from "./features/events.js";
 export type {
@@ -113,6 +115,7 @@ export type {
   ContentChangeEvent,
   SelectionChangeEvent,
   HistoryChangeEvent,
+  AttentionChangeEvent,
   SaveEvent,
   DirtyChangeEvent,
   AnyDocumentEvent,
@@ -187,6 +190,7 @@ export {
   findAttentionsAt,
   findAttentionsOverlapping,
   migrateSplits,
+  migrateDelete,
   insertWithAttention,
   deleteWithAttention,
 } from "./core/attention.js";

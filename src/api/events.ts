@@ -7,8 +7,10 @@ import {
   createContentChangeEvent,
   createSelectionChangeEvent,
   createHistoryChangeEvent,
+  createAttentionChangeEvent,
   createSaveEvent,
   createDirtyChangeEvent,
+  diffChangedAttentionIds,
   getAffectedRanges,
 } from "../store/features/events.js";
 
@@ -17,7 +19,9 @@ export const events = {
   createContentChangeEvent,
   createSelectionChangeEvent,
   createHistoryChangeEvent,
+  createAttentionChangeEvent,
   createSaveEvent,
   createDirtyChangeEvent,
+  diffChangedAttentionIds,
   getAffectedRanges,
 } as const;

@@ -5,7 +5,7 @@
  */
 
 import type { SelectionRange, ChunkMetadata } from "./state.js";
-import type { ByteOffset, ByteLength, ReadonlyUint8Array } from "./branded.js";
+import type { ByteOffset, ByteLength, ReadonlyUint8Array, AttentionID } from "./branded.js";
 import type { NonEmptyReadonlyArray } from "./utils.js";
 import { strEnum } from "./str-enum.js";
 
@@ -132,6 +132,37 @@ export interface ApplyRemoteAction {
 }
 
 // =============================================================================
+// Attention Actions
+// =============================================================================
+
+/**
+ * Create an attention spanning [start, end) and add it to the layer.
+ * Both bounds are document byte offsets — the reducer anchors them to piece
+ * boundaries against the current tree (offsets are serializable; piece IDs are
+ * process-scoped and must never appear in an action). Clamped to document
+ * bounds; a span that cannot be anchored (empty tree) is a no-op.
+ *
+ * The minted `AttentionID` is deterministic (`a{attention.nextID}` of the
+ * pre-dispatch state); read it from the post-dispatch snapshot's attention layer.
+ */
+export interface CreateAttentionAction {
+  readonly type: "CREATE_ATTENTION";
+  /** Start of the span (inclusive, byte offset) */
+  readonly start: ByteOffset;
+  /** End of the span (exclusive, byte offset) */
+  readonly end: ByteOffset;
+}
+
+/**
+ * Remove an attention from the layer. No-op if the ID is unknown.
+ */
+export interface DeleteAttentionAction {
+  readonly type: "DELETE_ATTENTION";
+  /** ID of the attention to remove */
+  readonly id: AttentionID;
+}
+
+// =============================================================================
 // Chunk Management Actions (for large files)
 // =============================================================================
 
@@ -204,6 +235,8 @@ export type DocumentAction =
   | RedoAction
   | HistoryClearAction
   | ApplyRemoteAction
+  | CreateAttentionAction
+  | DeleteAttentionAction
   | LoadChunkAction
   | EvictChunkAction
   | DeclareChunkMetadataAction;
@@ -225,6 +258,8 @@ export const DocumentActionTypes = strEnum([
   "REDO",
   "HISTORY_CLEAR",
   "APPLY_REMOTE",
+  "CREATE_ATTENTION",
+  "DELETE_ATTENTION",
   "LOAD_CHUNK",
   "EVICT_CHUNK",
   "DECLARE_CHUNK_METADATA",
@@ -486,6 +521,25 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
             );
           }
         }
+      }
+      break;
+    }
+
+    case "CREATE_ATTENTION": {
+      const createAction = action as Partial<CreateAttentionAction>;
+      if (!isValidEditPosition(createAction.start)) {
+        errors.push('CREATE_ATTENTION action requires an integer "start" property');
+      }
+      if (!isValidEditPosition(createAction.end)) {
+        errors.push('CREATE_ATTENTION action requires an integer "end" property');
+      }
+      break;
+    }
+
+    case "DELETE_ATTENTION": {
+      const deleteAction = action as Partial<DeleteAttentionAction>;
+      if (typeof deleteAction.id !== "string") {
+        errors.push('DELETE_ATTENTION action requires a string "id" property');
       }
       break;
     }

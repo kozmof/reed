@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from "vitest";
 import { DocumentActions, serializeAction, deserializeAction } from "./actions.js";
-import { byteOffset } from "../../types/branded.js";
+import { byteOffset, attentionID } from "../../types/branded.js";
 import type { DocumentAction } from "../../types/actions.js";
 
 // =============================================================================
@@ -28,6 +28,8 @@ describe("serializeAction / deserializeAction", () => {
       ["HISTORY_CLEAR", DocumentActions.historyClear()],
       ["EVICT_CHUNK", DocumentActions.evictChunk(3)],
       ["APPLY_REMOTE (empty)", DocumentActions.applyRemote([])],
+      ["CREATE_ATTENTION", DocumentActions.createAttention(byteOffset(6), byteOffset(11))],
+      ["DELETE_ATTENTION", DocumentActions.deleteAttention(attentionID("a0"))],
     ];
 
     it.each(cases)("%s serializes to valid JSON", (_, action) => {

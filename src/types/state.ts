@@ -4,6 +4,7 @@
  */
 
 import type { ByteOffset, ByteLength, CharOffset, PieceID, ReadonlyUint8Array } from "./branded.js";
+import type { AttentionLayerState } from "./attention.js";
 import type { GrowableBuffer } from "../store/core/growable-buffer.js";
 import type { NonEmptyReadonlyArray } from "./utils.js";
 import type { ReconciliationScheduler } from "../store/features/reconciliation-scheduler.js";
@@ -589,6 +590,13 @@ export interface DocumentState<M extends EvaluationMode = EvaluationMode> {
   readonly history: HistoryState;
   /** Document metadata */
   readonly metadata: DocumentMetadata;
+  /**
+   * Attention layer: piece-anchored references that survive edits.
+   * The third independent Reed layer alongside the piece table and line index.
+   * Content edits (INSERT/DELETE/REPLACE/APPLY_REMOTE/UNDO/REDO) migrate these
+   * points automatically; CREATE_ATTENTION / DELETE_ATTENTION mutate the set.
+   */
+  readonly attention: AttentionLayerState;
 }
 
 // =============================================================================

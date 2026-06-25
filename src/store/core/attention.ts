@@ -27,6 +27,12 @@
 import type { PieceNode, PieceTableState } from "../../types/state.js";
 import type { ByteOffset, PieceID, AttentionID } from "../../types/branded.js";
 import { byteOffset, attentionID } from "../../types/branded.js";
+import type {
+  AttentionPoint,
+  Attention,
+  AttentionLayerState,
+  ResolvedRange,
+} from "../../types/attention.js";
 import type { SplitRecord } from "./piece-table.js";
 import {
   pieceTableInsert,
@@ -41,53 +47,16 @@ import {
 // Types
 // =============================================================================
 
-// `PieceID` and `AttentionID` are branded string identities defined in branded.ts.
-// Re-exported here so the Attention Layer's public surface stays self-contained.
+// The Attention Layer's data types live in `types/attention.ts` (dependency-light,
+// so `DocumentState` can carry an `AttentionLayerState` without an import cycle).
+// They are re-exported here so this module's public surface stays self-contained.
 export type { PieceID, AttentionID } from "../../types/branded.js";
-
-/**
- * A position anchored to a piece rather than to a document offset.
- * `boundary` is the byte count from the piece's start to this position,
- * i.e. the gap *before* byte `boundary` and *after* byte `boundary - 1`.
- * Valid range: 0 (before first byte) to piece.length (after last byte).
- */
-export interface AttentionPoint {
-  readonly pieceID: PieceID;
-  readonly boundary: number;
-}
-
-/**
- * A reference into mutable text.
- * Covers all bytes whose piece-relative position falls in [start, end).
- *
- * Reed stores only the two boundary points.
- * Structure (groups, trees, ASTs) is the caller's responsibility.
- */
-export interface Attention {
-  readonly id: AttentionID;
-  readonly start: AttentionPoint;
-  readonly end: AttentionPoint;
-}
-
-/**
- * Immutable Attention Layer state.
- * Lives alongside the piece table and line index as the third Reed layer.
- */
-export interface AttentionLayerState {
-  readonly attentions: ReadonlyMap<AttentionID, Attention>;
-  /**
-   * Monotonic counter for minting fresh AttentionIDs, scoped to this layer's
-   * history rather than the process. Keeps IDs deterministic across runs and
-   * stable for serialization. Carried forward by every state-returning op.
-   */
-  readonly nextID: number;
-}
-
-/** A resolved Attention's current document span, half-open `[startOffset, endOffset)`. */
-export interface ResolvedRange {
-  readonly startOffset: ByteOffset;
-  readonly endOffset: ByteOffset;
-}
+export type {
+  AttentionPoint,
+  Attention,
+  AttentionLayerState,
+  ResolvedRange,
+} from "../../types/attention.js";
 
 // =============================================================================
 // Helpers
@@ -502,17 +471,68 @@ function migratePointForDelete(
 }
 
 /**
- * Delete [start, end) and migrate the Attention Layer in one step.
+ * Re-anchor every AttentionPoint across a delete, given the trees before and
+ * after the cut. Lower-level hook used both by `deleteWithAttention` and by the
+ * store dispatch path (which performs the piece-table delete itself).
  *
  * The split–join delete gives surviving fragments fresh piece IDs that no
  * `SplitRecord` captures, so ID rewriting (as `migrateSplits` does for inserts)
  * cannot heal points on a cut piece. Instead this resolves each point against
- * the pre-delete tree and re-anchors it against the new one. The Attention Layer
- * stays caller-owned — pass the current `attentionState` in and store the
- * returned one.
+ * `oldRoot` and re-anchors it against `newRoot`. `start` and `end` must already
+ * be clamped to `[0, oldTotalLength]`; an empty or inverted span is a no-op.
  *
- * O(n + A·log n) — the delete and pre-delete indexing are O(n); each affected
- * point re-anchors in O(log n).
+ * Copy-on-write: the input state is returned untouched when no point moves.
+ *
+ * O(n + A·log n) — pre-delete indexing is O(n); each affected point re-anchors
+ * in O(log n).
+ */
+export function migrateDelete(
+  state: AttentionLayerState,
+  oldRoot: PieceNode | null,
+  newRoot: PieceNode | null,
+  start: number,
+  end: number,
+): AttentionLayerState {
+  if (start >= end) return state;
+
+  const oldIndex = buildPieceOffsetIndex(oldRoot);
+  const deletedLength = end - start;
+
+  // Copy-on-write: only clone the map once a point actually re-anchors.
+  let next: Map<AttentionID, Attention> | null = null;
+  for (const [id, attention] of state.attentions) {
+    const migratedStart = migratePointForDelete(
+      attention.start,
+      oldIndex,
+      newRoot,
+      start,
+      end,
+      deletedLength,
+    );
+    const migratedEnd = migratePointForDelete(
+      attention.end,
+      oldIndex,
+      newRoot,
+      start,
+      end,
+      deletedLength,
+    );
+    if (migratedStart !== attention.start || migratedEnd !== attention.end) {
+      if (next === null) next = new Map(state.attentions);
+      next.set(id, Object.freeze({ ...attention, start: migratedStart, end: migratedEnd }));
+    }
+  }
+
+  return next === null ? state : Object.freeze({ attentions: next, nextID: state.nextID });
+}
+
+/**
+ * Delete [start, end) and migrate the Attention Layer in one step.
+ *
+ * The Attention Layer stays caller-owned — pass the current `attentionState` in
+ * and store the returned one. Re-anchoring is delegated to `migrateDelete`.
+ *
+ * O(n + A·log n).
  */
 export function deleteWithAttention(
   pieceTableState: PieceTableState,
@@ -524,47 +544,18 @@ export function deleteWithAttention(
   const clampedStart = Math.max(0, Math.min(start, total));
   const clampedEnd = Math.max(0, Math.min(end, total));
 
-  const oldIndex = buildPieceOffsetIndex(pieceTableState.root);
+  const oldRoot = pieceTableState.root;
   const newPieceTableState = pieceTableDelete(pieceTableState, start, end);
-
-  if (clampedStart >= clampedEnd) {
-    return { pieceTableState: newPieceTableState, attentionState, deletedByteLength: 0 };
-  }
-
-  const deletedLength = clampedEnd - clampedStart;
-  const newRoot = newPieceTableState.root;
-
-  // Copy-on-write: only clone the map once a point actually re-anchors.
-  let next: Map<AttentionID, Attention> | null = null;
-  for (const [id, attention] of attentionState.attentions) {
-    const migratedStart = migratePointForDelete(
-      attention.start,
-      oldIndex,
-      newRoot,
-      clampedStart,
-      clampedEnd,
-      deletedLength,
-    );
-    const migratedEnd = migratePointForDelete(
-      attention.end,
-      oldIndex,
-      newRoot,
-      clampedStart,
-      clampedEnd,
-      deletedLength,
-    );
-    if (migratedStart !== attention.start || migratedEnd !== attention.end) {
-      if (next === null) next = new Map(attentionState.attentions);
-      next.set(id, Object.freeze({ ...attention, start: migratedStart, end: migratedEnd }));
-    }
-  }
 
   return {
     pieceTableState: newPieceTableState,
-    attentionState:
-      next === null
-        ? attentionState
-        : Object.freeze({ attentions: next, nextID: attentionState.nextID }),
-    deletedByteLength: deletedLength,
+    attentionState: migrateDelete(
+      attentionState,
+      oldRoot,
+      newPieceTableState.root,
+      clampedStart,
+      clampedEnd,
+    ),
+    deletedByteLength: clampedStart >= clampedEnd ? 0 : clampedEnd - clampedStart,
   };
 }

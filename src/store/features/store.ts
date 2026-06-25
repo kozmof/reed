@@ -22,7 +22,9 @@ import {
   createContentChangeEvent,
   createSelectionChangeEvent,
   createHistoryChangeEvent,
+  createAttentionChangeEvent,
   createDirtyChangeEvent,
+  diffChangedAttentionIds,
   getAffectedRanges,
   type EventHandler,
   type DocumentEventMap,
@@ -516,6 +518,20 @@ export function createDocumentStoreWithEvents(
       emitter.emit(
         "history-change",
         createHistoryChangeEvent(action.type === "UNDO" ? "undo" : "redo", prevState, nextState),
+      );
+    }
+
+    // Attention change events: fire whenever the layer reference changed, whether
+    // from CREATE_ATTENTION / DELETE_ATTENTION or from a content edit re-anchoring
+    // points. Compared by reference (copy-on-write) so unchanged edits cost nothing.
+    if (prevState.attention !== nextState.attention) {
+      emitter.emit(
+        "attention-change",
+        createAttentionChangeEvent(
+          prevState,
+          nextState,
+          diffChangedAttentionIds(prevState, nextState),
+        ),
       );
     }
 

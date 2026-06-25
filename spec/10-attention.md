@@ -16,6 +16,8 @@ The module is fully implemented and covered by `src/store/core/attention.test.ts
 
 Exposure: it is public via the `attention` namespace on `src/index.ts` (`import { attention } from "@kozmof/reed"`). Attention layer types (`AttentionPoint`, `Attention`, `AttentionLayerState`, `ResolvedRange`, `InsertWithAttentionResult`, `DeleteWithAttentionResult`, `PieceID`, `AttentionID`) are exported flat. The function names in §4 are members of the `attention` namespace; `emptyAttentionLayerState` is exposed as `attention.emptyState`.
 
+The layer is also wired into the store: `DocumentState` carries an `attention` field that the dispatch path migrates automatically, with `CREATE_ATTENTION` / `DELETE_ATTENTION` actions and an `attention-change` event (see §8).
+
 ## 2. Core Idea
 
 An offset into a document is invalidated by every edit before it. An attention point instead pins to a **piece boundary**:
@@ -135,7 +137,21 @@ scan.getValue(pt); // ">> hello world"
 attention.getTextForAttention(pt, att, id); // "world"
 ```
 
-## 8. Not Implemented
+## 8. Store Dispatch Integration
 
-- integration with the reducer/store dispatch path (the layer is a standalone module; `DocumentState` does not carry an `AttentionLayerState`, and the `store` dispatch channel does not migrate attentions — use `insertWithAttention` / `deleteWithAttention` directly against the piece table)
-- event emission on attention changes
+`DocumentState` carries an `attention: AttentionLayerState` (initialized to `attention.emptyState`), so the layer travels with every snapshot. Content actions migrate it automatically — there is no longer any need to drive `insertWithAttention` / `deleteWithAttention` by hand against a bare piece table.
+
+### 8.1 Migration on edits
+
+All content edits re-anchor points: `INSERT`, `DELETE`, `REPLACE`, `APPLY_REMOTE`, and `UNDO` / `REDO`. Migration is centralized in the two `DocumentState` edit wrappers (`pieceTableInsert` / `pieceTableDelete` in `edit.ts`), which every edit path funnels through: inserts heal via `migrateSplits` (§5.1), deletes via `migrateDelete` (§5.2). Chunk streaming (`LOAD_CHUNK` / `EVICT_CHUNK`) does **not** migrate attentions — chunked-mode tracking is out of scope.
+
+### 8.2 Attention actions
+
+- `CREATE_ATTENTION { start, end }` — anchor a span by document byte offsets (offsets are serializable; piece IDs are process-scoped and never appear in an action). The reducer converts offsets to points against the current tree; an empty tree is a no-op. The minted `AttentionID` is deterministic (`a{attention.nextID}` of the pre-dispatch state) — read it from the post-dispatch snapshot's `attention` layer.
+- `DELETE_ATTENTION { id }` — remove an attention; unknown IDs are a no-op.
+
+Both produce a new state reference (so subscribers fire) but **do not bump `version`** — attention changes are content-neutral, mirroring reconciliation, so they are not misread as content edits. Create them via `store.createAttention(start, end)` / `store.deleteAttention(id)` (the `DocumentActions` factory), and they round-trip through `serializeAction` / `deserializeAction`.
+
+### 8.3 Event emission
+
+`createDocumentStoreWithEvents` emits an `attention-change` event whenever the stored layer changes — on create/delete, and on a content edit that rewrites a stored point (a split during an insert, or a re-anchor during a delete). The payload carries `{ prevState, nextState, changedIds }`, where `changedIds` lists every created, deleted, or migrated attention. An insert/delete *before* a tracked span does **not** fire the event: piece-anchoring means the stored point is unchanged and its resolved offset shifts for free — subscribe to `content-change` if you need to recompute resolved positions on every edit. Events respect transaction buffering (flushed on outermost commit, discarded on rollback).

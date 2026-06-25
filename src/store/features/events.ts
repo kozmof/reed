@@ -5,7 +5,7 @@
 
 import type { DocumentState, ReedLogger } from "../../types/state.js";
 import type { ContentChangeAction, DocumentAction } from "../../types/actions.js";
-import { byteOffset, type ByteOffset } from "../../types/branded.js";
+import { byteOffset, type ByteOffset, type AttentionID } from "../../types/branded.js";
 import { utf8ByteLength } from "../core/encoding.js";
 
 // =============================================================================
@@ -77,6 +77,25 @@ export interface HistoryChangeEvent extends DocumentEvent {
 }
 
 /**
+ * Fired when the attention layer's *stored* state changes: an attention is
+ * created or deleted, or a content edit rewrites a stored point (a split during
+ * an insert, or a re-anchor during a delete).
+ *
+ * `changedIds` lists every attention whose entry differs between `prevState` and
+ * `nextState` — created, deleted, or migrated. Note that an insert/delete *before*
+ * a tracked span does NOT fire this event: piece-anchoring means the stored point
+ * is unchanged and its resolved offset shifts for free. Subscribe to
+ * `content-change` if you need to recompute resolved positions on every edit.
+ */
+export interface AttentionChangeEvent extends DocumentEvent {
+  readonly type: "attention-change";
+  readonly prevState: DocumentState;
+  readonly nextState: DocumentState;
+  /** IDs of attentions created, deleted, or re-anchored by this change. */
+  readonly changedIds: readonly AttentionID[];
+}
+
+/**
  * Fired when document is saved.
  */
 export interface SaveEvent extends DocumentEvent {
@@ -100,6 +119,7 @@ export type AnyDocumentEvent =
   | ContentChangeEvent
   | SelectionChangeEvent
   | HistoryChangeEvent
+  | AttentionChangeEvent
   | SaveEvent
   | DirtyChangeEvent;
 
@@ -110,6 +130,7 @@ export interface DocumentEventMap {
   "content-change": ContentChangeEvent;
   "selection-change": SelectionChangeEvent;
   "history-change": HistoryChangeEvent;
+  "attention-change": AttentionChangeEvent;
   save: SaveEvent;
   "dirty-change": DirtyChangeEvent;
 }
@@ -277,6 +298,49 @@ export function createHistoryChangeEvent(
     direction,
     prevState,
     nextState,
+  });
+}
+
+/**
+ * Compute the IDs whose attention entry differs between two layer states.
+ *
+ * Covers created (present only in next), deleted (present only in prev), and
+ * migrated (same ID, different frozen `Attention` object) attentions. Copy-on-
+ * write guarantees an unchanged attention keeps the same object reference, so a
+ * reference comparison is sufficient. O(A).
+ */
+export function diffChangedAttentionIds(
+  prevState: DocumentState,
+  nextState: DocumentState,
+): readonly AttentionID[] {
+  const prev = prevState.attention.attentions;
+  const next = nextState.attention.attentions;
+  if (prev === next) return [];
+
+  const changed: AttentionID[] = [];
+  for (const [id, attention] of next) {
+    if (prev.get(id) !== attention) changed.push(id); // created or migrated
+  }
+  for (const [id] of prev) {
+    if (!next.has(id)) changed.push(id); // deleted
+  }
+  return changed;
+}
+
+/**
+ * Create an attention change event.
+ */
+export function createAttentionChangeEvent(
+  prevState: DocumentState,
+  nextState: DocumentState,
+  changedIds: readonly AttentionID[],
+): AttentionChangeEvent {
+  return Object.freeze({
+    type: "attention-change" as const,
+    timestamp: Date.now(),
+    prevState,
+    nextState,
+    changedIds,
   });
 }
 

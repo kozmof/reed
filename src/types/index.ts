@@ -64,6 +64,8 @@ export type {
   HistoryClearAction,
   RemoteChange,
   ApplyRemoteAction,
+  CreateAttentionAction,
+  DeleteAttentionAction,
   LoadChunkAction,
   EvictChunkAction,
   DeclareChunkMetadataAction,

@@ -43,6 +43,7 @@ import {
   rebuildLineIndexFromPieceTableState,
 } from "./edit.js";
 import { historyUndo, historyRedo } from "./history.js";
+import { createPoint, createAttention, deleteAttention } from "../core/attention.js";
 
 /**
  * Normalize line endings in `text` to match `lineEnding`.
@@ -594,6 +595,25 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
         pieceTable: newPieceTable,
         lineIndex: newLineIndex,
       });
+    }
+
+    case "CREATE_ATTENTION": {
+      const total = state.pieceTable.totalLength;
+      const root = state.pieceTable.root;
+      const startPoint = createPoint(root, validatePosition(action.start, total));
+      const endPoint = createPoint(root, validatePosition(action.end, total));
+      // Cannot anchor against an empty tree (or otherwise) — no-op.
+      if (startPoint === null || endPoint === null) return state;
+      const [newAttention] = createAttention(state.attention, startPoint, endPoint);
+      // Attention changes are content-neutral: a new state reference (so
+      // subscribers fire) but no version bump, mirroring reconciliation.
+      return withState(state, { attention: newAttention });
+    }
+
+    case "DELETE_ATTENTION": {
+      const newAttention = deleteAttention(state.attention, action.id);
+      if (newAttention === state.attention) return state; // unknown ID — no-op
+      return withState(state, { attention: newAttention });
     }
 
     default: {

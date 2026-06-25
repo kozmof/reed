@@ -18,6 +18,7 @@ import {
   findAttentionsAt,
   findAttentionsOverlapping,
   migrateSplits,
+  migrateDelete,
   insertWithAttention,
   deleteWithAttention,
 } from "./attention.js";
@@ -593,5 +594,33 @@ describe("deleteWithAttention", () => {
     const resolved = resolveAttention(pieceTableState.root, attentionState, id);
     expect(resolved!.startOffset).toBe(2);
     expect(resolved!.endOffset).toBe(5);
+  });
+});
+
+describe("migrateDelete", () => {
+  it("re-anchors points exactly as deleteWithAttention does", () => {
+    const s0 = createPieceTableState("hello world");
+    const start = createPoint(s0.root, byteOffset(6))!;
+    const end = createPoint(s0.root, byteOffset(11))!;
+    const [layer, id] = createAttention(emptyAttentionLayerState, start, end);
+
+    // Reference path: the coupled helper.
+    const coupled = deleteWithAttention(s0, layer, byteOffset(0), byteOffset(6));
+
+    // Manual path: delete the piece table, then migrate with the standalone hook.
+    const newPt = del(s0, 0, 6);
+    const migrated = migrateDelete(layer, s0.root, newPt.root, 0, 6);
+
+    const a = resolveAttention(coupled.pieceTableState.root, coupled.attentionState, id);
+    const b = resolveAttention(newPt.root, migrated, id);
+    expect(b).toEqual(a);
+    expect(getTextForAttention(newPt, migrated, id)).toBe("world");
+  });
+
+  it("returns the same reference when nothing moves (empty span)", () => {
+    const s0 = createPieceTableState("hello");
+    const pt = createPoint(s0.root, byteOffset(1))!;
+    const [layer] = createAttention(emptyAttentionLayerState, pt, pt);
+    expect(migrateDelete(layer, s0.root, s0.root, 3, 3)).toBe(layer);
   });
 });
