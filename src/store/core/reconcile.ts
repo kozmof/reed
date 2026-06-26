@@ -38,7 +38,7 @@ export function mergeDirtyRanges(
   // Sort by startLine — skip sort if already in order (common case: appended sequentially).
   let needsSort = false;
   for (let j = 1; j < ranges.length; j++) {
-    if (ranges[j].startLine < ranges[j - 1].startLine) {
+    if (ranges[j]!.startLine < ranges[j - 1]!.startLine) {
       needsSort = true;
       break;
     }
@@ -52,11 +52,11 @@ export function mergeDirtyRanges(
   // pushed to `merged`. It is set to null only in the e1===e2 branch when the
   // input is exhausted mid-loop — the post-loop push checks for null to avoid
   // a double push.
-  let current: DirtyLineRangeEntry | null = sorted[0];
+  let current: DirtyLineRangeEntry | null = sorted[0]!;
 
   while (i < sorted.length - 1) {
     i++;
-    const next = sorted[i];
+    const next = sorted[i]!; // i < sorted.length by the loop guard
     if (next.startLine <= current!.endLine + 1) {
       if (next.offsetDelta === current!.offsetDelta && next.startLine > current!.endLine) {
         // Adjacent (non-overlapping) same delta — extend current to cover both
@@ -124,7 +124,7 @@ export function mergeDirtyRanges(
             }),
           );
           i++;
-          current = i < sorted.length ? sorted[i] : null;
+          current = i < sorted.length ? sorted[i]! : null;
         }
       }
     } else {
@@ -282,8 +282,8 @@ export function reconcileRange(
   let cumDelta = 0;
   let evtIdx = 0;
   for (let line = clampedStart; line <= clampedEnd; line++) {
-    while (evtIdx < events.length && events[evtIdx].line === line) {
-      cumDelta += events[evtIdx].delta;
+    while (evtIdx < events.length && events[evtIdx]!.line === line) {
+      cumDelta += events[evtIdx]!.delta;
       evtIdx++;
     }
     if (cumDelta !== 0) {

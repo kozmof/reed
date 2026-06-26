@@ -23,7 +23,7 @@ function makeStore() {
 function makeLoader(chunks: Record<number, string>) {
   const loadChunk = vi.fn(async (i: number): Promise<Uint8Array> => {
     if (!(i in chunks)) throw new Error(`No chunk ${i}`);
-    return makeBytes(chunks[i]);
+    return makeBytes(chunks[i]!);
   });
   return { loadChunk };
 }

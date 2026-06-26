@@ -23,7 +23,7 @@ import { createDocumentStore, createDocumentStoreWithEvents } from "./store.js";
 function onlyId(state: DocumentState): AttentionID {
   const ids = [...state.attention.attentions.keys()];
   expect(ids).toHaveLength(1);
-  return ids[0];
+  return ids[0]!;
 }
 
 describe("DocumentState.attention", () => {
@@ -171,7 +171,7 @@ describe("attention-change event", () => {
     store.dispatch(DocumentActions.createAttention(byteOffset(6), byteOffset(11)));
 
     expect(handler).toHaveBeenCalledTimes(1);
-    const event = handler.mock.calls[0][0];
+    const event = handler.mock.calls[0]![0];
     expect(event.type).toBe("attention-change");
     expect(event.changedIds).toEqual([attentionID("a0")]);
   });
@@ -186,7 +186,7 @@ describe("attention-change event", () => {
     store.dispatch(DocumentActions.deleteAttention(id));
 
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(handler.mock.calls[0][0].changedIds).toEqual([id]);
+    expect(handler.mock.calls[0]![0].changedIds).toEqual([id]);
   });
 
   it("fires on a content edit that re-anchors a stored point (split rewrite)", () => {
@@ -201,7 +201,7 @@ describe("attention-change event", () => {
     store.dispatch(DocumentActions.insert(byteOffset(8), "XYZ"));
 
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(handler.mock.calls[0][0].changedIds).toContain(id);
+    expect(handler.mock.calls[0]![0].changedIds).toContain(id);
   });
 
   it("fires on a delete that re-anchors a stored point", () => {
@@ -214,7 +214,7 @@ describe("attention-change event", () => {
     store.dispatch(DocumentActions.delete(byteOffset(0), byteOffset(3)));
 
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(handler.mock.calls[0][0].changedIds).toContain(id);
+    expect(handler.mock.calls[0]![0].changedIds).toContain(id);
   });
 
   it("does not fire when an insert before the span only shifts resolution (no stored-point change)", () => {

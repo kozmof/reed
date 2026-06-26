@@ -55,7 +55,7 @@ function bench(fn: () => void, iterations = 1, options: BenchOptions = {}): numb
   }
 
   samples.sort((a, b) => a - b);
-  return samples[Math.floor(samples.length / 2)];
+  return samples[Math.floor(samples.length / 2)]!;
 }
 
 /**
@@ -622,8 +622,8 @@ describe("Multibyte content (kanji + emoji)", () => {
     const ms = bench(() => {
       const len = store.getSnapshot().pieceTable.totalLength;
       const tokenIndex = t++ % tokens.length;
-      store.dispatch(DocumentActions.insert(byteOffset(len), tokens[tokenIndex]));
-      insertedBytes += tokenBytes[tokenIndex];
+      store.dispatch(DocumentActions.insert(byteOffset(len), tokens[tokenIndex]!));
+      insertedBytes += tokenBytes[tokenIndex]!;
     }, ITERS);
     assertPerf(`append kanji/emoji × ${ITERS}`, ms, 5_000, ITERS);
     expect(store.getSnapshot().pieceTable.totalLength).toBe(initialBytes + insertedBytes);
@@ -651,8 +651,8 @@ describe("Multibyte content (kanji + emoji)", () => {
       // stored offset for unmodified lines near the start of the document.
       const off = getLineStartOffset(store.getSnapshot().lineIndex.root, targetLine);
       const tokenIndex = inserted++ % tokens.length;
-      store.dispatch(DocumentActions.insert(byteOffset(off), tokens[tokenIndex]));
-      insertedBytes += tokenBytes[tokenIndex];
+      store.dispatch(DocumentActions.insert(byteOffset(off), tokens[tokenIndex]!));
+      insertedBytes += tokenBytes[tokenIndex]!;
     }, ITERS);
     assertPerf(`insert kanji/emoji at line boundary × ${ITERS}`, ms, 5_000, ITERS);
     const final = store.getSnapshot();

@@ -124,8 +124,8 @@ describe("getVisibleLines", () => {
 
     expect(result.lines).toHaveLength(1);
     expect(result.totalLines).toBe(1);
-    expect(result.lines[0].lineNumber).toBe(0);
-    expect(result.lines[0].content).toBe("");
+    expect(result.lines[0]!.lineNumber).toBe(0);
+    expect(result.lines[0]!.content).toBe("");
   });
 
   it("should return visible lines with content", () => {
@@ -140,10 +140,10 @@ describe("getVisibleLines", () => {
     });
 
     expect(result.lines).toHaveLength(3);
-    expect(result.lines[0].content).toBe("Line 0");
-    expect(result.lines[0].lineNumber).toBe(0);
-    expect(result.lines[1].content).toBe("Line 1");
-    expect(result.lines[2].content).toBe("Line 2");
+    expect(result.lines[0]!.content).toBe("Line 0");
+    expect(result.lines[0]!.lineNumber).toBe(0);
+    expect(result.lines[1]!.content).toBe("Line 1");
+    expect(result.lines[2]!.content).toBe("Line 2");
   });
 
   it("should strip trailing newlines from content", () => {
@@ -157,10 +157,10 @@ describe("getVisibleLines", () => {
       overscan: 0,
     });
 
-    expect(result.lines[0].content).toBe("Hello");
-    expect(result.lines[0].hasNewline).toBe(true);
-    expect(result.lines[1].content).toBe("World");
-    expect(result.lines[1].hasNewline).toBe(true);
+    expect(result.lines[0]!.content).toBe("Hello");
+    expect(result.lines[0]!.hasNewline).toBe(true);
+    expect(result.lines[1]!.content).toBe("World");
+    expect(result.lines[1]!.hasNewline).toBe(true);
   });
 
   it("should strip CRLF and CR terminators from rendered content", () => {
@@ -189,10 +189,10 @@ describe("getVisibleLines", () => {
       overscan: 0,
     });
 
-    expect(result.lines[0].startOffset).toBe(0);
-    expect(result.lines[0].endOffset).toBe(4); // 'ABC\n'
-    expect(result.lines[1].startOffset).toBe(4);
-    expect(result.lines[1].endOffset).toBe(8); // 'DEF\n'
+    expect(result.lines[0]!.startOffset).toBe(0);
+    expect(result.lines[0]!.endOffset).toBe(4); // 'ABC\n'
+    expect(result.lines[1]!.startOffset).toBe(4);
+    expect(result.lines[1]!.endOffset).toBe(8); // 'DEF\n'
   });
 
   it("should apply overscan", () => {

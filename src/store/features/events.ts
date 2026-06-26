@@ -472,12 +472,14 @@ export function getAffectedRanges(
       // A subsequent entry j that sits at or before entry i's start shifts entry i by entry j's byteChange.
       const ranges: [ByteOffset, ByteOffset][] = [];
       for (let i = 0; i < entries.length; i++) {
+        const ei = entries[i]!;
         let delta = 0;
         for (let j = i + 1; j < entries.length; j++) {
-          if (entries[j].start <= entries[i].start) delta += entries[j].byteChange;
+          const ej = entries[j]!;
+          if (ej.start <= ei.start) delta += ej.byteChange;
         }
-        const s = entries[i].start + delta;
-        ranges.push([byteOffset(s), byteOffset(s + entries[i].size)]);
+        const s = ei.start + delta;
+        ranges.push([byteOffset(s), byteOffset(s + ei.size)]);
       }
       return ranges;
     }

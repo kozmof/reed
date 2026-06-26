@@ -114,7 +114,7 @@ export function historyUndo(state: DocumentState, version: number): DocumentStat
 
   // Apply inverse of each change (in reverse order) with eager line index updates
   for (let i = entry.changes.length - 1; i >= 0; i--) {
-    const change = entry.changes[i];
+    const change = entry.changes[i]!;
     newState = applyInverseChange(newState, change);
   }
 

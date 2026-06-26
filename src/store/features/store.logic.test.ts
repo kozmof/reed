@@ -432,7 +432,7 @@ describe("Document Reducer", () => {
       const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), "Test"));
 
       expect(pstackSize(newState.history.undoStack)).toBe(1);
-      expect(pstackPeek(newState.history.undoStack)!.changes[0].type).toBe("insert");
+      expect(pstackPeek(newState.history.undoStack)!.changes[0]!.type).toBe("insert");
     });
 
     it("should update line count for newlines", () => {

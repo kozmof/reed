@@ -479,7 +479,7 @@ export function createDocumentStoreWithEvents(
   function bufferOrEmit(fn: () => void): void {
     if (disposed) return;
     if (pendingEventLevels.length > 0) {
-      pendingEventLevels[pendingEventLevels.length - 1].push(fn);
+      pendingEventLevels[pendingEventLevels.length - 1]!.push(fn);
     } else {
       fn();
     }
@@ -582,14 +582,14 @@ export function createDocumentStoreWithEvents(
     }
 
     const isOutermost = pendingEventLevels.length === 1;
-    const events = pendingEventLevels[pendingEventLevels.length - 1];
+    const events = pendingEventLevels[pendingEventLevels.length - 1]!;
     try {
       baseStore.commitTransaction();
       pendingEventLevels.pop();
       if (isOutermost) {
         for (const fn of events) fn();
       } else {
-        pendingEventLevels[pendingEventLevels.length - 1].push(...events);
+        pendingEventLevels[pendingEventLevels.length - 1]!.push(...events);
       }
     } catch (e) {
       // baseStore already called emergencyReset internally; clear our buffer to match.

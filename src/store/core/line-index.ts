@@ -397,7 +397,7 @@ function bstInsertLine(
   let child: LineIndexNode = newNode;
 
   for (let i = descent.length - 1; i >= 0; i--) {
-    const { node, direction } = descent[i];
+    const { node, direction } = descent[i]!;
     const rebuilt =
       direction === "left"
         ? withLineIndexNode(node, { left: child })
@@ -556,10 +556,11 @@ function appendLinesStructural(
   const charPositions = text ? findNewlineCharPositions(text) : [];
   const hasCharInfo = charPositions.length === newlinePositions.length;
 
-  // Update the last line's length for text before first newline
-  const firstNewlinePos = newlinePositions[0];
+  // Update the last line's length for text before first newline.
+  // Callers only invoke this with at least one newline, so index 0 is present.
+  const firstNewlinePos = newlinePositions[0]!;
   const textBeforeFirstNewline = firstNewlinePos + 1; // Include the newline
-  const firstCharDelta = hasCharInfo ? charPositions[0] + 1 : 0;
+  const firstCharDelta = hasCharInfo ? charPositions[0]! + 1 : 0;
 
   let newRoot = root;
 
@@ -573,17 +574,17 @@ function appendLinesStructural(
   // Insert new lines for remaining newlines
   let currentOffset = position + textBeforeFirstNewline;
   for (let i = 1; i < newlinePositions.length; i++) {
-    const lineLength = newlinePositions[i] - newlinePositions[i - 1];
-    const lineCharLength = hasCharInfo ? charPositions[i] - charPositions[i - 1] : 0;
+    const lineLength = newlinePositions[i]! - newlinePositions[i - 1]!;
+    const lineCharLength = hasCharInfo ? charPositions[i]! - charPositions[i - 1]! : 0;
     newRoot = rbInsertLine(newRoot, lineCount, currentOffset, lineLength, lineCharLength);
     lineCount++;
     currentOffset += lineLength;
   }
 
   // Insert final line (text after last newline)
-  const textAfterLastNewline = byteLength - newlinePositions[newlinePositions.length - 1] - 1;
+  const textAfterLastNewline = byteLength - newlinePositions[newlinePositions.length - 1]! - 1;
   const lastCharLength = hasCharInfo
-    ? text!.length - charPositions[charPositions.length - 1] - 1
+    ? text!.length - charPositions[charPositions.length - 1]! - 1
     : 0;
   if (textAfterLastNewline > 0 || newlinePositions.length > 0) {
     newRoot = rbInsertLine(newRoot, lineCount, currentOffset, textAfterLastNewline, lastCharLength);
@@ -670,9 +671,9 @@ function insertLinesStructural(
   const afterInsert = originalLineLength - offsetInLine; // Text after insertion point
 
   // First line: original text before insert + text up to first newline (including \n)
-  const firstNewlinePos = newlinePositions[0];
+  const firstNewlinePos = newlinePositions[0]!;
   const firstLineLength = beforeInsert + firstNewlinePos + 1;
-  const firstLineCharLength = hasCharInfo ? charsBefore! + charPositions[0] + 1 : undefined;
+  const firstLineCharLength = hasCharInfo ? charsBefore! + charPositions[0]! + 1 : undefined;
 
   // Update the current line to be the first part
   let newRoot = updateLineAtNumber(root, lineNumber, firstLineLength, firstLineCharLength);
@@ -682,8 +683,8 @@ function insertLinesStructural(
 
   // Insert middle lines (between first and last newline)
   for (let i = 1; i < newlinePositions.length; i++) {
-    const lineLength = newlinePositions[i] - newlinePositions[i - 1];
-    const lineCharLength = hasCharInfo ? charPositions[i] - charPositions[i - 1] : 0;
+    const lineLength = newlinePositions[i]! - newlinePositions[i - 1]!;
+    const lineCharLength = hasCharInfo ? charPositions[i]! - charPositions[i - 1]! : 0;
     const offset = computeOffset(lineNumber + i, prevOffset);
     newRoot = rbInsertLine(newRoot, lineNumber + i, offset, lineLength, lineCharLength);
     lineCount++;
@@ -691,10 +692,10 @@ function insertLinesStructural(
   }
 
   // Last line: text after last newline + remaining original text
-  const textAfterLastNewline = byteLength - newlinePositions[newlinePositions.length - 1] - 1;
+  const textAfterLastNewline = byteLength - newlinePositions[newlinePositions.length - 1]! - 1;
   const lastLineLength = textAfterLastNewline + afterInsert;
   const lastCharLength = hasCharInfo
-    ? text!.length - charPositions[charPositions.length - 1] - 1 + (node.charLength - charsBefore!)
+    ? text!.length - charPositions[charPositions.length - 1]! - 1 + (node.charLength - charsBefore!)
     : 0;
 
   const lastOffset = computeOffset(lineNumber + newlinePositions.length, prevOffset);
@@ -851,8 +852,8 @@ function buildLineIndexFromText(text: string, startOffset: number): LineIndexSta
   let prevChar = 0;
 
   for (let i = 0; i < breakBytes.length; i++) {
-    const endByte = breakBytes[i] + 1; // Include the line-break endpoint byte
-    const endChar = breakChars[i] + 1; // Include the line-break endpoint char
+    const endByte = breakBytes[i]! + 1; // Include the line-break endpoint byte
+    const endChar = breakChars[i]! + 1; // Include the line-break endpoint char
     lines.push({
       offset: startOffset + prevByte,
       length: endByte - prevByte,
@@ -910,7 +911,7 @@ function buildBalancedTreeWithChars(
   if (start > end) return null;
 
   const mid = Math.floor((start + end) / 2);
-  const line = lines[mid];
+  const line = lines[mid]!; // start <= mid <= end, guarded by start > end above
 
   const left = buildBalancedTreeWithChars(lines, start, mid - 1, depth + 1, deepestDepth);
   const right = buildBalancedTreeWithChars(lines, mid + 1, end, depth + 1, deepestDepth);

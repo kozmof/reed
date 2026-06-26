@@ -235,24 +235,27 @@ export function fixInsertWithPath<N extends RBNode<N>>(
   withNode: WithNodeFn<N>,
 ): N {
   for (let i = insertPath.length - 1; i >= 0; i--) {
+    // Index is in-bounds by the loop guard; capturing the entry avoids repeated
+    // assertions and lets mutations flow back through the shared object reference.
+    const entry = insertPath[i]!;
     // Sync: if the child below was modified, update this node's reference to it
     if (i < insertPath.length - 1) {
-      const childBelow = insertPath[i + 1].node;
-      const dir = insertPath[i].direction;
-      const myChild = dir === "left" ? insertPath[i].node.left : insertPath[i].node.right;
+      const childBelow = insertPath[i + 1]!.node;
+      const dir = entry.direction;
+      const myChild = dir === "left" ? entry.node.left : entry.node.right;
       if (myChild !== childBelow) {
-        insertPath[i].node =
+        entry.node =
           dir === "left"
-            ? withNode(insertPath[i].node, { left: childBelow })
-            : withNode(insertPath[i].node, { right: childBelow });
+            ? withNode(entry.node, { left: childBelow })
+            : withNode(entry.node, { right: childBelow });
       }
     }
 
-    const { fixed } = fixInsertViolation(insertPath[i].node, withNode);
-    insertPath[i].node = fixed;
+    const { fixed } = fixInsertViolation(entry.node, withNode);
+    entry.node = fixed;
   }
 
-  return ensureBlackRoot(insertPath[0].node, withNode);
+  return ensureBlackRoot(insertPath[0]!.node, withNode);
 }
 
 // =============================================================================
@@ -287,7 +290,7 @@ export function appendToRightmost<N extends RBNode<N>>(
   let updated: N = fixRedViolations(withNode(cur, { right: newLeaf }), withNode);
 
   for (let i = path.length - 1; i >= 0; i--) {
-    updated = fixRedViolations(withNode(path[i], { right: updated }), withNode);
+    updated = fixRedViolations(withNode(path[i]!, { right: updated }), withNode);
   }
 
   return updated.color === "black" ? updated : withNode(updated, { color: "black" });

@@ -385,7 +385,7 @@ describe("getAffectedRanges", () => {
     };
     const ranges = getAffectedRanges(actionInf, prevState);
     // Infinity gets clamped to 0 by clampPosition → insert "A" (1 byte) from 0 to 1
-    expect(ranges[0][0]).toBe(0);
+    expect(ranges[0]![0]).toBe(0);
   });
 
   it("should return [[0, 0]] for APPLY_REMOTE with a zero-size delete (clamped to empty range)", () => {
@@ -406,8 +406,8 @@ describe("getAffectedRanges", () => {
     const ranges = getAffectedRanges(action, prevState);
     // With prevState, start/end are clamped to totalLength
     expect(ranges.length).toBeGreaterThan(0);
-    expect(ranges[0][0]).toBe(2); // start = 2
-    expect(ranges[0][1]).toBe(7); // end = 2 + 5 = 7
+    expect(ranges[0]![0]).toBe(2); // start = 2
+    expect(ranges[0]![1]).toBe(7); // end = 2 + 5 = 7
   });
 
   it("should return [[0, 0]] for APPLY_REMOTE when nextState equals prevState", () => {
@@ -482,10 +482,10 @@ describe("Batch event emission with intermediate states", () => {
 
     // With intermediate states, first event should show 0→5, second 5→11
     expect(events).toHaveLength(2);
-    expect(events[0].prevLength).toBe(0);
-    expect(events[0].nextLength).toBe(5);
-    expect(events[1].prevLength).toBe(5);
-    expect(events[1].nextLength).toBe(11);
+    expect(events[0]!.prevLength).toBe(0);
+    expect(events[0]!.nextLength).toBe(5);
+    expect(events[1]!.prevLength).toBe(5);
+    expect(events[1]!.nextLength).toBe(11);
   });
 });
 
@@ -500,7 +500,7 @@ describe("Store event integration", () => {
     );
 
     expect(handler).toHaveBeenCalledTimes(1);
-    const event = handler.mock.calls[0][0] as {
+    const event = handler.mock.calls[0]![0] as {
       action: { type: string };
       affectedRanges: readonly (readonly [number, number])[];
     };
@@ -518,7 +518,7 @@ describe("Store event integration", () => {
     );
 
     expect(handler).toHaveBeenCalledTimes(1);
-    const event = handler.mock.calls[0][0] as { isDirty: boolean };
+    const event = handler.mock.calls[0]![0] as { isDirty: boolean };
     expect(event.isDirty).toBe(true);
   });
 
@@ -550,7 +550,7 @@ describe("Store event integration", () => {
     store.dispatch(DocumentActions.insert(byteOffset(3), "\n"));
 
     expect(handler).toHaveBeenCalledTimes(1);
-    const event = handler.mock.calls[0][0] as {
+    const event = handler.mock.calls[0]![0] as {
       affectedRanges: readonly (readonly [number, number])[];
     };
     expect(event.affectedRanges).toEqual([[3, 5]]);

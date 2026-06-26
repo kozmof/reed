@@ -98,7 +98,7 @@ describe("Editor Use Cases", () => {
 
       // Simulate typing each character
       for (let i = 0; i < text.length; i++) {
-        store.dispatch(DocumentActions.insert(byteOffset(i), text[i]));
+        store.dispatch(DocumentActions.insert(byteOffset(i), text[i]!));
       }
 
       const state = store.getSnapshot();
@@ -276,7 +276,7 @@ describe("Editor Use Cases", () => {
       const state = store.getSnapshot();
       expect(state.selection.ranges.length).toBe(2);
       expect(state.selection.ranges[0].anchor).toBe(0);
-      expect(state.selection.ranges[1].anchor).toBe(6);
+      expect(state.selection.ranges[1]!.anchor).toBe(6);
     });
   });
 
@@ -356,8 +356,8 @@ describe("Editor Use Cases", () => {
 
     it("should schedule reconciliation after outermost transaction commit when pending", () => {
       const g = globalThis as {
-        requestIdleCallback?: (callback: () => void) => number;
-        cancelIdleCallback?: (id: number) => void;
+        requestIdleCallback?: ((callback: () => void) => number) | undefined;
+        cancelIdleCallback?: ((id: number) => void) | undefined;
       };
       const originalRequestIdleCallback = g.requestIdleCallback;
       const originalCancelIdleCallback = g.cancelIdleCallback;
@@ -669,7 +669,7 @@ describe("Editor Use Cases", () => {
 
         if (op === 0 || model.length === 0) {
           const pos = randomInt(rng, 0, model.length);
-          const text = pool[randomInt(rng, 0, pool.length - 1)];
+          const text = pool[randomInt(rng, 0, pool.length - 1)]!;
           store.dispatch(DocumentActions.insert(byteOffset(pos), text));
           model = model.slice(0, pos) + text + model.slice(pos);
         } else if (op === 1) {
@@ -680,7 +680,7 @@ describe("Editor Use Cases", () => {
         } else {
           const start = randomInt(rng, 0, model.length - 1);
           const end = randomInt(rng, start + 1, model.length);
-          const text = pool[randomInt(rng, 0, pool.length - 1)];
+          const text = pool[randomInt(rng, 0, pool.length - 1)]!;
           store.dispatch(DocumentActions.replace(byteOffset(start), byteOffset(end), text));
           model = model.slice(0, start) + text + model.slice(end);
         }
@@ -829,7 +829,7 @@ describe("Editor Use Cases", () => {
 
         if (op === 0 || model.length === 0) {
           const pos = randomInt(rng, 0, model.length);
-          const text = pool[randomInt(rng, 0, pool.length - 1)];
+          const text = pool[randomInt(rng, 0, pool.length - 1)]!;
           store.dispatch(DocumentActions.insert(byteOffset(pos), text));
           model = model.slice(0, pos) + text + model.slice(pos);
           editCount++;
@@ -842,7 +842,7 @@ describe("Editor Use Cases", () => {
         } else {
           const start = randomInt(rng, 0, model.length - 1);
           const end = randomInt(rng, start + 1, model.length);
-          const text = pool[randomInt(rng, 0, pool.length - 1)];
+          const text = pool[randomInt(rng, 0, pool.length - 1)]!;
           store.dispatch(DocumentActions.replace(byteOffset(start), byteOffset(end), text));
           model = model.slice(0, start) + text + model.slice(end);
           editCount++;
@@ -885,7 +885,7 @@ describe("Editor Use Cases", () => {
 
           if (op === 0 || model.length === 0) {
             const pos = randomInt(rng, 0, model.length);
-            const text = pool[randomInt(rng, 0, pool.length - 1)];
+            const text = pool[randomInt(rng, 0, pool.length - 1)]!;
             store.dispatch(DocumentActions.insert(byteOffset(pos), text));
             model = model.slice(0, pos) + text + model.slice(pos);
           } else if (op === 1) {
@@ -896,7 +896,7 @@ describe("Editor Use Cases", () => {
           } else {
             const start = randomInt(rng, 0, model.length - 1);
             const end = randomInt(rng, start + 1, model.length);
-            const text = pool[randomInt(rng, 0, pool.length - 1)];
+            const text = pool[randomInt(rng, 0, pool.length - 1)]!;
             store.dispatch(DocumentActions.replace(byteOffset(start), byteOffset(end), text));
             model = model.slice(0, start) + text + model.slice(end);
           }
@@ -929,7 +929,7 @@ describe("Editor Use Cases", () => {
 
           if (op === 0 || model.length === 0) {
             const pos = randomInt(rng, 0, model.length);
-            const text = pool[randomInt(rng, 0, pool.length - 1)];
+            const text = pool[randomInt(rng, 0, pool.length - 1)]!;
             opDesc = `insert pos=${pos} text=${JSON.stringify(text)}`;
             store.dispatch(DocumentActions.insert(byteOffset(pos), text));
             model = model.slice(0, pos) + text + model.slice(pos);
@@ -942,7 +942,7 @@ describe("Editor Use Cases", () => {
           } else {
             const start = randomInt(rng, 0, model.length - 1);
             const end = randomInt(rng, start + 1, model.length);
-            const text = pool[randomInt(rng, 0, pool.length - 1)];
+            const text = pool[randomInt(rng, 0, pool.length - 1)]!;
             opDesc = `replace start=${start} end=${end} text=${JSON.stringify(text)}`;
             store.dispatch(DocumentActions.replace(byteOffset(start), byteOffset(end), text));
             model = model.slice(0, start) + text + model.slice(end);
@@ -1015,7 +1015,7 @@ describe("Editor Use Cases", () => {
           if (op === 0 || cpLen === 0) {
             const cpPos = randomInt(rng, 0, cpLen);
             const charPos = codePointIndexToCharIndex(model, cpPos);
-            const text = pool[randomInt(rng, 0, pool.length - 1)];
+            const text = pool[randomInt(rng, 0, pool.length - 1)]!;
             const pos = charIndexToByteOffset(model, charPos);
             store.dispatch(DocumentActions.insert(byteOffset(pos), text));
             model = model.slice(0, charPos) + text + model.slice(charPos);
@@ -1033,7 +1033,7 @@ describe("Editor Use Cases", () => {
             const endCp = randomInt(rng, startCp + 1, cpLen);
             const startChar = codePointIndexToCharIndex(model, startCp);
             const endChar = codePointIndexToCharIndex(model, endCp);
-            const text = pool[randomInt(rng, 0, pool.length - 1)];
+            const text = pool[randomInt(rng, 0, pool.length - 1)]!;
             const start = charIndexToByteOffset(model, startChar);
             const end = charIndexToByteOffset(model, endChar);
             store.dispatch(DocumentActions.replace(byteOffset(start), byteOffset(end), text));
@@ -1073,7 +1073,7 @@ describe("Editor Use Cases", () => {
             const op = randomInt(rng, 0, 1);
             if (op === 0 || model.length === 0) {
               const pos = randomInt(rng, 0, model.length);
-              const text = pool[randomInt(rng, 0, pool.length - 1)];
+              const text = pool[randomInt(rng, 0, pool.length - 1)]!;
               changes.push({ type: "insert", start: pos, text });
               model = model.slice(0, pos) + text + model.slice(pos);
             } else {

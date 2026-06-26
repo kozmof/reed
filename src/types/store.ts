@@ -47,7 +47,7 @@ export interface DocumentStore {
    * Returns the same as getSnapshot() by default.
    * @returns Server-side document state
    */
-  getServerSnapshot?(): DocumentState;
+  getServerSnapshot?: (() => DocumentState) | undefined;
 
   /**
    * Check whether a previously captured snapshot is still current.
@@ -201,7 +201,7 @@ export interface ReconcilableDocumentStore extends DocumentStore, TransactionCon
 export interface ReadonlyDocumentStore {
   subscribe(listener: StoreListener): Unsubscribe;
   getSnapshot(): DocumentState;
-  getServerSnapshot?(): DocumentState;
+  getServerSnapshot?: (() => DocumentState) | undefined;
   isCurrentSnapshot(snapshot: DocumentState): boolean;
 }
 

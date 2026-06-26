@@ -179,7 +179,7 @@ describe("Piece Table Operations", () => {
       let state = createEmptyPieceTableState();
       const text = "Hello, World!";
       for (let i = 0; i < text.length; i++) {
-        state = pieceTableInsert(state, byteOffset(i), text[i]).state;
+        state = pieceTableInsert(state, byteOffset(i), text[i]!).state;
       }
       expect(getValue(state)).toBe(text);
     });

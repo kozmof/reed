@@ -461,7 +461,7 @@ function buildLineIndexTree(
 
   // Use middle element as root for balance
   const mid = Math.floor((start + end) / 2);
-  const line = lines[mid];
+  const line = lines[mid]!; // start <= mid <= end, all within bounds
 
   const left = buildLineIndexTree(lines, start, mid - 1, depth + 1, deepestDepth);
   const right = buildLineIndexTree(lines, mid + 1, end, depth + 1, deepestDepth);

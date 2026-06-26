@@ -19,9 +19,9 @@ describe("getValueStream", () => {
       const chunks = [...getValueStream(state.pieceTable)];
 
       expect(chunks).toHaveLength(1);
-      expect(chunks[0].content).toBe("Hello, World!");
-      expect(chunks[0].byteOffset).toBe(0);
-      expect(chunks[0].isLast).toBe(true);
+      expect(chunks[0]!.content).toBe("Hello, World!");
+      expect(chunks[0]!.byteOffset).toBe(0);
+      expect(chunks[0]!.isLast).toBe(true);
     });
 
     it("should reconstruct full content from chunks", () => {
@@ -41,9 +41,9 @@ describe("getValueStream", () => {
       const chunks = [...getValueStream(state.pieceTable, { chunkSize: 10 })];
 
       expect(chunks.length).toBe(3);
-      expect(chunks[0].byteOffset).toBe(0);
-      expect(chunks[1].byteOffset).toBe(10);
-      expect(chunks[2].byteOffset).toBe(20);
+      expect(chunks[0]!.byteOffset).toBe(0);
+      expect(chunks[1]!.byteOffset).toBe(10);
+      expect(chunks[2]!.byteOffset).toBe(20);
     });
 
     it("should mark last chunk correctly", () => {
@@ -53,9 +53,9 @@ describe("getValueStream", () => {
       const chunks = [...getValueStream(state.pieceTable, { chunkSize: 10 })];
 
       expect(chunks.length).toBe(3);
-      expect(chunks[0].isLast).toBe(false);
-      expect(chunks[1].isLast).toBe(false);
-      expect(chunks[2].isLast).toBe(true);
+      expect(chunks[0]!.isLast).toBe(false);
+      expect(chunks[1]!.isLast).toBe(false);
+      expect(chunks[2]!.isLast).toBe(true);
     });
   });
 
@@ -68,9 +68,9 @@ describe("getValueStream", () => {
 
       expect(chunks.length).toBe(5);
       for (let i = 0; i < 4; i++) {
-        expect(chunks[i].byteLength).toBe(20);
+        expect(chunks[i]!.byteLength).toBe(20);
       }
-      expect(chunks[4].byteLength).toBe(20);
+      expect(chunks[4]!.byteLength).toBe(20);
     });
 
     it("should handle chunk size larger than document", () => {
@@ -80,7 +80,7 @@ describe("getValueStream", () => {
       const chunks = [...getValueStream(state.pieceTable, { chunkSize: 1000 })];
 
       expect(chunks.length).toBe(1);
-      expect(chunks[0].content).toBe("Small");
+      expect(chunks[0]!.content).toBe("Small");
     });
 
     it("should use default 64KB chunk size", () => {
@@ -90,7 +90,7 @@ describe("getValueStream", () => {
       const chunks = [...getValueStream(state.pieceTable)];
 
       expect(chunks.length).toBe(1);
-      expect(chunks[0].content).toBe("Test");
+      expect(chunks[0]!.content).toBe("Test");
     });
   });
 
@@ -102,8 +102,8 @@ describe("getValueStream", () => {
       const chunks = [...getValueStream(state.pieceTable, { start: 7 })];
 
       expect(chunks.length).toBe(1);
-      expect(chunks[0].content).toBe("World!");
-      expect(chunks[0].byteOffset).toBe(7);
+      expect(chunks[0]!.content).toBe("World!");
+      expect(chunks[0]!.byteOffset).toBe(7);
     });
 
     it("should respect end option", () => {
@@ -113,7 +113,7 @@ describe("getValueStream", () => {
       const chunks = [...getValueStream(state.pieceTable, { end: 5 })];
 
       expect(chunks.length).toBe(1);
-      expect(chunks[0].content).toBe("Hello");
+      expect(chunks[0]!.content).toBe("Hello");
     });
 
     it("should respect both start and end", () => {
@@ -123,7 +123,7 @@ describe("getValueStream", () => {
       const chunks = [...getValueStream(state.pieceTable, { start: 7, end: 12 })];
 
       expect(chunks.length).toBe(1);
-      expect(chunks[0].content).toBe("World");
+      expect(chunks[0]!.content).toBe("World");
     });
 
     it("should yield nothing for invalid range", () => {
@@ -163,7 +163,7 @@ describe("getValueStream", () => {
 
       const chunks = [...getValueStream(state.pieceTable)];
 
-      expect(chunks[0].byteLength).toBe(6);
+      expect(chunks[0]!.byteLength).toBe(6);
     });
   });
 

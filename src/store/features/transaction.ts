@@ -115,7 +115,7 @@ export function createTransactionManager(): TransactionManager {
   }
 
   function emergencyReset(): DocumentState | null {
-    const earliest = snapshotStack.length > 0 ? snapshotStack[0] : null;
+    const earliest = snapshotStack.length > 0 ? snapshotStack[0]! : null;
     depth = 0;
     snapshotStack = [];
     return earliest;

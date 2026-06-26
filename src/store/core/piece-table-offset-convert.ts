@@ -81,7 +81,8 @@ export function byteToCharOffset(text: string, byteOffset: number): LinearCost<n
   let bytePos = 0;
 
   while (bytePos < byteOffset) {
-    const b = bytes[bytePos];
+    // bytePos < byteOffset < bytes.length (guarded above), so the byte exists.
+    const b = bytes[bytePos]!;
     let seqLen: number;
     if (b < 0x80) seqLen = 1;
     else if ((b & 0xe0) === 0xc0) seqLen = 2;

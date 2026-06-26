@@ -620,8 +620,8 @@ describe("Undo coalescing", () => {
 
     const entry = state.history.undoStack?.top;
     expect(entry?.changes.length).toBe(2);
-    expect(entry?.changes[0].type).toBe("delete");
-    expect(entry?.changes[1].type).toBe("insert");
-    expect(entry?.changes[1].text).toBe("XY");
+    expect(entry?.changes[0]!.type).toBe("delete");
+    expect(entry?.changes[1]!.type).toBe("insert");
+    expect(entry?.changes[1]!.text).toBe("XY");
   });
 });

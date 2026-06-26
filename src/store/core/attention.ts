@@ -388,7 +388,7 @@ export function migrateSplits(
   // insert splits at most one piece), so skip the Map allocation there.
   let lookup: (pieceID: PieceID) => SplitRecord | undefined;
   if (splits.length === 1) {
-    const only = splits[0];
+    const only = splits[0]!;
     lookup = (pieceID) => (pieceID === only.originalID ? only : undefined);
   } else {
     const splitMap = new Map<PieceID, SplitRecord>();

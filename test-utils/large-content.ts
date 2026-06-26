@@ -75,7 +75,7 @@ const WORDS = [
 ];
 
 function proseWord(rng: () => number): string {
-  return WORDS[Math.floor(rng() * WORDS.length)];
+  return WORDS[Math.floor(rng() * WORDS.length)]!;
 }
 
 function proseLine(rng: () => number): string {
@@ -174,11 +174,11 @@ function multibyteLine(rng: () => number): string {
   for (let i = 0; i < tokenCount; i++) {
     const r = rng();
     if (r < 0.4) {
-      tokens.push(ASCII_TOKENS[Math.floor(rng() * ASCII_TOKENS.length)]);
+      tokens.push(ASCII_TOKENS[Math.floor(rng() * ASCII_TOKENS.length)]!);
     } else if (r < 0.7) {
-      tokens.push(KANJI_WORDS[Math.floor(rng() * KANJI_WORDS.length)]);
+      tokens.push(KANJI_WORDS[Math.floor(rng() * KANJI_WORDS.length)]!);
     } else {
-      tokens.push(EMOJI_POOL[Math.floor(rng() * EMOJI_POOL.length)]);
+      tokens.push(EMOJI_POOL[Math.floor(rng() * EMOJI_POOL.length)]!);
     }
   }
   return tokens.join(" ");

@@ -232,7 +232,7 @@ function buildBalancedPieceTree(
 ): PieceNode | null {
   if (lo > hi) return null;
   const mid = (lo + hi) >> 1;
-  const src = arr[mid];
+  const src = arr[mid]!; // lo <= mid <= hi, guarded by lo > hi above
   const left = buildBalancedPieceTree(arr, lo, mid - 1, depth + 1, deepestDepth);
   const right = buildBalancedPieceTree(arr, mid + 1, hi, depth + 1, deepestDepth);
   const leftLen = left?.subtreeLength ?? 0;

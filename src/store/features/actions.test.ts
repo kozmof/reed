@@ -97,14 +97,14 @@ describe("serializeAction / deserializeAction", () => {
       const selection = [{ anchor: byteOffset(0), head: byteOffset(5) }];
       const action = DocumentActions.insert(byteOffset(0), "x", selection);
 
-      selection[0].head = byteOffset(9);
+      selection[0]!.head = byteOffset(9);
 
       expect(action.selection).toEqual([{ anchor: byteOffset(0), head: byteOffset(5) }]);
       expect(Object.isFrozen(action.selection)).toBe(true);
       expect(Object.isFrozen(action.selection?.[0])).toBe(true);
       expect(
         () =>
-          ((action.selection as unknown as Array<{ anchor: number; head: number }>)[0].head = 1),
+          ((action.selection as unknown as Array<{ anchor: number; head: number }>)[0]!.head = 1),
       ).toThrow(TypeError);
     });
 
@@ -112,7 +112,7 @@ describe("serializeAction / deserializeAction", () => {
       const changes = [{ type: "insert" as const, start: byteOffset(1), text: "A" as string }];
       const action = DocumentActions.applyRemote(changes);
 
-      changes[0].text = "B";
+      changes[0]!.text = "B";
 
       expect(action.changes).toEqual([{ type: "insert", start: byteOffset(1), text: "A" }]);
       expect(Object.isFrozen(action.changes)).toBe(true);
@@ -134,7 +134,7 @@ describe("serializeAction / deserializeAction", () => {
       const metadata = [{ chunkIndex: 0, byteLength: 10, lineCount: 2 }];
       const action = DocumentActions.declareChunkMetadata(metadata);
 
-      metadata[0].lineCount = 99;
+      metadata[0]!.lineCount = 99;
 
       expect(action.metadata).toEqual([{ chunkIndex: 0, byteLength: 10, lineCount: 2 }]);
       expect(Object.isFrozen(action.metadata)).toBe(true);
@@ -162,7 +162,7 @@ describe("serializeAction / deserializeAction", () => {
         expect(Object.isFrozen(action.selection?.[0])).toBe(true);
         expect(
           () =>
-            ((action.selection as unknown as Array<{ anchor: number; head: number }>)[0].head = 2),
+            ((action.selection as unknown as Array<{ anchor: number; head: number }>)[0]!.head = 2),
         ).toThrow(TypeError);
       }
     });

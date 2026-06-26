@@ -200,10 +200,10 @@ function myersDiff(
       const kIndex = k + max;
 
       let x: number;
-      if (k === -d || (k !== d && v[kIndex - 1] < v[kIndex + 1])) {
-        x = v[kIndex + 1]; // Move down
+      if (k === -d || (k !== d && v[kIndex - 1]! < v[kIndex + 1]!)) {
+        x = v[kIndex + 1]!; // Move down
       } else {
-        x = v[kIndex - 1] + 1; // Move right
+        x = v[kIndex - 1]! + 1; // Move right
       }
 
       let y = x - k;
@@ -250,13 +250,13 @@ function backtrack(
     const kIndex = k + max;
 
     let prevK: number;
-    if (k === -i || (k !== i && vPrev[kIndex - 1] < vPrev[kIndex + 1])) {
+    if (k === -i || (k !== i && vPrev[kIndex - 1]! < vPrev[kIndex + 1]!)) {
       prevK = k + 1; // Came from above (insert)
     } else {
       prevK = k - 1; // Came from left (delete)
     }
 
-    const prevX = vPrev[prevK + max];
+    const prevX = vPrev[prevK + max]!;
     const prevY = prevX - prevK;
 
     // Add diagonal (equal) moves
@@ -270,7 +270,7 @@ function backtrack(
         // Insert
         edits.push({
           type: "insert",
-          text: newText[y - 1],
+          text: newText[y - 1]!,
           oldPos: oldOffset + x,
           newPos: newOffset + y - 1,
         });
@@ -279,7 +279,7 @@ function backtrack(
         // Delete
         edits.push({
           type: "delete",
-          text: oldText[x - 1],
+          text: oldText[x - 1]!,
           oldPos: oldOffset + x - 1,
           newPos: newOffset + y,
         });
@@ -313,9 +313,9 @@ function simpleDiff(
   for (let i = 1; i <= n; i++) {
     for (let j = 1; j <= m; j++) {
       if (oldText[i - 1] === newText[j - 1]) {
-        dp[i * cols + j] = dp[(i - 1) * cols + (j - 1)] + 1;
+        dp[i * cols + j] = dp[(i - 1) * cols + (j - 1)]! + 1;
       } else {
-        dp[i * cols + j] = Math.max(dp[(i - 1) * cols + j], dp[i * cols + (j - 1)]);
+        dp[i * cols + j] = Math.max(dp[(i - 1) * cols + j]!, dp[i * cols + (j - 1)]!);
       }
     }
   }
@@ -345,20 +345,20 @@ function simpleDiff(
 
     if (i > 0 && j > 0 && oldText[i - 1] === newText[j - 1]) {
       type = "equal";
-      char = oldText[i - 1];
+      char = oldText[i - 1]!;
       oldPos = oldOffset + i - 1;
       newPos = newOffset + j - 1;
       i--;
       j--;
-    } else if (j > 0 && (i === 0 || dp[i * cols + (j - 1)] >= dp[(i - 1) * cols + j])) {
+    } else if (j > 0 && (i === 0 || dp[i * cols + (j - 1)]! >= dp[(i - 1) * cols + j]!)) {
       type = "insert";
-      char = newText[j - 1];
+      char = newText[j - 1]!;
       oldPos = oldOffset + i;
       newPos = newOffset + j - 1;
       j--;
     } else {
       type = "delete";
-      char = oldText[i - 1];
+      char = oldText[i - 1]!;
       oldPos = oldOffset + i - 1;
       newPos = newOffset + j;
       i--;
@@ -391,10 +391,10 @@ function consolidateEdits(edits: DiffEdit[]): DiffEdit[] {
   if (edits.length === 0) return [];
 
   const result: DiffEdit[] = [];
-  let current = { ...edits[0] };
+  let current = { ...edits[0]! };
 
   for (let i = 1; i < edits.length; i++) {
-    const edit = edits[i];
+    const edit = edits[i]!;
 
     if (edit.type === current.type) {
       // Merge with current
@@ -472,7 +472,7 @@ export function computeSetValueActions(
 
   for (const op of ops) {
     // Convert string position to byte position using the pre-built map (O(1))
-    const bytePos = charToByteMap[op.position] + byteOffsetDelta;
+    const bytePos = charToByteMap[op.position]! + byteOffsetDelta;
 
     if (op.type === "delete") {
       const deleteByteLen = textEncoder.encode(op.text).length;

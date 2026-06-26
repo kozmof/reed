@@ -193,7 +193,7 @@ export function createChunkManager(
     let loadedCount = snapshot.pieceTable.chunkMap.size;
 
     for (let i = 0; i < lruOrder.length && loadedCount > maxLoadedChunks; i++) {
-      const candidate = lruOrder[i];
+      const candidate = lruOrder[i]!; // i < lruOrder.length by the loop guard
       // Skip pinned chunks.
       if (activeChunks.has(candidate)) continue;
       // Keep the just-loaded chunk resident for the ensureLoaded()/prefetch caller.

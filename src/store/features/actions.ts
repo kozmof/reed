@@ -43,25 +43,25 @@ function encodeBase64(bytes: Uint8Array): string {
   let i = 0;
 
   for (; i + 2 < bytes.length; i += 3) {
-    const triplet = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
+    const triplet = (bytes[i]! << 16) | (bytes[i + 1]! << 8) | bytes[i + 2]!;
     output +=
-      BASE64_ALPHABET[(triplet >> 18) & 0x3f] +
-      BASE64_ALPHABET[(triplet >> 12) & 0x3f] +
-      BASE64_ALPHABET[(triplet >> 6) & 0x3f] +
-      BASE64_ALPHABET[triplet & 0x3f];
+      BASE64_ALPHABET[(triplet >> 18) & 0x3f]! +
+      BASE64_ALPHABET[(triplet >> 12) & 0x3f]! +
+      BASE64_ALPHABET[(triplet >> 6) & 0x3f]! +
+      BASE64_ALPHABET[triplet & 0x3f]!;
   }
 
   const remaining = bytes.length - i;
   if (remaining === 1) {
-    const triplet = bytes[i] << 16;
+    const triplet = bytes[i]! << 16;
     output +=
-      BASE64_ALPHABET[(triplet >> 18) & 0x3f] + BASE64_ALPHABET[(triplet >> 12) & 0x3f] + "==";
+      BASE64_ALPHABET[(triplet >> 18) & 0x3f]! + BASE64_ALPHABET[(triplet >> 12) & 0x3f]! + "==";
   } else if (remaining === 2) {
-    const triplet = (bytes[i] << 16) | (bytes[i + 1] << 8);
+    const triplet = (bytes[i]! << 16) | (bytes[i + 1]! << 8);
     output +=
-      BASE64_ALPHABET[(triplet >> 18) & 0x3f] +
-      BASE64_ALPHABET[(triplet >> 12) & 0x3f] +
-      BASE64_ALPHABET[(triplet >> 6) & 0x3f] +
+      BASE64_ALPHABET[(triplet >> 18) & 0x3f]! +
+      BASE64_ALPHABET[(triplet >> 12) & 0x3f]! +
+      BASE64_ALPHABET[(triplet >> 6) & 0x3f]! +
       "=";
   }
 
@@ -70,7 +70,7 @@ function encodeBase64(bytes: Uint8Array): string {
 
 function decodeBase64Char(base64: string, index: number): number {
   const code = base64.charCodeAt(index);
-  return code <= 0xff ? BASE64_DECODE_TABLE[code] : 255;
+  return code <= 0xff ? BASE64_DECODE_TABLE[code]! : 255;
 }
 
 function decodeBase64(base64: string): Uint8Array {

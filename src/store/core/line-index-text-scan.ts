@@ -132,8 +132,8 @@ export function findNewlineCharPositions(text: string): number[] {
 }
 
 export interface InsertBoundaryContext {
-  prevChar?: string;
-  nextChar?: string;
+  prevChar?: string | undefined;
+  nextChar?: string | undefined;
 }
 
 export function getInsertBoundaryContext(

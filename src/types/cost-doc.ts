@@ -564,7 +564,7 @@ export const $binarySearch =
     let hi = c.value.length - 1;
     while (lo <= hi) {
       const mid = (lo + hi) >>> 1;
-      const v = c.value[mid];
+      const v = c.value[mid]!; // lo <= mid <= hi within array bounds
       if (v === x) return { value: mid } as Ctx<Seq<C, C_LOG>, number>;
       if (v < x) lo = mid + 1;
       else hi = mid - 1;

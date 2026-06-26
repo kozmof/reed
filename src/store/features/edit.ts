@@ -286,7 +286,8 @@ function canCoalesce(
   if (now - lastEntry.timestamp > timeout) return false;
   if (lastEntry.changes.length === 0) return false;
 
-  const last = lastEntry.changes[lastEntry.changes.length - 1];
+  // Non-empty by the changes.length === 0 guard above.
+  const last = lastEntry.changes[lastEntry.changes.length - 1]!;
   if (last.type !== newChange.type) return false;
 
   switch (newChange.type) {
@@ -389,7 +390,8 @@ export function historyPush(
   // Try to coalesce with the last entry
   const lastEntry = pstackPeek(history.undoStack);
   if (lastEntry && canCoalesce(lastEntry, change, history.coalesceTimeout, now)) {
-    const lastChange = lastEntry.changes[lastEntry.changes.length - 1];
+    // canCoalesce returning true guarantees a non-empty changes list.
+    const lastChange = lastEntry.changes[lastEntry.changes.length - 1]!;
     const merged = coalesceChanges(lastChange, change);
     // Preserve earlier changes in the entry; only the tail change is merged.
     const mergedEntry: HistoryEntry = Object.freeze({
@@ -545,16 +547,16 @@ export type EditOperation =
       readonly kind: "insert";
       readonly position: ByteOffset;
       readonly insertText: string;
-      readonly timestamp?: number;
-      readonly selection?: readonly SelectionRange[];
+      readonly timestamp?: number | undefined;
+      readonly selection?: readonly SelectionRange[] | undefined;
     }
   | {
       readonly kind: "delete";
       readonly position: ByteOffset;
       readonly deleteEnd: ByteOffset;
       readonly deletedText: string;
-      readonly timestamp?: number;
-      readonly selection?: readonly SelectionRange[];
+      readonly timestamp?: number | undefined;
+      readonly selection?: readonly SelectionRange[] | undefined;
     }
   | {
       readonly kind: "replace";
@@ -562,8 +564,8 @@ export type EditOperation =
       readonly deleteEnd: ByteOffset;
       readonly deletedText: string;
       readonly insertText: string;
-      readonly timestamp?: number;
-      readonly selection?: readonly SelectionRange[];
+      readonly timestamp?: number | undefined;
+      readonly selection?: readonly SelectionRange[] | undefined;
     };
 
 /**

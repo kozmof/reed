@@ -17,6 +17,6 @@ export type ReadTextFn = (start: ByteOffset, end: ByteOffset) => string;
  * Needed for partial CRLF edits (deleting only '\r' or only '\n').
  */
 export interface DeleteBoundaryContext {
-  prevChar?: string;
-  nextChar?: string;
+  prevChar?: string | undefined;
+  nextChar?: string | undefined;
 }

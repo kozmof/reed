@@ -57,7 +57,7 @@ function bench(fn: () => void, iterations = 1, runs = 3): number {
     samples.push(performance.now() - t0);
   }
   samples.sort((a, b) => a - b);
-  return samples[Math.floor(samples.length / 2)];
+  return samples[Math.floor(samples.length / 2)]!;
 }
 
 function record(label: string, medianMs: number, threshold: number): void {

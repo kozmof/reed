@@ -233,7 +233,7 @@ export function getRawByte(state: PieceTableState, docOffset: ByteOffset): numbe
   if (location === null) return -1;
   const { node, offsetInPiece } = location;
   const buffer = getPieceBufferRaw(state, node);
-  return buffer[node.start + offsetInPiece];
+  return buffer[node.start + offsetInPiece] ?? -1;
 }
 
 // =============================================================================
@@ -424,7 +424,7 @@ function bstInsert(
   // is no aliasing between the read of the original node and the write of the rebuilt one.
   let child: PieceNode = newNode;
   for (let i = descent.length - 1; i >= 0; i--) {
-    const { node, direction } = descent[i];
+    const { node, direction } = descent[i]!;
     const rebuilt =
       direction === "left"
         ? withPieceNode(node, { left: child })
@@ -759,7 +759,7 @@ function replacePieceInTree(
   // Walk back up the path in reverse, creating new parent nodes
   // This only touches O(log n) nodes - the ones on the path from root to target
   for (let i = path.length - 1; i >= 0; i--) {
-    const { node: parent, direction } = path[i];
+    const { node: parent, direction } = path[i]!;
 
     if (direction === "left") {
       current = withPieceNode(parent, { left: current });
@@ -919,7 +919,7 @@ function extractMin(node: PieceNode): {
   // `current` is the minimum; replace it with its right child
   let rest: PieceNode | null = current.right;
   for (let i = path.length - 1; i >= 0; i--) {
-    rest = withPieceNode(path[i], { left: rest });
+    rest = withPieceNode(path[i]!, { left: rest });
     rest = fixRedViolations(rest, withPiece);
   }
   if (rest !== null && isRed(rest)) {
@@ -1013,7 +1013,7 @@ function joinRight(
     });
     // Rebuild path
     for (let i = path.length - 1; i >= 0; i--) {
-      joined = withPieceNode(path[i], { right: joined });
+      joined = withPieceNode(path[i]!, { right: joined });
       joined = fixRedViolations(joined, withPiece);
     }
     return joined;
@@ -1028,7 +1028,7 @@ function joinRight(
 
   // Rebuild path back to root, fixing violations
   for (let i = path.length - 1; i >= 0; i--) {
-    joined = withPieceNode(path[i], { right: joined });
+    joined = withPieceNode(path[i]!, { right: joined });
     joined = fixRedViolations(joined, withPiece);
   }
 
@@ -1067,7 +1067,7 @@ function joinLeft(
       color: "red",
     });
     for (let i = path.length - 1; i >= 0; i--) {
-      joined = withPieceNode(path[i], { left: joined });
+      joined = withPieceNode(path[i]!, { left: joined });
       joined = fixRedViolations(joined, withPiece);
     }
     return joined;
@@ -1082,7 +1082,7 @@ function joinLeft(
 
   // Rebuild path back to root, fixing violations
   for (let i = path.length - 1; i >= 0; i--) {
-    joined = withPieceNode(path[i], { left: joined });
+    joined = withPieceNode(path[i]!, { left: joined });
     joined = fixRedViolations(joined, withPiece);
   }
 

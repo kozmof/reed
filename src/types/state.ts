@@ -550,7 +550,7 @@ export interface HistoryState {
  */
 export interface DocumentMetadata {
   /** File path if loaded from file */
-  readonly filePath?: string;
+  readonly filePath?: string | undefined;
   /** File encoding (default: utf-8) */
   readonly encoding: string;
   /** Line ending style */
@@ -560,7 +560,7 @@ export interface DocumentMetadata {
   /** Whether document has unsaved changes */
   readonly isDirty: boolean;
   /** Last save timestamp */
-  readonly lastSaved?: number;
+  readonly lastSaved?: number | undefined;
 }
 
 // =============================================================================

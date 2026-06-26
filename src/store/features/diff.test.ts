@@ -22,23 +22,23 @@ describe("Diff Algorithm", () => {
       const result = diff("hello", "hello");
       expect(result.distance).toBe(0);
       expect(result.edits.length).toBe(1);
-      expect(result.edits[0].type).toBe("equal");
+      expect(result.edits[0]!.type).toBe("equal");
     });
 
     it("should handle empty old string (pure insert)", () => {
       const result = diff("", "hello");
       expect(result.distance).toBe(5);
       expect(result.edits.length).toBe(1);
-      expect(result.edits[0].type).toBe("insert");
-      expect(result.edits[0].text).toBe("hello");
+      expect(result.edits[0]!.type).toBe("insert");
+      expect(result.edits[0]!.text).toBe("hello");
     });
 
     it("should handle empty new string (pure delete)", () => {
       const result = diff("hello", "");
       expect(result.distance).toBe(5);
       expect(result.edits.length).toBe(1);
-      expect(result.edits[0].type).toBe("delete");
-      expect(result.edits[0].text).toBe("hello");
+      expect(result.edits[0]!.type).toBe("delete");
+      expect(result.edits[0]!.text).toBe("hello");
     });
 
     it("should detect simple insert", () => {
@@ -54,14 +54,14 @@ describe("Diff Algorithm", () => {
     it("should handle common prefix", () => {
       const result = diff("hello world", "hello there");
       // Both start with "hello "
-      expect(result.edits[0].type).toBe("equal");
-      expect(result.edits[0].text).toBe("hello ");
+      expect(result.edits[0]!.type).toBe("equal");
+      expect(result.edits[0]!.text).toBe("hello ");
     });
 
     it("should handle common suffix", () => {
       const result = diff("hello world", "goodbye world");
       // Both end with " world"
-      const lastEdit = result.edits[result.edits.length - 1];
+      const lastEdit = result.edits[result.edits.length - 1]!;
       expect(lastEdit.type).toBe("equal");
       expect(lastEdit.text).toContain("world");
     });
@@ -117,25 +117,25 @@ describe("Diff Algorithm", () => {
     it("should generate single INSERT for appending", () => {
       const actions = computeSetValueActionsOptimized("hello", "hello world");
       expect(actions.length).toBe(1);
-      expect(actions[0].type).toBe("INSERT");
+      expect(actions[0]!.type).toBe("INSERT");
     });
 
     it("should generate single DELETE for removing suffix", () => {
       const actions = computeSetValueActionsOptimized("hello world", "hello");
       expect(actions.length).toBe(1);
-      expect(actions[0].type).toBe("DELETE");
+      expect(actions[0]!.type).toBe("DELETE");
     });
 
     it("should generate single REPLACE for middle change", () => {
       const actions = computeSetValueActionsOptimized("hello world", "hello there");
       expect(actions.length).toBe(1);
-      expect(actions[0].type).toBe("REPLACE");
+      expect(actions[0]!.type).toBe("REPLACE");
     });
 
     it("should handle prefix-only change", () => {
       const actions = computeSetValueActionsOptimized("hello world", "hi world");
       expect(actions.length).toBe(1);
-      expect(actions[0].type).toBe("REPLACE");
+      expect(actions[0]!.type).toBe("REPLACE");
     });
   });
 
@@ -216,7 +216,7 @@ describe("Diff Algorithm", () => {
 
       const actions = computeSetValueActionsOptimized(oldContent, newContent);
       expect(actions.length).toBe(1);
-      expect(actions[0].type).toBe("REPLACE");
+      expect(actions[0]!.type).toBe("REPLACE");
     });
 
     it("should handle large diff", () => {
@@ -334,7 +334,7 @@ describe("Diff Algorithm", () => {
       const newContent = "A𐐀B";
       const actions = computeSetValueActionsOptimized(oldContent, newContent);
       expect(actions.length).toBe(1);
-      expect(actions[0].type).toBe("REPLACE");
+      expect(actions[0]!.type).toBe("REPLACE");
     });
   });
 
@@ -375,7 +375,7 @@ describe("Diff Algorithm", () => {
       const state = createInitialState({ content: "hello" });
       const actions = computeSetValueActionsFromState(state.pieceTable, "hello!");
       expect(actions.length).toBe(1);
-      expect(actions[0].type).toBe("INSERT");
+      expect(actions[0]!.type).toBe("INSERT");
     });
   });
 

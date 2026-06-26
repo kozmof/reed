@@ -210,16 +210,16 @@ describe("Line Index Operations", () => {
       const state = createEmptyLineIndexState();
       const lines = collectLines(state.root);
       expect(lines.length).toBe(1);
-      expect(lines[0].lineLength).toBe(0);
+      expect(lines[0]!.lineLength).toBe(0);
     });
 
     it("should collect all lines in order", () => {
       const state = createLineIndexState("A\nB\nC");
       const lines = collectLines(state.root);
       expect(lines.length).toBe(3);
-      expect(lines[0].lineLength).toBe(2); // "A\n"
-      expect(lines[1].lineLength).toBe(2); // "B\n"
-      expect(lines[2].lineLength).toBe(1); // "C"
+      expect(lines[0]!.lineLength).toBe(2); // "A\n"
+      expect(lines[1]!.lineLength).toBe(2); // "B\n"
+      expect(lines[2]!.lineLength).toBe(1); // "C"
     });
   });
 
@@ -592,7 +592,7 @@ describe("mergeDirtyRanges improvements", () => {
       Array.isArray(merged) &&
         (merged as import("../../types/state.ts").DirtyLineRangeEntry[]).length === 1,
     ).toBe(true);
-    const m0 = (merged as import("../../types/state.ts").DirtyLineRangeEntry[])[0];
+    const m0 = (merged as import("../../types/state.ts").DirtyLineRangeEntry[])[0]!;
     expect(m0.startLine).toBe(5);
     expect(m0.endLine).toBe(12);
     expect(m0.offsetDelta).toBe(1); // 3 + (-2)
@@ -627,7 +627,7 @@ describe("mergeDirtyRanges improvements", () => {
       Array.isArray(merged) &&
         (merged as import("../../types/state.ts").DirtyLineRangeEntry[]).length === 1,
     ).toBe(true);
-    const m0 = (merged as import("../../types/state.ts").DirtyLineRangeEntry[])[0];
+    const m0 = (merged as import("../../types/state.ts").DirtyLineRangeEntry[])[0]!;
     expect(m0.startLine).toBe(0);
     expect(m0.endLine).toBe(10);
   });
