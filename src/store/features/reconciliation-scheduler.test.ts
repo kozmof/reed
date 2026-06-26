@@ -239,25 +239,37 @@ describe("ReconciliationScheduler", () => {
       expect(scheduler.isRunning).toBe(false);
     });
 
-    it("mode 'sync' suppresses re-entrant schedule() while work is running", () => {
+    it("mode 'sync' does not recurse on a re-entrant schedule() but drains the follow-up work", () => {
+      // Models a listener that dispatches one more edit during reconciliation:
+      // pending work for the first run, plus one extra unit created re-entrantly.
+      let pendingUnits = 1;
       let workCount = 0;
+      let workCountAtReentrantCall: number | null = null;
       let reentrantRunningFlag: boolean | null = null;
       const scheduler = createReconciliationScheduler("sync", {
-        hasPendingWork: () => true,
+        hasPendingWork: () => pendingUnits > 0,
         shouldDefer: () => false,
         performWork: () => {
           workCount++;
+          pendingUnits--;
           if (workCount === 1) {
-            // Re-entrant call must be a no-op: the running guard prevents recursion.
+            // Re-entrant call must not recurse: the running guard records the
+            // request instead of executing performWork synchronously here.
             reentrantRunningFlag = scheduler.isRunning;
+            pendingUnits++; // a listener flips pending work back on
             scheduler.schedule();
+            workCountAtReentrantCall = workCount;
           }
         },
       });
 
       scheduler.schedule();
+      // The re-entrant schedule() did not execute performWork inline...
       expect(reentrantRunningFlag).toBe(true);
-      expect(workCount).toBe(1);
+      expect(workCountAtReentrantCall).toBe(1);
+      // ...but the drain loop reconciled the follow-up work before returning.
+      expect(workCount).toBe(2);
+      expect(scheduler.isRunning).toBe(false);
     });
   });
 

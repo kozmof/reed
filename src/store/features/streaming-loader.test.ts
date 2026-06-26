@@ -118,4 +118,45 @@ describe("StreamingDocumentLoader", () => {
 
     loader.dispose();
   });
+
+  it("rejects metadata with a duplicate chunk index at construction", () => {
+    const store = createDocumentStore({ chunkSize: 1 });
+    const loader = { loadChunk: vi.fn(async () => new Uint8Array([0])) };
+    expect(() =>
+      createStreamingDocumentLoader(store, loader, [
+        { chunkIndex: 0, byteLength: 1, lineCount: 1 },
+        { chunkIndex: 0, byteLength: 1, lineCount: 1 },
+      ]),
+    ).toThrow(/duplicate chunk metadata for index 0/);
+  });
+
+  it("rejects metadata with an out-of-range chunk index at construction", () => {
+    const store = createDocumentStore({ chunkSize: 1 });
+    const loader = { loadChunk: vi.fn(async () => new Uint8Array([0])) };
+    // Two entries (totalChunks === 2) but an index of 5 leaves index 1 uncovered.
+    expect(() =>
+      createStreamingDocumentLoader(store, loader, [
+        { chunkIndex: 0, byteLength: 1, lineCount: 1 },
+        { chunkIndex: 5, byteLength: 1, lineCount: 1 },
+      ]),
+    ).toThrow(/out of range/);
+  });
+
+  it("setViewport rejects a range entirely beyond the last chunk", async () => {
+    const store = createDocumentStore({ chunkSize: 1 });
+    const loadChunk = vi.fn(async () => new Uint8Array([0]));
+    const metadata = [
+      { chunkIndex: 0, byteLength: 1, lineCount: 1 },
+      { chunkIndex: 1, byteLength: 1, lineCount: 1 },
+    ];
+    const loader = createStreamingDocumentLoader(
+      store,
+      { loadChunk, totalChunkCount: 2 },
+      metadata,
+    );
+
+    await expect(loader.setViewport(5, 9)).rejects.toThrow(/out of range for 2 chunks/);
+    expect(loadChunk).not.toHaveBeenCalled();
+    loader.dispose();
+  });
 });

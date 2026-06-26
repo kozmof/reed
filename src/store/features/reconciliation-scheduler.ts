@@ -116,12 +116,25 @@ export function createReconciliationScheduler(
   }
 
   if (mode === "sync") {
+    // Set when schedule() is called re-entrantly while a drain is in progress.
+    let pendingReschedule = false;
     return {
       schedule() {
-        if (running) return;
-        if (!hasPendingWork()) return;
-        if (shouldDefer()) return;
-        runWork();
+        // A re-entrant call (a listener dispatched during performWork) must not
+        // recurse — record the request and let the active drain loop pick it up.
+        if (running) {
+          pendingReschedule = true;
+          return;
+        }
+        // Drain rather than run once. performWork() notifies listeners, and a
+        // listener may dispatch another edit that flips rebuildPending back on.
+        // That edit's schedule() sets pendingReschedule above; loop until no
+        // re-entrant work remains so the follow-up is reconciled before we return.
+        do {
+          pendingReschedule = false;
+          if (!hasPendingWork() || shouldDefer()) return;
+          runWork();
+        } while (pendingReschedule);
       },
       cancel() {},
       runNow,

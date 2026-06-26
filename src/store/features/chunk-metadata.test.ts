@@ -100,7 +100,7 @@ describe("DECLARE_CHUNK_METADATA", () => {
     const state0 = createInitialState({ chunkSize: 64 });
     const state1 = documentReducer(
       state0,
-      DocumentActions.declareChunkMetadata([{ chunkIndex: 0, byteLength: 64, lineCount: 5 }]),
+      DocumentActions.declareChunkMetadata([{ chunkIndex: 0, byteLength: 10, lineCount: 5 }]),
     );
     // Side-cache has the entry before loading
     expect(state1.lineIndex.unloadedLineCountsByChunk.has(0)).toBe(true);
@@ -118,7 +118,7 @@ describe("DECLARE_CHUNK_METADATA", () => {
     // Declare metadata, then load, then evict
     const state1 = documentReducer(
       state0,
-      DocumentActions.declareChunkMetadata([{ chunkIndex: 0, byteLength: 64, lineCount: 5 }]),
+      DocumentActions.declareChunkMetadata([{ chunkIndex: 0, byteLength: 10, lineCount: 5 }]),
     );
     const bytes = textEncoder.encode("a\nb\nc\nd\ne\n");
     const state2 = documentReducer(state1, DocumentActions.loadChunk(0, bytes));
@@ -162,5 +162,56 @@ describe("DocumentStoreConfig.totalFileSize", () => {
     const state = createInitialState({ content: "hello", totalFileSize: 9999 });
     // content mode is not chunked; totalFileSize stored as 0
     expect(state.pieceTable.totalFileSize).toBe(0);
+  });
+});
+
+describe("LOAD_CHUNK integrity", () => {
+  it("rejects a chunk whose length exceeds the known totalFileSize", () => {
+    // Repro: a declared four-byte file must not accept an eight-byte chunk —
+    // doing so reports totalLength: 8 and corrupts every backing-file offset.
+    const state0 = createInitialState({ chunkSize: 64, totalFileSize: 4 });
+    const state1 = documentReducer(
+      state0,
+      DocumentActions.loadChunk(0, textEncoder.encode("aaaabbbb")),
+    );
+    expect(state1).toBe(state0);
+    expect(state1.pieceTable.totalLength).toBe(0);
+    expect(state1.pieceTable.chunkMap.has(0)).toBe(false);
+  });
+
+  it("rejects a chunk longer than chunkSize", () => {
+    const state0 = createInitialState({ chunkSize: 4 });
+    const state1 = documentReducer(
+      state0,
+      DocumentActions.loadChunk(0, textEncoder.encode("aaaabbbb")),
+    );
+    expect(state1).toBe(state0);
+  });
+
+  it("rejects a chunk whose length contradicts its declared byteLength", () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const state1 = documentReducer(
+      state0,
+      DocumentActions.declareChunkMetadata([{ chunkIndex: 0, byteLength: 4, lineCount: 1 }]),
+    );
+    const state2 = documentReducer(
+      state1,
+      DocumentActions.loadChunk(0, textEncoder.encode("aaaabbbb")),
+    );
+    expect(state2).toBe(state1);
+    expect(state2.pieceTable.chunkMap.has(0)).toBe(false);
+  });
+
+  it("accepts a final chunk shorter than chunkSize within totalFileSize", () => {
+    // chunk 0 fills chunkSize (8 bytes), chunk 1 is the short final chunk (2 bytes).
+    const state0 = createInitialState({ chunkSize: 8, totalFileSize: 10 });
+    const state1 = documentReducer(
+      state0,
+      DocumentActions.loadChunk(0, textEncoder.encode("aaaabbbb")),
+    );
+    expect(state1.pieceTable.totalLength).toBe(8);
+    const state2 = documentReducer(state1, DocumentActions.loadChunk(1, textEncoder.encode("cc")));
+    expect(state2.pieceTable.totalLength).toBe(10);
+    expect(state2.pieceTable.chunkMap.has(1)).toBe(true);
   });
 });

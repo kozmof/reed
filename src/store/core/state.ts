@@ -94,6 +94,16 @@ function assertValidDocumentStoreConfig(config: DocumentStoreConfig): void {
   ) {
     throw new Error("maxDirtyRanges must be a positive integer");
   }
+  if (
+    config.lineEnding !== undefined &&
+    config.lineEnding !== "lf" &&
+    config.lineEnding !== "crlf" &&
+    config.lineEnding !== "cr"
+  ) {
+    throw new Error(
+      `lineEnding must be one of 'lf', 'crlf', or 'cr': ${String(config.lineEnding)}`,
+    );
+  }
 }
 
 function freezeChunkMetadata(metadata: ChunkMetadata): ChunkMetadata {

@@ -322,3 +322,51 @@ describe("ChunkManager.dispose", () => {
     expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
   });
 });
+
+describe("ChunkManager config validation", () => {
+  it("throws when maxLoadedChunks is NaN", () => {
+    const store = makeStore();
+    expect(() => createChunkManager(store, makeLoader({}), { maxLoadedChunks: NaN })).toThrow(
+      /maxLoadedChunks must be a positive integer/,
+    );
+  });
+
+  it("throws when maxLoadedChunks is Infinity", () => {
+    const store = makeStore();
+    expect(() => createChunkManager(store, makeLoader({}), { maxLoadedChunks: Infinity })).toThrow(
+      /maxLoadedChunks must be a positive integer/,
+    );
+  });
+
+  it("throws when maxLoadedChunks is below 1", () => {
+    const store = makeStore();
+    expect(() => createChunkManager(store, makeLoader({}), { maxLoadedChunks: 0 })).toThrow(
+      /maxLoadedChunks must be a positive integer/,
+    );
+  });
+});
+
+describe("ChunkManager chunk integrity", () => {
+  it("rejects with a descriptive error when the loader returns more bytes than chunkSize", async () => {
+    const store = makeStore(); // chunkSize = 8
+    const loader = { loadChunk: vi.fn(async () => makeBytes("aaaabbbbcccc")) }; // 12 > 8
+    const manager = createChunkManager(store, loader);
+
+    await expect(manager.ensureLoaded(0)).rejects.toThrow(/violates the declared file geometry/);
+    expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
+    manager.dispose();
+  });
+
+  it("rejects when the loader contradicts a chunk's declared byteLength", async () => {
+    const store = makeStore(); // chunkSize = 8
+    store.dispatch(
+      DocumentActions.declareChunkMetadata([{ chunkIndex: 0, byteLength: 4, lineCount: 1 }]),
+    );
+    const loader = { loadChunk: vi.fn(async () => makeBytes("aaaabbbb")) }; // 8 ≠ 4
+    const manager = createChunkManager(store, loader);
+
+    await expect(manager.ensureLoaded(0)).rejects.toThrow(/declared byteLength=4/);
+    expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
+    manager.dispose();
+  });
+});

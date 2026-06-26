@@ -165,6 +165,20 @@ describe("State Factories", () => {
         "maxDirtyRanges must be a positive integer",
       );
     });
+
+    it("throws for an invalid lineEnding", () => {
+      // JavaScript consumers can bypass the type and pass an unknown value, which
+      // would otherwise cause an opaque TypeError once normalization runs.
+      expect(() => createInitialState({ lineEnding: "windows" as unknown as "lf" })).toThrow(
+        "lineEnding must be one of 'lf', 'crlf', or 'cr'",
+      );
+    });
+
+    it("accepts each valid lineEnding", () => {
+      for (const lineEnding of ["lf", "crlf", "cr"] as const) {
+        expect(() => createInitialState({ lineEnding })).not.toThrow();
+      }
+    });
   });
 
   describe("pstackToArray", () => {
@@ -1276,6 +1290,34 @@ describe("Type Guards", () => {
       expect(isDocumentStore({})).toBe(false);
       expect(isDocumentStore({ subscribe: () => {} })).toBe(false);
     });
+  });
+});
+
+// =============================================================================
+// Sync reconciliation re-entrancy
+// =============================================================================
+
+describe("sync reconciliation re-entrancy", () => {
+  it("drains line-index work a listener dispatches while reconciliation is running", () => {
+    const store = createDocumentStore({ reconcileMode: "sync" });
+
+    // In sync mode the first dispatch notifies (call #1) and then runs
+    // reconciliation, whose own setState notifies again (call #2) — that second
+    // notification fires while the scheduler is mid-flight. A listener that
+    // dispatches there schedules follow-up work re-entrantly; the scheduler must
+    // drain it rather than drop it.
+    let notifyCount = 0;
+    store.subscribe(() => {
+      notifyCount += 1;
+      if (notifyCount === 2) {
+        store.dispatch(DocumentActions.insert(byteOffset(0), "x\ny\nz\n"));
+      }
+    });
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "a\nb\nc\n"));
+
+    // Both edits are reconciled: nothing is left pending once dispatch returns.
+    expect(store.getSnapshot().lineIndex.rebuildPending).toBe(false);
   });
 });
 

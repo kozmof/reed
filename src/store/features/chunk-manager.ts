@@ -14,6 +14,7 @@
 
 import type { ReedLogger } from "../../types/state.js";
 import type { DocumentStore } from "../../types/store.js";
+import { isChunkByteLengthValid } from "../core/piece-table.js";
 import { DocumentActions } from "./actions.js";
 
 // =============================================================================
@@ -120,7 +121,18 @@ export function createChunkManager(
   loader: ChunkLoader,
   config: ChunkManagerConfig = {},
 ): ChunkManager {
-  const maxLoadedChunks = Math.max(1, config.maxLoadedChunks ?? 8);
+  if (
+    config.maxLoadedChunks !== undefined &&
+    (!Number.isInteger(config.maxLoadedChunks) || config.maxLoadedChunks < 1)
+  ) {
+    // Reject NaN / Infinity / 0 / negatives / fractionals: a non-integer or
+    // sub-1 cap silently disables LRU eviction (`count > NaN` is always false),
+    // letting memory grow unbounded.
+    throw new Error(
+      `maxLoadedChunks must be a positive integer: ${String(config.maxLoadedChunks)}`,
+    );
+  }
+  const maxLoadedChunks = config.maxLoadedChunks ?? 8;
   const fetchStrategy = config.fetchStrategy ?? "parallel";
   const logger = config.logger;
 
@@ -235,6 +247,22 @@ export function createChunkManager(
           if (disposed) return;
           if (data.length === 0)
             throw new Error(`ChunkLoader returned empty data for chunk ${chunkIndex}`);
+          // Reject lengths that contradict the declared file geometry before
+          // dispatching — otherwise the reducer silently drops the load and the
+          // post-dispatch retention check below would report a misleading error.
+          const { pieceTable } = store.getSnapshot();
+          if (!isChunkByteLengthValid(pieceTable, chunkIndex, data.length)) {
+            const declared = pieceTable.chunkMetadata.get(chunkIndex);
+            throw new Error(
+              `ChunkLoader returned ${data.length} bytes for chunk ${chunkIndex}, which ` +
+                `violates the declared file geometry (chunkSize=${pieceTable.chunkSize}` +
+                (declared !== undefined ? `, declared byteLength=${declared.byteLength}` : "") +
+                (pieceTable.totalFileSize > 0
+                  ? `, totalFileSize=${pieceTable.totalFileSize}`
+                  : "") +
+                ")",
+            );
+          }
           store.dispatch(DocumentActions.loadChunk(chunkIndex, data));
           if (!store.getSnapshot().pieceTable.chunkMap.has(chunkIndex)) {
             throw new Error(

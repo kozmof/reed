@@ -112,6 +112,27 @@ export function createStreamingDocumentLoader(
   let disposed = false;
   let latestViewportRequestId = 0;
 
+  // Validate that metadata describes the contiguous chunk set {0..totalChunks-1}
+  // exactly once each. setViewport indexes chunks positionally and derives the
+  // chunk count from metadata.length, so duplicate, missing, or out-of-range
+  // indexes would silently make some chunks unreachable or double-counted.
+  // In-range + unique + count === length together guarantee full coverage.
+  const seenChunkIndexes = new Set<number>();
+  for (const m of metadata) {
+    if (!Number.isInteger(m.chunkIndex) || m.chunkIndex < 0 || m.chunkIndex >= totalChunks) {
+      throw new RangeError(
+        `createStreamingDocumentLoader: chunk metadata index ${m.chunkIndex} is out of range; ` +
+          `metadata must cover indexes 0..${totalChunks - 1}`,
+      );
+    }
+    if (seenChunkIndexes.has(m.chunkIndex)) {
+      throw new RangeError(
+        `createStreamingDocumentLoader: duplicate chunk metadata for index ${m.chunkIndex}`,
+      );
+    }
+    seenChunkIndexes.add(m.chunkIndex);
+  }
+
   // Declare all chunk metadata upfront so the store can answer total line-count
   // queries even while most chunks are not yet loaded.
   if (metadata.length > 0) {
@@ -136,6 +157,15 @@ export function createStreamingDocumentLoader(
     ) {
       throw new RangeError(
         `setViewport: invalid chunk range [${startChunkIndex}, ${endChunkIndex}]`,
+      );
+    }
+    // Reject ranges that do not intersect [0, totalChunks-1]. Clamping a fully
+    // out-of-range request (e.g. start beyond the last chunk) would silently
+    // resolve without loading anything, masking a caller bug.
+    if (totalChunks === 0 || startChunkIndex >= totalChunks || endChunkIndex < 0) {
+      throw new RangeError(
+        `setViewport: chunk range [${startChunkIndex}, ${endChunkIndex}] is out of range ` +
+          `for ${totalChunks} chunks`,
       );
     }
     const requestId = ++latestViewportRequestId;

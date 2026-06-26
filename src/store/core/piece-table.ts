@@ -47,6 +47,35 @@ import { textEncoder, textDecoder } from "./encoding.js";
 import { GrowableBuffer } from "./growable-buffer.js";
 
 // =============================================================================
+// Chunk Integrity
+// =============================================================================
+
+/**
+ * Validate that a chunk's byte length is consistent with the declared file
+ * geometry. A chunk whose length contradicts its declared
+ * `ChunkMetadata.byteLength`, exceeds `chunkSize`, or would extend past a known
+ * `totalFileSize` all shift every backing-file offset after it and must be
+ * rejected. Returns true when the length is acceptable, including when the
+ * relevant geometry is unknown (no declared metadata, `totalFileSize === 0`).
+ *
+ * Assumes the uniform chunk layout used throughout streaming: chunk `i` occupies
+ * bytes `[i * chunkSize, i * chunkSize + length)`, with only the final chunk
+ * allowed to be shorter than `chunkSize`.
+ */
+export function isChunkByteLengthValid(
+  pieceTable: PieceTableState,
+  chunkIndex: number,
+  byteLength: number,
+): boolean {
+  const { chunkSize, totalFileSize, chunkMetadata } = pieceTable;
+  const declared = chunkMetadata.get(chunkIndex);
+  if (declared !== undefined && byteLength !== declared.byteLength) return false;
+  if (chunkSize > 0 && byteLength > chunkSize) return false;
+  if (totalFileSize > 0 && chunkIndex * chunkSize + byteLength > totalFileSize) return false;
+  return true;
+}
+
+// =============================================================================
 // In-Order Traversal Helpers
 // =============================================================================
 

@@ -27,7 +27,13 @@ import {
 } from "../core/state.js";
 import { unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
 import { appendToRightmost } from "../core/rb-tree.js";
-import { getText, getRawByte, insertChunkPieceAt, pieceTableInOrder } from "../core/piece-table.js";
+import {
+  getText,
+  getRawByte,
+  insertChunkPieceAt,
+  pieceTableInOrder,
+  isChunkByteLengthValid,
+} from "../core/piece-table.js";
 import {
   lineIndexInsertLazy as liInsertLazy,
   lineIndexDeleteLazy as liDeleteLazy,
@@ -530,6 +536,14 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
 
       const chunkBytes = new Uint8Array(data);
       if (chunkBytes.length === 0) return state;
+
+      // Integrity: a loaded chunk must fit the declared file geometry. Accepting a
+      // mismatched length silently shifts every backing-file offset after it, so
+      // reject loads that contradict declared metadata, the chunk size, or the
+      // known total file size.
+      if (!isChunkByteLengthValid(state.pieceTable, chunkIndex, chunkBytes.length)) {
+        return state;
+      }
 
       const chunkText = textDecoder.decode(chunkBytes);
 

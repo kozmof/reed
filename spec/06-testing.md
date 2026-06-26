@@ -4,7 +4,7 @@
 
 - Date: 2026-06-26
 - Functional command: `pnpm test`
-- Functional result: `23` test files, `935` tests passed
+- Functional result: `23` test files, `962` tests passed
 - Perf command: `pnpm test:perf`
 - Perf result: `1` test file, `28` tests passed
 
@@ -25,6 +25,7 @@ Functional suites (`pnpm test`):
 - `src/store/features/rendering.test.ts`: rendering selectors and conversions
 - `src/store/features/history.test.ts`: undo/redo/history helpers and coalescing
 - `src/store/features/events.test.ts`: event emitter and event-store behavior
+- `src/store/features/attention-store.test.ts`: attention-layer integration through the document store
 - `src/store/core/piece-table.test.ts`: piece-table operations and buffer behavior
 - `src/store/core/line-index.test.ts`: line-index operations and lookups
 - `src/store/features/reconciliation-scheduler.test.ts`: scheduler mode, cancel, and idle reschedule behavior
