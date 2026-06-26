@@ -13,10 +13,11 @@ describe("query selectors", () => {
     expect(result!.lineNumber).toBe(1);
   });
 
-  it("findLineByNumber should return the line node for a 1-based line number", () => {
+  it("findLineByNumber should return the line node for a 0-based line number", () => {
     const state = createInitialState({ content: "A\nB\nC" });
     const result = query.findLineByNumber(state, 2);
     expect(result).not.toBeNull();
+    expect(result!.documentOffset).toBe(4);
   });
 
   it("getLineStartOffset should return the byte offset of a line's start", () => {

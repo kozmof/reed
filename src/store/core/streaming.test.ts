@@ -92,6 +92,16 @@ describe("getValueStream", () => {
       expect(chunks.length).toBe(1);
       expect(chunks[0]!.content).toBe("Test");
     });
+
+    it("should reject non-positive and non-integral chunk sizes", () => {
+      const state = createInitialState({ content: "abc" });
+
+      for (const chunkSize of [0, -1, 1.5, Number.NaN]) {
+        expect(() => getValueStream(state.pieceTable, { chunkSize })).toThrow(
+          "chunkSize must be a positive integer",
+        );
+      }
+    });
   });
 
   describe("range options", () => {
@@ -164,6 +174,18 @@ describe("getValueStream", () => {
       const chunks = [...getValueStream(state.pieceTable)];
 
       expect(chunks[0]!.byteLength).toBe(6);
+    });
+
+    it("should preserve UTF-8 characters split across byte chunks", () => {
+      const content = "A🎉世界B";
+      const state = createInitialState({ content });
+
+      const chunks = [...getValueStream(state.pieceTable, { chunkSize: 1 })];
+
+      expect(chunks.map((chunk) => chunk.content).join("")).toBe(content);
+      expect(chunks.reduce((total, chunk) => total + chunk.byteLength, 0)).toBe(
+        new TextEncoder().encode(content).length,
+      );
     });
   });
 

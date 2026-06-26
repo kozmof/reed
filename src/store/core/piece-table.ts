@@ -1505,7 +1505,10 @@ export { charToByteOffset, byteToCharOffset } from "./piece-table-offset-convert
  * Options for getValueStream.
  */
 export interface StreamOptions {
-  /** Chunk size in bytes (default: 64KB) */
+  /**
+   * Positive integer chunk size in bytes (default: 64KB).
+   * @throws RangeError when the value is non-positive or non-integral.
+   */
   chunkSize?: number;
   /** Start offset in document (default: 0) */
   start?: number;
@@ -1537,6 +1540,10 @@ export interface DocumentChunk {
  *
  * @remarks
  * Pieces are traversed lazily — no upfront O(n) array allocation.
+ * UTF-8 decoder state is preserved between chunks, so concatenating `content`
+ * reconstructs the selected byte range even when a character crosses a byte
+ * boundary. A chunk can have empty `content` while the decoder waits for the
+ * remaining bytes of a multi-byte character.
  *
  * @example
  * ```typescript
@@ -1555,6 +1562,10 @@ export function getValueStream(
     start = 0,
     end = state.totalLength,
   } = options;
+
+  if (!Number.isInteger(chunkSize) || chunkSize <= 0) {
+    throw new RangeError("getValueStream: chunkSize must be a positive integer");
+  }
 
   if (state.root === null || start >= end || start < 0) {
     return (function* () {})();
@@ -1589,6 +1600,10 @@ function* streamChunks(
   let chunkBuffer = new Uint8Array(chunkSize);
   let chunkOffset = 0;
   let chunkStartPosition = documentPosition;
+  // Decoder state must span yielded byte chunks: a fixed byte boundary can fall
+  // in the middle of a multi-byte UTF-8 sequence. A decoder local to this
+  // generator also keeps concurrent streams independent.
+  const decoder = new TextDecoder();
 
   // Process pieces until we reach `end`
   while (currentEntry !== null && documentPosition < end) {
@@ -1622,7 +1637,7 @@ function* streamChunks(
     const isLast = documentPosition >= end || currentEntry === null;
     if (chunkOffset >= chunkSize || isLast) {
       yield {
-        content: textDecoder.decode(chunkBuffer.subarray(0, chunkOffset)),
+        content: decoder.decode(chunkBuffer.subarray(0, chunkOffset), { stream: !isLast }),
         byteOffset: chunkStartPosition,
         byteLength: chunkOffset,
         isLast,

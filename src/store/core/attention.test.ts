@@ -159,6 +159,23 @@ describe("createAttention / getAttention / deleteAttention", () => {
     const result = deleteAttention(emptyAttentionLayerState, attentionID("unknown"));
     expect(result).toBe(emptyAttentionLayerState);
   });
+
+  it("exposes runtime-read-only maps and deeply frozen points", () => {
+    const state = createPieceTableState("Hello");
+    const mutableStart = { pieceID: state.root!.id, boundary: 0 };
+    const mutableEnd = { pieceID: state.root!.id, boundary: 5 };
+    const [layer, id] = createAttention(emptyAttentionLayerState, mutableStart, mutableEnd);
+    const stored = getAttention(layer, id)!;
+
+    expect(() => (layer.attentions as Map<typeof id, typeof stored>).clear()).toThrow();
+    expect(Object.isFrozen(stored.start)).toBe(true);
+    expect(Object.isFrozen(stored.end)).toBe(true);
+
+    mutableStart.boundary = 3;
+    mutableEnd.boundary = 4;
+    expect(stored.start.boundary).toBe(0);
+    expect(stored.end.boundary).toBe(5);
+  });
 });
 
 // ---------------------------------------------------------------------------

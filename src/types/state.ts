@@ -623,7 +623,10 @@ export interface DocumentStoreConfigBase {
   logger?: ReedLogger;
   /** Maximum history entries (default: 1000) */
   historyLimit?: number;
-  /** Chunk size for large file handling (default: 65536) */
+  /**
+   * Chunk size for large-file streaming. Omit to use non-chunked mode;
+   * explicitly providing a positive value opts an empty document into chunked mode.
+   */
   chunkSize?: number;
   /** File encoding (default: 'utf-8') */
   encoding?: string;

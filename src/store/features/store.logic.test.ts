@@ -1508,6 +1508,25 @@ describe("LOAD_CHUNK", () => {
     expect(read).toBe("Hello\nWorld\n");
   });
 
+  it("keeps UTF-16 line metrics correct when UTF-8 sequences span chunks", () => {
+    const bytes = textEncoder.encode("🎉");
+    const state0 = createInitialState({ chunkSize: 2 });
+    const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes.slice(0, 2)));
+    const state2 = documentReducer(state1, DocumentActions.loadChunk(1, bytes.slice(2)));
+
+    expect(getText(state2.pieceTable, byteOffset(0), byteOffset(bytes.length))).toBe("🎉");
+    expect(state2.lineIndex.root?.subtreeCharLength).toBe("🎉".length);
+    expect(state2.lineIndex.rebuildPending).toBe(false);
+
+    const state3 = documentReducer(state2, DocumentActions.evictChunk(1));
+    expect(state3.lineIndex.root?.subtreeCharLength).toBe(
+      new TextDecoder().decode(bytes.slice(0, 2)).length,
+    );
+
+    const state4 = documentReducer(state3, DocumentActions.loadChunk(1, bytes.slice(2)));
+    expect(state4.lineIndex.root?.subtreeCharLength).toBe("🎉".length);
+  });
+
   it("updates the line index with the new chunk lines", () => {
     const state0 = createInitialState({ chunkSize: 64 });
     const bytes = textEncoder.encode("line1\nline2\nline3\n");

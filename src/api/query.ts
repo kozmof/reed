@@ -124,7 +124,7 @@ export const query: QueryApi = {
   isReconciledState,
   /** @complexity O(log n) — tree walk to find line at byte position */
   findLineAtPosition: $uncostedFn(findLineAtPosition),
-  /** @complexity O(log n) — tree walk to find line by 1-based line number */
+  /** @complexity O(log n) — tree walk to find line by 0-based line number */
   findLineByNumber: $uncostedFn(findLineByNumber),
   /** @complexity O(log n) — byte offset of line start via prefix sum */
   getLineStartOffset: $uncostedFn(getLineStartOffset),

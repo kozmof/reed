@@ -14,6 +14,7 @@ import type {
   NonEmptyReadonlyArray,
   PieceNode,
   LineIndexState,
+  PieceTableState,
 } from "../../types/state.js";
 import type { DocumentAction } from "../../types/actions.js";
 import type { ByteOffset } from "../../types/branded.js";
@@ -26,7 +27,7 @@ import {
 } from "../core/state.js";
 import { unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
 import { appendToRightmost } from "../core/rb-tree.js";
-import { getText, insertChunkPieceAt, pieceTableInOrder } from "../core/piece-table.js";
+import { getText, getRawByte, insertChunkPieceAt, pieceTableInOrder } from "../core/piece-table.js";
 import {
   lineIndexInsertLazy as liInsertLazy,
   lineIndexDeleteLazy as liDeleteLazy,
@@ -278,6 +279,47 @@ function removeChunkPiecesFromTree(
   if (survivors.length === 0) return { newRoot: null, removedLength };
 
   return { newRoot: buildBalancedPieceTree(survivors, 0, survivors.length - 1), removedLength };
+}
+
+function isUtf8ContinuationByte(byte: number): boolean {
+  return byte >= 0x80 && byte <= 0xbf;
+}
+
+function utf8SequenceLengthFromLead(byte: number): number {
+  if (byte >= 0xc2 && byte <= 0xdf) return 2;
+  if (byte >= 0xe0 && byte <= 0xef) return 3;
+  if (byte >= 0xf0 && byte <= 0xf4) return 4;
+  return 0;
+}
+
+/**
+ * Return true when `boundary` splits a structurally valid multi-byte UTF-8
+ * sequence. Incremental line-index edits decode each inserted/deleted span on
+ * its own, so such a seam changes UTF-16 char counts and requires a full rebuild.
+ */
+function utf8SequenceCrossesBoundary(state: PieceTableState, boundary: number): boolean {
+  if (boundary <= 0 || boundary >= state.totalLength) return false;
+  if (!isUtf8ContinuationByte(getRawByte(state, byteOffset(boundary)))) return false;
+
+  const searchStart = Math.max(0, boundary - 4);
+  for (let leadPos = boundary - 1; leadPos >= searchStart; leadPos--) {
+    const byte = getRawByte(state, byteOffset(leadPos));
+    if (isUtf8ContinuationByte(byte)) continue;
+
+    const sequenceLength = utf8SequenceLengthFromLead(byte);
+    if (sequenceLength === 0) return false;
+    const bytesBeforeBoundary = boundary - leadPos;
+    if (bytesBeforeBoundary >= sequenceLength) return false;
+
+    for (let pos = leadPos + 1; pos < leadPos + sequenceLength; pos++) {
+      if (pos >= state.totalLength || !isUtf8ContinuationByte(getRawByte(state, byteOffset(pos)))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  return false;
 }
 
 // =============================================================================
@@ -541,13 +583,26 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       // line that spans a chunk boundary.
       const readChunkText = (start: ByteOffset, end: ByteOffset) =>
         getText(newPieceTable, start, end);
-      newLineIndex = liInsertLazy(
-        newLineIndex,
-        insertionPos,
-        chunkText,
-        nextVersion,
-        readChunkText,
-      );
+      const insertedEnd = insertionPos + chunkBytes.length;
+      if (
+        utf8SequenceCrossesBoundary(newPieceTable, insertionPos) ||
+        utf8SequenceCrossesBoundary(newPieceTable, insertedEnd)
+      ) {
+        const rebuiltState = rebuildLineIndexFromPieceTableState(
+          withState(state, { pieceTable: newPieceTable, lineIndex: newLineIndex }),
+        );
+        newLineIndex = withLineIndexState(rebuiltState.lineIndex, {
+          unloadedLineCountsByChunk: newLineIndex.unloadedLineCountsByChunk,
+        });
+      } else {
+        newLineIndex = liInsertLazy(
+          newLineIndex,
+          insertionPos,
+          chunkText,
+          nextVersion,
+          readChunkText,
+        );
+      }
 
       return withState(state, {
         version: nextVersion,
@@ -569,6 +624,9 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       if (range === null) return state;
       if (hasAddPieceTouchingRange(state.pieceTable.root, range.start, range.end)) return state;
       const chunkText = textDecoder.decode(unwrapReadonlyUint8Array(chunkBytes));
+      const crossedUtf8BoundaryBeforeDelete =
+        utf8SequenceCrossesBoundary(state.pieceTable, range.start) ||
+        utf8SequenceCrossesBoundary(state.pieceTable, range.end);
 
       const { newRoot, removedLength } = removeChunkPiecesFromTree(
         state.pieceTable.root,
@@ -596,7 +654,11 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       // deleted-newline count at the seam is wrong and lineCount drifts.
       const deleteContext = getDeleteBoundaryContext(state, range.start, range.end);
       let newLineIndex: LineIndexState;
-      if (shouldRebuildLineIndexForDelete(chunkText, deleteContext)) {
+      if (
+        crossedUtf8BoundaryBeforeDelete ||
+        utf8SequenceCrossesBoundary(newPieceTable, range.start) ||
+        shouldRebuildLineIndexForDelete(chunkText, deleteContext)
+      ) {
         const rebuiltState = rebuildLineIndexFromPieceTableState(
           withState(state, { pieceTable: newPieceTable }),
         );

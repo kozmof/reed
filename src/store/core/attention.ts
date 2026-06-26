@@ -50,6 +50,7 @@ import {
   type LinearCost,
   type NLogNCost,
 } from "../../types/cost-doc.js";
+import { asReadonlyMap } from "./runtime-readonly.js";
 
 // =============================================================================
 // Types
@@ -72,9 +73,20 @@ export type {
 
 /** Empty AttentionLayerState — use as the initial value. */
 export const emptyAttentionLayerState: AttentionLayerState = Object.freeze({
-  attentions: new Map<AttentionID, Attention>(),
+  attentions: asReadonlyMap(new Map<AttentionID, Attention>()),
   nextID: 0,
 });
+
+function freezeAttentionPoint(point: AttentionPoint): AttentionPoint {
+  return Object.freeze({ pieceID: point.pieceID, boundary: point.boundary });
+}
+
+function freezeAttentionState(
+  attentions: Map<AttentionID, Attention>,
+  nextID: number,
+): AttentionLayerState {
+  return Object.freeze({ attentions: asReadonlyMap(attentions), nextID });
+}
 
 // =============================================================================
 // Point API
@@ -108,7 +120,10 @@ export function createPoint(
     if (last === null) return null;
     return $proveCtx(
       "O(log n)",
-      $lift("O(log n)", { pieceID: last.node.id, boundary: last.offsetInPiece }),
+      $lift(
+        "O(log n)",
+        freezeAttentionPoint({ pieceID: last.node.id, boundary: last.offsetInPiece }),
+      ),
     );
   }
 
@@ -117,7 +132,10 @@ export function createPoint(
 
   return $proveCtx(
     "O(log n)",
-    $lift("O(log n)", { pieceID: location.node.id, boundary: location.offsetInPiece }),
+    $lift(
+      "O(log n)",
+      freezeAttentionPoint({ pieceID: location.node.id, boundary: location.offsetInPiece }),
+    ),
   );
 }
 
@@ -161,11 +179,15 @@ export function createAttention(
   end: AttentionPoint,
 ): ConstCost<[AttentionLayerState, AttentionID]> {
   const id = attentionID(`a${state.nextID}`);
-  const attention: Attention = Object.freeze({ id, start, end });
+  const attention: Attention = Object.freeze({
+    id,
+    start: freezeAttentionPoint(start),
+    end: freezeAttentionPoint(end),
+  });
   const next = new Map(state.attentions);
   next.set(id, attention);
   const result: [AttentionLayerState, AttentionID] = [
-    Object.freeze({ attentions: next, nextID: state.nextID + 1 }),
+    freezeAttentionState(next, state.nextID + 1),
     id,
   ];
   return $proveCtx("O(1)", $lift("O(1)", result));
@@ -183,10 +205,7 @@ export function deleteAttention(
   if (!state.attentions.has(id)) return $proveCtx("O(1)", $lift("O(1)", state));
   const next = new Map(state.attentions);
   next.delete(id);
-  return $proveCtx(
-    "O(1)",
-    $lift("O(1)", Object.freeze({ attentions: next, nextID: state.nextID })),
-  );
+  return $proveCtx("O(1)", $lift("O(1)", freezeAttentionState(next, state.nextID)));
 }
 
 /**
@@ -412,8 +431,7 @@ export function migrateSplits(
     }
   }
 
-  const migrated =
-    next === null ? state : Object.freeze({ attentions: next, nextID: state.nextID });
+  const migrated = next === null ? state : freezeAttentionState(next, state.nextID);
   return $proveCtx("O(n)", $lift("O(n)", migrated));
 }
 
@@ -564,8 +582,7 @@ export function migrateDelete(
     }
   }
 
-  const migrated =
-    next === null ? state : Object.freeze({ attentions: next, nextID: state.nextID });
+  const migrated = next === null ? state : freezeAttentionState(next, state.nextID);
   return $proveCtx("O(n log n)", $lift("O(n log n)", migrated));
 }
 
