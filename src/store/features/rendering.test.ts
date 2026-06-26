@@ -76,6 +76,42 @@ describe("getVisibleLineRange", () => {
     expect(result.startLine).toBe(0);
     expect(result.endLine).toBe(10); // 5 visible + 5 overscan
   });
+
+  it("should return a finite top range for invalid line height", () => {
+    const scroll: ScrollPosition = {
+      scrollTop: 0,
+      lineHeight: 0,
+      viewportHeight: 400,
+    };
+
+    const result = getVisibleLineRange(scroll, 10);
+
+    expect(result).toEqual({ startLine: 0, endLine: 5 });
+    expect(Number.isFinite(result.startLine)).toBe(true);
+    expect(Number.isFinite(result.endLine)).toBe(true);
+  });
+
+  it("should clamp negative scroll and overscan inputs", () => {
+    const scroll: ScrollPosition = {
+      scrollTop: -100,
+      lineHeight: 20,
+      viewportHeight: 100,
+    };
+
+    const result = getVisibleLineRange(scroll, 100, -3);
+
+    expect(result).toEqual({ startLine: 0, endLine: 5 });
+  });
+
+  it("should return an empty range when totalLines is zero", () => {
+    const scroll: ScrollPosition = {
+      scrollTop: 0,
+      lineHeight: 20,
+      viewportHeight: 100,
+    };
+
+    expect(getVisibleLineRange(scroll, 0)).toEqual({ startLine: 0, endLine: -1 });
+  });
 });
 
 describe("getVisibleLines", () => {
@@ -407,6 +443,24 @@ describe("lineColumnToPosition", () => {
     // Column 100 should clamp to end of line
     const result = lineColumnToPosition(state, 0, 100);
     expect(result).toBe(3); // Clamped to line length including newline
+  });
+
+  it("should clamp negative column to start of line", () => {
+    const state = createInitialState({
+      content: "Hello\nWorld",
+    });
+
+    expect(lineColumnToPosition(state, 0, -1)).toBe(0);
+    expect(lineColumnToPosition(state, 1, -1)).toBe(6);
+  });
+
+  it("should clamp non-finite column to start of line", () => {
+    const state = createInitialState({
+      content: "Hello\nWorld",
+    });
+
+    expect(lineColumnToPosition(state, 0, Number.NaN)).toBe(0);
+    expect(lineColumnToPosition(state, 1, Number.POSITIVE_INFINITY)).toBe(6);
   });
 
   it("should handle unicode", () => {

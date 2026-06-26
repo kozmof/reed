@@ -9,7 +9,7 @@ Reed is an **immutable state + reducer + store** system with a namespaced API su
 - State transition: pure reducer (`src/store/features/reducer.ts`)
 - Runtime orchestration: store factory + transaction manager (`src/store/features/store.ts`)
 - Background maintenance: reconciliation scheduler + add-buffer compaction (`src/store/features/reconciliation-scheduler.ts`)
-- Public runtime access: `store/query/scan/events/rendering/history/diff/position/cost` namespaces (`src/api/*`)
+- Public runtime access: `store/query/scan/events/rendering/history/diff/position/attention` namespaces (`src/api/*`)
 
 The piece table and line index remain independent structures. Piece nodes do not store line metadata.
 

@@ -12,7 +12,6 @@ Current public runtime surface is exported from `src/index.ts` as namespaces:
 - `history`
 - `diff`
 - `position`
-- `cost`
 - `attention`
 
 Types are exported flat from the same entry file.

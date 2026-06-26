@@ -96,6 +96,10 @@ interface RenderedLineText {
   readonly hasNewline: boolean;
 }
 
+function toNonNegativeInteger(value: number, fallback: number = 0): number {
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : fallback;
+}
+
 /**
  * Split a rendered line into display content plus a terminator flag.
  * Supports LF, CR, and CRLF without leaking terminator characters into UI text.
@@ -135,14 +139,29 @@ export function getVisibleLineRange(
   overscan: number = 5,
 ): ConstCost<{ startLine: number; endLine: number }> {
   const { scrollTop, lineHeight, viewportHeight } = scroll;
+  const lineCount = toNonNegativeInteger(totalLines);
+  const safeOverscan = toNonNegativeInteger(overscan);
 
-  const firstVisibleLine = Math.floor(scrollTop / lineHeight);
-  const visibleLineCount = Math.ceil(viewportHeight / lineHeight);
+  if (lineCount === 0) {
+    return $proveCtx("O(1)", $lift("O(1)", { startLine: 0, endLine: -1 }));
+  }
+
+  if (!Number.isFinite(lineHeight) || lineHeight <= 0) {
+    return $proveCtx(
+      "O(1)",
+      $lift("O(1)", { startLine: 0, endLine: Math.min(lineCount - 1, safeOverscan) }),
+    );
+  }
+
+  const safeScrollTop = Number.isFinite(scrollTop) ? Math.max(0, scrollTop) : 0;
+  const safeViewportHeight = Number.isFinite(viewportHeight) ? Math.max(0, viewportHeight) : 0;
+  const firstVisibleLine = Math.min(Math.floor(safeScrollTop / lineHeight), lineCount - 1);
+  const visibleLineCount = Math.ceil(safeViewportHeight / lineHeight);
   const lastVisibleLine = firstVisibleLine + visibleLineCount;
 
   // Apply overscan
-  const startLine = Math.max(0, firstVisibleLine - overscan);
-  const endLine = Math.min(totalLines - 1, lastVisibleLine + overscan);
+  const startLine = Math.max(0, firstVisibleLine - safeOverscan);
+  const endLine = Math.min(lineCount - 1, lastVisibleLine + safeOverscan);
 
   return $proveCtx("O(1)", $lift("O(1)", { startLine, endLine }));
 }
@@ -495,7 +514,7 @@ export function lineColumnToPosition(
           ),
         ),
         $map(({ resolvedRange, lineContent }) => {
-          const clampedColumn = Math.min(column, lineContent.length);
+          const clampedColumn = Math.min(toNonNegativeInteger(column), lineContent.length);
           const columnByteLen = textEncoder.encode(lineContent.slice(0, clampedColumn)).length;
           return addByteOffset(resolvedRange.start, columnByteLen);
         }),
