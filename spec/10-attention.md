@@ -150,7 +150,7 @@ All content edits re-anchor points: `INSERT`, `DELETE`, `REPLACE`, `APPLY_REMOTE
 - `CREATE_ATTENTION { start, end }` — anchor a span by document byte offsets (offsets are serializable; piece IDs are process-scoped and never appear in an action). The reducer converts offsets to points against the current tree; an empty tree is a no-op. The minted `AttentionID` is deterministic (`a{attention.nextID}` of the pre-dispatch state) — read it from the post-dispatch snapshot's `attention` layer.
 - `DELETE_ATTENTION { id }` — remove an attention; unknown IDs are a no-op.
 
-Both produce a new state reference (so subscribers fire) but **do not bump `version`** — attention changes are content-neutral, mirroring reconciliation, so they are not misread as content edits. Create them via `store.createAttention(start, end)` / `store.deleteAttention(id)` (the `DocumentActions` factory), and they round-trip through `serializeAction` / `deserializeAction`.
+Both are **content-neutral**: they produce a new immutable state reference (so subscribers fire) but **MUST NOT increment `revision`**, so they are never misread as content edits — mirroring reconciliation. (See the "Revision semantics" contract in [docs/invariants.md](../docs/invariants.md).) Create them via `store.createAttention(start, end)` / `store.deleteAttention(id)` (the `DocumentActions` factory), and they round-trip through `serializeAction` / `deserializeAction`.
 
 ### 8.3 Event emission
 

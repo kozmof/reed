@@ -116,7 +116,7 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
       shouldDefer: () => transaction.isActive,
       performWork() {
         if (state.lineIndex.rebuildPending) {
-          const newLineIndex = reconcileFull(state.lineIndex, state.version);
+          const newLineIndex = reconcileFull(state.lineIndex, state.revision);
           if (newLineIndex !== state.lineIndex) {
             setState(withState(state, { lineIndex: newLineIndex }));
             notifyListeners();
@@ -322,11 +322,11 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
 
   /**
    * Shared core: apply reconcileFull in-place and return eager state.
-   * Does NOT bump version — offset resolution is content-neutral.
+   * Does NOT increment revision — offset resolution is content-neutral.
    */
   function reconcileInPlace(): DocumentState<"eager"> {
     if (!state.lineIndex.rebuildPending) return state as DocumentState<"eager">;
-    const newLineIndex = reconcileFull(state.lineIndex, state.version);
+    const newLineIndex = reconcileFull(state.lineIndex, state.revision);
     if (newLineIndex !== state.lineIndex) {
       setState(withState(state, { lineIndex: newLineIndex }));
     }
@@ -336,8 +336,8 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
 
   /**
    * Get the current state with all dirty line-index ranges resolved.
-   * Reconciles in-place without bumping the version number (offset resolution
-   * does not change visible content, so no version increment is warranted).
+   * Reconciles in-place without incrementing the revision number (offset resolution
+   * does not change visible content, so no revision increment is warranted).
    */
   function getEagerSnapshot(): DocumentState<"eager"> {
     return reconcileInPlace();
@@ -347,10 +347,10 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
    * Force immediate reconciliation (blocking).
    * Use sparingly - prefer scheduleReconciliation().
    *
-   * Does NOT bump `state.version`. Offset resolution is content-neutral:
-   * the document text is unchanged, so no version increment is warranted.
+   * Does NOT increment `state.revision`. Offset resolution is content-neutral:
+   * the document text is unchanged, so no revision increment is warranted.
    * Callers that need to detect whether lines are ready should inspect
-   * `lineIndex.rebuildPending`, not compare version numbers.
+   * `lineIndex.rebuildPending`, not compare revision numbers.
    */
   function reconcileNow(): DocumentState<"eager"> {
     scheduler.cancel();
@@ -398,7 +398,7 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
    */
   function setViewport(startLine: number, endLine: number): void {
     if (disposed) return;
-    const newLineIndex = reconcileViewport(state.lineIndex, startLine, endLine, state.version);
+    const newLineIndex = reconcileViewport(state.lineIndex, startLine, endLine, state.revision);
     if (newLineIndex !== state.lineIndex) {
       setState(withState(state, { lineIndex: newLineIndex }));
       if (!transaction.isActive) {

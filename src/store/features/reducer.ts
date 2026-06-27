@@ -396,26 +396,26 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
 
     case "SET_SELECTION": {
       return withState(setSelection(state, action.ranges), {
-        version: state.version + 1,
-        selectionVersion: state.selectionVersion + 1,
+        revision: state.revision + 1,
+        selectionRevision: state.selectionRevision + 1,
       });
     }
 
     case "UNDO": {
-      const nextVersion = state.version + 1;
-      const newState = historyUndo(state, nextVersion);
+      const nextRevision = state.revision + 1;
+      const newState = historyUndo(state, nextRevision);
       if (newState === state) return state; // No undo available
       return withState(newState, {
-        version: nextVersion,
+        revision: nextRevision,
       });
     }
 
     case "REDO": {
-      const nextVersion = state.version + 1;
-      const newState = historyRedo(state, nextVersion);
+      const nextRevision = state.revision + 1;
+      const newState = historyRedo(state, nextRevision);
       if (newState === state) return state; // No redo available
       return withState(newState, {
-        version: nextVersion,
+        revision: nextRevision,
       });
     }
 
@@ -428,13 +428,13 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
           limit: state.history.limit,
           coalesceTimeout: state.history.coalesceTimeout,
         }),
-        version: state.version + 1,
+        revision: state.revision + 1,
       });
     }
 
     case "APPLY_REMOTE": {
       // Apply remote changes from collaboration
-      const nextVersion = state.version + 1;
+      const nextRevision = state.revision + 1;
       let newState = state;
       let didApplyChange = false;
       for (const change of action.changes) {
@@ -450,7 +450,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
           newState = pieceTableInsert(newState, position, insertText).state;
           const readText = (start: ByteOffset, end: ByteOffset) =>
             getText(newState.pieceTable, start, end);
-          const li = liInsertLazy(newState.lineIndex, position, insertText, nextVersion, readText);
+          const li = liInsertLazy(newState.lineIndex, position, insertText, nextRevision, readText);
           newState = withState(newState, { lineIndex: li });
         } else if (change.type === "delete" && change.length > 0) {
           const { start, end, valid } = validateRange(
@@ -472,7 +472,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
               start,
               end,
               deletedText,
-              nextVersion,
+              nextRevision,
               deleteContext,
             );
             newState = pieceTableDelete(newState, start, end);
@@ -491,7 +491,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
             isDirty: true,
           });
       return withState(newState, {
-        version: nextVersion,
+        revision: nextRevision,
         metadata,
       });
     }
@@ -514,7 +514,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
 
       if (!changed) return state;
 
-      // DECLARE_CHUNK_METADATA does not bump version or emit content-change.
+      // DECLARE_CHUNK_METADATA does not increment revision or emit content-change.
       return withState(state, {
         pieceTable: Object.freeze({ ...state.pieceTable, chunkMetadata: newChunkMetadata }),
         lineIndex: withLineIndexState(state.lineIndex, {
@@ -580,7 +580,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
         loadedChunks: newLoadedChunks,
       });
 
-      const nextVersion = state.version + 1;
+      const nextRevision = state.revision + 1;
       // Remove this chunk's pre-declared line count from the side-cache now that
       // real lines are being inserted into the line index tree.
       let newLineIndex = state.lineIndex;
@@ -613,13 +613,13 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
           newLineIndex,
           insertionPos,
           chunkText,
-          nextVersion,
+          nextRevision,
           readChunkText,
         );
       }
 
       return withState(state, {
-        version: nextVersion,
+        revision: nextRevision,
         pieceTable: newPieceTable,
         lineIndex: newLineIndex,
       });
@@ -657,7 +657,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
         totalLength: state.pieceTable.totalLength - removedLength,
       });
 
-      const nextVersion = state.version + 1;
+      const nextRevision = state.revision + 1;
 
       // Evicting a chunk whose boundary split a CRLF pair can rewrite line breaks
       // at the eviction seam — e.g. removing the chunk that held the "\n" leaves an
@@ -687,7 +687,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
           range.start,
           range.end,
           chunkText,
-          nextVersion,
+          nextRevision,
           deleteContext,
         );
       }
@@ -704,7 +704,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       }
 
       return withState(state, {
-        version: nextVersion,
+        revision: nextRevision,
         pieceTable: newPieceTable,
         lineIndex: newLineIndex,
       });
@@ -719,7 +719,8 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       if (startPoint === null || endPoint === null) return state;
       const [newAttention] = createAttention(state.attention, startPoint, endPoint);
       // Attention changes are content-neutral: a new state reference (so
-      // subscribers fire) but no version bump, mirroring reconciliation.
+      // subscribers fire) but MUST NOT increment `revision`, so they are never
+      // misread as content edits (mirrors reconciliation). See docs/invariants.md.
       return withState(state, { attention: newAttention });
     }
 

@@ -176,10 +176,10 @@ export const eagerStrategy: LineIndexStrategy = {
 };
 
 /** Lazy strategy: records dirty ranges for background reconciliation (used by normal edits). */
-export function lazyStrategy(version: number): LineIndexStrategy {
+export function lazyStrategy(revision: number): LineIndexStrategy {
   return {
-    insert: (li, pos, text, readText) => liInsertLazy(li, pos, text, version, readText),
-    delete: (li, pos, end, text, ctx) => liDeleteLazy(li, pos, end, text, version, ctx),
+    insert: (li, pos, text, readText) => liInsertLazy(li, pos, text, revision, readText),
+    delete: (li, pos, end, text, ctx) => liDeleteLazy(li, pos, end, text, revision, ctx),
   };
 }
 
@@ -574,11 +574,11 @@ export type EditOperation =
  * 2. Insert phase (if insertText non-empty)
  * 3. Build history change
  * 4. Push to history
- * 5. Mark dirty + increment version
+ * 5. Mark dirty + increment revision
  */
 export function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
-  const nextVersion = state.version + 1;
-  const strategy = lazyStrategy(nextVersion);
+  const nextRevision = state.revision + 1;
+  const strategy = lazyStrategy(nextRevision);
   let newState: DocumentState = state;
 
   // Determine upfront whether CRLF semantics require a full line-index rebuild.
@@ -672,9 +672,9 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   }
   newState = historyPush(newState, historyChange, op.timestamp ?? Date.now());
 
-  // Mark as dirty and increment version
+  // Mark as dirty and increment revision
   return withState(newState, {
-    version: nextVersion,
+    revision: nextRevision,
     metadata: Object.freeze({
       ...state.metadata,
       isDirty: true,

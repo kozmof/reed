@@ -45,7 +45,7 @@ Notes:
 - `root: LineIndexNode<M> | null`
 - `lineCount`
 - `dirtyRanges` (guaranteed empty in eager mode)
-- `lastReconciledVersion`
+- `lastReconciledRevision`
 - `rebuildPending`
 
 `LineIndexNode` stores:
@@ -65,7 +65,7 @@ Notes:
 3. Update line index via lazy strategy for normal editing.
 4. Force line-index rebuild for CRLF boundary-sensitive delete cases.
 5. Push history entry (with coalescing).
-6. Increment version and mark dirty.
+6. Increment revision and mark dirty.
 
 ### 3.2 Undo/redo
 
@@ -73,7 +73,7 @@ Notes:
 
 ### 3.3 Remote edits
 
-`APPLY_REMOTE` applies insert/delete changes to piece table + lazy line index, marks dirty, increments version, and does not push history.
+`APPLY_REMOTE` applies insert/delete changes to piece table + lazy line index, marks dirty, increments revision, and does not push history.
 
 ## 4. Store Runtime
 

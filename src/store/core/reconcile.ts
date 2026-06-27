@@ -222,12 +222,12 @@ function reconcileInPlace(
 
 function toEagerLineIndexState(
   state: LineIndexState,
-  version: number,
+  revision: number,
   changes: Partial<LineIndexState> = {},
 ): LineIndexState<"eager"> {
   const reconciled = withLineIndexState(state, {
     dirtyRanges: Object.freeze([]),
-    lastReconciledVersion: version,
+    lastReconciledRevision: revision,
     rebuildPending: false,
     ...changes,
   });
@@ -243,7 +243,7 @@ function toEagerLineIndexState(
  * Updates offsets for lines in [startLine, endLine].
  *
  * @internal Low-level operation — callers must understand dirty-range semantics:
- * `version` must match the state version, and line bounds must be within
+ * `revision` must match the state revision, and line bounds must be within
  * `[0, state.lineCount - 1]`. Misuse can leave the line index in a partially
  * reconciled state. Prefer the higher-level entry points:
  * - `reconcileNow()` — immediate full reconciliation (store method)
@@ -253,7 +253,7 @@ export function reconcileRange(
   state: LineIndexState,
   startLine: number,
   endLine: number,
-  version: number,
+  revision: number,
 ): NLogNCost<LineIndexState> {
   const dirtyRanges = state.dirtyRanges;
   if (state.root === null) return $proveCtx("O(n log n)", $lift("O(n log n)", state));
@@ -322,7 +322,7 @@ export function reconcileRange(
       withLineIndexState(state, {
         root: newRoot,
         dirtyRanges: remainingRanges,
-        lastReconciledVersion: version,
+        lastReconciledRevision: revision,
         rebuildPending: remainingRanges === "full-rebuild-needed" || remainingRanges.length > 0,
       }),
     ),
@@ -356,12 +356,12 @@ const defaultThresholdFn = (lineCount: number): number =>
  */
 export function reconcileFull(
   state: LineIndexState,
-  version: number,
+  revision: number,
   config?: ReconciliationConfig,
 ): NLogNCost<LineIndexState<"eager">> {
   const dirtyRanges = state.dirtyRanges;
   if (dirtyRanges !== "full-rebuild-needed" && dirtyRanges.length === 0) {
-    return $proveCtx("O(n log n)", $lift("O(n log n)", toEagerLineIndexState(state, version)));
+    return $proveCtx("O(n log n)", $lift("O(n log n)", toEagerLineIndexState(state, revision)));
   }
 
   if (state.root === null) {
@@ -369,7 +369,7 @@ export function reconcileFull(
       "O(n log n)",
       $lift(
         "O(n log n)",
-        toEagerLineIndexState(state, version, {
+        toEagerLineIndexState(state, revision, {
           lineCount: 1,
         }),
       ),
@@ -388,9 +388,9 @@ export function reconcileFull(
     let current: LineIndexState = state;
     for (const range of dirtyRanges) {
       const endLine = Math.min(range.endLine, current.lineCount - 1);
-      current = reconcileRange(current, range.startLine, endLine, version);
+      current = reconcileRange(current, range.startLine, endLine, revision);
     }
-    return $proveCtx("O(n log n)", $lift("O(n log n)", toEagerLineIndexState(current, version)));
+    return $proveCtx("O(n log n)", $lift("O(n log n)", toEagerLineIndexState(current, revision)));
   }
 
   // Slow path: triggered either by a sentinel (delta information lost) or when
@@ -407,7 +407,7 @@ export function reconcileFull(
     "O(n log n)",
     $lift(
       "O(n log n)",
-      toEagerLineIndexState(state, version, {
+      toEagerLineIndexState(state, revision, {
         root: newRoot,
       }),
     ),
@@ -422,7 +422,7 @@ export function reconcileViewport(
   state: LineIndexState,
   startLine: number,
   endLine: number,
-  version: number,
+  revision: number,
 ): NLogNCost<LineIndexState> {
   const dirtyRanges = state.dirtyRanges;
   if (dirtyRanges !== "full-rebuild-needed" && dirtyRanges.length === 0)
@@ -442,7 +442,7 @@ export function reconcileViewport(
   if (!viewportDirty) return $proveCtx("O(n log n)", $lift("O(n log n)", state));
 
   // Reconcile only the viewport range
-  return reconcileRange(state, clampedStart, clampedEnd, version);
+  return reconcileRange(state, clampedStart, clampedEnd, revision);
 }
 
 // Explicit re-export of EvaluationMode for consumers that import from this module

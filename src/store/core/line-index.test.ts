@@ -476,26 +476,26 @@ describe("Line Index Operations", () => {
   });
 });
 
-describe("Reconciliation version tracking (P6 fix)", () => {
-  it("reconcileFull should update lastReconciledVersion", () => {
+describe("Reconciliation revision tracking (P6 fix)", () => {
+  it("reconcileFull should update lastReconciledRevision", () => {
     const initial = createLineIndexState("Line 1\nLine 2");
     // Insert lazily to create dirty ranges
     const dirty = lineIndexInsertLazy(initial, byteOffset(13), "\nLine 3", 5);
     expect(dirty.dirtyRanges !== "full-rebuild-needed" && dirty.dirtyRanges.length > 0).toBe(true);
-    expect(dirty.lastReconciledVersion).toBe(0);
+    expect(dirty.lastReconciledRevision).toBe(0);
 
     const reconciled = reconcileFull(dirty, 10);
-    expect(reconciled.lastReconciledVersion).toBe(10);
+    expect(reconciled.lastReconciledRevision).toBe(10);
     expect(reconciled.dirtyRanges).toEqual([]);
   });
 
-  it("reconcileRange should update lastReconciledVersion", () => {
+  it("reconcileRange should update lastReconciledRevision", () => {
     const initial = createLineIndexState("Line 1\nLine 2");
     const dirty = lineIndexInsertLazy(initial, byteOffset(13), "\nLine 3", 5);
-    expect(dirty.lastReconciledVersion).toBe(0);
+    expect(dirty.lastReconciledRevision).toBe(0);
 
     const reconciled = reconcileRange(dirty, 0, 2, 7);
-    expect(reconciled.lastReconciledVersion).toBe(7);
+    expect(reconciled.lastReconciledRevision).toBe(7);
   });
 
   it("reconcileRange should keep dirty lines outside the reconciled window", () => {
@@ -733,7 +733,7 @@ describe("assertEagerOffsets", () => {
     const line0Node = findLineByNumber(base2.root, 0)!;
     Object.freeze({ ...line0Node, documentOffset: 9999 });
     // Walk down to corrupt line 0's leaf: replace it in a minimal structure
-    // Instead, use withLineIndexState to replace root with a version where line 0 is bad:
+    // Instead, use withLineIndexState to replace root with a revision where line 0 is bad:
     // The simplest approach is to test via a 1-line document (root IS line 0)
     const oneLineState = createLineIndexState("hello\n");
     const corruptRoot = Object.freeze({ ...oneLineState.root!, documentOffset: 42 });

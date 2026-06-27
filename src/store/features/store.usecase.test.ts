@@ -103,7 +103,7 @@ describe("Editor Use Cases", () => {
 
       const state = store.getSnapshot();
       expect(state.pieceTable.totalLength).toBe(text.length);
-      expect(state.version).toBe(text.length);
+      expect(state.revision).toBe(text.length);
       expect(state.metadata.isDirty).toBe(true);
     });
 
@@ -625,7 +625,7 @@ describe("Editor Use Cases", () => {
       }
 
       expect(store.getSnapshot().pieceTable.totalLength).toBe(iterations);
-      expect(store.getSnapshot().version).toBe(iterations);
+      expect(store.getSnapshot().revision).toBe(iterations);
     });
 
     it("should keep line index consistent after many rapid multiline edits", () => {

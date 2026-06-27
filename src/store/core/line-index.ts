@@ -76,7 +76,7 @@ const withLine: WithNodeFn<LineIndexNode> = withLineIndexNode;
 function rebuildFromReadText(
   state: LineIndexState,
   readText: ReadTextFn,
-  reconciledVersion: number,
+  reconciledRevision: number,
 ): LineIndexState {
   const content = readText(byteOffset(0), byteOffset(END_OF_DOCUMENT));
   const rebuilt = buildLineIndexFromText(content, 0);
@@ -84,7 +84,7 @@ function rebuildFromReadText(
     root: rebuilt.root,
     lineCount: rebuilt.lineCount,
     dirtyRanges: Object.freeze([]),
-    lastReconciledVersion: reconciledVersion,
+    lastReconciledRevision: reconciledRevision,
     rebuildPending: false,
   });
 }
@@ -438,7 +438,7 @@ export function lineIndexInsert(
   if (readText && hasCrossBoundaryCRLFMerge(text, insertContext)) {
     return $proveCtx(
       "O(n)",
-      $lift("O(n)", rebuildFromReadText(state, readText, state.lastReconciledVersion)),
+      $lift("O(n)", rebuildFromReadText(state, readText, state.lastReconciledRevision)),
     );
   }
 
@@ -875,7 +875,7 @@ function buildLineIndexFromText(text: string, startOffset: number): LineIndexSta
       root: null,
       lineCount: 1,
       dirtyRanges: Object.freeze([]),
-      lastReconciledVersion: 0,
+      lastReconciledRevision: 0,
       rebuildPending: false,
       maxDirtyRanges: 32,
       unloadedLineCountsByChunk: new Map<number, number>(),
@@ -887,7 +887,7 @@ function buildLineIndexFromText(text: string, startOffset: number): LineIndexSta
     root,
     lineCount: lines.length,
     dirtyRanges: Object.freeze([]),
-    lastReconciledVersion: 0,
+    lastReconciledRevision: 0,
     rebuildPending: false,
     maxDirtyRanges: 32,
     unloadedLineCountsByChunk: new Map<number, number>(),
@@ -1083,7 +1083,7 @@ function rebuildWithDeletedRange(
       root: null,
       lineCount: 1,
       dirtyRanges: Object.freeze([]),
-      lastReconciledVersion: 0,
+      lastReconciledRevision: 0,
       rebuildPending: false,
     });
   }
@@ -1109,7 +1109,7 @@ function rebuildWithDeletedRange(
       root: null,
       lineCount: 1,
       dirtyRanges: Object.freeze([]),
-      lastReconciledVersion: 0,
+      lastReconciledRevision: 0,
       rebuildPending: false,
     });
   }
@@ -1123,7 +1123,7 @@ function rebuildWithDeletedRange(
     root: newRoot,
     lineCount: newLineCount,
     dirtyRanges: Object.freeze([]),
-    lastReconciledVersion: 0,
+    lastReconciledRevision: 0,
     rebuildPending: false,
   });
 }
@@ -1300,7 +1300,7 @@ function removeLinesToEnd(
       root: null,
       lineCount: 1,
       dirtyRanges: Object.freeze([]),
-      lastReconciledVersion: 0,
+      lastReconciledRevision: 0,
       rebuildPending: false,
     });
   }
@@ -1310,7 +1310,7 @@ function removeLinesToEnd(
     root,
     lineCount: newLines.length,
     dirtyRanges: Object.freeze([]),
-    lastReconciledVersion: 0,
+    lastReconciledRevision: 0,
     rebuildPending: false,
   });
 }
@@ -1540,7 +1540,7 @@ export function lineIndexInsertLazy(
   state: LineIndexState,
   position: ByteOffset,
   text: string,
-  currentVersion: number,
+  currentRevision: number,
   readText?: ReadTextFn,
 ): LinearCost<LineIndexState> {
   if (text.length === 0) return $proveCtx("O(n)", $lift("O(n)", state));
@@ -1550,7 +1550,7 @@ export function lineIndexInsertLazy(
 
   // Same cross-boundary CRLF case as eager insert; rebuild to guarantee correctness.
   if (readText && hasCrossBoundaryCRLFMerge(text, insertContext)) {
-    return $proveCtx("O(n)", $lift("O(n)", rebuildFromReadText(state, readText, currentVersion)));
+    return $proveCtx("O(n)", $lift("O(n)", rebuildFromReadText(state, readText, currentRevision)));
   }
 
   // No newlines: simple length update (O(log n), no lazy needed)
@@ -1578,7 +1578,7 @@ export function lineIndexInsertLazy(
               text,
               newlinePositions,
               byteLength,
-              currentVersion,
+              currentRevision,
             );
           }
 
@@ -1589,7 +1589,7 @@ export function lineIndexInsertLazy(
             text,
             newlinePositions,
             byteLength,
-            currentVersion,
+            currentRevision,
             readText,
           );
         }),
@@ -1610,7 +1610,7 @@ function appendLinesLazy(
   text: string,
   newlinePositions: number[],
   byteLength: number,
-  currentVersion: number,
+  currentRevision: number,
 ): LineIndexState {
   if (state.root === null) {
     const newState = buildLineIndexFromText(text, 0);
@@ -1618,7 +1618,7 @@ function appendLinesLazy(
       root: newState.root,
       lineCount: newState.lineCount,
       dirtyRanges: Object.freeze([]),
-      lastReconciledVersion: currentVersion,
+      lastReconciledRevision: currentRevision,
       rebuildPending: false,
     });
   }
@@ -1648,7 +1648,7 @@ function insertLinesAtPositionLazy(
   text: string,
   newlinePositions: number[],
   byteLength: number,
-  _currentVersion: number,
+  _currentRevision: number,
   readText?: ReadTextFn,
 ): LineIndexState {
   // Compute charsBefore using readText if available
@@ -1711,7 +1711,7 @@ export function lineIndexDeleteLazy(
   start: ByteOffset,
   end: ByteOffset,
   deletedText: string,
-  currentVersion: number,
+  currentRevision: number,
   deleteContext?: DeleteBoundaryContext,
 ): NLogNCost<LineIndexState> {
   if (start >= end) return $proveCtx("O(n log n)", $lift("O(n log n)", state));
@@ -1744,7 +1744,7 @@ export function lineIndexDeleteLazy(
             resolvedLocation,
             deletedNewlines,
             deleteLength,
-            currentVersion,
+            currentRevision,
             deletedText.length,
           );
         }),
@@ -1761,7 +1761,7 @@ function deleteLineRangeLazy(
   startLocation: LineLocation,
   deletedNewlines: number,
   deleteLength: number,
-  currentVersion: number,
+  currentRevision: number,
   deletedCharLength: number,
 ): LineIndexState {
   const { lineNumber: startLine, offsetInLine: startOffset } = startLocation;
@@ -1780,7 +1780,7 @@ function deleteLineRangeLazy(
     deletedCharLength,
   );
   if (newState === null) {
-    return removeLinesToEndLazy(state, startLine, startOffset, currentVersion, deletedCharLength);
+    return removeLinesToEndLazy(state, startLine, startOffset, currentRevision, deletedCharLength);
   }
 
   // Remap existing dirty ranges to new tree line numbering before merging
@@ -1809,7 +1809,7 @@ function removeLinesToEndLazy(
   state: LineIndexState,
   startLine: number,
   startOffset: number,
-  currentVersion: number,
+  currentRevision: number,
   deletedCharLength?: number,
 ): LineIndexState {
   const newState = removeLinesToEnd(state, startLine, startOffset, deletedCharLength);
@@ -1817,7 +1817,7 @@ function removeLinesToEndLazy(
     root: newState.root,
     lineCount: newState.lineCount,
     dirtyRanges: Object.freeze([]),
-    lastReconciledVersion: currentVersion,
+    lastReconciledRevision: currentRevision,
     rebuildPending: false,
   });
 }

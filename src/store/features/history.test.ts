@@ -357,14 +357,14 @@ describe("HISTORY_CLEAR action", () => {
     expect(state.history.limit).toBe(50);
   });
 
-  it("should increment version", () => {
+  it("should increment revision", () => {
     let state = createInitialState();
     state = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hello"));
-    const versionBefore = state.version;
+    const revisionBefore = state.revision;
 
     state = documentReducer(state, DocumentActions.historyClear());
 
-    expect(state.version).toBe(versionBefore + 1);
+    expect(state.revision).toBe(revisionBefore + 1);
   });
 
   it("should not affect document content", () => {

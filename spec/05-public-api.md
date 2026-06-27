@@ -46,7 +46,7 @@ Returns `ReconcilableDocumentStore` with:
 - `scheduleReconciliation()`
 - `reconcileNow()` — reconcile and return `DocumentState<'eager'>`
 - `reconcileIfCurrent(snapshot)` — reconcile only if `snapshot` is still current; returns `DocumentState<'eager'> | null`
-- `getEagerSnapshot()` — return current state with eager line-index without bumping version
+- `getEagerSnapshot()` — return current state with eager line-index without incrementing revision
 - `whenReconciled()` — resolve with eager state after background reconciliation completes
 - `setViewport(startLine, endLine)`
 - `emergencyReset()`

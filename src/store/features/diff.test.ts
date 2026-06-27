@@ -182,10 +182,10 @@ describe("Diff Algorithm", () => {
       expect(getValue(newState.pieceTable)).toBe("line1\nmodified\nline3");
     });
 
-    it("should update version", () => {
+    it("should update revision", () => {
       const state = createInitialState({ content: "hello" });
       const newState = setValue(state, "world");
-      expect(newState.version).toBeGreaterThan(state.version);
+      expect(newState.revision).toBeGreaterThan(state.revision);
     });
 
     it("should mark as dirty", () => {

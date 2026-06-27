@@ -207,7 +207,7 @@ export interface EvictChunkAction {
 /**
  * Pre-declare metadata for one or more chunks before their content is loaded.
  * This lets the line index answer line-count queries for unloaded ranges.
- * Does NOT bump state.version and does NOT emit a content-change event.
+ * Does NOT increment state.revision and does NOT emit a content-change event.
  */
 export interface DeclareChunkMetadataAction {
   readonly type: "DECLARE_CHUNK_METADATA";

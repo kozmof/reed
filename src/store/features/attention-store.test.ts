@@ -45,13 +45,13 @@ describe("CREATE_ATTENTION / DELETE_ATTENTION dispatch", () => {
     expect(getTextForAttention(snap.pieceTable, snap.attention, id)).toBe("world");
   });
 
-  it("does not bump version (content-neutral) but yields a new state reference", () => {
+  it("does not increment revision (content-neutral) but yields a new state reference", () => {
     const store = createDocumentStore({ content: "hello world" });
     const before = store.getSnapshot();
     store.dispatch(DocumentActions.createAttention(byteOffset(0), byteOffset(5)));
     const after = store.getSnapshot();
     expect(after).not.toBe(before);
-    expect(after.version).toBe(before.version);
+    expect(after.revision).toBe(before.revision);
   });
 
   it("notifies subscribers on create", () => {

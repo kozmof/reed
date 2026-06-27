@@ -125,10 +125,10 @@ insert/delete.
 `rebuildPending === true` if and only if `dirtyRanges.length > 0`.  
 Both are reset to `false` / `[]` together by `toEagerLineIndexState`.
 
-### 3.2 `lastReconciledVersion` Monotonicity
+### 3.2 `lastReconciledRevision` Monotonicity
 
-`state.lastReconciledVersion` is set to `state.version` at the time of
-reconciliation. It never decreases. A stale version indicates that subsequent
+`state.lastReconciledRevision` is set to `state.revision` at the time of
+reconciliation. It never decreases. A stale revision indicates that subsequent
 edits have made the line index dirty again.
 
 ### 3.3 Dirty Range Merge Rules
@@ -189,13 +189,49 @@ This invariant is enforced at construction time by `makeInsertChange`,
 
 ---
 
-## 5. Version Invariants
+## 5. Revision Semantics
 
-`state.version` increments by exactly 1 on every action that modifies document
-content or selection. `reconcileNow` does **not** bump the version — it only
-reconciles the line index in place, leaving the rest of the state unchanged.
+This section is the single source of truth for the three monotonic counters on
+`DocumentState`. Other docs and JSDoc point here rather than restating the rules.
 
-The `lineIndex.lastReconciledVersion` field is set to the state version at
-reconciliation time, not to the version after reconciliation. Callers should
-compare `lineIndex.lastReconciledVersion < state.version` to detect whether
-the index is stale.
+### 5.1 `revision` — global state revision
+
+`state.revision` is a **global state revision**, not a content version. It
+increments by **exactly 1** on every state-changing action:
+
+- content edits — `INSERT`, `DELETE`, `REPLACE`, `APPLY_REMOTE`
+- `SET_SELECTION`
+- `HISTORY_CLEAR`, `UNDO`, `REDO`
+- `LOAD_CHUNK`, `EVICT_CHUNK`
+
+Because it moves on selection and history actions too, `revision` alone cannot
+tell you that _content_ changed. To detect a content change, compare piece-table
+reference identity: `state.pieceTable === prev.pieceTable` (O(1) via structural
+sharing) holds whenever content is unchanged.
+
+### 5.2 Content-neutral operations MUST NOT increment `revision`
+
+Some operations produce a new immutable state reference (so subscribers fire) but
+are **content-neutral** and **MUST NOT** increment `revision`, so they are never
+misread as content edits:
+
+- reconciliation (`reconcileNow` / `getEagerSnapshot`) — resolves line offsets
+  in place; visible text is unchanged
+- `CREATE_ATTENTION` / `DELETE_ATTENTION` — mutate the piece-anchored reference
+  layer only
+- `DECLARE_CHUNK_METADATA` — registers line counts for unloaded chunks
+
+Canonical wording for such operations: _"content-neutral: produces a new immutable
+state reference but MUST NOT increment `revision`."_
+
+### 5.3 `selectionRevision`
+
+Increments only on `SET_SELECTION`. Inline selections carried by a content edit do
+**not** move it — it strictly tracks `SET_SELECTION` dispatches.
+
+### 5.4 `lineIndex.lastReconciledRevision`
+
+Set to `state.revision` at reconciliation time (the revision _before_ reconcile,
+not after — reconciliation does not increment `revision`). It never decreases.
+Compare `lineIndex.lastReconciledRevision < state.revision` to detect a stale
+index.

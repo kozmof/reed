@@ -319,7 +319,7 @@ export function createEmptyLineIndexState(maxDirtyRanges: number = 32): LineInde
     root: createLineIndexNode(0, 0, "black"),
     lineCount: 1, // Empty document has 1 line
     dirtyRanges: Object.freeze([]),
-    lastReconciledVersion: 0,
+    lastReconciledRevision: 0,
     rebuildPending: false,
     maxDirtyRanges,
     unloadedLineCountsByChunk: new Map<number, number>(),
@@ -440,7 +440,7 @@ export function createLineIndexState(content: string, maxDirtyRanges: number = 3
     root,
     lineCount: lineStarts.length,
     dirtyRanges: Object.freeze([]),
-    lastReconciledVersion: 0,
+    lastReconciledRevision: 0,
     rebuildPending: false,
     maxDirtyRanges,
     unloadedLineCountsByChunk: new Map<number, number>(),
@@ -543,8 +543,8 @@ export function createInitialState(config: DocumentStoreConfig = {}): DocumentSt
   const totalFileSize = mergedConfig.totalFileSize ?? 0;
 
   return Object.freeze({
-    version: 0,
-    selectionVersion: 0,
+    revision: 0,
+    selectionRevision: 0,
     pieceTable:
       content.length > 0
         ? createPieceTableState(content)

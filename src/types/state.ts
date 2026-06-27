@@ -299,8 +299,8 @@ export interface LineIndexState<M extends EvaluationMode = EvaluationMode> {
   readonly lineCount: number;
   /** Dirty ranges awaiting background reconciliation */
   readonly dirtyRanges: M extends "eager" ? readonly [] : DirtyLineRangeList;
-  /** Version number of last full reconciliation */
-  readonly lastReconciledVersion: number;
+  /** Revision number of last full reconciliation */
+  readonly lastReconciledRevision: number;
   /** Whether a background rebuild is pending */
   readonly rebuildPending: M extends "eager" ? false : boolean;
   /**
@@ -569,17 +569,29 @@ export interface DocumentMetadata {
 
 /**
  * Immutable document state snapshot.
- * All properties are read-only and structurally shared between versions.
+ * All properties are read-only and structurally shared between revisions.
  */
 export interface DocumentState<M extends EvaluationMode = EvaluationMode> {
-  /** Monotonically increasing version number for change detection */
-  readonly version: number;
   /**
-   * Monotonically increasing counter bumped only when the selection changes.
-   * Consumers can compare `state.version === prev.version` to cheaply detect
-   * selection-only changes and skip expensive content re-computations.
+   * Global state revision. Increments by exactly 1 on every state-changing
+   * action: content edits (INSERT/DELETE/REPLACE/APPLY_REMOTE), SET_SELECTION,
+   * HISTORY_CLEAR, UNDO/REDO, and LOAD_CHUNK/EVICT_CHUNK. Content-neutral ops
+   * (reconciliation, CREATE_ATTENTION/DELETE_ATTENTION, DECLARE_CHUNK_METADATA)
+   * return a new state reference but do NOT increment it. See the "Revision
+   * semantics" section in docs/invariants.md for the full contract.
    */
-  readonly selectionVersion: number;
+  readonly revision: number;
+  /**
+   * Monotonically increasing counter incremented only on SET_SELECTION.
+   *
+   * Note: `revision` also increments on selection changes, so it cannot single
+   * out a selection-only change. To skip content re-computation, compare
+   * piece-table reference identity instead: `state.pieceTable === prev.pieceTable`
+   * is true (O(1) via structural sharing) whenever content is unchanged —
+   * including across selection-only changes — while `selectionRevision` tells you
+   * a SET_SELECTION occurred.
+   */
+  readonly selectionRevision: number;
   /** Piece table containing the document content */
   readonly pieceTable: PieceTableState;
   /** Line index for O(log n) line lookups */

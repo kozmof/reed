@@ -73,10 +73,10 @@ export function isHistoryEmpty(state: DocumentState | HistoryState): boolean {
  */
 export function reconcileRangeForChanges(
   lineIndex: LineIndexState,
-  version: number,
+  revision: number,
 ): LineIndexState<"eager"> {
   if (!lineIndex.rebuildPending) return lineIndex as LineIndexState<"eager">;
-  return reconcileFull(lineIndex, version);
+  return reconcileFull(lineIndex, revision);
 }
 
 // =============================================================================
@@ -88,10 +88,10 @@ export function reconcileRangeForChanges(
  * Uses eager line index strategy for immediate accuracy.
  *
  * @param state - Current document state
- * @param version - Next version number (caller is responsible for incrementing)
+ * @param revision - Next revision number (caller is responsible for incrementing)
  * @returns New state with undo applied, or the same state if no undo is available
  */
-export function historyUndo(state: DocumentState, version: number): DocumentState {
+export function historyUndo(state: DocumentState, revision: number): DocumentState {
   const history = state.history;
   if (history.undoStack === null) return state;
 
@@ -107,7 +107,7 @@ export function historyUndo(state: DocumentState, version: number): DocumentStat
     }),
   });
 
-  const reconciledLI = reconcileRangeForChanges(newState.lineIndex, version);
+  const reconciledLI = reconcileRangeForChanges(newState.lineIndex, revision);
   if (reconciledLI !== newState.lineIndex) {
     newState = withState(newState, { lineIndex: reconciledLI });
   }
@@ -131,10 +131,10 @@ export function historyUndo(state: DocumentState, version: number): DocumentStat
  * Uses eager line index strategy for immediate accuracy.
  *
  * @param state - Current document state
- * @param version - Next version number (caller is responsible for incrementing)
+ * @param revision - Next revision number (caller is responsible for incrementing)
  * @returns New state with redo applied, or the same state if no redo is available
  */
-export function historyRedo(state: DocumentState, version: number): DocumentState {
+export function historyRedo(state: DocumentState, revision: number): DocumentState {
   const history = state.history;
   if (history.redoStack === null) return state;
 
@@ -150,7 +150,7 @@ export function historyRedo(state: DocumentState, version: number): DocumentStat
     }),
   });
 
-  const reconciledLI = reconcileRangeForChanges(newState.lineIndex, version);
+  const reconciledLI = reconcileRangeForChanges(newState.lineIndex, revision);
   if (reconciledLI !== newState.lineIndex) {
     newState = withState(newState, { lineIndex: reconciledLI });
   }

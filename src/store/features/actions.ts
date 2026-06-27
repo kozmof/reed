@@ -362,7 +362,7 @@ export const DocumentActions = {
   /**
    * Pre-declare metadata for one or more chunks before their content is loaded.
    * Allows getLineCountFromIndex to include unloaded chunk line counts.
-   * Does not bump state.version and does not emit a content-change event.
+   * Does not increment state.revision and does not emit a content-change event.
    * @param metadata - Array of chunk metadata entries
    */
   declareChunkMetadata(metadata: readonly ChunkMetadata[]): DeclareChunkMetadataAction {

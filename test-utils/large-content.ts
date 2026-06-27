@@ -70,7 +70,7 @@ const WORDS = [
   "range",
   "offset",
   "length",
-  "version",
+  "revision",
   "state",
 ];
 

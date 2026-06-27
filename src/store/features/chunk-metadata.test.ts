@@ -22,14 +22,14 @@ describe("DECLARE_CHUNK_METADATA", () => {
     expect(next).toBe(state);
   });
 
-  it("does not bump state.version", () => {
+  it("does not increment state.revision", () => {
     const state = createInitialState({ chunkSize: 64 });
-    const versionBefore = state.version;
+    const revisionBefore = state.revision;
     const next = documentReducer(
       state,
       DocumentActions.declareChunkMetadata([{ chunkIndex: 0, byteLength: 64, lineCount: 5 }]),
     );
-    expect(next.version).toBe(versionBefore);
+    expect(next.revision).toBe(revisionBefore);
   });
 
   it("stores metadata in pieceTable.chunkMetadata", () => {

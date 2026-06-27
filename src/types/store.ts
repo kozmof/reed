@@ -150,7 +150,7 @@ export interface ReconcilableDocumentStore extends DocumentStore, TransactionCon
   /**
    * Get the current state, reconciling dirty line-index ranges immediately if needed.
    * Returns DocumentState<'eager'> — all line offsets are guaranteed accurate.
-   * Unlike reconcileNow(), this does not bump the version number, since resolving
+   * Unlike reconcileNow(), this does not increment the revision number, since resolving
    * offsets does not change visible content.
    * Prefer this over getSnapshot() when APIs that require DocumentState<'eager'>
    * (e.g. query.getLineRange) are needed without an explicit reconciliation call.

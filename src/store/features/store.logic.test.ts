@@ -66,7 +66,7 @@ describe("State Factories", () => {
     it("should create state with default config", () => {
       const state = createInitialState();
 
-      expect(state.version).toBe(0);
+      expect(state.revision).toBe(0);
       expect(state.pieceTable.totalLength).toBe(0);
       expect(state.lineIndex.lineCount).toBe(1);
       expect(state.selection.ranges.length).toBe(1);
@@ -369,15 +369,15 @@ describe("State Factories", () => {
   describe("withState", () => {
     it("should create new state with changes", () => {
       const state = createInitialState();
-      const newState = withState(state, { version: 1 });
+      const newState = withState(state, { revision: 1 });
 
-      expect(newState.version).toBe(1);
+      expect(newState.revision).toBe(1);
       expect(newState).not.toBe(state);
     });
 
     it("should preserve unchanged properties", () => {
       const state = createInitialState();
-      const newState = withState(state, { version: 1 });
+      const newState = withState(state, { revision: 1 });
 
       expect(newState.pieceTable).toBe(state.pieceTable);
       expect(newState.selection).toBe(state.selection);
@@ -386,7 +386,7 @@ describe("State Factories", () => {
 
     it("should return frozen state", () => {
       const state = createInitialState();
-      const newState = withState(state, { version: 1 });
+      const newState = withState(state, { revision: 1 });
 
       expect(Object.isFrozen(newState)).toBe(true);
     });
@@ -427,11 +427,11 @@ describe("Document Reducer", () => {
       expect(newState.pieceTable.totalLength).toBe(5);
     });
 
-    it("should increment version", () => {
+    it("should increment revision", () => {
       const state = createInitialState();
       const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), "Hi"));
 
-      expect(newState.version).toBe(1);
+      expect(newState.revision).toBe(1);
     });
 
     it("should mark document as dirty", () => {
@@ -558,14 +558,14 @@ describe("Document Reducer", () => {
       expect(newState.selection.ranges[0].head).toBe(3);
     });
 
-    it("should increment version", () => {
+    it("should increment revision", () => {
       const state = createInitialState();
       const newState = documentReducer(
         state,
         DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(0) }]),
       );
 
-      expect(newState.version).toBe(1);
+      expect(newState.revision).toBe(1);
     });
 
     it("should not mark dirty", () => {
@@ -1330,7 +1330,7 @@ describe("Immutability", () => {
     const state = createInitialState();
 
     expect(() => {
-      (state as { version: number }).version = 999;
+      (state as { revision: number }).revision = 999;
     }).toThrow();
   });
 
@@ -1574,17 +1574,17 @@ describe("LOAD_CHUNK", () => {
     const bytes = textEncoder.encode("line1\nline2\nline3\n");
     const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
     // After reconciliation, line count should include the new lines (4: 3 + trailing empty)
-    const eager = reconcileFull(state1.lineIndex, state1.version);
+    const eager = reconcileFull(state1.lineIndex, state1.revision);
     expect(eager.lineCount).toBeGreaterThanOrEqual(3);
   });
 
-  it("bumps the version on a successful load", () => {
+  it("bumps the revision on a successful load", () => {
     const state0 = createInitialState({ chunkSize: 64 });
     const state1 = documentReducer(
       state0,
       DocumentActions.loadChunk(0, textEncoder.encode("data")),
     );
-    expect(state1.version).toBe(state0.version + 1);
+    expect(state1.revision).toBe(state0.revision + 1);
   });
 });
 
@@ -1642,12 +1642,12 @@ describe("EVICT_CHUNK", () => {
     expect(state3.pieceTable.chunkMap.has(0)).toBe(true);
   });
 
-  it("bumps the version on a successful eviction", () => {
+  it("bumps the revision on a successful eviction", () => {
     const state0 = createInitialState({ chunkSize: 64 });
     const bytes = textEncoder.encode("data");
     const state1 = documentReducer(state0, DocumentActions.loadChunk(0, bytes));
     const state2 = documentReducer(state1, DocumentActions.evictChunk(0));
-    expect(state2.version).toBe(state1.version + 1);
+    expect(state2.revision).toBe(state1.revision + 1);
   });
 
   it("evicting chunk 0 then loading chunk 0 again is allowed (re-load of evicted chunk)", () => {
