@@ -32,7 +32,9 @@ import {
   type LineNumber,
 } from "./branded.js";
 import {
-  $declare,
+  $unsafeDeclare,
+  $beginCost,
+  $withCost,
   $prove,
   $proveCtx,
   $constCostFn,
@@ -58,6 +60,7 @@ import {
   type CostFn,
   type LogCost,
   type LinearCost,
+  type RegionCtx,
 } from "./cost-doc.js";
 
 describe("Branded Types", () => {
@@ -298,18 +301,18 @@ describe("Branded Types", () => {
     });
 
     it("should reject context input for unchecked declaration", () => {
-      // @ts-expect-error $declare only accepts plain values
-      $declare("O(1)", $lift("O(1)", 7));
+      // @ts-expect-error $unsafeDeclare only accepts plain values
+      $unsafeDeclare("O(1)", $lift("O(1)", 7));
     });
 
     it("should declare plain values at unchecked boundary", () => {
-      const result = $declare("O(1)", 7);
+      const result = $unsafeDeclare("O(1)", 7);
       expect(result).toBe(7);
     });
 
     it("should keep legacy labels compatible", () => {
-      const legacy = $declare("const", 3);
-      const bigO = $declare("O(1)", 3);
+      const legacy = $unsafeDeclare("const", 3);
+      const bigO = $unsafeDeclare("O(1)", 3);
       expect(legacy).toBe(bigO);
     });
 
@@ -344,7 +347,7 @@ describe("Branded Types", () => {
     });
 
     it("should support compact $ boundary helper", () => {
-      const c = $declare("O(1)", 1);
+      const c = $unsafeDeclare("O(1)", 1);
       const l = $proveCtx("O(log n)", $pipe($lift("O(1)", [1, 2, 3]), $binarySearch(2)));
       const n = $proveCtx(
         "O(n)",
@@ -354,6 +357,73 @@ describe("Branded Types", () => {
         ),
       );
       expect(c + l + (n ?? 0)).toBe(5);
+    });
+  });
+
+  describe("cost context boundaries ($beginCost / $lift / $proveCtx)", () => {
+    it("should prove a plain value against an opened context (single label)", () => {
+      const result: LinearCost<number> = $proveCtx($beginCost("O(n)"), 42);
+      expect(result).toBe(42);
+    });
+
+    it("should reject proving a too-expensive value under a cheaper bound", () => {
+      const linVal: LinearCost<number> = $unsafeDeclare("O(n)", 5);
+      // @ts-expect-error O(n) value cannot be proven under an O(log n) bound
+      $proveCtx($beginCost("O(log n)"), linVal);
+    });
+
+    it("should reject an expensive branded value hidden in a nested payload", () => {
+      const linVal: LinearCost<number> = $unsafeDeclare("O(n)", 5);
+      // @ts-expect-error nested O(n) payload exceeds the O(log n) bound
+      $proveCtx($beginCost("O(log n)"), { cheap: 1, expensive: linVal });
+    });
+
+    it("should accept a nested payload within the bound", () => {
+      const logVal: LogCost<number> = $unsafeDeclare("O(log n)", 3);
+      const proven = $proveCtx($beginCost("O(log n)"), { cheap: 1, ok: logVal });
+      expect(proven.cheap).toBe(1);
+    });
+
+    it("should insert a value with $lift(ctx, value) and prove it", () => {
+      const ctx = $beginCost("O(log n)");
+      const lifted = $lift(ctx, 7);
+      const proven = $proveCtx(ctx, lifted);
+      expect(proven).toBe(7);
+    });
+
+    it("should reject lifting a too-expensive value into a cheaper context", () => {
+      const ctx = $beginCost("O(log n)");
+      const linVal: LinearCost<number> = $unsafeDeclare("O(n)", 5);
+      // @ts-expect-error O(n) value cannot enter an O(log n) context
+      $lift(ctx, linVal);
+    });
+  });
+
+  describe("cost context regions ($withCost)", () => {
+    it("should prove a value isolated within a region scope", () => {
+      const result: LogCost<number> = $withCost("O(log n)", (ctx) =>
+        $proveCtx(ctx, $lift(ctx, 11)),
+      );
+      expect(result).toBe(11);
+    });
+
+    it("should prevent a region-bound value from escaping its scope (#5)", () => {
+      type EscapedValue = RegionCtx<unknown, { p: 0; l: 0 }, number>;
+      // @ts-expect-error a region-bound value cannot escape its $withCost scope
+      const _escaped: EscapedValue = $withCost("O(log n)", (ctx) => $lift(ctx, 1));
+      expect(true).toBe(true);
+    });
+
+    it("does NOT separate sibling $beginCost contexts — documented limitation (#3)", () => {
+      const a = $beginCost("O(log n)");
+      const b = $beginCost("O(log n)");
+      const v = $lift(a, 5);
+      // Ideally this would be rejected (`v` belongs to `a`, not `b`), but
+      // `$beginCost` mints region `unknown`, so TypeScript treats same-bound
+      // contexts as interchangeable. This compiles intentionally and locks in
+      // the known limitation — see the module-level note in cost-doc.ts.
+      const proven = $proveCtx(b, v);
+      expect(proven).toBe(5);
     });
   });
 

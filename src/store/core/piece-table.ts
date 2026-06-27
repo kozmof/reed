@@ -2,7 +2,7 @@
  * Piece Table operations with immutable Red-Black tree.
  * All operations return new tree structures with structural sharing.
  *
- * Cost typing policy: use explicit boundaries (`$declare`, `$prove`, `$proveCtx`)
+ * Cost typing policy: use explicit boundaries (`$unsafeDeclare`, `$prove`, `$proveCtx`)
  * for compute regions (see `src/types/cost-doc.ts`).
  */
 
@@ -15,6 +15,7 @@ import {
   type PieceID,
 } from "../../types/branded.js";
 import {
+  $beginCost,
   $prove,
   $proveCtx,
   $checked,
@@ -324,15 +325,12 @@ export function findPieceAtPosition(
       currentOffset = pieceEnd;
       current = current.right;
     } else {
-      return $proveCtx(
-        "O(log n)",
-        $lift("O(log n)", {
-          node: current,
-          offsetInPiece: position - pieceStart,
-          pieceStartOffset: pieceStart,
-          path,
-        }),
-      );
+      return $proveCtx($beginCost("O(log n)"), {
+        node: current,
+        offsetInPiece: position - pieceStart,
+        pieceStartOffset: pieceStart,
+        path,
+      });
     }
   }
 
@@ -356,15 +354,12 @@ export function findLastPiece(root: PieceNode | null): LogCost<PieceLocation> | 
   }
 
   const leftLength = current.left?.subtreeLength ?? 0;
-  return $proveCtx(
-    "O(log n)",
-    $lift("O(log n)", {
-      node: current,
-      offsetInPiece: current.length,
-      pieceStartOffset: currentOffset + leftLength,
-      path,
-    }),
-  );
+  return $proveCtx($beginCost("O(log n)"), {
+    node: current,
+    offsetInPiece: current.length,
+    pieceStartOffset: currentOffset + leftLength,
+    path,
+  });
 }
 
 /**
@@ -383,7 +378,7 @@ export function collectPieces(root: PieceNode | null): LinearCost<readonly Piece
     result.push(current);
     current = current.right;
   }
-  return $proveCtx("O(n)", $lift("O(n)", result));
+  return $proveCtx($beginCost("O(n)"), result);
 }
 
 // =============================================================================
@@ -406,14 +401,14 @@ export function rbInsertPiece(
 
   if (root === null) {
     // Empty tree - new node becomes black root
-    return $proveCtx("O(log n)", $lift("O(log n)", withPieceNode(newPiece, { color: "black" })));
+    return $proveCtx($beginCost("O(log n)"), withPieceNode(newPiece, { color: "black" }));
   }
 
   // Insert using standard BST insertion, collecting new nodes along insertion path
   const insertPath = bstInsert(root, position, newPiece);
 
   // Fix Red-Black violations using path-based O(log n) approach
-  return $proveCtx("O(log n)", $lift("O(log n)", fixInsertWithPath(insertPath, withPiece)));
+  return $proveCtx($beginCost("O(log n)"), fixInsertWithPath(insertPath, withPiece));
 }
 
 /**
@@ -594,7 +589,7 @@ export function pieceTableInsert(
   text: string,
 ): LinearCost<PieceTableInsertResult> {
   if (text.length === 0)
-    return $proveCtx("O(n)", $lift("O(n)", { state, insertedByteLength: 0, splits: [] }));
+    return $proveCtx($beginCost("O(n)"), { state, insertedByteLength: 0, splits: [] });
 
   const textBytes = textEncoder.encode(text);
 
@@ -610,23 +605,20 @@ export function pieceTableInsert(
       byteLength(textBytes.length),
       "black",
     );
-    return $proveCtx(
-      "O(n)",
-      $lift("O(n)", {
-        state: freezePieceTableState({
-          ...state,
-          root: newRoot,
-          addBuffer,
-          totalLength: textBytes.length,
-        }),
-        insertedByteLength: textBytes.length,
-        splits: [],
+    return $proveCtx($beginCost("O(n)"), {
+      state: freezePieceTableState({
+        ...state,
+        root: newRoot,
+        addBuffer,
+        totalLength: textBytes.length,
       }),
-    );
+      insertedByteLength: textBytes.length,
+      splits: [],
+    });
   }
 
   const location: LogCost<PieceLocation | null> =
-    findPieceAtPosition(state.root, position) ?? $proveCtx("O(log n)", $lift("O(log n)", null));
+    findPieceAtPosition(state.root, position) ?? $proveCtx($beginCost("O(log n)"), null);
 
   // Capture any split that occurs — set from within the $andThen callback.
   let capturedSplit: SplitRecord | null = null;
@@ -730,7 +722,7 @@ function rbReInsertPiece(root: PieceNode, position: number, piece: PieceNode): L
     right: null,
   });
   const insertPath = bstInsert(root, position, insertNode);
-  return $proveCtx("O(log n)", $lift("O(log n)", fixInsertWithPath(insertPath, withPiece)));
+  return $proveCtx($beginCost("O(log n)"), fixInsertWithPath(insertPath, withPiece));
 }
 
 /**
@@ -888,11 +880,11 @@ export function pieceTableDelete(
   start: ByteOffset,
   end: ByteOffset,
 ): LogCost<PieceTableState> {
-  if (start >= end) return $proveCtx("O(log n)", $lift("O(log n)", state));
-  if (state.root === null) return $proveCtx("O(log n)", $lift("O(log n)", state));
+  if (start >= end) return $proveCtx($beginCost("O(log n)"), state);
+  if (state.root === null) return $proveCtx($beginCost("O(log n)"), state);
 
   const deleteLength = Math.min(end, state.totalLength) - Math.max(start, 0);
-  if (deleteLength <= 0) return $proveCtx("O(log n)", $lift("O(log n)", state));
+  if (deleteLength <= 0) return $proveCtx($beginCost("O(log n)"), state);
 
   const clampedStart = Math.max(start, 0);
   const clampedEnd = Math.min(end, state.totalLength);
@@ -906,15 +898,12 @@ export function pieceTableDelete(
   }
 
   return $proveCtx(
-    "O(log n)",
-    $lift(
-      "O(log n)",
-      freezePieceTableState({
-        ...state,
-        root: newRoot,
-        totalLength: state.totalLength - deleteLength,
-      }),
-    ),
+    $beginCost("O(log n)"),
+    freezePieceTableState({
+      ...state,
+      root: newRoot,
+      totalLength: state.totalLength - deleteLength,
+    }),
   );
 }
 
@@ -1126,7 +1115,7 @@ function joinLeft(
  * Get the entire document content as a string.
  */
 export function getValue(state: PieceTableState): LinearCost<string> {
-  if (state.root === null) return $proveCtx("O(n)", $lift("O(n)", ""));
+  if (state.root === null) return $proveCtx($beginCost("O(n)"), "");
 
   return $prove(
     "O(n)",
@@ -1165,10 +1154,10 @@ export function getText(
   start: ByteOffset,
   end: ByteOffset,
 ): LinearCost<string> {
-  if (state.root === null) return $proveCtx("O(n)", $lift("O(n)", ""));
-  if (start < 0) return $proveCtx("O(n)", $lift("O(n)", ""));
-  if (start >= end) return $proveCtx("O(n)", $lift("O(n)", ""));
-  if (start >= state.totalLength) return $proveCtx("O(n)", $lift("O(n)", ""));
+  if (state.root === null) return $proveCtx($beginCost("O(n)"), "");
+  if (start < 0) return $proveCtx($beginCost("O(n)"), "");
+  if (start >= end) return $proveCtx($beginCost("O(n)"), "");
+  if (start >= state.totalLength) return $proveCtx($beginCost("O(n)"), "");
 
   const actualEnd = Math.min(end, state.totalLength);
 
@@ -1178,10 +1167,7 @@ export function getText(
   const writeState = { offset: 0 };
   collectBytesInRange(state, state.root, 0, start, actualEnd, result, writeState);
 
-  return $proveCtx(
-    "O(n)",
-    $lift("O(n)", textDecoder.decode(result.subarray(0, writeState.offset))),
-  );
+  return $proveCtx($beginCost("O(n)"), textDecoder.decode(result.subarray(0, writeState.offset)));
 }
 
 /**
@@ -1227,7 +1213,7 @@ function collectBytesInRange(
  * Get the total length of the document.
  */
 export function getLength(state: PieceTableState): ConstCost<number> {
-  return $proveCtx("O(1)", $lift("O(1)", state.totalLength));
+  return $proveCtx($beginCost("O(1)"), state.totalLength);
 }
 
 /**
@@ -1238,8 +1224,8 @@ export function getLength(state: PieceTableState): ConstCost<number> {
  * For line-index based line access with DocumentState, use `getLineContent()` from rendering.ts.
  */
 export function getLineLinearScan(state: PieceTableState, lineNumber: number): LinearCost<string> {
-  if (state.root === null) return $proveCtx("O(n)", $lift("O(n)", ""));
-  if (lineNumber < 0) return $proveCtx("O(n)", $lift("O(n)", ""));
+  if (state.root === null) return $proveCtx($beginCost("O(n)"), "");
+  if (lineNumber < 0) return $proveCtx($beginCost("O(n)"), "");
 
   // Find line start and end offsets by scanning for newlines
   return $prove(
@@ -1273,7 +1259,7 @@ function findLineOffsets(
   state: PieceTableState,
   lineNumber: number,
 ): LinearCost<{ start: ByteOffset; end: ByteOffset } | null> {
-  if (state.root === null) return $proveCtx("O(n)", $lift("O(n)", null));
+  if (state.root === null) return $proveCtx($beginCost("O(n)"), null);
 
   return $prove(
     "O(n)",
@@ -1397,10 +1383,12 @@ export function getBufferStats(state: PieceTableState): ConstCost<BufferStats> {
   const addBufferWaste = addBufferSize - addBufferUsed;
   const wasteRatio = addBufferSize > 0 ? addBufferWaste / addBufferSize : 0;
 
-  return $proveCtx(
-    "O(1)",
-    $lift("O(1)", { addBufferSize, addBufferUsed, addBufferWaste, wasteRatio }),
-  );
+  return $proveCtx($beginCost("O(1)"), {
+    addBufferSize,
+    addBufferUsed,
+    addBufferWaste,
+    wasteRatio,
+  });
 }
 
 /**

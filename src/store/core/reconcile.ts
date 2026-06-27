@@ -16,7 +16,7 @@ import type {
   DirtyLineRangeList,
   EvaluationMode,
 } from "../../types/state.js";
-import { $proveCtx, $lift, type NLogNCost } from "../../types/cost-doc.js";
+import { $beginCost, $proveCtx, type NLogNCost } from "../../types/cost-doc.js";
 import { withLineIndexNode, withLineIndexState, asEagerLineIndex } from "./state.js";
 
 // =============================================================================
@@ -31,9 +31,9 @@ export function mergeDirtyRanges(
   maxRanges: number = 32,
 ): NLogNCost<DirtyLineRangeList> {
   if (ranges === "full-rebuild-needed") {
-    return $proveCtx("O(n log n)", $lift("O(n log n)", "full-rebuild-needed" as const));
+    return $proveCtx($beginCost("O(n log n)"), "full-rebuild-needed" as const);
   }
-  if (ranges.length <= 1) return $proveCtx("O(n log n)", $lift("O(n log n)", [...ranges]));
+  if (ranges.length <= 1) return $proveCtx($beginCost("O(n log n)"), [...ranges]);
 
   // Sort by startLine — skip sort if already in order (common case: appended sequentially).
   let needsSort = false;
@@ -138,10 +138,10 @@ export function mergeDirtyRanges(
   // Safety cap: if too many ranges accumulated, collapse to full-document rebuild.
   // Threshold is configurable via DocumentStoreConfig.maxDirtyRanges (default 32).
   if (merged.length > maxRanges) {
-    return $proveCtx("O(n log n)", $lift("O(n log n)", "full-rebuild-needed" as const));
+    return $proveCtx($beginCost("O(n log n)"), "full-rebuild-needed" as const);
   }
 
-  return $proveCtx("O(n log n)", $lift<"O(n log n)", DirtyLineRangeList>("O(n log n)", merged));
+  return $proveCtx($beginCost("O(n log n)"), merged);
 }
 
 // =============================================================================
@@ -256,12 +256,12 @@ export function reconcileRange(
   revision: number,
 ): NLogNCost<LineIndexState> {
   const dirtyRanges = state.dirtyRanges;
-  if (state.root === null) return $proveCtx("O(n log n)", $lift("O(n log n)", state));
+  if (state.root === null) return $proveCtx($beginCost("O(n log n)"), state);
   if (dirtyRanges === "full-rebuild-needed" || dirtyRanges.length === 0)
-    return $proveCtx("O(n log n)", $lift("O(n log n)", state));
+    return $proveCtx($beginCost("O(n log n)"), state);
   const clampedStart = Math.max(0, startLine);
   const clampedEnd = Math.min(endLine, state.lineCount - 1);
-  if (clampedStart > clampedEnd) return $proveCtx("O(n log n)", $lift("O(n log n)", state));
+  if (clampedStart > clampedEnd) return $proveCtx($beginCost("O(n log n)"), state);
 
   // Build sweep events from sorted, non-overlapping dirty ranges — O(K)
   // Each range contributes a +delta event at its effective start and
@@ -316,16 +316,13 @@ export function reconcileRange(
   const remainingRanges = mergeDirtyRanges(remaining, state.maxDirtyRanges);
 
   return $proveCtx(
-    "O(n log n)",
-    $lift(
-      "O(n log n)",
-      withLineIndexState(state, {
-        root: newRoot,
-        dirtyRanges: remainingRanges,
-        lastReconciledRevision: revision,
-        rebuildPending: remainingRanges === "full-rebuild-needed" || remainingRanges.length > 0,
-      }),
-    ),
+    $beginCost("O(n log n)"),
+    withLineIndexState(state, {
+      root: newRoot,
+      dirtyRanges: remainingRanges,
+      lastReconciledRevision: revision,
+      rebuildPending: remainingRanges === "full-rebuild-needed" || remainingRanges.length > 0,
+    }),
   );
 }
 
@@ -361,18 +358,15 @@ export function reconcileFull(
 ): NLogNCost<LineIndexState<"eager">> {
   const dirtyRanges = state.dirtyRanges;
   if (dirtyRanges !== "full-rebuild-needed" && dirtyRanges.length === 0) {
-    return $proveCtx("O(n log n)", $lift("O(n log n)", toEagerLineIndexState(state, revision)));
+    return $proveCtx($beginCost("O(n log n)"), toEagerLineIndexState(state, revision));
   }
 
   if (state.root === null) {
     return $proveCtx(
-      "O(n log n)",
-      $lift(
-        "O(n log n)",
-        toEagerLineIndexState(state, revision, {
-          lineCount: 1,
-        }),
-      ),
+      $beginCost("O(n log n)"),
+      toEagerLineIndexState(state, revision, {
+        lineCount: 1,
+      }),
     );
   }
 
@@ -390,7 +384,7 @@ export function reconcileFull(
       const endLine = Math.min(range.endLine, current.lineCount - 1);
       current = reconcileRange(current, range.startLine, endLine, revision);
     }
-    return $proveCtx("O(n log n)", $lift("O(n log n)", toEagerLineIndexState(current, revision)));
+    return $proveCtx($beginCost("O(n log n)"), toEagerLineIndexState(current, revision));
   }
 
   // Slow path: triggered either by a sentinel (delta information lost) or when
@@ -404,13 +398,10 @@ export function reconcileFull(
   const newRoot = reconcileInPlace(state.root, { offset: 0 });
 
   return $proveCtx(
-    "O(n log n)",
-    $lift(
-      "O(n log n)",
-      toEagerLineIndexState(state, revision, {
-        root: newRoot,
-      }),
-    ),
+    $beginCost("O(n log n)"),
+    toEagerLineIndexState(state, revision, {
+      root: newRoot,
+    }),
   );
 }
 
@@ -426,12 +417,12 @@ export function reconcileViewport(
 ): NLogNCost<LineIndexState> {
   const dirtyRanges = state.dirtyRanges;
   if (dirtyRanges !== "full-rebuild-needed" && dirtyRanges.length === 0)
-    return $proveCtx("O(n log n)", $lift("O(n log n)", state));
+    return $proveCtx($beginCost("O(n log n)"), state);
   const normalizedStart = Math.min(startLine, endLine);
   const normalizedEnd = Math.max(startLine, endLine);
   const clampedStart = Math.max(0, normalizedStart);
   const clampedEnd = Math.min(normalizedEnd, state.lineCount - 1);
-  if (clampedStart > clampedEnd) return $proveCtx("O(n log n)", $lift("O(n log n)", state));
+  if (clampedStart > clampedEnd) return $proveCtx($beginCost("O(n log n)"), state);
 
   // Check if any viewport lines are dirty.
   // 'full-rebuild-needed' means the entire document is dirty — viewport is always dirty.
@@ -439,7 +430,7 @@ export function reconcileViewport(
     dirtyRanges === "full-rebuild-needed" ||
     dirtyRanges.some((range) => range.startLine <= clampedEnd && range.endLine >= clampedStart);
 
-  if (!viewportDirty) return $proveCtx("O(n log n)", $lift("O(n log n)", state));
+  if (!viewportDirty) return $proveCtx($beginCost("O(n log n)"), state);
 
   // Reconcile only the viewport range
   return reconcileRange(state, clampedStart, clampedEnd, revision);

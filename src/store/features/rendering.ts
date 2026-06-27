@@ -7,6 +7,7 @@ import type { DocumentState, SelectionRange, CharSelectionRange } from "../../ty
 import { byteOffset, charOffset, addByteOffset, type ByteOffset } from "../../types/branded.js";
 import {
   $prove,
+  $beginCost,
   $proveCtx,
   $checked,
   $from,
@@ -143,14 +144,14 @@ export function getVisibleLineRange(
   const safeOverscan = toNonNegativeInteger(overscan);
 
   if (lineCount === 0) {
-    return $proveCtx("O(1)", $lift("O(1)", { startLine: 0, endLine: -1 }));
+    return $proveCtx($beginCost("O(1)"), { startLine: 0, endLine: -1 });
   }
 
   if (!Number.isFinite(lineHeight) || lineHeight <= 0) {
-    return $proveCtx(
-      "O(1)",
-      $lift("O(1)", { startLine: 0, endLine: Math.min(lineCount - 1, safeOverscan) }),
-    );
+    return $proveCtx($beginCost("O(1)"), {
+      startLine: 0,
+      endLine: Math.min(lineCount - 1, safeOverscan),
+    });
   }
 
   const safeScrollTop = Number.isFinite(scrollTop) ? Math.max(0, scrollTop) : 0;
@@ -163,7 +164,7 @@ export function getVisibleLineRange(
   const startLine = Math.max(0, firstVisibleLine - safeOverscan);
   const endLine = Math.min(lineCount - 1, lastVisibleLine + safeOverscan);
 
-  return $proveCtx("O(1)", $lift("O(1)", { startLine, endLine }));
+  return $proveCtx($beginCost("O(1)"), { startLine, endLine });
 }
 
 /**
@@ -183,7 +184,7 @@ export const getLineContent: CostFn<"linear", [DocumentState, number], string | 
 ) => {
   const range = getLineRangePrecise(state.lineIndex, lineNum);
   if (range === null) {
-    return $proveCtx("O(n)", $lift("O(log n)", null));
+    return $proveCtx($beginCost("O(n)"), null);
   }
 
   return $prove(
@@ -236,16 +237,13 @@ export function getVisibleLines(
   }
 
   return $proveCtx(
-    "O(n)",
-    $lift<"O(n)", VisibleLinesResult>(
-      "O(n)",
-      Object.freeze({
-        lines: Object.freeze(lines),
-        firstLine,
-        lastLine,
-        totalLines,
-      }),
-    ),
+    $beginCost("O(n)"),
+    Object.freeze({
+      lines: Object.freeze(lines),
+      firstLine,
+      lastLine,
+      totalLines,
+    }),
   );
 }
 
@@ -259,13 +257,13 @@ export function getVisibleLine(
   const totalLines = getLineCountFromIndex(state.lineIndex);
 
   if (lineNumber < 0 || lineNumber >= totalLines) {
-    return $proveCtx("O(n)", $lift("O(1)", null));
+    return $proveCtx($beginCost("O(n)"), null);
   }
 
   // Use getLineRangePrecise to handle dirty line indices correctly
   const range = getLineRangePrecise(state.lineIndex, lineNumber);
   if (!range) {
-    return $proveCtx("O(n)", $lift("O(log n)", null));
+    return $proveCtx($beginCost("O(n)"), null);
   }
 
   return $prove(
@@ -318,16 +316,16 @@ export interface LineHeightConfig {
  */
 export function estimateLineHeight(line: VisibleLine, config: LineHeightConfig): ConstCost<number> {
   if (!config.softWrap) {
-    return $proveCtx("O(1)", $lift("O(1)", config.baseLineHeight));
+    return $proveCtx($beginCost("O(1)"), config.baseLineHeight);
   }
 
   const charsPerLine = Math.floor(config.viewportWidth / config.charWidth);
   if (charsPerLine <= 0) {
-    return $proveCtx("O(1)", $lift("O(1)", config.baseLineHeight));
+    return $proveCtx($beginCost("O(1)"), config.baseLineHeight);
   }
 
   const wrappedLines = Math.ceil(line.content.length / charsPerLine) || 1;
-  return $proveCtx("O(1)", $lift("O(1)", wrappedLines * config.baseLineHeight));
+  return $proveCtx($beginCost("O(1)"), wrappedLines * config.baseLineHeight);
 }
 
 /**
@@ -354,7 +352,7 @@ export function estimateTotalHeight(
 
   if (!config.softWrap) {
     // Fixed height mode: simple multiplication
-    return $proveCtx("O(n)", $lift("O(1)", totalLines * config.baseLineHeight));
+    return $proveCtx($beginCost("O(n)"), totalLines * config.baseLineHeight);
   }
 
   const SAMPLE_SIZE = 100;
@@ -372,7 +370,7 @@ export function estimateTotalHeight(
     for (const line of renderedLines) {
       totalHeight += wrappedHeight(line.content.length, charsPerLine, config.baseLineHeight);
     }
-    return $proveCtx("O(n)", $lift("O(n)", totalHeight));
+    return $proveCtx($beginCost("O(n)"), totalHeight);
   }
 
   // Large document: sample evenly-spaced rendered lines so mixed newline styles
@@ -391,7 +389,7 @@ export function estimateTotalHeight(
 
   const avgLineHeight = sampledLines > 0 ? sampleHeight / sampledLines : config.baseLineHeight;
 
-  return $proveCtx("O(n)", $lift("O(n)", Math.ceil(totalLines * avgLineHeight)));
+  return $proveCtx($beginCost("O(n)"), Math.ceil(totalLines * avgLineHeight));
 }
 
 // =============================================================================
@@ -479,7 +477,7 @@ export function positionToLineColumn(
     );
   }
 
-  return $proveCtx("O(n)", $lift("O(n)", null));
+  return $proveCtx($beginCost("O(n)"), null);
 }
 
 /**
@@ -493,7 +491,7 @@ export function lineColumnToPosition(
   // Use getLineRangePrecise to handle dirty line indices correctly
   const range = getLineRangePrecise(state.lineIndex, line);
   if (!range) {
-    return $proveCtx("O(n)", $lift("O(n)", null));
+    return $proveCtx($beginCost("O(n)"), null);
   }
 
   return $prove(
@@ -535,7 +533,7 @@ export function lineColumnToPosition(
  */
 function byteOffsetToCharOffset(state: DocumentState, position: ByteOffset): LinearCost<number> {
   const posNum = position;
-  if (posNum <= 0) return $proveCtx("O(n)", $lift("O(n)", 0));
+  if (posNum <= 0) return $proveCtx($beginCost("O(n)"), 0);
 
   const location = findLineAtPosition(state.lineIndex.root, position);
   if (location === null) {
@@ -617,19 +615,19 @@ export function selectionToCharOffsets(
  */
 function charOffsetToByteOffset(state: DocumentState, charPos: number): LinearCost<ByteOffset> {
   if (charPos <= 0) {
-    return $proveCtx("O(n)", $lift("O(n)", byteOffset(0)));
+    return $proveCtx($beginCost("O(n)"), byteOffset(0));
   }
 
   const location = findLineAtCharPosition(state.lineIndex.root, charPos);
   if (location === null) {
     // charPos is at or past end of document
-    return $proveCtx("O(n)", $lift("O(n)", byteOffset(state.pieceTable.totalLength)));
+    return $proveCtx($beginCost("O(n)"), byteOffset(state.pieceTable.totalLength));
   }
 
   // Get the byte range of the target line
   const range = getLineRangePrecise(state.lineIndex, location.lineNumber);
   if (range === null) {
-    return $proveCtx("O(n)", $lift("O(n)", byteOffset(state.pieceTable.totalLength)));
+    return $proveCtx($beginCost("O(n)"), byteOffset(state.pieceTable.totalLength));
   }
 
   return $prove(

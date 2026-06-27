@@ -2,13 +2,17 @@
  * Branded algorithmic cost types and combinators.
  *
  * Usage policy:
- * 1. Use `$prove(level, $checked(() => plan))` or `$proveCtx(level, planCtx)`
- *    for compile-time checked boundaries.
- * 2. Use `$declare(level, value)` for explicit unchecked declarations.
- * 3. Start plans from `$lift('O(1)', value)` and compose with pipeline combinators.
- * 4. Keep internal arithmetic/data as plain types and apply branding only
- *    at explicit boundaries (or via `CostFn` wrappers).
- * 5. Avoid direct cast helpers in store/application code.
+ * 1. For an inline boundary, open a context and prove a value against it:
+ *    `$proveCtx($beginCost('O(n)'), value)`. The cost label is stated once.
+ * 2. For a multi-step boundary, use `$prove(level, $checked(() => plan))` and
+ *    compose with the pipeline combinators, seeding via `$from`/`$lift(label, …)`.
+ * 3. Use `$unsafeDeclare(level, value)` for explicit unchecked declarations at
+ *    system boundaries or legacy migration points.
+ * 4. Use `$withCost(level, ctx => …)` when an internal context value must not
+ *    escape its scope.
+ * 5. Keep internal arithmetic/data as plain types and apply branding only at
+ *    explicit boundaries (or via `CostFn` wrappers); avoid direct cast helpers
+ *    in store/application code.
  *
  * @remarks
  * **Cost labels are documentation annotations, not runtime contracts.**
@@ -18,6 +22,12 @@
  * operations, or profile performance. Any contributor can annotate an O(n)
  * loop as O(1) and the type system will not object. Use a benchmark harness
  * to validate cost claims against real data.
+ *
+ * **Context identity is partial.** `$beginCost`/`$withCost` carry a phantom
+ * region so that escaping an internal context value can be rejected, but
+ * TypeScript conflates the regions of sibling/nested contexts created in the
+ * same scope. Mixing two same-bound contexts is therefore NOT reliably caught;
+ * do not rely on it as a guarantee.
  */
 
 // =============================================================================
@@ -205,6 +215,96 @@ type CtxLike = { readonly _cost: Cost; readonly value: unknown };
 type CheckedPlanLike = { readonly run: () => CtxLike };
 type UncheckedBoundaryValue<T> = T extends CtxLike ? never : T extends CheckedPlanLike ? never : T;
 
+// =============================================================================
+// Cost Context Identity & Payload Scanning
+// =============================================================================
+
+/**
+ * Fold a union of cost labels to its maximum. Labels are totally ordered
+ * (`const < log < linear < nlogn < quad`), so membership tests from the top
+ * down pick the dominant level. `"quad" extends L` is true iff `quad ∈ L`.
+ */
+type MaxLabel<L extends CostLabel> = "quad" extends L
+  ? "quad"
+  : "nlogn" extends L
+    ? "nlogn"
+    : "linear" extends L
+      ? "linear"
+      : "log" extends L
+        ? "log"
+        : "const";
+
+/**
+ * A value's own *declared* level = the max of its brand's level set, else
+ * `const`. A `Costed<L, T>` brand carries `LevelsUpTo<L>` (every level ≤ L for
+ * natural widening), so the declared level is the maximum of that set.
+ */
+type LabelOf<T> = T extends CostBrand<infer L> ? MaxLabel<L & CostLabel> : "const";
+
+/** Decreasing-depth counter for bounded structural recursion. */
+type Prev = [never, 0, 1, 2, 3, 4, 5, 6];
+
+/**
+ * Maximum *declared* cost label found anywhere in a payload, scanned to a
+ * bounded depth. Used by `$lift`/`$proveCtx` to reject hiding an expensive
+ * branded value inside an otherwise-cheap payload.
+ *
+ * @remarks
+ * Only brands present in the **static type** are visible; a value whose brand
+ * was stripped (e.g. via `$value`) reads as `const`. Depth is capped to keep
+ * type-checking tractable on deep object graphs.
+ */
+type PayloadLabel<T, D extends number = 6> = D extends 0
+  ? LabelOf<T>
+  : T extends CostBrand<CostLabel>
+    ? LabelOf<T>
+    : T extends readonly (infer E)[]
+      ? PayloadLabel<E, Prev[D] & number>
+      : T extends object
+        ? MaxLabel<{ [K in keyof T]-?: PayloadLabel<T[K], Prev[D] & number> }[keyof T] & CostLabel>
+        : "const";
+
+/** The deep payload cost of `T` as a {@link Cost} pair. */
+export type PayloadCost<T> = CostOfLabel<PayloadLabel<T>>;
+
+/**
+ * A proof context opened by {@link $beginCost} / {@link $withCost}.
+ *
+ * Carries the declared upper-bound label `L`, its {@link Cost} pair `C`, and a
+ * phantom region `S`. The region is **invariant** (the `(s: S) => S` field is
+ * the classic `runST` encoding): a value tagged with one region cannot be used
+ * where a different region is expected. `$beginCost` mints `S = unknown` (no
+ * identity); `$withCost` mints a *fresh* `S` per call so context values cannot
+ * escape their scope.
+ *
+ * @remarks
+ * All three fields are **phantom** — they exist only in the type. At runtime a
+ * context is `{ __label }` and a context value is a tagged `{ value }`.
+ */
+export type CostCtx<S, L extends CostLabel, C extends Cost> = {
+  readonly __region: (s: S) => S;
+  readonly __label: L;
+  readonly __bound: C;
+};
+
+/** A value inserted into a context: carries its origin region `S` and cost `C`. */
+export type RegionCtx<S, C extends Cost, T> = { readonly __region: (s: S) => S } & Ctx<C, T>;
+
+/**
+ * Runtime brand marking a context value produced by `$lift(ctx, value)`, so
+ * `$proveCtx(ctx, …)` can distinguish a lifted value from a raw payload.
+ * Phantom at the type level; the only runtime field beyond `value`.
+ */
+const ctxValueBrand = Symbol("cost-ctx-value");
+
+function mkCtxValue<T>(value: T): { value: T } {
+  return { [ctxValueBrand]: true, value } as { value: T };
+}
+
+function isCtxValue(x: unknown): x is { value: unknown } {
+  return typeof x === "object" && x !== null && ctxValueBrand in x;
+}
+
 /**
  * Extract the plain value from a cost-branded result.
  * Identity at runtime — the brand only exists at compile time.
@@ -255,16 +355,17 @@ export function $uncostedFn<Args extends readonly unknown[], R>(
  * For checked boundaries, use `$prove` or `$proveCtx`.
  *
  * This is a **pure assertion** with no compile-time or runtime verification. A caller can
- * annotate an O(n) value as O(1) and the type system will not object. `$declare` exists for
+ * annotate an O(n) value as O(1) and the type system will not object. `$unsafeDeclare` exists for
  * contexts where cost is provable by reasoning but cannot be expressed through the
  * `$pipe`/`$andThen` combinator algebra (e.g., amortized bounds, platform-specific guarantees).
- * The trade-off is made explicit here so that reviewers know to scrutinize `$declare` call sites.
+ * The `unsafe` prefix makes the trade-off explicit so reviewers know to scrutinize these call
+ * sites; reserve it for system boundaries and legacy migration points.
  */
-export function $declare<L extends CostInputLabel, T>(
+export function $unsafeDeclare<L extends CostInputLabel, T>(
   max: L,
   value: UncheckedBoundaryValue<T>,
 ): Costed<NormalizeCostLabel<L>, UncheckedBoundaryValue<T>>;
-export function $declare(max: CostInputLabel, value: unknown): unknown {
+export function $unsafeDeclare(max: CostInputLabel, value: unknown): unknown {
   return castCost(toCostLevel(max), value);
 }
 
@@ -295,8 +396,33 @@ export function $proveCtx<L extends CostInputLabel, C extends Cost, T>(
   max: L,
   ctx: Ctx<C, T> & (Leq<C, CostOfLabel<NormalizeCostLabel<L>>> extends true ? unknown : never),
 ): Costed<NormalizeCostLabel<L>, T>;
-export function $proveCtx(max: CostInputLabel, ctx: Ctx<Cost, unknown>): unknown {
-  return castCost(toCostLevel(max), ctx.value);
+/**
+ * Close a context opened by {@link $beginCost}/{@link $withCost}, exporting a
+ * public cost-branded value. Checks that the value's accumulated/declared cost
+ * is ≤ the context bound, and (via `NoInfer<S>`) that the value belongs to this
+ * context's region.
+ */
+export function $proveCtx<S, L extends CostLabel, C extends Cost, VC extends Cost, T>(
+  ctx: CostCtx<S, L, C>,
+  v: RegionCtx<NoInfer<S>, VC, T> & (Leq<VC, C> extends true ? unknown : never),
+): Costed<L, T>;
+/**
+ * Close a context over a raw value, auto-lifting it. Checks that no branded
+ * payload nested in the value exceeds the context bound.
+ */
+export function $proveCtx<S, L extends CostLabel, C extends Cost, T>(
+  ctx: CostCtx<S, L, C>,
+  value: T & (Leq<PayloadCost<T>, C> extends true ? unknown : never),
+): Costed<L, T>;
+export function $proveCtx(
+  a: CostInputLabel | CostCtx<unknown, CostLabel, Cost>,
+  b: unknown,
+): unknown {
+  if (typeof a === "string") {
+    return castCost(toCostLevel(a), (b as Ctx<Cost, unknown>).value);
+  }
+  const value = isCtxValue(b) ? b.value : b;
+  return castCost((a as { __label: CostLevel }).__label, value);
 }
 
 /**
@@ -399,20 +525,75 @@ export const $from = <L extends CostLevel, T>(value: Costed<L, T>): Ctx<CostOfLa
   ({ value: value as unknown as T }) as Ctx<CostOfLabel<L>, T>;
 
 /**
- * Lift a plain value into a context at a declared upper bound.
- * Use `O(1)` when seeding a new plan.
- * Useful in checked plans where branch costs must align.
+ * Open a proof context at a declared upper bound.
+ *
+ * The returned context owns the cost bound and a proof scope; pass it to
+ * `$proveCtx(ctx, value)` to export a public cost-branded value, or to
+ * `$lift(ctx, value)` to insert a value for further composition. The context
+ * has no per-call identity (region `unknown`); use {@link $withCost} when
+ * escape-prevention matters.
  *
  * @remarks
- * The `_level` parameter is unused at runtime — it is consumed only by the
- * type system. Passing `'O(1)'` does not verify or constrain runtime cost.
- * See module-level note.
+ * The bound is a documentation annotation, not a runtime contract — see the
+ * module-level note.
+ */
+export function $beginCost<L extends CostInputLabel>(
+  label: L,
+): CostCtx<unknown, NormalizeCostLabel<L>, CostOfLabel<NormalizeCostLabel<L>>> {
+  return { __label: toCostLevel(label) } as CostCtx<
+    unknown,
+    NormalizeCostLabel<L>,
+    CostOfLabel<NormalizeCostLabel<L>>
+  >;
+}
+
+/**
+ * Open a proof context with a *fresh* region bound to the callback scope.
+ *
+ * The rank-2 `<S>` mints a region unique to this invocation, so a value lifted
+ * into `ctx` (a {@link RegionCtx}) cannot escape the callback — only the value
+ * returned by `$proveCtx(ctx, …)` leaves. Use for boundaries where an internal
+ * context value must not leak.
+ *
+ * @remarks
+ * Region separation in TypeScript is reliable for a value that escapes one
+ * scope and is reused in another, but TypeScript conflates the regions of
+ * sibling/nested `$beginCost`/`$withCost` contexts in the same scope — so
+ * cross-context mixing is **not** fully detectable. See the module-level note.
+ */
+export function $withCost<L extends CostInputLabel, R>(
+  label: L,
+  body: <S>(ctx: CostCtx<S, NormalizeCostLabel<L>, CostOfLabel<NormalizeCostLabel<L>>>) => R,
+): R {
+  return (body as (ctx: unknown) => R)($beginCost(label));
+}
+
+/**
+ * Seed a context from a plain value at a declared cost (composed-plan form), or
+ * insert a value into an existing context (`$lift(ctx, value)` form).
+ *
+ * The `(label, value)` overload seeds a fresh `Ctx` at `label` for use inside
+ * `$pipe`/`$checked` plans where branch costs must align. The `(ctx, value)`
+ * overload performs controlled insertion into an open context: it rejects a
+ * value whose nested branded cost exceeds the context bound, and tags the
+ * result with the context's region.
+ *
+ * @remarks
+ * Neither form verifies or constrains runtime cost — see the module-level note.
  */
 export function $lift<L extends CostInputLabel, T>(
-  _level: L,
+  label: L,
   value: T,
-): Ctx<CostOfLabel<NormalizeCostLabel<L>>, T> {
-  return { value } as Ctx<CostOfLabel<NormalizeCostLabel<L>>, T>;
+): Ctx<CostOfLabel<NormalizeCostLabel<L>>, T>;
+export function $lift<S, L extends CostLabel, C extends Cost, T>(
+  ctx: CostCtx<S, L, C>,
+  value: T & (Leq<PayloadCost<T>, C> extends true ? unknown : never),
+): RegionCtx<S, PayloadCost<T>, T>;
+export function $lift(
+  a: CostInputLabel | CostCtx<unknown, CostLabel, Cost>,
+  value: unknown,
+): unknown {
+  return typeof a === "string" ? { value } : mkCtxValue(value);
 }
 
 export function $pipe<C extends Cost, T>(ctx: Ctx<C, T>): Ctx<C, T>;

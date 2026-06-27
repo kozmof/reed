@@ -8,7 +8,7 @@
  * public import surface.
  */
 
-import { $proveCtx, $lift, type LinearCost } from "../../types/cost-doc.js";
+import { $beginCost, $proveCtx, type LinearCost } from "../../types/cost-doc.js";
 import { textEncoder } from "./encoding.js";
 
 /**
@@ -50,7 +50,7 @@ export function charToByteOffset(text: string, charOffset: number): LinearCost<n
       bytes += 3;
     }
   }
-  return $proveCtx("O(n)", $lift("O(n)", bytes));
+  return $proveCtx($beginCost("O(n)"), bytes);
 }
 
 /**
@@ -71,10 +71,10 @@ export function charToByteOffset(text: string, charOffset: number): LinearCost<n
  * ```
  */
 export function byteToCharOffset(text: string, byteOffset: number): LinearCost<number> {
-  if (byteOffset <= 0) return $proveCtx("O(n)", $lift("O(n)", 0));
+  if (byteOffset <= 0) return $proveCtx($beginCost("O(n)"), 0);
 
   const bytes = textEncoder.encode(text);
-  if (byteOffset >= bytes.length) return $proveCtx("O(n)", $lift("O(n)", text.length));
+  if (byteOffset >= bytes.length) return $proveCtx($beginCost("O(n)"), text.length);
 
   // Single encode + byte scanning using UTF-8 sequence length detection
   let charPos = 0;
@@ -95,5 +95,5 @@ export function byteToCharOffset(text: string, byteOffset: number): LinearCost<n
     charPos += seqLen === 4 ? 2 : 1;
   }
 
-  return $proveCtx("O(n)", $lift("O(n)", charPos));
+  return $proveCtx($beginCost("O(n)"), charPos);
 }

@@ -3,7 +3,7 @@
  * Maintains line positions for O(log n) line lookups.
  * All operations return new tree structures with structural sharing.
  *
- * Cost typing policy: use explicit boundaries (`$declare`, `$prove`, `$proveCtx`)
+ * Cost typing policy: use explicit boundaries (`$unsafeDeclare`, `$prove`, `$proveCtx`)
  * for compute regions (see `src/types/cost-doc.ts`).
  */
 
@@ -26,9 +26,9 @@ import type { ReadTextFn, DeleteBoundaryContext } from "../../types/operations.j
 import {
   $prove,
   $proveCtx,
+  $beginCost,
   $checked,
-  $lift,
-  $declare,
+  $unsafeDeclare,
   $from,
   $pipe,
   $andThen,
@@ -143,14 +143,11 @@ export function findLineAtPosition(
     } else {
       // Position is in this line (or at end and no right subtree)
       const node = current;
-      const location = $proveCtx(
-        "O(log n)",
-        $lift("O(log n)", {
-          node,
-          lineNumber: lineNumber + leftLineCount,
-          offsetInLine: pos - lineStart,
-        }),
-      );
+      const location = $proveCtx($beginCost("O(log n)"), {
+        node,
+        lineNumber: lineNumber + leftLineCount,
+        offsetInLine: pos - lineStart,
+      });
       return location;
     }
   }
@@ -182,7 +179,7 @@ export function findLineByNumber(
       current = current.right;
     } else {
       // This is the target line
-      const line = $proveCtx("O(log n)", $lift("O(log n)", current));
+      const line = $proveCtx($beginCost("O(log n)"), current);
       return line;
     }
   }
@@ -198,10 +195,10 @@ export function getLineStartOffset(
   lineNumber: number,
 ): LogCost<ByteOffset> {
   if (root === null) {
-    return $proveCtx("O(log n)", $lift("O(1)", 0 as ByteOffset));
+    return $proveCtx($beginCost("O(log n)"), 0 as ByteOffset);
   }
   if (lineNumber < 0) {
-    return $proveCtx("O(log n)", $lift("O(1)", 0 as ByteOffset));
+    return $proveCtx($beginCost("O(log n)"), 0 as ByteOffset);
   }
 
   let offset = 0;
@@ -226,11 +223,11 @@ export function getLineStartOffset(
       current = current.right;
     } else {
       // This is the target line
-      return $proveCtx("O(log n)", $lift("O(log n)", (offset + leftByteLength) as ByteOffset));
+      return $proveCtx($beginCost("O(log n)"), (offset + leftByteLength) as ByteOffset);
     }
   }
 
-  return $proveCtx("O(log n)", $lift("O(log n)", offset as ByteOffset));
+  return $proveCtx($beginCost("O(log n)"), offset as ByteOffset);
 }
 
 /**
@@ -242,10 +239,10 @@ export function getCharStartOffset(
   lineNumber: number,
 ): LogCost<CharOffset> {
   if (root === null) {
-    return $proveCtx("O(log n)", $lift("O(1)", 0 as CharOffset));
+    return $proveCtx($beginCost("O(log n)"), 0 as CharOffset);
   }
   if (lineNumber < 0) {
-    return $proveCtx("O(log n)", $lift("O(1)", 0 as CharOffset));
+    return $proveCtx($beginCost("O(log n)"), 0 as CharOffset);
   }
 
   let offset = 0;
@@ -267,11 +264,11 @@ export function getCharStartOffset(
       targetLine -= leftLineCount + 1;
       current = current.right;
     } else {
-      return $proveCtx("O(log n)", $lift("O(log n)", (offset + leftCharLength) as CharOffset));
+      return $proveCtx($beginCost("O(log n)"), (offset + leftCharLength) as CharOffset);
     }
   }
 
-  return $proveCtx("O(log n)", $lift("O(log n)", offset as CharOffset));
+  return $proveCtx($beginCost("O(log n)"), offset as CharOffset);
 }
 
 /**
@@ -303,13 +300,10 @@ export function findLineAtCharPosition(
       pos -= lineEnd;
       current = current.right;
     } else {
-      const location = $proveCtx(
-        "O(log n)",
-        $lift("O(log n)", {
-          lineNumber: lineNumber + leftLineCount,
-          charOffsetInLine: pos - lineStart,
-        }),
-      );
+      const location = $proveCtx($beginCost("O(log n)"), {
+        lineNumber: lineNumber + leftLineCount,
+        charOffsetInLine: pos - lineStart,
+      });
       return location;
     }
   }
@@ -335,7 +329,7 @@ export function collectLines(root: LineIndexNode | null): LinearCost<readonly Li
     current = current.right;
   }
 
-  return $proveCtx("O(n)", $lift("O(n)", result));
+  return $proveCtx($beginCost("O(n)"), result);
 }
 
 // =============================================================================
@@ -427,7 +421,7 @@ export function lineIndexInsert(
   text: string,
   readText?: ReadTextFn,
 ): LinearCost<LineIndexState> {
-  if (text.length === 0) return $proveCtx("O(n)", $lift("O(n)", state));
+  if (text.length === 0) return $proveCtx($beginCost("O(n)"), state);
 
   const { positions: newlinePositions, byteLength } = findNewlineBytePositions(text);
   const insertContext = getInsertBoundaryContext(position, byteLength, readText);
@@ -437,21 +431,21 @@ export function lineIndexInsert(
   // cross-boundary CRLF composition violates that assumption. Rebuild for correctness.
   if (readText && hasCrossBoundaryCRLFMerge(text, insertContext)) {
     return $proveCtx(
-      "O(n)",
-      $lift("O(n)", rebuildFromReadText(state, readText, state.lastReconciledRevision)),
+      $beginCost("O(n)"),
+      rebuildFromReadText(state, readText, state.lastReconciledRevision),
     );
   }
 
   // If no newlines, just update the length of the affected line
   if (newlinePositions.length === 0) {
     return $proveCtx(
-      "O(n)",
-      $lift("O(n)", updateLineLength(state, position, byteLength, text.length)),
+      $beginCost("O(n)"),
+      updateLineLength(state, position, byteLength, text.length),
     );
   }
 
   const location: LogCost<LineLocation | null> =
-    findLineAtPosition(state.root, position) ?? $proveCtx("O(log n)", $lift("O(log n)", null));
+    findLineAtPosition(state.root, position) ?? $proveCtx($beginCost("O(log n)"), null);
 
   return $prove(
     "O(n)",
@@ -940,8 +934,8 @@ export function lineIndexDelete(
   deletedText: string,
   deleteContext?: DeleteBoundaryContext,
 ): NLogNCost<LineIndexState> {
-  if (start >= end) return $proveCtx("O(n log n)", $lift("O(n log n)", state));
-  if (state.root === null) return $proveCtx("O(n log n)", $lift("O(n log n)", state));
+  if (start >= end) return $proveCtx($beginCost("O(n log n)"), state);
+  if (state.root === null) return $proveCtx($beginCost("O(n log n)"), state);
 
   const deleteLength = end - start;
   const deletedNewlines = countDeletedLineBreaks(deletedText, deleteContext);
@@ -949,13 +943,13 @@ export function lineIndexDelete(
   // If no newlines deleted, just update line length
   if (deletedNewlines === 0) {
     return $proveCtx(
-      "O(n log n)",
-      $lift("O(n log n)", updateLineLength(state, start, -deleteLength, -deletedText.length)),
+      $beginCost("O(n log n)"),
+      updateLineLength(state, start, -deleteLength, -deletedText.length),
     );
   }
 
   const startLocation: LogCost<LineLocation | null> =
-    findLineAtPosition(state.root, start) ?? $proveCtx("O(log n)", $lift("O(log n)", null));
+    findLineAtPosition(state.root, start) ?? $proveCtx($beginCost("O(log n)"), null);
 
   return $prove(
     "O(n log n)",
@@ -1324,7 +1318,7 @@ function removeLinesToEnd(
  * Use this when the line index gets out of sync.
  */
 export function rebuildLineIndex(content: string): LinearCost<LineIndexState> {
-  return $proveCtx("O(n)", $lift("O(n)", buildLineIndexFromText(content, 0)));
+  return $proveCtx($beginCost("O(n)"), buildLineIndexFromText(content, 0));
 }
 
 /**
@@ -1341,7 +1335,7 @@ export function getLineCountFromIndex(state: LineIndexState): ConstCost<number> 
     total += count;
   }
   // k (declared chunks) is document-size-independent; treat as O(1) per policy.
-  return $declare("O(1)", total);
+  return $unsafeDeclare("O(1)", total);
 }
 
 /**
@@ -1390,14 +1384,11 @@ export function isLineDirty(
   lineNumber: number,
 ): LinearCost<boolean> {
   if (dirtyRanges === "full-rebuild-needed") {
-    return $proveCtx("O(n)", $lift("O(n)", true));
+    return $proveCtx($beginCost("O(n)"), true);
   }
   return $proveCtx(
-    "O(n)",
-    $lift(
-      "O(n)",
-      dirtyRanges.some((r) => lineNumber >= r.startLine && lineNumber <= r.endLine),
-    ),
+    $beginCost("O(n)"),
+    dirtyRanges.some((r) => lineNumber >= r.startLine && lineNumber <= r.endLine),
   );
 }
 
@@ -1410,7 +1401,7 @@ export function getOffsetDeltaForLine(
 ): LinearCost<number> {
   if (dirtyRanges === "full-rebuild-needed") {
     // Delta information is lost; caller must reconcile before relying on offsets.
-    return $proveCtx("O(n)", $lift("O(n)", 0));
+    return $proveCtx($beginCost("O(n)"), 0);
   }
   let delta = 0;
   for (const range of dirtyRanges) {
@@ -1418,7 +1409,7 @@ export function getOffsetDeltaForLine(
       delta += range.offsetDelta;
     }
   }
-  return $proveCtx("O(n)", $lift("O(n)", delta));
+  return $proveCtx($beginCost("O(n)"), delta);
 }
 
 /**
@@ -1543,26 +1534,26 @@ export function lineIndexInsertLazy(
   currentRevision: number,
   readText?: ReadTextFn,
 ): LinearCost<LineIndexState> {
-  if (text.length === 0) return $proveCtx("O(n)", $lift("O(n)", state));
+  if (text.length === 0) return $proveCtx($beginCost("O(n)"), state);
 
   const { positions: newlinePositions, byteLength } = findNewlineBytePositions(text);
   const insertContext = getInsertBoundaryContext(position, byteLength, readText);
 
   // Same cross-boundary CRLF case as eager insert; rebuild to guarantee correctness.
   if (readText && hasCrossBoundaryCRLFMerge(text, insertContext)) {
-    return $proveCtx("O(n)", $lift("O(n)", rebuildFromReadText(state, readText, currentRevision)));
+    return $proveCtx($beginCost("O(n)"), rebuildFromReadText(state, readText, currentRevision));
   }
 
   // No newlines: simple length update (O(log n), no lazy needed)
   if (newlinePositions.length === 0) {
     return $proveCtx(
-      "O(n)",
-      $lift("O(n)", updateLineLengthLazy(state, position, byteLength, text.length)),
+      $beginCost("O(n)"),
+      updateLineLengthLazy(state, position, byteLength, text.length),
     );
   }
 
   const location: LogCost<LineLocation | null> =
-    findLineAtPosition(state.root, position) ?? $proveCtx("O(log n)", $lift("O(log n)", null));
+    findLineAtPosition(state.root, position) ?? $proveCtx($beginCost("O(log n)"), null);
 
   return $prove(
     "O(n)",
@@ -1714,8 +1705,8 @@ export function lineIndexDeleteLazy(
   currentRevision: number,
   deleteContext?: DeleteBoundaryContext,
 ): NLogNCost<LineIndexState> {
-  if (start >= end) return $proveCtx("O(n log n)", $lift("O(n log n)", state));
-  if (state.root === null) return $proveCtx("O(n log n)", $lift("O(n log n)", state));
+  if (start >= end) return $proveCtx($beginCost("O(n log n)"), state);
+  if (state.root === null) return $proveCtx($beginCost("O(n log n)"), state);
 
   const deleteLength = end - start;
   const deletedNewlines = countDeletedLineBreaks(deletedText, deleteContext);
@@ -1723,13 +1714,13 @@ export function lineIndexDeleteLazy(
   // No newlines: just update line length
   if (deletedNewlines === 0) {
     return $proveCtx(
-      "O(n log n)",
-      $lift("O(n log n)", updateLineLengthLazy(state, start, -deleteLength, -deletedText.length)),
+      $beginCost("O(n log n)"),
+      updateLineLengthLazy(state, start, -deleteLength, -deletedText.length),
     );
   }
 
   const startLocation: LogCost<LineLocation | null> =
-    findLineAtPosition(state.root, start) ?? $proveCtx("O(log n)", $lift("O(log n)", null));
+    findLineAtPosition(state.root, start) ?? $proveCtx($beginCost("O(log n)"), null);
 
   return $prove(
     "O(n log n)",

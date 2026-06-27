@@ -11,6 +11,7 @@ import { byteOffset } from "../../types/branded.js";
 import { DocumentActions } from "./actions.js";
 import { textEncoder } from "../core/encoding.js";
 import {
+  $beginCost,
   $prove,
   $proveCtx,
   $checked,
@@ -62,33 +63,24 @@ export interface DiffResult {
 export function diff(oldText: string, newText: string): QuadCost<DiffResult> {
   // Handle trivial cases
   if (oldText === newText) {
-    return $proveCtx(
-      "O(n^2)",
-      $lift("O(n)", {
-        edits: oldText.length > 0 ? [{ type: "equal", text: oldText, oldPos: 0, newPos: 0 }] : [],
-        distance: 0,
-      } satisfies DiffResult),
-    );
+    return $proveCtx($beginCost("O(n^2)"), {
+      edits: oldText.length > 0 ? [{ type: "equal", text: oldText, oldPos: 0, newPos: 0 }] : [],
+      distance: 0,
+    } satisfies DiffResult);
   }
 
   if (oldText.length === 0) {
-    return $proveCtx(
-      "O(n^2)",
-      $lift("O(1)", {
-        edits: [{ type: "insert", text: newText, oldPos: 0, newPos: 0 }],
-        distance: newText.length,
-      } satisfies DiffResult),
-    );
+    return $proveCtx($beginCost("O(n^2)"), {
+      edits: [{ type: "insert", text: newText, oldPos: 0, newPos: 0 }],
+      distance: newText.length,
+    } satisfies DiffResult);
   }
 
   if (newText.length === 0) {
-    return $proveCtx(
-      "O(n^2)",
-      $lift("O(1)", {
-        edits: [{ type: "delete", text: oldText, oldPos: 0, newPos: 0 }],
-        distance: oldText.length,
-      } satisfies DiffResult),
-    );
+    return $proveCtx($beginCost("O(n^2)"), {
+      edits: [{ type: "delete", text: oldText, oldPos: 0, newPos: 0 }],
+      distance: oldText.length,
+    } satisfies DiffResult);
   }
 
   // Find common prefix
@@ -152,7 +144,7 @@ export function diff(oldText: string, newText: string): QuadCost<DiffResult> {
     }
   }
 
-  return $proveCtx("O(n^2)", $lift<"O(n^2)", DiffResult>("O(n^2)", { edits, distance }));
+  return $proveCtx($beginCost("O(n^2)"), { edits, distance });
 }
 
 /**
@@ -427,7 +419,7 @@ export function computeSetValueActions(
   newContent: string,
 ): QuadCost<DocumentAction[]> {
   if (oldContent === newContent) {
-    return $proveCtx("O(n^2)", $lift("O(1)", []));
+    return $proveCtx($beginCost("O(n^2)"), []);
   }
 
   const diffResult = diff(oldContent, newContent);
@@ -488,7 +480,7 @@ export function computeSetValueActions(
     }
   }
 
-  return $proveCtx("O(n^2)", $lift<"O(n^2)", DocumentAction[]>("O(n^2)", actions));
+  return $proveCtx($beginCost("O(n^2)"), actions);
 }
 
 /**
@@ -559,7 +551,7 @@ export function computeSetValueActionsOptimized(
   newContent: string,
 ): LinearCost<DocumentAction[]> {
   if (oldContent === newContent) {
-    return $proveCtx("O(n)", $lift("O(n)", []));
+    return $proveCtx($beginCost("O(n)"), []);
   }
 
   // Find the differing region (in string indices)
@@ -597,7 +589,7 @@ export function computeSetValueActionsOptimized(
   const insertedText = newContent.slice(start, newEnd);
 
   if (deletedText.length === 0 && insertedText.length === 0) {
-    return $proveCtx("O(n)", $lift("O(n)", []));
+    return $proveCtx($beginCost("O(n)"), []);
   }
 
   // Convert string indices to byte indices for the piece table
@@ -606,27 +598,18 @@ export function computeSetValueActionsOptimized(
 
   if (deletedText.length === 0) {
     // Pure insert
-    return $proveCtx(
-      "O(n)",
-      $lift<"O(n)", DocumentAction[]>("O(n)", [DocumentActions.insert(byteStart, insertedText)]),
-    );
+    return $proveCtx($beginCost("O(n)"), [DocumentActions.insert(byteStart, insertedText)]);
   }
 
   if (insertedText.length === 0) {
     // Pure delete
-    return $proveCtx(
-      "O(n)",
-      $lift<"O(n)", DocumentAction[]>("O(n)", [DocumentActions.delete(byteStart, byteOldEnd)]),
-    );
+    return $proveCtx($beginCost("O(n)"), [DocumentActions.delete(byteStart, byteOldEnd)]);
   }
 
   // Replace
-  return $proveCtx(
-    "O(n)",
-    $lift<"O(n)", DocumentAction[]>("O(n)", [
-      DocumentActions.replace(byteStart, byteOldEnd, insertedText),
-    ]),
-  );
+  return $proveCtx($beginCost("O(n)"), [
+    DocumentActions.replace(byteStart, byteOldEnd, insertedText),
+  ]);
 }
 
 // =============================================================================
@@ -717,7 +700,7 @@ export function setValueAuto(
   if (options?.strategy === "diff") {
     return setValueWithDiff(state, newContent);
   }
-  return $proveCtx("O(n^2)", $lift("O(n^2)", setValue(state, newContent) as DocumentState));
+  return $proveCtx($beginCost("O(n^2)"), setValue(state, newContent) as DocumentState);
 }
 
 /**

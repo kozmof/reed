@@ -43,8 +43,8 @@ import {
   inOrderPieces,
 } from "./piece-table.js";
 import {
+  $beginCost,
   $proveCtx,
-  $lift,
   type ConstCost,
   type LogCost,
   type LinearCost,
@@ -119,11 +119,8 @@ export function createPoint(
     const last = findLastPiece(root);
     if (last === null) return null;
     return $proveCtx(
-      "O(log n)",
-      $lift(
-        "O(log n)",
-        freezeAttentionPoint({ pieceID: last.node.id, boundary: last.offsetInPiece }),
-      ),
+      $beginCost("O(log n)"),
+      freezeAttentionPoint({ pieceID: last.node.id, boundary: last.offsetInPiece }),
     );
   }
 
@@ -131,11 +128,8 @@ export function createPoint(
   if (location === null) return null;
 
   return $proveCtx(
-    "O(log n)",
-    $lift(
-      "O(log n)",
-      freezeAttentionPoint({ pieceID: location.node.id, boundary: location.offsetInPiece }),
-    ),
+    $beginCost("O(log n)"),
+    freezeAttentionPoint({ pieceID: location.node.id, boundary: location.offsetInPiece }),
   );
 }
 
@@ -156,7 +150,7 @@ export function resolvePoint(
   if (root === null) return null;
   const offset = resolvePointWithIndex(buildPieceOffsetIndex(root), point);
   if (offset === null) return null;
-  return $proveCtx("O(n)", $lift("O(n)", offset));
+  return $proveCtx($beginCost("O(n)"), offset);
 }
 
 // =============================================================================
@@ -190,7 +184,7 @@ export function createAttention(
     freezeAttentionState(next, state.nextID + 1),
     id,
   ];
-  return $proveCtx("O(1)", $lift("O(1)", result));
+  return $proveCtx($beginCost("O(1)"), result);
 }
 
 /**
@@ -202,10 +196,10 @@ export function deleteAttention(
   state: AttentionLayerState,
   id: AttentionID,
 ): ConstCost<AttentionLayerState> {
-  if (!state.attentions.has(id)) return $proveCtx("O(1)", $lift("O(1)", state));
+  if (!state.attentions.has(id)) return $proveCtx($beginCost("O(1)"), state);
   const next = new Map(state.attentions);
   next.delete(id);
-  return $proveCtx("O(1)", $lift("O(1)", freezeAttentionState(next, state.nextID)));
+  return $proveCtx($beginCost("O(1)"), freezeAttentionState(next, state.nextID));
 }
 
 /**
@@ -219,7 +213,7 @@ export function getAttention(
 ): ConstCost<Attention> | null {
   const attention = state.attentions.get(id);
   if (attention === undefined) return null;
-  return $proveCtx("O(1)", $lift("O(1)", attention));
+  return $proveCtx($beginCost("O(1)"), attention);
 }
 
 // =============================================================================
@@ -303,7 +297,7 @@ export function resolveAttention(
   if (state.attentions.get(id) === undefined) return null;
   const range = resolveAttentionWithIndex(buildPieceOffsetIndex(root), state, id);
   if (range === null) return null;
-  return $proveCtx("O(n)", $lift("O(n)", range));
+  return $proveCtx($beginCost("O(n)"), range);
 }
 
 // =============================================================================
@@ -323,7 +317,7 @@ export function getTextForAttention(
 ): LinearCost<string> | null {
   const offsets = resolveAttention(pieceTableState.root, attentionState, id);
   if (offsets === null) return null;
-  if (offsets.startOffset >= offsets.endOffset) return $proveCtx("O(n)", $lift("O(n)", ""));
+  if (offsets.startOffset >= offsets.endOffset) return $proveCtx($beginCost("O(n)"), "");
   return getText(pieceTableState, offsets.startOffset, offsets.endOffset);
 }
 
@@ -351,7 +345,7 @@ export function findAttentionsAt(
       results.push(id);
     }
   }
-  return $proveCtx("O(n)", $lift("O(n)", results));
+  return $proveCtx($beginCost("O(n)"), results);
 }
 
 /**
@@ -377,7 +371,7 @@ export function findAttentionsOverlapping(
       results.push(id);
     }
   }
-  return $proveCtx("O(n)", $lift("O(n)", results));
+  return $proveCtx($beginCost("O(n)"), results);
 }
 
 // =============================================================================
@@ -401,7 +395,7 @@ export function migrateSplits(
   state: AttentionLayerState,
   splits: readonly SplitRecord[],
 ): LinearCost<AttentionLayerState> {
-  if (splits.length === 0) return $proveCtx("O(n)", $lift("O(n)", state));
+  if (splits.length === 0) return $proveCtx($beginCost("O(n)"), state);
 
   // originalID → SplitRecord lookup. The common case is a single split (one
   // insert splits at most one piece), so skip the Map allocation there.
@@ -432,7 +426,7 @@ export function migrateSplits(
   }
 
   const migrated = next === null ? state : freezeAttentionState(next, state.nextID);
-  return $proveCtx("O(n)", $lift("O(n)", migrated));
+  return $proveCtx($beginCost("O(n)"), migrated);
 }
 
 function migratePoint(
@@ -479,14 +473,11 @@ export function insertWithAttention(
   text: string,
 ): LinearCost<InsertWithAttentionResult> {
   const result = pieceTableInsert(pieceTableState, position, text);
-  return $proveCtx(
-    "O(n)",
-    $lift("O(n)", {
-      pieceTableState: result.state,
-      attentionState: migrateSplits(attentionState, result.splits),
-      insertedByteLength: result.insertedByteLength,
-    }),
-  );
+  return $proveCtx($beginCost("O(n)"), {
+    pieceTableState: result.state,
+    attentionState: migrateSplits(attentionState, result.splits),
+    insertedByteLength: result.insertedByteLength,
+  });
 }
 
 /** Result of an attention-aware delete: both layers advanced together. */
@@ -552,7 +543,7 @@ export function migrateDelete(
   start: number,
   end: number,
 ): NLogNCost<AttentionLayerState> {
-  if (start >= end) return $proveCtx("O(n log n)", $lift("O(n log n)", state));
+  if (start >= end) return $proveCtx($beginCost("O(n log n)"), state);
 
   const oldIndex = buildPieceOffsetIndex(oldRoot);
   const deletedLength = end - start;
@@ -583,7 +574,7 @@ export function migrateDelete(
   }
 
   const migrated = next === null ? state : freezeAttentionState(next, state.nextID);
-  return $proveCtx("O(n log n)", $lift("O(n log n)", migrated));
+  return $proveCtx($beginCost("O(n log n)"), migrated);
 }
 
 /**
@@ -607,18 +598,15 @@ export function deleteWithAttention(
   const oldRoot = pieceTableState.root;
   const newPieceTableState = pieceTableDelete(pieceTableState, start, end);
 
-  return $proveCtx(
-    "O(n log n)",
-    $lift("O(n log n)", {
-      pieceTableState: newPieceTableState,
-      attentionState: migrateDelete(
-        attentionState,
-        oldRoot,
-        newPieceTableState.root,
-        clampedStart,
-        clampedEnd,
-      ),
-      deletedByteLength: clampedStart >= clampedEnd ? 0 : clampedEnd - clampedStart,
-    }),
-  );
+  return $proveCtx($beginCost("O(n log n)"), {
+    pieceTableState: newPieceTableState,
+    attentionState: migrateDelete(
+      attentionState,
+      oldRoot,
+      newPieceTableState.root,
+      clampedStart,
+      clampedEnd,
+    ),
+    deletedByteLength: clampedStart >= clampedEnd ? 0 : clampedEnd - clampedStart,
+  });
 }
