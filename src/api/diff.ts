@@ -22,7 +22,7 @@ export const diff = {
   computeSetValueActionsFromStateWithDiff,
   /** O(n) — single REPLACE operation. Best for interactive edits. */
   setValue,
-  /** O(n²) — Myers minimal-edit script. Use when fine-grained history matters. */
+  /** O(n²) — memory-bounded Myers script. Use when finer history matters. */
   setValueWithDiff,
   /**
    * Unified entry point: routes to `setValue` (default, O(n)) or `setValueWithDiff`

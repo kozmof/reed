@@ -57,7 +57,7 @@ Supported config fields (`DocumentStoreConfig`):
 - `logger` — optional diagnostics sink; omit to keep the library silent
 - `historyLimit`
 - `chunkSize`
-- `encoding`
+- `encoding` — currently only `'utf-8'` is supported
 - `lineEnding`
 - `undoGroupTimeout`
 - `normalizeInsertedLineEndings` — coerce line endings on `INSERT`/`REPLACE` to match `lineEnding`

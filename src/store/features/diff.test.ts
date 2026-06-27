@@ -226,6 +226,30 @@ describe("Diff Algorithm", () => {
       const result = diff(oldContent, newContent);
       expect(result.distance).toBeGreaterThan(0);
     });
+
+    it("falls back to a bounded coarse replacement for large unrelated text", () => {
+      const oldContent = "prefix:" + "a".repeat(100_000);
+      const newContent = "prefix:" + "b".repeat(100_000);
+
+      const result = diff(oldContent, newContent);
+
+      expect(result.edits).toEqual([
+        { type: "equal", text: "prefix:", oldPos: 0, newPos: 0 },
+        { type: "delete", text: "a".repeat(100_000), oldPos: 7, newPos: 7 },
+        { type: "insert", text: "b".repeat(100_000), oldPos: 100_007, newPos: 7 },
+      ]);
+      expect(result.distance).toBe(200_000);
+    });
+
+    it("applies the bounded fallback at the correct non-zero byte offset", () => {
+      const oldContent = "é-prefix:" + "a".repeat(100_000);
+      const newContent = "é-prefix:" + "b".repeat(100_000);
+      const state = createInitialState({ content: oldContent });
+
+      const next = setValueWithDiff(state, newContent);
+
+      expect(getValue(next.pieceTable)).toBe(newContent);
+    });
   });
 
   describe("edge cases", () => {

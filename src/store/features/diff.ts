@@ -1,6 +1,7 @@
 /**
- * Myers diff algorithm implementation for computing minimal edit scripts.
- * Used for efficient bulk text replacement via setValue.
+ * Memory-bounded Myers diff implementation for bulk text replacement.
+ * Produces a minimal edit script while its trace fits the configured budget,
+ * then safely falls back to a coarse replacement.
  *
  * Reference: "An O(ND) Difference Algorithm and Its Variations" by Eugene W. Myers
  * http://www.xmailserver.org/diff2.pdf
@@ -57,8 +58,19 @@ export interface DiffResult {
 // =============================================================================
 
 /**
+ * Hard ceiling for the Myers frontier plus its backtracking snapshots.
+ *
+ * Myers is fast for nearby texts, but retaining every frontier is O((N + M)D)
+ * memory and becomes unsafe for large, unrelated inputs. Once this budget is
+ * exhausted we return a correct coarse replacement instead of risking process
+ * termination. The fast setValue path is unaffected.
+ */
+const MAX_MYERS_MEMORY_BYTES = 16 * 1024 * 1024;
+
+/**
  * Compute the diff between two strings using Myers algorithm.
- * Returns the minimal edit script to transform `oldText` into `newText`.
+ * Returns a minimal edit script when it fits the memory budget, otherwise a
+ * correct coarse replacement.
  */
 export function diff(oldText: string, newText: string): QuadCost<DiffResult> {
   // Handle trivial cases
@@ -180,13 +192,22 @@ function myersDiff(
   // Myers algorithm
   const max = n + m;
   const vSize = 2 * max + 1;
+  const frontierBytes = vSize * Int32Array.BYTES_PER_ELEMENT;
+  if (!Number.isSafeInteger(frontierBytes) || frontierBytes > MAX_MYERS_MEMORY_BYTES) {
+    return coarseReplacement(oldText, newText, oldOffset, newOffset);
+  }
+
   const v = new Int32Array(vSize);
-  // Single flat buffer for all (max+1) trace snapshots: O((n+m)²) memory but one allocation.
-  const traceBuf = new Int32Array((max + 1) * vSize);
+  const trace: Int32Array[] = [];
+  let allocatedBytes = frontierBytes;
 
   // Forward phase - find the path
   for (let d = 0; d <= max; d++) {
-    traceBuf.set(v, d * vSize);
+    if (allocatedBytes + frontierBytes > MAX_MYERS_MEMORY_BYTES) {
+      return coarseReplacement(oldText, newText, oldOffset, newOffset);
+    }
+    trace.push(v.slice());
+    allocatedBytes += frontierBytes;
 
     for (let k = -d; k <= d; k += 2) {
       const kIndex = k + max;
@@ -210,21 +231,44 @@ function myersDiff(
 
       // Check if we've reached the end
       if (x >= n && y >= m) {
-        return backtrack(traceBuf, vSize, oldText, newText, oldOffset, newOffset, d, max);
+        return backtrack(trace, oldText, newText, oldOffset, newOffset, d, max);
       }
     }
   }
 
-  // Should not reach here
-  return simpleDiff(oldText, newText, oldOffset, newOffset);
+  // Defensive fallback: the edit graph should always reach (n, m).
+  return coarseReplacement(oldText, newText, oldOffset, newOffset);
+}
+
+/**
+ * Return a correct, non-minimal replacement when retaining a minimal Myers
+ * trace would exceed the memory budget.
+ */
+function coarseReplacement(
+  oldText: string,
+  newText: string,
+  oldOffset: number,
+  newOffset: number,
+): DiffEdit[] {
+  return [
+    { type: "delete", text: oldText, oldPos: oldOffset, newPos: newOffset },
+    {
+      type: "insert",
+      text: newText,
+      // computeSetValueActions applies edits sequentially. Positioning the
+      // insert after the deleted old span makes its adjusted byte offset equal
+      // the start of that span.
+      oldPos: oldOffset + oldText.length,
+      newPos: newOffset,
+    },
+  ];
 }
 
 /**
  * Backtrack through the trace to build the edit list.
  */
 function backtrack(
-  traceBuf: Int32Array,
-  vSize: number,
+  trace: readonly Int32Array[],
   oldText: string,
   newText: string,
   oldOffset: number,
@@ -237,7 +281,7 @@ function backtrack(
   let y = newText.length;
 
   for (let i = d; i > 0; i--) {
-    const vPrev = traceBuf.subarray((i - 1) * vSize, i * vSize);
+    const vPrev = trace[i - 1]!;
     const k = x - y;
     const kIndex = k + max;
 
@@ -672,15 +716,15 @@ export interface SetValueOptions {
   /**
    * Strategy to use when computing the edit:
    * - `'fast'` (default) — single REPLACE operation, O(n). Best for interactive edits.
-   * - `'diff'` — Myers minimal-edit script, O(n²). Produces finer-grained history entries.
+   * - `'diff'` — memory-bounded Myers script, O(n²). Usually produces finer-grained history.
    */
   strategy?: "fast" | "diff";
 }
 
 /**
  * Unified entry point for setting the entire document value.
- * Routes to `setValue` (O(n), single REPLACE) or `setValueWithDiff` (O(n²), minimal diff)
- * based on the `strategy` option.
+ * Routes to `setValue` (O(n), single REPLACE) or `setValueWithDiff` (O(n²),
+ * memory-bounded diff) based on the `strategy` option.
  *
  * Use `strategy: 'diff'` only when fine-grained undo history matters — e.g. collaborative
  * editing or patch generation. For all other cases the default `'fast'` is preferable.
@@ -705,9 +749,10 @@ export function setValueAuto(
 
 /**
  * Set the entire document value to new content using the Myers diff algorithm.
- * Computes a minimal edit script — O(n²) worst case, but produces finer-grained history entries.
+ * Computes a minimal edit script while its trace fits the memory budget; larger
+ * unrelated inputs safely fall back to a single coarse replacement.
  *
- * Prefer `setValue` for interactive use. Use this when minimal diff granularity matters.
+ * Prefer `setValue` for interactive use. Use this when finer diff granularity matters.
  *
  * For store semantics (single notification and rollback safety), callers should use store.batch().
  *
@@ -771,8 +816,9 @@ export function computeSetValueActionsFromState(
 }
 
 /**
- * Compute the minimal Myers-diff actions needed to transform a piece table to new content.
- * O(n²) worst case — use when fine-grained diff granularity is required.
+ * Compute memory-bounded Myers-diff actions needed to transform a piece table.
+ * Produces minimal actions while the trace fits the memory budget and a coarse
+ * replacement otherwise. O(n²) worst-case time.
  *
  * @param pieceTable - Current piece table state
  * @param newContent - The desired new content

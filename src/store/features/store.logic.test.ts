@@ -88,10 +88,16 @@ describe("State Factories", () => {
       expect(state.history.limit).toBe(100);
     });
 
-    it("should create state with custom encoding", () => {
-      const state = createInitialState({ encoding: "utf-16" });
+    it("should expose the supported UTF-8 encoding", () => {
+      const state = createInitialState({ encoding: "utf-8" });
 
-      expect(state.metadata.encoding).toBe("utf-16");
+      expect(state.metadata.encoding).toBe("utf-8");
+    });
+
+    it("should reject unsupported encodings at runtime", () => {
+      expect(() => createInitialState({ encoding: "utf-16" as unknown as "utf-8" })).toThrow(
+        "encoding must be 'utf-8'",
+      );
     });
 
     it("should create state with custom line ending", () => {

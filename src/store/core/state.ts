@@ -64,6 +64,9 @@ function assertValidDocumentStoreConfig(config: DocumentStoreConfig): void {
       "DocumentStoreConfig cannot include both 'scheduler' and 'reconcileMode' at the same time",
     );
   }
+  if (config.encoding !== undefined && config.encoding !== "utf-8") {
+    throw new Error(`encoding must be 'utf-8': ${String(config.encoding)}`);
+  }
   if (
     config.chunkSize !== undefined &&
     (!Number.isInteger(config.chunkSize) || config.chunkSize < 0)

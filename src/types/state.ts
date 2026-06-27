@@ -554,8 +554,8 @@ export interface HistoryState {
 export interface DocumentMetadata {
   /** File path if loaded from file */
   readonly filePath?: string | undefined;
-  /** File encoding (default: utf-8) */
-  readonly encoding: string;
+  /** Internal and streamed-file encoding. Reed currently supports UTF-8 only. */
+  readonly encoding: "utf-8";
   /** Line ending style */
   readonly lineEnding: "lf" | "crlf" | "cr";
   /** When true, inserted text is normalized to match `lineEnding` */
@@ -643,8 +643,8 @@ export interface DocumentStoreConfigBase {
    * explicitly providing a positive value opts an empty document into chunked mode.
    */
   chunkSize?: number;
-  /** File encoding (default: 'utf-8') */
-  encoding?: string;
+  /** File encoding. Reed currently supports UTF-8 only. */
+  encoding?: "utf-8";
   /** Line ending style (default: 'lf') */
   lineEnding?: "lf" | "crlf" | "cr";
   /**
