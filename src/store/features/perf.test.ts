@@ -11,6 +11,7 @@
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { createDocumentStore } from "./store.js";
+import { createStreamingDocumentLoader } from "./streaming-loader.js";
 import { createInitialState, withLineIndexState } from "../core/state.js";
 import { DocumentActions } from "./actions.js";
 import { byteOffset } from "../../types/branded.js";
@@ -255,7 +256,50 @@ describe("Piece table reads (getText)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Edits — insert / delete
+// 4. Streaming viewport latency
+// ---------------------------------------------------------------------------
+
+describe("Streaming viewport latency", () => {
+  it("loads a 100-chunk viewport within the local-processing budget", async () => {
+    const chunkCount = 100;
+    const chunkSize = 32;
+    const store = createDocumentStore({
+      chunkSize,
+      totalFileSize: chunkCount * chunkSize,
+      reconcileMode: "none",
+    });
+    const chunk = new Uint8Array(chunkSize).fill(97);
+    const metadata = Array.from({ length: chunkCount }, (_, chunkIndex) => ({
+      chunkIndex,
+      byteLength: chunkSize,
+      lineCount: 0,
+    }));
+    const loader = createStreamingDocumentLoader(
+      store,
+      {
+        totalChunkCount: chunkCount,
+        loadChunk: async () => chunk,
+      },
+      metadata,
+      {
+        prefetchWindowSize: 0,
+        chunkManagerConfig: { maxLoadedChunks: chunkCount },
+      },
+    );
+
+    const start = performance.now();
+    await loader.setViewport(0, chunkCount - 1);
+    const elapsedMs = performance.now() - start;
+
+    assertPerf("load 100-chunk viewport", elapsedMs, 500);
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(chunkCount);
+    loader.dispose();
+    store.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. Edits — insert / delete
 // ---------------------------------------------------------------------------
 
 describe("Edits via store.dispatch", () => {
@@ -309,7 +353,7 @@ describe("Edits via store.dispatch", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 5. Reconciliation
+// 6. Reconciliation
 // ---------------------------------------------------------------------------
 
 describe("Reconciliation", () => {
@@ -360,7 +404,7 @@ describe("Reconciliation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 6. Undo / redo
+// 7. Undo / redo
 // ---------------------------------------------------------------------------
 
 describe("Undo / redo", () => {
@@ -391,7 +435,7 @@ describe("Undo / redo", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 7. Scaling ratio (cost-algebra validation)
+// 8. Scaling ratio (cost-algebra validation)
 //
 // These tests confirm that cost annotations are not silently wrong by
 // measuring the actual growth rate between the 10k-line and 900k-line
@@ -471,7 +515,7 @@ describe("Scaling ratio (cost-algebra validation)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 8. Stress: mixed edit workload
+// 9. Stress: mixed edit workload
 // ---------------------------------------------------------------------------
 
 describe("Mixed edit workload", () => {
@@ -513,7 +557,7 @@ describe("Mixed edit workload", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 8. Multibyte content (kanji + emoji)
+// 10. Multibyte content (kanji + emoji)
 //
 // Kanji:  3 UTF-8 bytes, 1 UTF-16 code unit  → byteOffset ≠ charOffset
 // Emoji:  4 UTF-8 bytes, 2 UTF-16 code units → byteOffset ≠ charOffset,

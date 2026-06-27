@@ -76,3 +76,29 @@ jobs:
             }
             console.log('Package consumption OK — export count:', Object.keys(reed).length);
           "
+      - name: Type-check a packed-package consumer
+        run: |
+          consume="$RUNNER_TEMP/consume"
+          cd "$consume"
+          cat > index.ts <<'TS'
+          import { position, query, store, type DocumentState } from '@kozmof/reed';
+
+          const documentStore = store.createDocumentStore({ content: 'hello' });
+          const snapshot: DocumentState = documentStore.getSnapshot();
+          const length: number = query.getLength(snapshot.pieceTable);
+          const insert = store.DocumentActions.insert(position.byteOffset(length), '!');
+          documentStore.dispatch(insert);
+          TS
+          cat > tsconfig.json <<'JSON'
+          {
+            "compilerOptions": {
+              "module": "NodeNext",
+              "moduleResolution": "NodeNext",
+              "noEmit": true,
+              "strict": true,
+              "target": "ES2022"
+            },
+            "include": ["index.ts"]
+          }
+          JSON
+          "$GITHUB_WORKSPACE/node_modules/.bin/tsc" -p tsconfig.json

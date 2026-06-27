@@ -501,9 +501,7 @@ export function computeSetValueActions(
   // Build the char-to-byte offset map once (O(n)) to avoid repeated encode() allocations.
   const charToByteMap = buildCharToByteMap(oldContent);
 
-  // Process operations, adjusting positions as we go
-  // We need to track both string offset and byte offset
-  let stringOffset = 0;
+  // Process operations, adjusting byte positions as earlier edits change the document.
   let byteOffsetDelta = 0;
 
   for (const op of ops) {
@@ -515,11 +513,9 @@ export function computeSetValueActions(
       actions.push(
         DocumentActions.delete(byteOffset(bytePos), byteOffset(bytePos + deleteByteLen)),
       );
-      stringOffset -= op.text.length;
       byteOffsetDelta -= deleteByteLen;
     } else if (op.type === "insert") {
       actions.push(DocumentActions.insert(byteOffset(bytePos), op.text));
-      stringOffset += op.text.length;
       byteOffsetDelta += textEncoder.encode(op.text).length;
     }
   }

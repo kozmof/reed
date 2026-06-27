@@ -79,6 +79,47 @@ describe("StreamingDocumentLoader", () => {
     streamingLoader.dispose();
   });
 
+  it("trims late chunks from a superseded multi-chunk viewport", async () => {
+    const store = createDocumentStore({ chunkSize: 1 });
+    const resolvers = new Map<number, () => void>();
+    const loadChunk = vi.fn(async (chunkIndex: number): Promise<Uint8Array> => {
+      if (chunkIndex < 2) {
+        await new Promise<void>((resolve) => {
+          resolvers.set(chunkIndex, resolve);
+        });
+      }
+      return new TextEncoder().encode(String(chunkIndex));
+    });
+    const metadata = Array.from({ length: 6 }, (_, chunkIndex) => ({
+      chunkIndex,
+      byteLength: 1,
+      lineCount: 0,
+    }));
+    const streamingLoader = createStreamingDocumentLoader(
+      store,
+      { loadChunk, totalChunkCount: metadata.length },
+      metadata,
+      {
+        prefetchWindowSize: 0,
+        chunkManagerConfig: { maxLoadedChunks: 2 },
+      },
+    );
+
+    const staleViewport = streamingLoader.setViewport(0, 1);
+    await vi.waitFor(() => expect(resolvers.size).toBe(2));
+
+    await streamingLoader.setViewport(4, 5);
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([4, 5]);
+
+    resolvers.get(0)?.();
+    resolvers.get(1)?.();
+    await staleViewport;
+
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([4, 5]);
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(2);
+    streamingLoader.dispose();
+  });
+
   it("preserves chunk order across viewport eviction and out-of-order reload", async () => {
     const chunks = ["A\n", "B\n", "C\n", "D"];
     const store = createDocumentStore({

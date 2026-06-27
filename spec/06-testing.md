@@ -4,9 +4,9 @@
 
 - Date: 2026-06-27
 - Functional command: `pnpm test`
-- Functional result: `23` test files, `978` tests passed
+- Functional result: `23` test files, `982` tests passed
 - Perf command: `pnpm test:perf`
-- Perf result: `1` test file, `29` tests passed
+- Perf result: `1` test file, `30` tests passed
 
 ## 2. Current Test Suites
 
@@ -51,13 +51,12 @@ Implemented coverage is strongest in:
 - event semantics including `APPLY_REMOTE` `content-change` emission and `affectedRanges` correctness for multi-change batches
 - selector-level rendering and byte/char conversion logic
 
-## 4. Testing Gaps
+## 4. Coverage Boundaries
 
 Current gaps relative to roadmap/spec ambitions:
 
-- `createStreamingDocumentLoader` direct coverage remains focused on viewport validation, stale requests, and boundary eviction/reload
-- performance thresholds are intentionally generous and catch catastrophic regressions rather
-  than enforcing product-level latency budgets on every supported runtime
+- `createStreamingDocumentLoader` directly covers viewport validation, stale-request cache trimming, multi-chunk viewport transitions, and boundary eviction/reload
+- the performance suite enforces a 500 ms local-processing budget for a 100-chunk viewport; end-to-end I/O latency remains loader- and product-specific
 
 The randomized high-scale streaming stress suite (`chunk-stress.test.ts`) closes the
 previously-acknowledged gap. It drives long seeded sequences of viewport-driven

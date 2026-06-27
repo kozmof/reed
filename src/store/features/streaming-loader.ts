@@ -117,6 +117,7 @@ export function createStreamingDocumentLoader(
   const totalChunks = metadata.length;
   let disposed = false;
   let latestViewportRequestId = 0;
+  let latestWindowChunks: readonly number[] = [];
 
   // Validate that metadata describes the contiguous chunk set {0..totalChunks-1}
   // exactly once each and that every value is usable by the chunk runtime.
@@ -220,13 +221,22 @@ export function createStreamingDocumentLoader(
     // Pin the window so LRU does not evict chunks while they are loading.
     const windowChunks: number[] = [];
     for (let i = windowStart; i <= windowEnd; i++) windowChunks.push(i);
+    latestWindowChunks = windowChunks;
     manager.setActiveChunks(windowChunks);
 
     // Load viewport chunks (awaited — caller needs them visible).
     const viewportLoads: Promise<void>[] = [];
     for (let i = start; i <= end; i++) viewportLoads.push(manager.ensureLoaded(i));
     await Promise.all(viewportLoads);
-    if (disposed || requestId !== latestViewportRequestId) return;
+    if (disposed) return;
+    if (requestId !== latestViewportRequestId) {
+      // Each completed fetch temporarily protects its own chunk from eviction so
+      // ensureLoaded callers can observe it. Once an entire stale viewport has
+      // completed, trim again without that protection; otherwise its last chunk
+      // can leave the cache above maxLoadedChunks indefinitely.
+      manager.setActiveChunks(latestWindowChunks);
+      return;
+    }
 
     // Prefetch window chunks outside the viewport in the background.
     for (let i = windowStart; i < start; i++) manager.prefetch(i);
