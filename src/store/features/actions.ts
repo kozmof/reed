@@ -191,12 +191,18 @@ export const DocumentActions = {
    * @param start - Start position to insert at (0-based byte offset)
    * @param text - Text to insert
    */
-  insert(start: ByteOffset, text: string, selection?: readonly SelectionRange[]): InsertAction {
+  insert(
+    start: ByteOffset,
+    text: string,
+    selection?: readonly SelectionRange[],
+    timestamp: number = Date.now(),
+  ): InsertAction {
     const frozenSelection = freezeSelection(selection);
     return Object.freeze({
       type: "INSERT",
       start,
       text,
+      timestamp,
       ...(frozenSelection && { selection: frozenSelection }),
     });
   },
@@ -206,12 +212,18 @@ export const DocumentActions = {
    * @param start - Start position of deletion (inclusive, byte offset)
    * @param end - End position of deletion (exclusive, byte offset)
    */
-  delete(start: ByteOffset, end: ByteOffset, selection?: readonly SelectionRange[]): DeleteAction {
+  delete(
+    start: ByteOffset,
+    end: ByteOffset,
+    selection?: readonly SelectionRange[],
+    timestamp: number = Date.now(),
+  ): DeleteAction {
     const frozenSelection = freezeSelection(selection);
     return Object.freeze({
       type: "DELETE",
       start,
       end,
+      timestamp,
       ...(frozenSelection && { selection: frozenSelection }),
     });
   },
@@ -227,6 +239,7 @@ export const DocumentActions = {
     end: ByteOffset,
     text: string,
     selection?: readonly SelectionRange[],
+    timestamp: number = Date.now(),
   ): ReplaceAction {
     const frozenSelection = freezeSelection(selection);
     return Object.freeze({
@@ -234,6 +247,7 @@ export const DocumentActions = {
       start,
       end,
       text,
+      timestamp,
       ...(frozenSelection && { selection: frozenSelection }),
     });
   },

@@ -213,6 +213,28 @@ describe("StreamingDocumentLoader", () => {
     },
   );
 
+  it("rejects invalid manager config before mutating the store", () => {
+    const store = createDocumentStore({ chunkSize: 4, totalFileSize: 4 });
+    const listener = vi.fn();
+    store.subscribe(listener);
+    const chunkLoader = {
+      totalChunkCount: 1,
+      loadChunk: vi.fn(async () => new Uint8Array([0, 0, 0, 0])),
+    };
+
+    expect(() =>
+      createStreamingDocumentLoader(
+        store,
+        chunkLoader,
+        [{ chunkIndex: 0, byteLength: 4, lineCount: 1 }],
+        { chunkManagerConfig: { maxLoadedChunks: 0 } },
+      ),
+    ).toThrow(/maxLoadedChunks must be a positive integer/);
+    expect(store.getSnapshot().pieceTable.chunkMetadata.size).toBe(0);
+    expect(listener).not.toHaveBeenCalled();
+    store.dispose();
+  });
+
   it("rejects invalid metadata values before mutating the store", () => {
     const store = createDocumentStore({ chunkSize: 4 });
     const chunkLoader = { loadChunk: vi.fn(async () => new Uint8Array([0])) };

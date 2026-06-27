@@ -670,7 +670,9 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
       historyChange = makeInsertChange(op.position, op.insertText);
       break;
   }
-  newState = historyPush(newState, historyChange, op.timestamp ?? Date.now());
+  // Timestamp-less hand-written actions remain deterministic. Normal callers use
+  // DocumentActions, which captures wall-clock time before reduction.
+  newState = historyPush(newState, historyChange, op.timestamp ?? state.revision);
 
   // Mark as dirty and increment revision
   return withState(newState, {

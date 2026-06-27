@@ -174,20 +174,20 @@ export function createStreamingDocumentLoader(
     }
   }
 
-  // Declare all chunk metadata upfront so the store can answer total line-count
-  // queries even while most chunks are not yet loaded.
-  if (metadata.length > 0) {
-    store.dispatch(DocumentActions.declareChunkMetadata([...metadata]));
-  }
-
-  // Default to a one-chunk viewport plus the surrounding prefetch window.
-  // The +4 gives some slack for chunks being loaded concurrently.
+  // Validate and construct the manager before mutating the store. A configuration
+  // error must leave metadata and subscribers untouched.
   const derivedMax = 1 + 2 * prefetchWindowSize + 4;
   const cmConfig: ChunkManagerConfig = {
     maxLoadedChunks: derivedMax,
     ...config.chunkManagerConfig,
   };
   const manager = createChunkManager(store, loader, cmConfig);
+
+  // Declare all chunk metadata upfront so the store can answer total line-count
+  // queries even while most chunks are not yet loaded.
+  if (metadata.length > 0) {
+    store.dispatch(DocumentActions.declareChunkMetadata([...metadata]));
+  }
 
   async function setViewport(startChunkIndex: number, endChunkIndex: number): Promise<void> {
     if (disposed) return;

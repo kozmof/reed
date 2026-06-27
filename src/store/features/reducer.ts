@@ -17,8 +17,8 @@ import type {
   PieceTableState,
 } from "../../types/state.js";
 import { isValidChunkMetadata, type DocumentAction } from "../../types/actions.js";
-import type { ByteOffset } from "../../types/branded.js";
-import { byteOffset, byteLength } from "../../types/branded.js";
+import type { ByteOffset, PieceID } from "../../types/branded.js";
+import { byteOffset, byteLength, pieceID } from "../../types/branded.js";
 import {
   withState,
   createChunkPieceNode,
@@ -113,12 +113,16 @@ function appendChunkPiece(
   root: PieceNode | null,
   chunkIndex: number,
   chunkByteLength: number,
+  id: PieceID,
 ): PieceNode {
   const newLeaf = createChunkPieceNode(
     chunkIndex,
     byteOffset(0),
     byteLength(chunkByteLength),
     "red",
+    null,
+    null,
+    id,
   );
   return appendToRightmost(root, newLeaf, withPieceNode);
 }
@@ -563,10 +567,17 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
 
       const newChunkMap = new Map(chunkMap);
       newChunkMap.set(chunkIndex, chunkBytes);
+      const newPieceID = pieceID(`p${state.pieceTable.nextPieceID}`);
 
       const newRoot = isSequentialFirst
-        ? appendChunkPiece(state.pieceTable.root, chunkIndex, chunkBytes.length)
-        : insertChunkPieceAt(state.pieceTable.root, insertionPos, chunkIndex, chunkBytes.length);
+        ? appendChunkPiece(state.pieceTable.root, chunkIndex, chunkBytes.length, newPieceID)
+        : insertChunkPieceAt(
+            state.pieceTable.root,
+            insertionPos,
+            chunkIndex,
+            chunkBytes.length,
+            newPieceID,
+          );
 
       // Update loadedChunks on first load; advance the high-water mark.
       const newLoadedChunks = isFirstLoad ? new Set([...loadedChunks, chunkIndex]) : loadedChunks;
@@ -576,6 +587,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
         root: newRoot,
         chunkMap: newChunkMap,
         totalLength: totalLength + chunkBytes.length,
+        nextPieceID: state.pieceTable.nextPieceID + 1,
         // High-water mark: always advances to max(prev, chunkIndex + 1).
         nextExpectedChunk: Math.max(nextExpectedChunk, chunkIndex + 1),
         loadedChunks: newLoadedChunks,
@@ -734,7 +746,8 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
     default: {
       // Exhaustive check - TypeScript will error if we miss an action type
       const exhaustiveCheck: never = action;
-      return exhaustiveCheck;
+      const unknownAction = exhaustiveCheck as unknown as { readonly type?: unknown };
+      throw new TypeError(`Unknown document action type: ${String(unknownAction.type)}`);
     }
   }
 }

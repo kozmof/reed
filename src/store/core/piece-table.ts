@@ -10,6 +10,7 @@ import type { PieceNode, PieceTableState, BufferReference } from "../../types/st
 import {
   byteOffset,
   byteLength,
+  pieceID,
   type ByteOffset,
   type ByteLength,
   type PieceID,
@@ -395,9 +396,10 @@ export function rbInsertPiece(
   bufferType: "original" | "add",
   start: ByteOffset,
   length: ByteLength,
+  id: PieceID = generatePieceID(),
 ): LogCost<PieceNode> {
   // Create the new node (always red initially)
-  const newPiece = createPieceNode(bufferType, start, length, "red");
+  const newPiece = createPieceNode(bufferType, start, length, "red", null, null, id);
 
   if (root === null) {
     // Empty tree - new node becomes black root
@@ -480,6 +482,7 @@ function bstInsert(
 export function splitPiece(
   piece: PieceNode,
   offsetInPiece: number,
+  rightID: PieceID = generatePieceID(),
 ): [PieceNode, PieceNode | null, SplitRecord | null] {
   if (offsetInPiece <= 0) {
     return [piece, null, null];
@@ -508,7 +511,7 @@ export function splitPiece(
       "red",
       null,
       piece.right,
-      // right half auto-generates a fresh ID
+      rightID,
     );
   } else {
     leftPiece = createPieceNode(
@@ -527,7 +530,7 @@ export function splitPiece(
       "red",
       null,
       piece.right,
-      // right half auto-generates a fresh ID
+      rightID,
     );
   }
 
@@ -592,6 +595,8 @@ export function pieceTableInsert(
     return $proveCtx($beginCost("O(n)"), { state, insertedByteLength: 0, splits: [] });
 
   const textBytes = textEncoder.encode(text);
+  let nextPieceID = state.nextPieceID;
+  const allocatePieceID = (): PieceID => pieceID(`p${nextPieceID++}`);
 
   // Append text to add buffer
   const newAddStart = state.addBuffer.length;
@@ -604,6 +609,9 @@ export function pieceTableInsert(
       byteOffset(newAddStart),
       byteLength(textBytes.length),
       "black",
+      null,
+      null,
+      allocatePieceID(),
     );
     return $proveCtx($beginCost("O(n)"), {
       state: freezePieceTableState({
@@ -611,6 +619,7 @@ export function pieceTableInsert(
         root: newRoot,
         addBuffer,
         totalLength: textBytes.length,
+        nextPieceID,
       }),
       insertedByteLength: textBytes.length,
       splits: [],
@@ -637,6 +646,7 @@ export function pieceTableInsert(
                 "add",
                 byteOffset(newAddStart),
                 byteLength(textBytes.length),
+                allocatePieceID(),
               ),
             );
           }
@@ -648,6 +658,7 @@ export function pieceTableInsert(
                 "add",
                 byteOffset(newAddStart),
                 byteLength(textBytes.length),
+                allocatePieceID(),
               ),
             );
           }
@@ -659,6 +670,7 @@ export function pieceTableInsert(
                 "add",
                 byteOffset(newAddStart),
                 byteLength(textBytes.length),
+                allocatePieceID(),
               ),
             );
           }
@@ -668,6 +680,8 @@ export function pieceTableInsert(
             "add",
             byteOffset(newAddStart),
             byteLength(textBytes.length),
+            allocatePieceID(),
+            allocatePieceID(),
           );
           capturedSplit = splitRecord;
           return $lift("O(log n)", splitRoot);
@@ -678,6 +692,7 @@ export function pieceTableInsert(
             root: newRoot,
             addBuffer,
             totalLength: state.totalLength + textBytes.length,
+            nextPieceID,
           }),
           insertedByteLength: textBytes.length,
           splits: capturedSplit !== null ? [capturedSplit] : ([] as readonly SplitRecord[]),
@@ -697,12 +712,16 @@ export function insertChunkPieceAt(
   position: number,
   chunkIndex: number,
   chunkByteLength: number,
+  id: PieceID = generatePieceID(),
 ): PieceNode {
   const newLeaf = createChunkPieceNode(
     chunkIndex,
     byteOffset(0),
     byteLength(chunkByteLength),
     "red",
+    null,
+    null,
+    id,
   );
   if (root === null) {
     return withPieceNode(newLeaf, { color: "black" });
@@ -734,20 +753,26 @@ function insertWithSplit(
   bufferType: "original" | "add",
   start: ByteOffset,
   length: ByteLength,
+  insertedID: PieceID,
+  rightID: PieceID,
 ): [PieceNode, SplitRecord] {
   // We need to:
   // 1. Replace the found piece with its left part
   // 2. Insert the new piece
   // 3. Insert the right part of the split
 
-  const [leftPart, rightPart, splitRecord] = splitPiece(location.node, location.offsetInPiece);
+  const [leftPart, rightPart, splitRecord] = splitPiece(
+    location.node,
+    location.offsetInPiece,
+    rightID,
+  );
 
   // Rebuild the tree with the split
   const replaceResult = replacePieceInTree(location.path, location.node, leftPart);
 
   // Insert the new piece after the left part
   const insertPos = location.pieceStartOffset + leftPart.length;
-  let newRoot = rbInsertPiece(replaceResult, insertPos, bufferType, start, length);
+  let newRoot = rbInsertPiece(replaceResult, insertPos, bufferType, start, length, insertedID);
 
   // Insert the right part after the new piece, preserving its full identity
   // (including chunkIndex for 'chunk' pieces — rbInsertPiece cannot be used here).
@@ -827,7 +852,11 @@ function makePiece(
  * joinByBlackHeight call whose cost is proportional to the height difference,
  * and those differences telescope to O(log n) total across the root-to-leaf path).
  */
-function splitAt(node: PieceNode | null, offset: number): [PieceNode | null, PieceNode | null] {
+function splitAt(
+  node: PieceNode | null,
+  offset: number,
+  allocatePieceID: () => PieceID,
+): [PieceNode | null, PieceNode | null] {
   if (node === null) return [null, null];
   if (offset <= 0) return [null, node];
   if (offset >= node.subtreeLength) return [node, null];
@@ -839,7 +868,7 @@ function splitAt(node: PieceNode | null, offset: number): [PieceNode | null, Pie
   if (offset <= pieceStart) {
     // Split falls in the left subtree; rebuild right part as join(lr, this-piece, right).
     // This node is reconstructed unchanged — preserve its ID so AttentionPoints survive.
-    const [ll, lr] = splitAt(node.left, offset);
+    const [ll, lr] = splitAt(node.left, offset, allocatePieceID);
     const key = makePiece(node, node.start, byteLength(node.length), node.id);
     return [ll, joinByBlackHeight(lr, key, node.right)];
   }
@@ -847,7 +876,7 @@ function splitAt(node: PieceNode | null, offset: number): [PieceNode | null, Pie
   if (offset >= pieceEnd) {
     // Split falls in the right subtree; rebuild left part as join(left, this-piece, rl).
     // This node is reconstructed unchanged — preserve its ID so AttentionPoints survive.
-    const [rl, rr] = splitAt(node.right, offset - pieceEnd);
+    const [rl, rr] = splitAt(node.right, offset - pieceEnd, allocatePieceID);
     const key = makePiece(node, node.start, byteLength(node.length), node.id);
     return [joinByBlackHeight(node.left, key, rl), rr];
   }
@@ -857,7 +886,12 @@ function splitAt(node: PieceNode | null, offset: number): [PieceNode | null, Pie
   // Right half gets a fresh ID; callers that track pieces must handle this new ID.
   const off = offset - pieceStart;
   const lKey = makePiece(node, node.start, byteLength(off), node.id);
-  const rKey = makePiece(node, byteOffset(node.start + off), byteLength(node.length - off));
+  const rKey = makePiece(
+    node,
+    byteOffset(node.start + off),
+    byteLength(node.length - off),
+    allocatePieceID(),
+  );
   return [joinByBlackHeight(node.left, lKey, null), joinByBlackHeight(null, rKey, node.right)];
 }
 
@@ -888,9 +922,11 @@ export function pieceTableDelete(
 
   const clampedStart = Math.max(start, 0);
   const clampedEnd = Math.min(end, state.totalLength);
+  let nextPieceID = state.nextPieceID;
+  const allocatePieceID = (): PieceID => pieceID(`p${nextPieceID++}`);
 
-  const [left, rest] = splitAt(state.root, clampedStart);
-  const [, right] = splitAt(rest, clampedEnd - clampedStart);
+  const [left, rest] = splitAt(state.root, clampedStart, allocatePieceID);
+  const [, right] = splitAt(rest, clampedEnd - clampedStart, allocatePieceID);
 
   let newRoot = mergeTrees(left, right);
   if (newRoot !== null && isRed(newRoot)) {
@@ -903,6 +939,7 @@ export function pieceTableDelete(
       ...state,
       root: newRoot,
       totalLength: state.totalLength - deleteLength,
+      nextPieceID,
     }),
   );
 }

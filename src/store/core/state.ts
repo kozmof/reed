@@ -192,6 +192,7 @@ export function createEmptyPieceTableState(
 ): PieceTableState {
   return freezePieceTableState({
     root: null,
+    nextPieceID: 0,
     originalBuffer: asReadonlyUint8Array(new Uint8Array(0)),
     addBuffer: GrowableBuffer.empty(),
     totalLength: 0,
@@ -296,10 +297,19 @@ export function createPieceTableState(content: string): PieceTableState {
   const originalBuffer = textEncoder.encode(content);
 
   // Create single piece spanning entire original buffer
-  const root = createPieceNode("original", byteOffset(0), byteLength(originalBuffer.length));
+  const root = createPieceNode(
+    "original",
+    byteOffset(0),
+    byteLength(originalBuffer.length),
+    "black",
+    null,
+    null,
+    pieceID("p0"),
+  );
 
   return freezePieceTableState({
     root,
+    nextPieceID: 1,
     originalBuffer: asReadonlyUint8Array(originalBuffer),
     addBuffer: GrowableBuffer.empty(1024),
     totalLength: originalBuffer.length,

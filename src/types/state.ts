@@ -153,6 +153,11 @@ export type PieceNode = OriginalPieceNode | AddPieceNode | ChunkPieceNode;
 export interface PieceTableState {
   /** Root of the Red-Black tree of pieces */
   readonly root: PieceNode | null;
+  /**
+   * State-local allocator cursor for stable piece identities.
+   * Keeping this in the immutable snapshot makes reducer replay deterministic.
+   */
+  readonly nextPieceID: number;
   /** Original buffer: immutable, loaded from file */
   readonly originalBuffer: ReadonlyUint8Array;
   /** Add buffer: append-only growable buffer for user edits */

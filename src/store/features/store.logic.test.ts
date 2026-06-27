@@ -57,6 +57,11 @@ function expectValidPieceTree(root: PieceNode | null): void {
   visit(root);
 }
 
+function getPieceIDs(root: PieceNode | null): string[] {
+  if (root === null) return [];
+  return [...getPieceIDs(root.left), root.id, ...getPieceIDs(root.right)];
+}
+
 // =============================================================================
 // State Factory Tests
 // =============================================================================
@@ -468,6 +473,23 @@ describe("Document Reducer", () => {
       const newState = documentReducer(state, DocumentActions.insert(byteOffset(0), longText));
 
       expect(newState.pieceTable.addBuffer.length).toBeGreaterThanOrEqual(2000);
+    });
+
+    it("is deterministic for the same state and timestamp-less action", () => {
+      const state = createInitialState({ content: "abc" });
+      const action = Object.freeze({ type: "INSERT" as const, start: byteOffset(1), text: "X" });
+      const now = vi.spyOn(Date, "now");
+
+      now.mockReturnValue(100);
+      const first = documentReducer(state, action);
+      now.mockReturnValue(200);
+      const second = documentReducer(state, action);
+      now.mockRestore();
+
+      expect(getPieceIDs(first.pieceTable.root)).toEqual(getPieceIDs(second.pieceTable.root));
+      expect(first.pieceTable.nextPieceID).toBe(second.pieceTable.nextPieceID);
+      expect(pstackPeek(first.history.undoStack)?.timestamp).toBe(state.revision);
+      expect(pstackPeek(second.history.undoStack)?.timestamp).toBe(state.revision);
     });
 
     it("should clamp inline edit selection to pre-edit document bounds", () => {
@@ -1282,6 +1304,20 @@ describe("Type Guards", () => {
 
     expect(existingListener).not.toHaveBeenCalled();
     expect(lateListener).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown action without changing the store", () => {
+    const store = createDocumentStore({ content: "Hello" });
+    const snapshot = store.getSnapshot();
+    const listener = vi.fn();
+    store.subscribe(listener);
+    const invalidAction = { type: "BOGUS" } as unknown as Parameters<typeof store.dispatch>[0];
+
+    expect(() => store.dispatch(invalidAction)).toThrow(TypeError);
+    expect(store.getSnapshot()).toBe(snapshot);
+    expect(listener).not.toHaveBeenCalled();
+
+    store.dispose();
   });
 
   describe("isDocumentStore", () => {
