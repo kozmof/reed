@@ -47,12 +47,12 @@ This repository currently implements a core text engine and state runtime:
 
 ## Verification Snapshot
 
-- Latest verified functional test run: 2026-06-25
+- Latest verified functional test run: 2026-06-27
 - Command: `pnpm test`
-- Result: `23` test files, `930` tests passed
-- Latest verified perf test run: 2026-06-25
+- Result: `23` test files, `978` tests passed
+- Latest verified perf test run: 2026-06-27
 - Command: `pnpm test:perf`
-- Result: `1` test file, `28` tests passed
+- Result: `1` test file, `29` tests passed
 
 [spec/06-testing.md](spec/06-testing.md) is the source of truth for the latest
 verified run and per-suite coverage; keep these counts in sync with it.

@@ -323,6 +323,7 @@ export function createEmptyLineIndexState(maxDirtyRanges: number = 32): LineInde
     rebuildPending: false,
     maxDirtyRanges,
     unloadedLineCountsByChunk: new Map<number, number>(),
+    unloadedLineCount: 0,
   });
 }
 
@@ -444,6 +445,7 @@ export function createLineIndexState(content: string, maxDirtyRanges: number = 3
     rebuildPending: false,
     maxDirtyRanges,
     unloadedLineCountsByChunk: new Map<number, number>(),
+    unloadedLineCount: 0,
   });
 }
 
@@ -586,9 +588,17 @@ export function withState(state: DocumentState, changes: Partial<DocumentState>)
  */
 export function withLineIndexState<M extends EvaluationMode = EvaluationMode>(
   state: LineIndexState<M>,
-  changes: Partial<LineIndexState<M>>,
+  changes: Partial<Omit<LineIndexState<M>, "unloadedLineCount">>,
 ): LineIndexState<M> {
-  return freezeLineIndexState({ ...state, ...changes } as LineIndexState<M>);
+  const next = { ...state, ...changes };
+  if ("unloadedLineCountsByChunk" in changes) {
+    let unloadedLineCount = 0;
+    for (const count of next.unloadedLineCountsByChunk.values()) {
+      unloadedLineCount += count;
+    }
+    next.unloadedLineCount = unloadedLineCount;
+  }
+  return freezeLineIndexState(next as LineIndexState<M>);
 }
 
 /**

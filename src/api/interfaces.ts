@@ -69,7 +69,7 @@ export interface QueryLineIndexApi {
 
 /**
  * Contract for the `query` namespace.
- * All operations are O(1) or O(log n) — see the `@complexity` tags on `query`.
+ * Operations are O(1), O(log n) for the balanced piece table, or O(h) for line-index tree height — see the `` tags on `query`.
  */
 export interface QueryApi {
   getText(state: PieceTableState, start: ByteOffset, end: ByteOffset): string;

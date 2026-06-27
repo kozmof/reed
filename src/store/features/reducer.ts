@@ -16,7 +16,7 @@ import type {
   LineIndexState,
   PieceTableState,
 } from "../../types/state.js";
-import type { DocumentAction } from "../../types/actions.js";
+import { isValidChunkMetadata, type DocumentAction } from "../../types/actions.js";
 import type { ByteOffset } from "../../types/branded.js";
 import { byteOffset, byteLength } from "../../types/branded.js";
 import {
@@ -498,6 +498,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
 
     case "DECLARE_CHUNK_METADATA": {
       if (state.pieceTable.chunkSize === 0) return state; // non-chunked mode
+      if (!action.metadata.every(isValidChunkMetadata)) return state;
 
       const { loadedChunks, chunkMetadata } = state.pieceTable;
       const newChunkMetadata = new Map(chunkMetadata);

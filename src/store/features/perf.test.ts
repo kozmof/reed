@@ -11,7 +11,7 @@
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { createDocumentStore } from "./store.js";
-import { createInitialState } from "../core/state.js";
+import { createInitialState, withLineIndexState } from "../core/state.js";
 import { DocumentActions } from "./actions.js";
 import { byteOffset } from "../../types/branded.js";
 import { query } from "../../api/query.js";
@@ -123,10 +123,10 @@ describe("Load: createInitialState", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 2. Line index queries — O(log n)
+// 2. Balanced line-index queries — O(log n)
 // ---------------------------------------------------------------------------
 
-describe("Line index queries (O(log n))", () => {
+describe("Balanced line-index queries (O(log n))", () => {
   const ITERS = 10_000;
 
   it(`getLineStartOffset × ${ITERS.toLocaleString()} on ${LINES_LG.toLocaleString()}-line index`, () => {
@@ -199,6 +199,20 @@ describe("Line index queries (O(log n))", () => {
     );
     assertPerf(`getLineCount (O(1))`, ms, 100, ITERS);
     expect(query.getLineCount(state)).toBe(LINES_LG);
+  });
+
+  it("getLineCount stays O(1) with 100,000 unloaded chunks", () => {
+    const base = createInitialState({ chunkSize: 1 });
+    const unloadedLineCountsByChunk = new Map(
+      Array.from({ length: 100_000 }, (_, chunkIndex) => [chunkIndex, 1] as const),
+    );
+    const lineIndex = withLineIndexState(base.lineIndex, { unloadedLineCountsByChunk });
+    const state = { ...base, lineIndex };
+    const iterations = 1_000;
+
+    const ms = bench(() => query.getLineCount(state), iterations, STABLE_READ_BENCH);
+    assertPerf("getLineCount (100,000 unloaded chunks)", ms, 100, iterations);
+    expect(query.getLineCount(state)).toBe(100_001);
   });
 });
 

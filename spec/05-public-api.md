@@ -141,7 +141,7 @@ Note:
 
 ### 4.1 Query namespace (`query`)
 
-Primary selector namespace for O(1)/O(log n)/bounded operations:
+Primary selector namespace for O(1)/O(tree height)/bounded operations:
 
 - `getText`, `getLength`, `getBufferStats`
 - `findPieceAtPosition`

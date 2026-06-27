@@ -304,7 +304,7 @@ function isOptionalSelection(value: unknown): value is readonly SelectionRange[]
   return value === undefined || isSelectionRangeArray(value);
 }
 
-function isChunkMetadata(value: unknown): value is ChunkMetadata {
+export function isValidChunkMetadata(value: unknown): value is ChunkMetadata {
   if (typeof value !== "object" || value === null) return false;
   const metadata = value as Partial<ChunkMetadata>;
   return (
@@ -567,7 +567,7 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
       } else {
         for (let i = 0; i < declAction.metadata.length; i++) {
           const m = declAction.metadata[i] as unknown;
-          if (!isChunkMetadata(m)) {
+          if (!isValidChunkMetadata(m)) {
             errors.push(
               `DECLARE_CHUNK_METADATA metadata[${i}] must include non-negative integer chunkIndex, byteLength, and lineCount`,
             );

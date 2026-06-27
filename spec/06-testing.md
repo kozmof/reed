@@ -2,11 +2,11 @@
 
 ## 1. Latest Verified Run
 
-- Date: 2026-06-26
+- Date: 2026-06-27
 - Functional command: `pnpm test`
-- Functional result: `23` test files, `962` tests passed
+- Functional result: `23` test files, `978` tests passed
 - Perf command: `pnpm test:perf`
-- Perf result: `1` test file, `28` tests passed
+- Perf result: `1` test file, `29` tests passed
 
 ## 2. Current Test Suites
 
@@ -74,10 +74,10 @@ index. Building it surfaced and fixed two real correctness defects:
   cases that require it), so evicting a chunk whose boundary split a `\r\n` pair left
   the line index reporting the wrong line count until reload.
 
-Note: strict red-black _balance_ of the line index is intentionally not asserted in
-the stress suite — the lazy insert/delete path keeps BST ordering and subtree
-aggregates exact (so every O(log n) lookup is correct) but does not guarantee strict
-height balance between reconciles, for ordinary editing as well as chunk loading.
+The randomized streaming stress suite asserts ordering and subtree aggregates after
+every reconciled step. Strict red-black balance is not guaranteed by lazy deletion,
+so line-index lookup complexity is expressed as O(tree height), with O(log n)
+expected for balanced trees.
 
 ## 5. Guidance for Spec-Driven Testing
 

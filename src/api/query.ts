@@ -1,5 +1,5 @@
 /**
- * Query namespace — O(1), O(log n), and bounded linear operations.
+ * Query namespace — O(1), O(tree height), and bounded linear operations.
  * Functions here are read-only selectors over immutable document state.
  * For O(n) traversals see `scan.*`. For rendering utilities see `rendering.*`.
  */
@@ -122,23 +122,23 @@ export const query: QueryApi = {
   findPieceAtPosition: $uncostedFn(findPieceAtPosition),
   /** @complexity O(1) — runtime mode check for line-index cleanliness */
   isReconciledState,
-  /** @complexity O(log n) — tree walk to find line at byte position */
+  /** @complexity O(h) — tree walk to find line at byte position */
   findLineAtPosition: $uncostedFn(findLineAtPosition),
-  /** @complexity O(log n) — tree walk to find line by 0-based line number */
+  /** @complexity O(h) — tree walk to find line by 0-based line number */
   findLineByNumber: $uncostedFn(findLineByNumber),
-  /** @complexity O(log n) — byte offset of line start via prefix sum */
+  /** @complexity O(h) — byte offset of line start via prefix sum */
   getLineStartOffset: $uncostedFn(getLineStartOffset),
-  /** @complexity O(log n) — tree walk; requires eager DocumentState */
+  /** @complexity O(h) — tree walk; requires eager DocumentState */
   getLineRange: $uncostedFn(getLineRange),
-  /** @complexity O(log n) — runtime-checked eager range; throws on dirty lazy state */
+  /** @complexity O(h) — runtime-checked eager range; throws on dirty lazy state */
   getLineRangeChecked: $uncostedFn(getLineRangeChecked),
-  /** @complexity O(log n) — range lookup safe for eager and lazy states */
+  /** @complexity O(h) — range lookup safe for eager and lazy states */
   getLineRangePrecise: $uncostedFn(getLineRangePrecise),
   /** @complexity O(1) — cached lineCount */
   getLineCount: $uncostedFn(getLineCount),
-  /** @complexity O(log n) — prefix sum via subtreeCharLength */
+  /** @complexity O(h) — prefix sum via subtreeCharLength */
   getCharStartOffset: $uncostedFn(getCharStartOffset),
-  /** @complexity O(log n) — tree descent via subtreeCharLength */
+  /** @complexity O(h) — tree descent via subtreeCharLength */
   findLineAtCharPosition: $uncostedFn(findLineAtCharPosition),
   /** @complexity O(1) — index into selection.ranges array */
   getSelectionHead,

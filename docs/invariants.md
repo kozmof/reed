@@ -71,13 +71,26 @@ It can be in one of two evaluation modes:
 
 `node.subtreeByteLength` is the sum of `lineLength` for all nodes in the
 subtree. It is updated by `withLineIndexNode` on every structural change and
-is **never** marked dirty. Callers may rely on it for O(log n) byte-offset
+is **never** marked dirty. Callers may rely on it for O(tree height) byte-offset
 arithmetic even in lazy mode.
 
 ### 2.2 `subtreeLineCount` Is Always Accurate
 
 `node.subtreeLineCount` equals `1 + left.subtreeLineCount + right.subtreeLineCount`.
-Accurate in both modes; used for O(log n) line-number lookups.
+Accurate in both modes; used for O(tree height) line-number lookups.
+
+#### Tree height
+
+Lazy deletion preserves ordering and subtree aggregates but does not guarantee
+strict red-black balance between full rebuilds. Line-index navigation is therefore
+O(tree height), and O(log n) when the tree is balanced.
+
+#### Unloaded line-count cache
+
+`lineIndex.unloadedLineCount` equals the sum of
+`unloadedLineCountsByChunk.values()`. Only `withLineIndexState` may replace the
+per-chunk map; it recomputes this aggregate so `getLineCountFromIndex` remains
+O(1).
 
 ### 2.3 `documentOffset` in Eager Mode
 

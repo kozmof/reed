@@ -15,6 +15,7 @@
 
 import type { DocumentStore } from "../../types/store.js";
 import type { ChunkMetadata } from "../../types/state.js";
+import { isValidChunkMetadata } from "../../types/actions.js";
 import { DocumentActions } from "./actions.js";
 import { createChunkManager, type ChunkLoader, type ChunkManagerConfig } from "./chunk-manager.js";
 
@@ -107,19 +108,27 @@ export function createStreamingDocumentLoader(
     throw new Error("StreamingDocumentLoader requires a store configured with chunkSize > 0");
   }
 
-  const prefetchWindowSize = Math.max(0, config.prefetchWindowSize ?? 2);
+  const prefetchWindowSize = config.prefetchWindowSize ?? 2;
+  if (!Number.isInteger(prefetchWindowSize) || prefetchWindowSize < 0) {
+    throw new RangeError(
+      `prefetchWindowSize must be a non-negative integer: ${String(prefetchWindowSize)}`,
+    );
+  }
   const totalChunks = metadata.length;
   let disposed = false;
   let latestViewportRequestId = 0;
 
   // Validate that metadata describes the contiguous chunk set {0..totalChunks-1}
-  // exactly once each. setViewport indexes chunks positionally and derives the
-  // chunk count from metadata.length, so duplicate, missing, or out-of-range
-  // indexes would silently make some chunks unreachable or double-counted.
-  // In-range + unique + count === length together guarantee full coverage.
+  // exactly once each and that every value is usable by the chunk runtime.
   const seenChunkIndexes = new Set<number>();
   for (const m of metadata) {
-    if (!Number.isInteger(m.chunkIndex) || m.chunkIndex < 0 || m.chunkIndex >= totalChunks) {
+    if (!isValidChunkMetadata(m) || m.byteLength === 0) {
+      throw new RangeError(
+        "createStreamingDocumentLoader: chunk metadata requires non-negative integer " +
+          "chunkIndex and lineCount, and a positive integer byteLength",
+      );
+    }
+    if (m.chunkIndex >= totalChunks) {
       throw new RangeError(
         `createStreamingDocumentLoader: chunk metadata index ${m.chunkIndex} is out of range; ` +
           `metadata must cover indexes 0..${totalChunks - 1}`,
@@ -131,6 +140,37 @@ export function createStreamingDocumentLoader(
       );
     }
     seenChunkIndexes.add(m.chunkIndex);
+  }
+
+  const { chunkSize, totalFileSize } = store.getSnapshot().pieceTable;
+  if (metadata.some((m) => m.byteLength > chunkSize)) {
+    throw new RangeError(
+      `createStreamingDocumentLoader: chunk byteLength cannot exceed chunkSize ${chunkSize}`,
+    );
+  }
+  if (loader.totalChunkCount !== undefined && loader.totalChunkCount !== totalChunks) {
+    throw new RangeError(
+      `createStreamingDocumentLoader: metadata has ${totalChunks} chunks but loader declares ` +
+        `${loader.totalChunkCount}`,
+    );
+  }
+  if (totalFileSize > 0) {
+    const expectedChunkCount = Math.ceil(totalFileSize / chunkSize);
+    if (totalChunks !== expectedChunkCount) {
+      throw new RangeError(
+        `createStreamingDocumentLoader: metadata has ${totalChunks} chunks but file geometry ` +
+          `requires ${expectedChunkCount}`,
+      );
+    }
+    for (const m of metadata) {
+      const expectedByteLength = Math.min(chunkSize, totalFileSize - m.chunkIndex * chunkSize);
+      if (m.byteLength !== expectedByteLength) {
+        throw new RangeError(
+          `createStreamingDocumentLoader: chunk ${m.chunkIndex} declares ${m.byteLength} bytes; ` +
+            `expected ${expectedByteLength}`,
+        );
+      }
+    }
   }
 
   // Declare all chunk metadata upfront so the store can answer total line-count

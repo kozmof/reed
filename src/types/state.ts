@@ -313,12 +313,15 @@ export interface LineIndexState<M extends EvaluationMode = EvaluationMode> {
   /**
    * Line counts for chunks declared via DECLARE_CHUNK_METADATA but not yet loaded
    * (or currently evicted).  Keyed by chunk index.
-   * `getLineCountFromIndex` sums `lineCount` with the values in this map so that
-   * consumers can query the total expected line count before all chunks are loaded.
    * Entries are added by DECLARE_CHUNK_METADATA and EVICT_CHUNK (when metadata is
    * known); entries are removed by LOAD_CHUNK.
    */
   readonly unloadedLineCountsByChunk: ReadonlyMap<number, number>;
+  /**
+   * Cached sum of `unloadedLineCountsByChunk`, maintained by `withLineIndexState`.
+   * Keeps total line-count queries O(1) regardless of the number of chunks.
+   */
+  readonly unloadedLineCount: number;
 }
 
 /**

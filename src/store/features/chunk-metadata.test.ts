@@ -60,6 +60,7 @@ describe("DECLARE_CHUNK_METADATA", () => {
       DocumentActions.declareChunkMetadata([{ chunkIndex: 0, byteLength: 64, lineCount: 10 }]),
     );
     expect(next.lineIndex.unloadedLineCountsByChunk.get(0)).toBe(10);
+    expect(next.lineIndex.unloadedLineCount).toBe(10);
   });
 
   it("getLineCountFromIndex includes unloaded chunk line counts", () => {
@@ -76,6 +77,7 @@ describe("DECLARE_CHUNK_METADATA", () => {
     );
     // 1 (sentinel) + 10 + 5 = 16
     expect(getLineCountFromIndex(next.lineIndex)).toBe(16);
+    expect(next.lineIndex.unloadedLineCount).toBe(15);
   });
 
   it("ignores metadata for already-loaded chunks", () => {
@@ -109,6 +111,7 @@ describe("DECLARE_CHUNK_METADATA", () => {
     const state2 = documentReducer(state1, DocumentActions.loadChunk(0, bytes));
     // Side-cache entry must be removed after LOAD_CHUNK
     expect(state2.lineIndex.unloadedLineCountsByChunk.has(0)).toBe(false);
+    expect(state2.lineIndex.unloadedLineCount).toBe(0);
     // Real line count from the tree
     expect(getLineCountFromIndex(state2.lineIndex)).toBeGreaterThanOrEqual(5);
   });
@@ -126,6 +129,7 @@ describe("DECLARE_CHUNK_METADATA", () => {
 
     // After eviction the side-cache should be restored
     expect(state3.lineIndex.unloadedLineCountsByChunk.get(0)).toBe(5);
+    expect(state3.lineIndex.unloadedLineCount).toBe(5);
     // getLineCountFromIndex should include the restored count
     expect(getLineCountFromIndex(state3.lineIndex)).toBeGreaterThanOrEqual(5);
   });
@@ -138,6 +142,17 @@ describe("DECLARE_CHUNK_METADATA", () => {
 
     // No metadata was declared, so side-cache stays empty
     expect(state2.lineIndex.unloadedLineCountsByChunk.has(0)).toBe(false);
+  });
+
+  it("ignores invalid metadata instead of corrupting the line count", () => {
+    const state = createInitialState({ chunkSize: 64 });
+    const next = documentReducer(state, {
+      type: "DECLARE_CHUNK_METADATA",
+      metadata: [{ chunkIndex: 0, byteLength: 64, lineCount: -2 }],
+    });
+
+    expect(next).toBe(state);
+    expect(getLineCountFromIndex(next.lineIndex)).toBe(1);
   });
 
   it("is a no-op when metadata array is empty", () => {

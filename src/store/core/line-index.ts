@@ -1,6 +1,6 @@
 /**
  * Line Index operations with immutable Red-Black tree.
- * Maintains line positions for O(log n) line lookups.
+ * Maintains line positions for O(tree height) line lookups.
  * All operations return new tree structures with structural sharing.
  *
  * Cost typing policy: use explicit boundaries (`$unsafeDeclare`, `$prove`, `$proveCtx`)
@@ -232,7 +232,7 @@ export function getLineStartOffset(
 
 /**
  * Get the character offset where a line starts.
- * O(log n) using subtreeCharLength aggregates.
+ * O(tree height) using subtreeCharLength aggregates.
  */
 export function getCharStartOffset(
   root: LineIndexNode | null,
@@ -273,7 +273,7 @@ export function getCharStartOffset(
 
 /**
  * Find the line containing a character offset.
- * O(log n) using subtreeCharLength aggregates.
+ * O(tree height) using subtreeCharLength aggregates.
  */
 export function findLineAtCharPosition(
   root: LineIndexNode | null,
@@ -873,6 +873,7 @@ function buildLineIndexFromText(text: string, startOffset: number): LineIndexSta
       rebuildPending: false,
       maxDirtyRanges: 32,
       unloadedLineCountsByChunk: new Map<number, number>(),
+      unloadedLineCount: 0,
     });
   }
 
@@ -885,6 +886,7 @@ function buildLineIndexFromText(text: string, startOffset: number): LineIndexSta
     rebuildPending: false,
     maxDirtyRanges: 32,
     unloadedLineCountsByChunk: new Map<number, number>(),
+    unloadedLineCount: 0,
   });
 }
 
@@ -1326,16 +1328,11 @@ export function rebuildLineIndex(content: string): LinearCost<LineIndexState> {
  * Includes lines declared via DECLARE_CHUNK_METADATA for chunks not yet loaded,
  * so callers can query the total expected line count before all chunks arrive.
  *
- * Cost: O(k) where k = number of declared-but-unloaded chunks (bounded by total
- * chunk count, not document size). Declared O(1) by convention since k is small.
+ * Cost: O(1), using the cached unloaded line total maintained by
+ * `withLineIndexState`.
  */
 export function getLineCountFromIndex(state: LineIndexState): ConstCost<number> {
-  let total = state.lineCount;
-  for (const count of state.unloadedLineCountsByChunk.values()) {
-    total += count;
-  }
-  // k (declared chunks) is document-size-independent; treat as O(1) per policy.
-  return $unsafeDeclare("O(1)", total);
+  return $unsafeDeclare("O(1)", state.lineCount + state.unloadedLineCount);
 }
 
 /**

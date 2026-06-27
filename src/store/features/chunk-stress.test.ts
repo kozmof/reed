@@ -17,13 +17,8 @@
  *   same chunks. Any piece ordering bug, lost-byte bug, or stale line/char
  *   offset surfaces as a mismatch — with a logged seed for replay.
  *
- * Note on what we do NOT assert: strict red-black *balance* (equal black height)
- * is intentionally not checked. The line index's lazy insert/delete path keeps
- * BST ordering and subtree aggregates exact (so every O(log n) lookup is
- * correct) but does not guarantee strict height balance between reconciles —
- * this is true for ordinary editing too, not just chunk loading. We therefore
- * assert subtree-aggregate exactness (the property correctness actually depends
- * on) rather than tree height.
+ * Strict red-black balance is not asserted: lazy deletion preserves ordering and
+ * aggregates, while lookup complexity is O(tree height) until a balanced rebuild.
  *
  * CRLF configs deliberately let byte-aligned chunk boundaries split "\r\n"
  * pairs, exercising the CR/LF/CRLF-aware boundary path under load/evict/reload.
@@ -122,7 +117,7 @@ async function flushPrefetches(): Promise<void> {
  * Validate subtree-aggregate exactness on a reconciled line index: every node's
  * subtree counts must equal the sum of its children plus itself. These are the
  * aggregates that O(log n) line/offset navigation reads, so any drift here would
- * corrupt lookups. (Tree *balance* is deliberately not asserted — see file header.)
+ * corrupt lookups. Tree balance is intentionally outside this invariant.
  */
 function assertLineIndexAggregates(node: LineIndexNode | null): void {
   if (node === null) return;

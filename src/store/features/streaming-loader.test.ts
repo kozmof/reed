@@ -159,4 +159,45 @@ describe("StreamingDocumentLoader", () => {
     expect(loadChunk).not.toHaveBeenCalled();
     loader.dispose();
   });
+
+  it.each([-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid prefetchWindowSize %s",
+    (prefetchWindowSize) => {
+      const store = createDocumentStore({ chunkSize: 1 });
+      const chunkLoader = { loadChunk: vi.fn(async () => new Uint8Array([0])) };
+      expect(() =>
+        createStreamingDocumentLoader(store, chunkLoader, [], { prefetchWindowSize }),
+      ).toThrow(/prefetchWindowSize must be a non-negative integer/);
+      store.dispose();
+    },
+  );
+
+  it("rejects invalid metadata values before mutating the store", () => {
+    const store = createDocumentStore({ chunkSize: 4 });
+    const chunkLoader = { loadChunk: vi.fn(async () => new Uint8Array([0])) };
+
+    expect(() =>
+      createStreamingDocumentLoader(store, chunkLoader, [
+        { chunkIndex: 0, byteLength: 4, lineCount: -1 },
+      ]),
+    ).toThrow(/chunk metadata requires/);
+    expect(store.getSnapshot().lineIndex.unloadedLineCount).toBe(0);
+    store.dispose();
+  });
+
+  it("rejects metadata that contradicts known file geometry", () => {
+    const store = createDocumentStore({ chunkSize: 4, totalFileSize: 6 });
+    const chunkLoader = {
+      totalChunkCount: 2,
+      loadChunk: vi.fn(async () => new Uint8Array([0])),
+    };
+
+    expect(() =>
+      createStreamingDocumentLoader(store, chunkLoader, [
+        { chunkIndex: 0, byteLength: 4, lineCount: 0 },
+        { chunkIndex: 1, byteLength: 1, lineCount: 0 },
+      ]),
+    ).toThrow(/chunk 1 declares 1 bytes; expected 2/);
+    store.dispose();
+  });
 });
