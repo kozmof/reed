@@ -731,7 +731,7 @@ describe("Editor Use Cases", () => {
       expect(listener).toHaveBeenCalledTimes(1);
     });
 
-    it("should resolve whenReconciled after reconcileNow without an extra notification", async () => {
+    it("should resolve whenReconciled and notify subscribers after reconcileNow", async () => {
       const store = createDocumentStore({
         content: Array.from({ length: 40 }, (_, i) => `Line ${i}`).join("\n"),
         reconcileMode: "none",
@@ -746,6 +746,25 @@ describe("Editor Use Cases", () => {
       const eager = store.reconcileNow();
 
       await expect(waiting).resolves.toBe(eager);
+      expect(listener).toHaveBeenCalledTimes(2);
+    });
+
+    it("getEagerSnapshot should notify when it installs a reconciled snapshot", () => {
+      const store = createDocumentStore({
+        content: Array.from({ length: 10 }, (_, i) => `Line ${i}`).join("\n"),
+        reconcileMode: "none",
+      });
+      const listener = vi.fn();
+      store.subscribe(listener);
+
+      store.dispatch(DocumentActions.insert(byteOffset(0), "prefix\n"));
+      listener.mockClear();
+      const before = store.getSnapshot();
+
+      const eager = store.getEagerSnapshot();
+
+      expect(eager).not.toBe(before);
+      expect(eager.lineIndex.rebuildPending).toBe(false);
       expect(listener).toHaveBeenCalledTimes(1);
     });
 

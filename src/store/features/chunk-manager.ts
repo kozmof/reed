@@ -28,11 +28,13 @@ import { DocumentActions } from "./actions.js";
 export interface ChunkLoader {
   /**
    * Fetch the raw bytes for the given chunk index.
+   * When provided, `signal` is aborted if the manager is disposed before the
+   * load completes. Loaders should pass it to their underlying I/O operation.
    * The returned Uint8Array must remain valid until LOAD_CHUNK has been
    * dispatched — do not mutate it afterward.
    * Return an empty Uint8Array or throw to signal a load failure.
    */
-  loadChunk(chunkIndex: number): Promise<Uint8Array>;
+  loadChunk(chunkIndex: number, signal?: AbortSignal): Promise<Uint8Array>;
 
   /**
    * Optional: total number of chunks in the file.
@@ -94,7 +96,8 @@ export interface ChunkManager {
   /**
    * Dispose this manager.
    * After disposal, ensureLoaded / prefetch are no-ops and in-flight fetches
-   * that have not yet dispatched LOAD_CHUNK will not dispatch.
+   * receive an abort signal. Fetches that have not yet dispatched LOAD_CHUNK
+   * will not dispatch, even when their loader ignores cancellation.
    * The underlying DocumentStore is NOT destroyed.
    */
   dispose(): void;
@@ -139,6 +142,9 @@ export function createChunkManager(
   // In-flight fetch promises keyed by chunk index.
   // Removed once the fetch resolves or rejects.
   const inFlight = new Map<number, Promise<void>>();
+
+  // Cooperative cancellation for loaders that honor AbortSignal.
+  const abortControllers = new Map<number, AbortController>();
 
   // LRU order: index 0 is least recently used, last index is most recently used.
   const lruOrder: number[] = [];
@@ -240,41 +246,55 @@ export function createChunkManager(
   // ── Core fetch ────────────────────────────────────────────────────────────
 
   function doFetch(chunkIndex: number): Promise<void> {
+    const abortController = new AbortController();
+    abortControllers.set(chunkIndex, abortController);
+
     const fetch = (): Promise<void> =>
-      loader
-        .loadChunk(chunkIndex)
-        .then((data) => {
-          if (disposed) return;
-          if (data.length === 0)
-            throw new Error(`ChunkLoader returned empty data for chunk ${chunkIndex}`);
-          // Reject lengths that contradict the declared file geometry before
-          // dispatching — otherwise the reducer silently drops the load and the
-          // post-dispatch retention check below would report a misleading error.
-          const { pieceTable } = store.getSnapshot();
-          if (!isChunkByteLengthValid(pieceTable, chunkIndex, data.length)) {
-            const declared = pieceTable.chunkMetadata.get(chunkIndex);
-            throw new Error(
-              `ChunkLoader returned ${data.length} bytes for chunk ${chunkIndex}, which ` +
-                `violates the declared file geometry (chunkSize=${pieceTable.chunkSize}` +
-                (declared !== undefined ? `, declared byteLength=${declared.byteLength}` : "") +
-                (pieceTable.totalFileSize > 0
-                  ? `, totalFileSize=${pieceTable.totalFileSize}`
-                  : "") +
-                ")",
-            );
-          }
-          store.dispatch(DocumentActions.loadChunk(chunkIndex, data));
-          if (!store.getSnapshot().pieceTable.chunkMap.has(chunkIndex)) {
-            throw new Error(
-              `Chunk ${chunkIndex} was fetched but the store did not retain it after LOAD_CHUNK dispatch`,
-            );
-          }
-          lruTouch(chunkIndex);
-          evictIfOverLimit(chunkIndex);
-        })
-        .finally(() => {
-          inFlight.delete(chunkIndex);
-        });
+      disposed
+        ? Promise.resolve()
+        : loader
+            .loadChunk(chunkIndex, abortController.signal)
+            .then((data) => {
+              if (disposed) return;
+              if (data.length === 0)
+                throw new Error(`ChunkLoader returned empty data for chunk ${chunkIndex}`);
+              // Reject lengths that contradict the declared file geometry before
+              // dispatching — otherwise the reducer silently drops the load and the
+              // post-dispatch retention check below would report a misleading error.
+              const { pieceTable } = store.getSnapshot();
+              if (!isChunkByteLengthValid(pieceTable, chunkIndex, data.length)) {
+                const declared = pieceTable.chunkMetadata.get(chunkIndex);
+                throw new Error(
+                  `ChunkLoader returned ${data.length} bytes for chunk ${chunkIndex}, which ` +
+                    `violates the declared file geometry (chunkSize=${pieceTable.chunkSize}` +
+                    (declared !== undefined ? `, declared byteLength=${declared.byteLength}` : "") +
+                    (pieceTable.totalFileSize > 0
+                      ? `, totalFileSize=${pieceTable.totalFileSize}`
+                      : "") +
+                    ")",
+                );
+              }
+              store.dispatch(DocumentActions.loadChunk(chunkIndex, data));
+              if (!store.getSnapshot().pieceTable.chunkMap.has(chunkIndex)) {
+                throw new Error(
+                  `Chunk ${chunkIndex} was fetched but the store did not retain it after LOAD_CHUNK dispatch`,
+                );
+              }
+              lruTouch(chunkIndex);
+              evictIfOverLimit(chunkIndex);
+            })
+            .catch((error: unknown) => {
+              // Disposal is successful cancellation from the manager caller's
+              // perspective. Pending ensureLoaded() calls continue to resolve.
+              if (disposed && abortController.signal.aborted) return;
+              throw error;
+            })
+            .finally(() => {
+              inFlight.delete(chunkIndex);
+              if (abortControllers.get(chunkIndex) === abortController) {
+                abortControllers.delete(chunkIndex);
+              }
+            });
 
     if (fetchStrategy === "queue") {
       const promise = fetchQueue.then(fetch, fetch);
@@ -334,7 +354,12 @@ export function createChunkManager(
   }
 
   function dispose(): void {
+    if (disposed) return;
     disposed = true;
+    for (const controller of abortControllers.values()) {
+      controller.abort();
+    }
+    abortControllers.clear();
     inFlight.clear();
     lruOrder.length = 0;
     activeChunks.clear();

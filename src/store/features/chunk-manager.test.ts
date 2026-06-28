@@ -321,6 +321,31 @@ describe("ChunkManager.dispose", () => {
     expect(loader.loadChunk.mock.calls.length).toBe(0);
     expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
   });
+
+  it("aborts cooperative in-flight loads and resolves without dispatching", async () => {
+    const store = makeStore();
+    let receivedSignal: AbortSignal | undefined;
+    const loader = {
+      loadChunk: vi.fn((_chunkIndex: number, signal?: AbortSignal): Promise<Uint8Array> => {
+        receivedSignal = signal;
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      }),
+    };
+    const manager = createChunkManager(store, loader);
+
+    const pending = manager.ensureLoaded(0);
+    manager.dispose();
+
+    expect(receivedSignal?.aborted).toBe(true);
+    await expect(pending).resolves.toBeUndefined();
+    expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
+  });
 });
 
 describe("ChunkManager config validation", () => {

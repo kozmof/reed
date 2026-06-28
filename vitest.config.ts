@@ -5,9 +5,12 @@ export default defineConfig({
     exclude: [...configDefaults.exclude, "**/perf.test.ts"],
     coverage: {
       provider: "v8",
+      // Enumerate all production modules, including files no test imports.
+      // Without include, thresholds only cover modules executed by the suite.
+      include: ["src/**/*.ts"],
       // Test data/helpers and benchmarks under test-utils are not product code;
       // don't gate them on product coverage thresholds.
-      exclude: [...coverageConfigDefaults.exclude, "test-utils/**"],
+      exclude: [...coverageConfigDefaults.exclude, "src/**/*.test.ts", "test-utils/**"],
       // Per-file gates sit ~1.5 pts under the current per-file floor (the
       // worst-covered file per metric, not the aggregate): statements are
       // bounded by line-index.ts (~82%), branches by rendering.ts (~74%),

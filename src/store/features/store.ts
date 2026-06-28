@@ -344,6 +344,12 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
     const newLineIndex = reconcileFull(state.lineIndex, state.revision);
     if (newLineIndex !== state.lineIndex) {
       setState(withState(state, { lineIndex: newLineIndex }));
+      // Reconciliation changes the snapshot reference even though document
+      // content and revision stay unchanged. External-store consumers must be
+      // notified whenever getSnapshot() can return a new reference.
+      if (!transaction.isActive) {
+        notifyListeners();
+      }
     }
     resolveWhenReconciledIfReady();
     return state as DocumentState<"eager">;
