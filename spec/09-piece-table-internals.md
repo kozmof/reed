@@ -243,13 +243,13 @@ nodes carry no index that could identify a sub-region to evict.
 
 ### 5.2 Data structure differences
 
-|                           | `originalBuffer`                         | chunk buffers                               |
-| ------------------------- | ---------------------------------------- | ------------------------------------------- |
-| Storage                   | Single `Uint8Array` on `PieceTableState` | `Map<number, Uint8Array>` (`chunkMap`)      |
-| Piece node type           | `OriginalPieceNode`                      | `ChunkPieceNode`                            |
-| Extra field on piece node | —                                        | `chunkIndex: number`                        |
-| `start` field meaning     | Absolute offset within `originalBuffer`  | Offset within that chunk's `Uint8Array`     |
-| Lifetime                  | Permanent (never removed)                | Evictable; re-loadable                      |
+|                           | `originalBuffer`                         | chunk buffers                           |
+| ------------------------- | ---------------------------------------- | --------------------------------------- |
+| Storage                   | Single `Uint8Array` on `PieceTableState` | `Map<number, Uint8Array>` (`chunkMap`)  |
+| Piece node type           | `OriginalPieceNode`                      | `ChunkPieceNode`                        |
+| Extra field on piece node | —                                        | `chunkIndex: number`                    |
+| `start` field meaning     | Absolute offset within `originalBuffer`  | Offset within that chunk's `Uint8Array` |
+| Lifetime                  | Permanent (never removed)                | Evictable; re-loadable                  |
 
 The critical asymmetry is the `start` field. A `ChunkPieceNode` with
 `chunkIndex = 2, start = 40` means byte 40 of the `Uint8Array` stored at
