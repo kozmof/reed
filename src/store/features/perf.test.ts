@@ -81,7 +81,7 @@ const LINES_LG = 900_000;
 
 let content_sm: string; // ~10k lines ASCII prose
 let content_md: string; // ~50k lines
-let content_lg: string; // ~100k lines
+let content_lg: string; // ~900k lines
 
 beforeAll(() => {
   content_sm = generateLargeContent({ lineCount: LINES_SM, pattern: "prose", seed: 1 });

@@ -135,8 +135,9 @@ insert/delete.
 
 ### 3.1 `rebuildPending` → Dirty Ranges Exist
 
-`rebuildPending === true` if and only if `dirtyRanges.length > 0`.  
-Both are reset to `false` / `[]` together by `toEagerLineIndexState`.
+`rebuildPending === true` if and only if `dirtyRanges` is
+`"full-rebuild-needed"` or is a non-empty array. Both are reset to `false` /
+`[]` together by `toEagerLineIndexState`.
 
 ### 3.2 `lastReconciledRevision` Monotonicity
 
@@ -151,14 +152,16 @@ edits have made the line index dirty again.
 - Result contains no overlapping ranges.
 - Ranges are sorted by `startLine` ascending.
 - If the number of merged ranges exceeds `maxDirtyRanges` (default 32), the
-  entire result is collapsed to a single sentinel `{ kind: 'sentinel' }`.
+  entire result is collapsed to the list-level sentinel
+  `"full-rebuild-needed"`.
 - A sentinel input propagates to a sentinel output (no partial merging).
 
 ### 3.4 Sentinel Means Full Rebuild Required
 
-When `dirtyRanges` contains a sentinel, the individual `offsetDelta` values
-have been discarded. Only `reconcileFull` (slow path: `reconcileInPlace`) can
-recover from this state. `reconcileRange` skips sentinel entries.
+When `dirtyRanges === "full-rebuild-needed"`, the individual `offsetDelta`
+values have been discarded. Only `reconcileFull` (slow path:
+`reconcileInPlace`) can recover from this state. Incremental range
+reconciliation leaves the sentinel unchanged.
 
 ### 3.5 `reconcileRange` Is Idempotent on Non-Overlapping Windows
 
