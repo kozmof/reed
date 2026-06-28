@@ -30,7 +30,10 @@ import {
   type DocumentEventMap,
 } from "./events.js";
 import { isTextEditAction } from "../../types/actions.js";
-import { createReconciliationScheduler } from "./reconciliation-scheduler.js";
+import {
+  createReconciliationScheduler,
+  type ReconciliationSchedulerOptions,
+} from "./reconciliation-scheduler.js";
 
 // Automatically compact the add buffer when more than this fraction of allocated bytes
 // are unreferenced waste AND the buffer exceeds AUTO_COMPACT_MIN_BYTES.
@@ -109,22 +112,24 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
     }
   }
 
-  const scheduler =
-    config.scheduler ??
-    createReconciliationScheduler(reconcileMode, {
-      hasPendingWork: () => state.lineIndex.rebuildPending || needsCompaction(),
-      shouldDefer: () => transaction.isActive,
-      performWork() {
-        if (state.lineIndex.rebuildPending) {
-          const newLineIndex = reconcileFull(state.lineIndex, state.revision);
-          if (newLineIndex !== state.lineIndex) {
-            setState(withState(state, { lineIndex: newLineIndex }));
-            notifyListeners();
-          }
+  const schedulerOptions: ReconciliationSchedulerOptions = {
+    hasPendingWork: () => state.lineIndex.rebuildPending || needsCompaction(),
+    shouldDefer: () => transaction.isActive,
+    performWork() {
+      if (state.lineIndex.rebuildPending) {
+        const newLineIndex = reconcileFull(state.lineIndex, state.revision);
+        if (newLineIndex !== state.lineIndex) {
+          setState(withState(state, { lineIndex: newLineIndex }));
+          notifyListeners();
         }
-        applyCompactionIfNeeded();
-      },
-    });
+      }
+      applyCompactionIfNeeded();
+    },
+  };
+  const scheduler =
+    typeof config.scheduler === "function"
+      ? config.scheduler(schedulerOptions)
+      : (config.scheduler ?? createReconciliationScheduler(reconcileMode, schedulerOptions));
 
   /**
    * Notify all listeners of state change.

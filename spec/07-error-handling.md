@@ -29,7 +29,9 @@
 - `isCurrentSnapshot()` lets callers detect stale snapshots.
 - `reconcileIfCurrent(snapshot)` returns `null` for stale snapshots instead of mutating current state from an outdated reference.
 - `whenReconciled()` provides a promise-based path for consumers that need an eager state after background reconciliation.
-- A custom scheduler can be injected through `DocumentStoreConfig.scheduler` when callers need explicit scheduling behavior.
+- A custom scheduler factory can be injected through `DocumentStoreConfig.scheduler`
+  when callers need explicit scheduling behavior. It receives the store's live
+  maintenance callbacks, avoiding a circular store capture.
 
 ## 2. Current Non-Goals / Not Implemented
 

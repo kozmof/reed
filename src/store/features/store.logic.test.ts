@@ -155,7 +155,16 @@ describe("State Factories", () => {
 
     it("throws for negative totalFileSize", () => {
       expect(() => createInitialState({ totalFileSize: -1 })).toThrow(
-        "totalFileSize must be a non-negative number",
+        "totalFileSize must be a non-negative safe integer",
+      );
+    });
+
+    it("throws for fractional or unsafe totalFileSize", () => {
+      expect(() => createInitialState({ totalFileSize: 4.5 })).toThrow(
+        "totalFileSize must be a non-negative safe integer",
+      );
+      expect(() => createInitialState({ totalFileSize: Number.MAX_SAFE_INTEGER + 1 })).toThrow(
+        "totalFileSize must be a non-negative safe integer",
       );
     });
 

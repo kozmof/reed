@@ -75,9 +75,9 @@ function assertValidDocumentStoreConfig(config: DocumentStoreConfig): void {
   }
   if (
     config.totalFileSize !== undefined &&
-    (!Number.isFinite(config.totalFileSize) || config.totalFileSize < 0)
+    (!Number.isSafeInteger(config.totalFileSize) || config.totalFileSize < 0)
   ) {
-    throw new Error("totalFileSize must be a non-negative number");
+    throw new Error("totalFileSize must be a non-negative safe integer");
   }
   if (
     config.historyLimit !== undefined &&

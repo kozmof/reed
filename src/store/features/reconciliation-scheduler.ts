@@ -31,6 +31,17 @@ export interface ReconciliationSchedulerOptions {
 }
 
 /**
+ * Factory for a custom reconciliation scheduler.
+ *
+ * Prefer this over passing a pre-built scheduler instance: the factory receives
+ * the store's live maintenance callbacks, so it can schedule work without
+ * circularly capturing the store being constructed.
+ */
+export type ReconciliationSchedulerFactory = (
+  options: ReconciliationSchedulerOptions,
+) => ReconciliationScheduler;
+
+/**
  * Coordinates when background maintenance fires.
  * Implementations differ by mode but share the same surface area.
  */

@@ -61,10 +61,11 @@ Supported config fields (`DocumentStoreConfig`):
 - `lineEnding`
 - `undoGroupTimeout`
 - `normalizeInsertedLineEndings` — coerce line endings on `INSERT`/`REPLACE` to match `lineEnding`
-- `totalFileSize` — pre-declared file size used for chunk sizing
+- `totalFileSize` — pre-declared file size used for chunk sizing; must be a non-negative safe integer
 - `maxDirtyRanges` — dirty-range count threshold before a full line-index rebuild is triggered
 - `reconcileMode` — `'idle'` (default, uses `requestIdleCallback`) | `'sync'` (same-tick) | `'none'` (manual)
-- `scheduler` — custom `ReconciliationScheduler`; mutually exclusive with `reconcileMode`
+- `scheduler` — custom `ReconciliationSchedulerFactory` (preferred) or pre-built
+  `ReconciliationScheduler` (backward compatibility); mutually exclusive with `reconcileMode`
 
 ### 2.2 `store.createDocumentStoreWithEvents(config?)`
 

@@ -174,6 +174,7 @@ export type {
 export { createReconciliationScheduler } from "./features/reconciliation-scheduler.js";
 export type {
   ReconciliationScheduler,
+  ReconciliationSchedulerFactory,
   ReconciliationSchedulerOptions,
 } from "./features/reconciliation-scheduler.js";
 

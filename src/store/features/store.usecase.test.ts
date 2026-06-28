@@ -789,7 +789,32 @@ describe("Editor Use Cases", () => {
       );
     });
 
-    it("should resolve when a custom scheduler reconciles synchronously", async () => {
+    it("should give a custom scheduler factory live maintenance callbacks", () => {
+      let performCount = 0;
+      const store = createDocumentStore({
+        content: Array.from({ length: 10 }, (_, i) => "Line " + i).join("\n"),
+        scheduler: (options) => ({
+          schedule() {
+            performCount++;
+            options.performWork();
+          },
+          cancel() {},
+          runNow() {
+            options.performWork();
+          },
+          get isRunning() {
+            return false;
+          },
+        }),
+      });
+
+      store.dispatch(DocumentActions.insert(byteOffset(0), "prefix\n"));
+
+      expect(performCount).toBe(1);
+      expect(store.getSnapshot().lineIndex.rebuildPending).toBe(false);
+    });
+
+    it("should preserve support for a pre-built custom scheduler instance", async () => {
       let store: ReturnType<typeof createDocumentStore>;
       let scheduleCount = 0;
       const scheduler = {

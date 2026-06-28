@@ -7,7 +7,10 @@ import type { ByteOffset, ByteLength, CharOffset, PieceID, ReadonlyUint8Array } 
 import type { AttentionLayerState } from "./attention.js";
 import type { GrowableBuffer } from "../store/core/growable-buffer.js";
 import type { NonEmptyReadonlyArray } from "./utils.js";
-import type { ReconciliationScheduler } from "../store/features/reconciliation-scheduler.js";
+import type {
+  ReconciliationScheduler,
+  ReconciliationSchedulerFactory,
+} from "../store/features/reconciliation-scheduler.js";
 export type { NonEmptyReadonlyArray } from "./utils.js";
 export type { ReadTextFn, DeleteBoundaryContext } from "./operations.js";
 
@@ -625,10 +628,13 @@ export interface DocumentState<M extends EvaluationMode = EvaluationMode> {
 
 /**
  * Reconciliation scheduling options — mutually exclusive: either a preset
- * `reconcileMode` string or a custom `scheduler` instance, never both.
+ * `reconcileMode` string or a custom `scheduler` factory or instance, never both.
  */
 type ReconcileModeConfig = { reconcileMode?: "idle" | "sync" | "none"; scheduler?: never };
-type CustomSchedulerConfig = { scheduler: ReconciliationScheduler; reconcileMode?: never };
+type CustomSchedulerConfig = {
+  scheduler: ReconciliationScheduler | ReconciliationSchedulerFactory;
+  reconcileMode?: never;
+};
 type ReconcileOptions = ReconcileModeConfig | CustomSchedulerConfig;
 
 export interface ReedLogger {
@@ -663,7 +669,7 @@ export interface DocumentStoreConfigBase {
   /** Timeout in ms for grouping consecutive undo entries (default: 0, disabled) */
   undoGroupTimeout?: number;
   /**
-   * Known total byte length of the file, declared before chunk loading begins.
+   * Known total byte length of the file, declared before chunk loading begins. Must be a non-negative safe integer.
    * When provided alongside `chunkSize`, callers can compute the expected chunk
    * count and the document length is known upfront even before content arrives.
    * 0 or omitted means the total size is not yet known.
@@ -685,6 +691,7 @@ export interface DocumentStoreConfigBase {
  *
  * The `reconcileMode` and `scheduler` fields are mutually exclusive: providing
  * both at the same time is a compile error. Use `reconcileMode` for the built-in
- * presets or `scheduler` to supply a fully custom implementation.
+ * presets or `scheduler` to supply a custom scheduler factory. Pre-built
+ * scheduler instances remain supported for backward compatibility.
  */
 export type DocumentStoreConfig = DocumentStoreConfigBase & ReconcileOptions;

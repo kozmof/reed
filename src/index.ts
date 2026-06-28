@@ -108,7 +108,11 @@ export type { StreamingDocumentLoaderConfig, StreamingDocumentLoader } from "./s
 export { createStreamingDocumentLoader } from "./store/index.js";
 
 // Reconciliation scheduler
-export type { ReconciliationScheduler, ReconciliationSchedulerOptions } from "./store/index.js";
+export type {
+  ReconciliationScheduler,
+  ReconciliationSchedulerFactory,
+  ReconciliationSchedulerOptions,
+} from "./store/index.js";
 export { createReconciliationScheduler } from "./store/index.js";
 
 // Diff types
