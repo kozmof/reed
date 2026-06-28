@@ -62,7 +62,7 @@ The randomized high-scale streaming stress suite (`chunk-stress.test.ts`) closes
 previously-acknowledged gap. It drives long seeded sequences of viewport-driven
 load/evict/reload through `createStreamingDocumentLoader` over ASCII LF and CRLF
 content (chunk boundaries deliberately split `\r\n` pairs) and, after every step,
-reads the _actual_ resident chunk set and asserts the assembled text, total byte
+reads the actual resident chunk set and asserts the assembled text, total byte
 length, line count, and per-line byte/char offsets all match a from-scratch rebuild
 of exactly those chunks, plus subtree-aggregate exactness on the reconciled line
 index. Building it surfaced and fixed two real correctness defects:

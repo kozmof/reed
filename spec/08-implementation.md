@@ -86,7 +86,7 @@ No currently confirmed functional-suite core reducer/store correctness blockers 
 
 High-scale randomized streaming coverage is now in place (`chunk-stress.test.ts`).
 Building it fixed two chunk-path line-index defects (boundary-spanning char offsets
-on `LOAD_CHUNK`; CRLF un-merge line count on `EVICT_CHUNK`) — see
+on `LOAD_CHUNK`; CRLF un-merge line count on `EVICT_CHUNK`). See
 [06-testing.md](06-testing.md). Direct `createStreamingDocumentLoader` coverage now
 includes superseded multi-chunk viewport races and verifies that late chunks are trimmed
 back to the configured LRU cap.

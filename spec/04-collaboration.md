@@ -2,7 +2,7 @@
 
 ## 1. What Exists Today
 
-Current codebase has **collaboration action primitives**, not a full collaboration stack.
+Current codebase has collaboration action primitives, not a full collaboration stack.
 
 Implemented:
 

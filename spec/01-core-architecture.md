@@ -2,7 +2,7 @@
 
 ## 1. Current Document Model
 
-Reed is an **immutable state + reducer + store** system with a namespaced API surface.
+Reed is an immutable state + reducer + store system with a namespaced API surface.
 
 - Text storage: piece table (`src/store/core/piece-table.ts`)
 - Line model: separate line-index tree (`src/store/core/line-index.ts`)
@@ -13,7 +13,7 @@ Reed is an **immutable state + reducer + store** system with a namespaced API su
 
 The piece table and line index remain independent structures. Piece nodes do not store line metadata.
 
-A third core layer — the **attention layer** (`src/store/core/attention.ts`) — provides piece-anchored boundary references that survive tree rebalancing. It is implemented, tested, and exposed via the public `attention` namespace; see [10-attention.md](10-attention.md).
+A third core layer, the attention layer (`src/store/core/attention.ts`), provides piece-anchored boundary references that survive tree rebalancing. It is implemented, tested, and exposed via the public `attention` namespace. See [10-attention.md](10-attention.md).
 
 ## 2. Core Data Structures
 

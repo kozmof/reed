@@ -2,8 +2,8 @@
 
 ## 1. Overview
 
-The piece table stores document content as a Red-Black tree of lightweight _piece nodes_.
-Each node does not hold text directly — it holds a `(bufferType, start, length)` window
+The piece table stores document content as a Red-Black tree of lightweight piece nodes.
+Each node does not hold text directly. It holds a `(bufferType, start, length)` window
 into one of two backing byte buffers:
 
 - `originalBuffer: Uint8Array` — immutable, loaded once from the initial content string.
@@ -16,10 +16,10 @@ concatenating the byte ranges each piece points to.
 
 ## 2. `addBuffer` Layout
 
-`addBuffer` is a **flat, append-only byte array**. Bytes are written in edit-chronological
+`addBuffer` is a flat, append-only byte array. Bytes are written in edit-chronological
 order, not document order.
 
-Every insertion — regardless of where in the document it appears — appends to the end:
+Every insertion appends to the end, regardless of where in the document it appears:
 
 ```
 Edit sequence:
@@ -38,11 +38,11 @@ bytes are ordered by edit time, not document position.
 
 ### 2.1 Multiple text chunks accumulated over edits
 
-Because every edit appends, `addBuffer` ends up as a **concatenation of all inserted
-text in edit order**, with no delimiters or alignment between them. Each `AddPieceNode`
+Because every edit appends, `addBuffer` ends up as a concatenation of all inserted
+text in edit order, with no delimiters or alignment between them. Each `AddPieceNode`
 in the tree holds a `(start, length)` window that picks out exactly its own chunk.
 
-Extended example — five edits at scattered document positions:
+Extended example with five edits at scattered document positions:
 
 ```
 Edit 1: insert "Line1\n"   at doc offset 0
@@ -59,8 +59,8 @@ addBuffer bytes (flat, edit order):
   offset 21 : L i n e 8 \n          ← Edit 5  (6 bytes)
 ```
 
-The corresponding `AddPieceNode`s — wherever they sit in the RB-tree — point into
-those ranges:
+The corresponding `AddPieceNode`s point into those ranges, wherever they sit in the
+RB-tree:
 
 ```
 AddPieceNode { start: 0,  length: 6 }  → "Line1\n"
@@ -70,14 +70,14 @@ AddPieceNode { start: 18, length: 3 }  → "fix"
 AddPieceNode { start: 21, length: 6 }  → "Line8\n"
 ```
 
-The tree's in-order traversal visits these nodes in **document order** (which may be
+The tree's in-order traversal visits these nodes in document order (which may be
 entirely different from the 0 → 6 → 12 → 18 → 21 physical order above) and emits the
 correct document text.
 
 A mid-piece insertion (§3) can also slice an existing add-buffer chunk. For example, if
 Edit 4 lands inside the "Line1\n" piece at offset 4, `splitPiece` leaves two
 `AddPieceNode`s pointing to the original chunk plus one new node pointing to the "fix"
-bytes — all referencing the same `addBuffer`, no data copied:
+bytes. All reference the same `addBuffer`, and no data is copied:
 
 ```
 addBuffer (unchanged):
@@ -93,15 +93,15 @@ Three pieces now covering the original "Line1\n" region (doc order):
 ### 2.2 Capacity growth
 
 `GrowableBuffer.append()` returns a new `GrowableBuffer` instance. When the backing
-`Uint8Array` has spare capacity, the new instance **shares the same array** — no
+`Uint8Array` has spare capacity, the new instance shares the same array, so no
 reallocation occurs. When capacity is exceeded the array is reallocated at
 `max(currentSize × 2, currentSize + newDataSize)`, amortising growth to O(1) per byte.
 
 ### 2.3 Snapshot safety
 
 Old `PieceTableState` snapshots (e.g. undo-stack entries) hold a `GrowableBuffer` whose
-`length` was smaller at snapshot time. Because bytes are only ever appended — never
-overwritten — those snapshots remain valid indefinitely; they simply ignore bytes beyond
+`length` was smaller at snapshot time. Because bytes are only ever appended and never
+overwritten, those snapshots remain valid indefinitely. They simply ignore bytes beyond
 their own `length` boundary.
 
 ### 2.4 Deleted bytes and compaction
@@ -121,20 +121,20 @@ Relevant code: `pieceTableInsert`, `insertWithSplit`, `splitPiece` in
 
 ### 3.1 Steps
 
-1. **Encode & append** — The inserted text is UTF-8 encoded and appended to `addBuffer`,
+1. Encode and append — The inserted text is UTF-8 encoded and appended to `addBuffer`,
    producing a new `GrowableBuffer`. The bytes occupy `[oldLength, oldLength + newByteLen)`.
 
-2. **Find the target piece** — `findPieceAtPosition()` walks the RB-tree using the cached
+2. Find the target piece — `findPieceAtPosition()` walks the RB-tree using the cached
    `subtreeLength` augment to locate the piece containing the insertion offset. It returns:
    - `node` — the piece to split
    - `offsetInPiece` — byte offset within that piece
    - `path` — root-to-node ancestry, used for efficient tree rewriting
 
-3. **Boundary check** — If `offsetInPiece` is 0 or equals `node.length` the insertion
-   falls on a piece boundary; a new `AddPieceNode` is inserted before or after the
+3. Boundary check — If `offsetInPiece` is 0 or equals `node.length` the insertion
+   falls on a piece boundary. A new `AddPieceNode` is inserted before or after the
    existing piece without splitting (O(log n)).
 
-4. **Split** (`insertWithSplit`) — For a true mid-piece insertion, `splitPiece` divides
+4. Split (`insertWithSplit`) — For a true mid-piece insertion, `splitPiece` divides
    the piece at `offsetInPiece`:
 
    ```
@@ -149,7 +149,7 @@ Relevant code: `pieceTableInsert`, `insertWithSplit`, `splitPiece` in
    Both halves keep the original `bufferType` (and `chunkIndex` for chunk pieces). No
    buffer bytes are copied or moved.
 
-5. **Rebuild** — Three tree operations (all O(log n)):
+5. Rebuild — Three tree operations (all O(log n)):
    1. Replace the original node with `left` using the recorded path.
    2. Insert a new `AddPieceNode` pointing to the freshly appended bytes.
    3. Re-insert `right` after the new node.
@@ -232,9 +232,9 @@ All rebalancing is O(log n).
 ### 5.1 Purpose
 
 For large documents, loading the entire content upfront is impractical. The chunk system
-allows the document to be populated **incrementally**: the backing store sends fixed-size
+allows the document to be populated incrementally: the backing store sends fixed-size
 byte arrays one at a time, and each arrives as a `LOAD_CHUNK` action. Chunks that have
-already been scrolled past can be **evicted** (`EVICT_CHUNK`) to free memory, and
+already been scrolled past can be evicted (`EVICT_CHUNK`) to free memory, and
 re-loaded on demand when that region is visited again.
 
 `originalBuffer` cannot support this lifecycle because it is a single immutable
@@ -248,12 +248,12 @@ nodes carry no index that could identify a sub-region to evict.
 | Storage                   | Single `Uint8Array` on `PieceTableState` | `Map<number, Uint8Array>` (`chunkMap`)      |
 | Piece node type           | `OriginalPieceNode`                      | `ChunkPieceNode`                            |
 | Extra field on piece node | —                                        | `chunkIndex: number`                        |
-| `start` field meaning     | Absolute offset within `originalBuffer`  | Offset **within that chunk's `Uint8Array`** |
+| `start` field meaning     | Absolute offset within `originalBuffer`  | Offset within that chunk's `Uint8Array`     |
 | Lifetime                  | Permanent (never removed)                | Evictable; re-loadable                      |
 
 The critical asymmetry is the `start` field. A `ChunkPieceNode` with
 `chunkIndex = 2, start = 40` means byte 40 of the `Uint8Array` stored at
-`chunkMap.get(2)` — not byte 40 of any combined buffer. This is necessary so that each
+`chunkMap.get(2)`, not byte 40 of any combined buffer. This is necessary so that each
 chunk's buffer can be replaced independently without touching any other piece node.
 
 ### 5.3 Eviction and re-load lifecycle
@@ -277,7 +277,7 @@ LOAD_CHUNK { chunkIndex: 3, data: Uint8Array }   ← re-load after eviction
 
 `getBuffer()` in `piece-table.ts` is the single access point for all buffer types. For
 chunk pieces it does `chunkMap.get(ref.chunkIndex)` and throws if the chunk has been
-evicted — this is the intended failure mode when a region is accessed before re-loading.
+evicted. This is the intended failure mode when a region is accessed before re-loading.
 
 ### 5.4 Why chunks cannot be transparently merged into `originalBuffer`
 
@@ -285,19 +285,19 @@ Once all chunks have arrived it may seem that `chunkMap` could be collapsed: con
 every chunk buffer into `originalBuffer` and retag all `ChunkPieceNode`s as
 `OriginalPieceNode`s. There are two blockers:
 
-1. **`start` offsets must be remapped.** Each chunk piece's `start` is relative to its
+1. `start` offsets must be remapped. Each chunk piece's `start` is relative to its
    own chunk buffer. After concatenation the correct offset would be
    `chunkIndex × chunkSize + oldStart`. Every chunk piece node in the entire tree must be
-   rewritten — an O(n) pass with no safe shortcut.
+   rewritten, which is an O(n) pass with no safe shortcut.
 
-2. **Eviction becomes permanently impossible.** The `chunkIndex` field is the only handle
+2. Eviction becomes permanently impossible. The `chunkIndex` field is the only handle
    that lets `EVICT_CHUNK` locate and remove a specific region. Once it is discarded there
    is no way to identify which nodes belong to which chunk, and no way to release memory
    for individual document regions later.
 
 Merging is only safe when the document is guaranteed never to need eviction again (e.g.
 the file is small enough to stay fully resident). Even then, the offset-remapping tree
-walk is a required step — skipping it produces silent data corruption on all reads from
+walk is a required step. Skipping it produces silent data corruption on all reads from
 former chunk pieces.
 
 ---
