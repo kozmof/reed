@@ -79,20 +79,3 @@ Fully implemented:
 Implemented in `src/store/core/attention.ts`, with full coverage in `src/store/core/attention.test.ts`: piece-anchored boundary references that survive RB-tree rebalancing and edit migration. Exposed publicly via the `attention` namespace (`src/api/attention.ts`).
 
 See [10-attention.md](10-attention.md) for the full design, API, and migration semantics.
-
-## 3. Current Known Gaps
-
-No currently confirmed functional-suite core reducer/store correctness blockers from earlier spec revisions.
-
-High-scale randomized streaming coverage is now in place (`chunk-stress.test.ts`).
-Building it fixed two chunk-path line-index defects (boundary-spanning char offsets
-on `LOAD_CHUNK`; CRLF un-merge line count on `EVICT_CHUNK`). See
-[06-testing.md](06-testing.md). Direct `createStreamingDocumentLoader` coverage now
-includes superseded multi-chunk viewport races and verifies that late chunks are trimmed
-back to the configured LRU cap.
-The perf suite also enforces a local-processing budget for 100-chunk viewports; external
-I/O latency remains the responsibility of the supplied loader.
-
-## 4. Near-Term Priorities
-
-1. Add environment-specific end-to-end streaming latency budgets where Reed is integrated with a real chunk source.

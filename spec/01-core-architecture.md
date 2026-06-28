@@ -104,9 +104,3 @@ Implemented:
 - Chunk loading/eviction runtime and high-level streaming loader
 - Typed events and query/scan API namespaces
 - Snapshot-gated reconciliation (`isCurrentSnapshot` + `reconcileIfCurrent(snapshot)`)
-
-## 6. Current Gap Summary
-
-Previously tracked core consistency gaps (`getLineRangePrecise` lazy offset issue, missing `batch()` reconciliation scheduling, missing remote content-change emission, incorrect `affectedRanges` for multi-change `APPLY_REMOTE` batches) are fixed in current code.
-
-No core consistency gaps are currently tracked. Both the functional and perf suites pass (see [06-testing.md](06-testing.md) for the latest verified run).

@@ -43,14 +43,3 @@ Implemented utilities:
 
 - Query namespace (`src/api/query.ts`) exposes selector-style functions with documented complexity labels.
 - Scan namespace (`src/api/scan.ts`) exposes full traversal operations.
-
-## 4. Not Implemented Here
-
-- DOM virtualization engine
-- Element recycling/pooling
-- Syntax tokenization/render pipeline
-- Scroll event binding/UI layer
-
-## 5. Current Accuracy Note
-
-Rendering helpers now rely on `getLineRangePrecise` behavior that is valid for both eager and lazy line-index states. The previously documented lazy multiline offset issue is not present in the current implementation/test suite.
