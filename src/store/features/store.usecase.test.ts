@@ -1232,6 +1232,27 @@ describe("Editor Use Cases", () => {
       expect(listener1).toHaveBeenCalledTimes(2);
       expect(listener2).toHaveBeenCalledTimes(1);
     });
+
+    it("should notify earlier subscribers again after a re-entrant dispatch", () => {
+      const store = createDocumentStore({ content: "", reconcileMode: "none" });
+      const observedLengths: number[] = [];
+      let dispatchedNestedEdit = false;
+
+      store.subscribe(() => {
+        observedLengths.push(store.getSnapshot().pieceTable.totalLength);
+      });
+      store.subscribe(() => {
+        if (!dispatchedNestedEdit) {
+          dispatchedNestedEdit = true;
+          store.dispatch(DocumentActions.insert(byteOffset(1), "B"));
+        }
+      });
+
+      store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+
+      expect(observedLengths).toEqual([1, 2]);
+      expect(store.getSnapshot().pieceTable.totalLength).toBe(2);
+    });
   });
 
   describe("Snapshot Gating", () => {

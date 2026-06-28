@@ -65,7 +65,11 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
   // the array so the in-progress for-of iteration is not disturbed. Outside notification
   // (the common case) push/splice mutate in place — O(1) add, O(n) remove (n ≈ 2–3).
   let listeners: StoreListener[] = [];
-  let notifying = false; // Re-entrancy guard for notifyListeners (see 6.4)
+  let notifying = false;
+  // A dispatch from inside a listener cannot recurse through the listener list,
+  // but its notification must not be lost. The active notification drains this
+  // flag in a follow-up pass after its current listener snapshot completes.
+  let notificationPending = false;
   const transaction = createTransactionManager();
 
   /**
@@ -135,26 +139,32 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
    * Notify all listeners of state change.
    * Only called when not in a transaction.
    *
-   * Re-entrancy guard: if a listener triggers `emergencyReset` (which itself
-   * calls `notifyListeners`), the inner call is a no-op, preventing recursive
-   * notification.
+   * Re-entrant notifications are coalesced into a follow-up pass. This avoids
+   * recursive listener execution while ensuring subscribers that ran before a
+   * nested dispatch are notified of the resulting state.
    *
    * The listeners array uses copy-on-write semantics: subscribe/unsubscribe
    * clone the array before mutating when `notifying` is true, so the
    * iteration here never sees mid-notify additions or removals.
    */
   function notifyListeners(): void {
-    if (notifying) return;
+    if (notifying) {
+      notificationPending = true;
+      return;
+    }
     notifying = true;
     try {
-      for (const listener of listeners) {
-        try {
-          listener();
-        } catch (error) {
-          // Don't let one listener's error affect others
-          logger?.error?.("Store listener threw an error:", error);
+      do {
+        notificationPending = false;
+        for (const listener of listeners) {
+          try {
+            listener();
+          } catch (error) {
+            // Don't let one listener's error affect others
+            logger?.error?.("Store listener threw an error:", error);
+          }
         }
-      }
+      } while (notificationPending);
     } finally {
       notifying = false;
     }

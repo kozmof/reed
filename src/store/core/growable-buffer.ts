@@ -19,7 +19,12 @@ export class GrowableBuffer {
 
   constructor(bytes: Uint8Array, length: number) {
     this.#rawBytes = bytes;
-    this.bytes = asReadonlyUint8Array(bytes.slice(0, length));
+    // A fixed-length view is sufficient to isolate snapshots: append() only
+    // writes at or beyond this snapshot's length, so later writes cannot alter
+    // any byte visible through this view. Avoiding slice() here is important —
+    // copying the full valid prefix on every keystroke makes sequential edits
+    // quadratic in the total inserted byte count.
+    this.bytes = asReadonlyUint8Array(bytes.subarray(0, length));
     this.length = length;
     Object.freeze(this);
   }
