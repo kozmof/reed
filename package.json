@@ -1,7 +1,25 @@
 {
   "name": "@kozmof/reed",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": false,
+  "description": "A fast, immutable text engine for building editors, built on a piece table and usable with any UI framework.",
+  "keywords": [
+    "piece-table",
+    "text-editor",
+    "immutable",
+    "document",
+    "text-buffer"
+  ],
+  "license": "MIT",
+  "author": "Kozo Oeda",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kozmof/reed.git"
+  },
+  "homepage": "https://github.com/kozmof/reed#readme",
+  "bugs": {
+    "url": "https://github.com/kozmof/reed/issues"
+  },
   "files": [
     "dist"
   ],
