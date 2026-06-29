@@ -1,7 +1,7 @@
 {
   "name": "@kozmof/reed",
-  "version": "0.0.0",
-  "private": true,
+  "version": "1.0.0",
+  "private": false,
   "files": [
     "dist"
   ],
@@ -27,7 +27,13 @@
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "lint": "oxlint",
-    "lint:fix": "oxlint --fix"
+    "lint:fix": "oxlint --fix",
+    "pack:home": "pnpm pack --pack-destination ~",
+    "pack:check": "pnpm pack:home && pnpm pack:check-compare",
+    "preflight": "pnpm publish --dry-run",
+    "pack:check-name": "v=$(echo $npm_package_version) && name='kozmof-reed-'$v && echo $name",
+    "pack:check-counts": "name=$(pnpm run --silent pack:check-name) && echo $(tar -tzf ~/$name.tgz | wc -l)",
+    "pack:check-compare": "counts=$(pnpm run --silent pack:check-counts) && if [ $counts -ne 97 ]; then echo ERROR: check files in tgz; exit 1; else echo OK; fi"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
