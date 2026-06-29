@@ -36,13 +36,13 @@
     "pack:check-compare": "counts=$(pnpm run --silent pack:check-counts) && if [ $counts -ne 97 ]; then echo ERROR: check files in tgz; exit 1; else echo OK; fi"
   },
   "devDependencies": {
-    "@types/node": "^25.5.2",
+    "@types/node": "^25.9.4",
     "@vitest/coverage-v8": "4.0.18",
     "oxfmt": "^0.44.0",
-    "oxlint": "^1.59.0",
+    "oxlint": "^1.71.0",
     "typescript": "~5.9.3",
-    "vite": "^7.2.4",
-    "vitest": "^4.0.18"
+    "vite": "^7.3.5",
+    "vitest": "^4.1.9"
   },
   "engines": {
     "node": ">=20"
