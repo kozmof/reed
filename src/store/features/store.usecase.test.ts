@@ -9,7 +9,7 @@ import { createDocumentStore, withTransaction } from "./store.js";
 import { DocumentActions } from "./actions.js";
 import { byteOffset, byteLength } from "../../types/branded.js";
 import { rebuildLineIndex, getLineStartOffset, getCharStartOffset } from "../core/line-index.js";
-import { getText } from "../core/piece-table.js";
+import { getText, getValue } from "../core/piece-table.js";
 
 function createDeterministicRng(seed: number): () => number {
   let state = seed >>> 0;
@@ -319,6 +319,23 @@ describe("Editor Use Cases", () => {
       store.rollbackTransaction();
 
       expect(store.getSnapshot()).toBe(originalState);
+    });
+
+    it("keeps abandoned snapshots immutable after rollback and a new edit branch", () => {
+      // Non-empty initial content preallocates add-buffer capacity, exercising
+      // the shared-capacity fast path rather than allocation on every insert.
+      const store = createDocumentStore({ content: "x", reconcileMode: "none" });
+
+      store.beginTransaction();
+      store.dispatch(DocumentActions.insert(byteOffset(1), "alpha"));
+      const abandonedSnapshot = store.getSnapshot();
+      expect(getValue(abandonedSnapshot.pieceTable)).toBe("xalpha");
+
+      store.rollbackTransaction();
+      store.dispatch(DocumentActions.insert(byteOffset(1), "BRAVO"));
+
+      expect(getValue(store.getSnapshot().pieceTable)).toBe("xBRAVO");
+      expect(getValue(abandonedSnapshot.pieceTable)).toBe("xalpha");
     });
 
     it("should notify listeners on transaction rollback", () => {

@@ -2,6 +2,15 @@ import type { ReadonlyUint8Array } from "../../types/branded.js";
 import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "./runtime-readonly.js";
 
 /**
+ * Tracks which immutable buffer version owns the writable tail of a backing
+ * array. Appending from that version is safe because the write starts exactly
+ * after its visible prefix. Appending from an older version is a branch and
+ * must copy first, or it could overwrite bytes visible through a newer
+ * snapshot after a transaction rollback.
+ */
+const writableTailOwner = new WeakMap<Uint8Array, GrowableBuffer>();
+
+/**
  * Append-only growable buffer that encapsulates the mutation invariant
  * for the piece table's add buffer.
  *
@@ -19,14 +28,14 @@ export class GrowableBuffer {
 
   constructor(bytes: Uint8Array, length: number) {
     this.#rawBytes = bytes;
-    // A fixed-length view is sufficient to isolate snapshots: append() only
-    // writes at or beyond this snapshot's length, so later writes cannot alter
-    // any byte visible through this view. Avoiding slice() here is important —
-    // copying the full valid prefix on every keystroke makes sequential edits
-    // quadratic in the total inserted byte count.
+    // A fixed-length view plus the tail-owner check in append() isolates
+    // snapshots without copying the full valid prefix on every keystroke.
+    // Sequential descendants only write beyond this view; stale branches copy
+    // before writing into their own backing array.
     this.bytes = asReadonlyUint8Array(bytes.subarray(0, length));
     this.length = length;
     Object.freeze(this);
+    writableTailOwner.set(bytes, this);
   }
 
   /**
@@ -38,14 +47,22 @@ export class GrowableBuffer {
 
   /**
    * Append data to the buffer.
-   * Returns a new GrowableBuffer — the backing array is shared when possible
-   * (only reallocated when capacity is exceeded).
+   * Returns a new GrowableBuffer. Sequential appends reuse spare capacity;
+   * stale branches and capacity growth allocate independent storage.
    */
   append(data: Uint8Array | ReadonlyUint8Array): GrowableBuffer {
     let bytes = this.#rawBytes;
     const source = unwrapReadonlyUint8Array(data);
-    if (this.length + source.length > bytes.length) {
-      const newSize = Math.max(bytes.length * 2, this.length + source.length);
+
+    const isWritableTailOwner = writableTailOwner.get(bytes) === this;
+    if (!isWritableTailOwner || this.length + source.length > bytes.length) {
+      // A stale version can be reached after rollback or by branching directly
+      // from an older snapshot. Preserve its prefix in a new backing array
+      // before writing. For the current tail owner, allocation only happens
+      // when normal geometric growth is required.
+      const newSize = isWritableTailOwner
+        ? Math.max(bytes.length * 2, this.length + source.length)
+        : Math.max(bytes.length, this.length + source.length);
       const newBytes = new Uint8Array(newSize);
       newBytes.set(bytes.subarray(0, this.length));
       bytes = newBytes;

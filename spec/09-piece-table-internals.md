@@ -92,17 +92,24 @@ Three pieces now covering the original "Line1\n" region (doc order):
 
 ### 2.2 Capacity growth
 
-`GrowableBuffer.append()` returns a new `GrowableBuffer` instance. When the backing
-`Uint8Array` has spare capacity, the new instance shares the same array, so no
-reallocation occurs. When capacity is exceeded the array is reallocated at
-`max(currentSize × 2, currentSize + newDataSize)`, amortising growth to O(1) per byte.
+`GrowableBuffer.append()` returns a new `GrowableBuffer` instance. The newest version
+that owns a backing array's writable tail may reuse spare capacity, so ordinary
+sequential edits do not reallocate. When capacity is exceeded the array is reallocated
+at `max(currentSize × 2, currentSize + newDataSize)`, amortising growth to O(1) per byte.
+
+Appending from an older buffer version creates a branch (for example, after transaction
+rollback). That version no longer owns the shared array's writable tail, so `append()`
+first copies its valid prefix into a new backing array. This copy-on-branch rule prevents
+the new branch from overwriting bytes already visible through a descendant snapshot.
 
 ### 2.3 Snapshot safety
 
-Old `PieceTableState` snapshots (e.g. undo-stack entries) hold a `GrowableBuffer` whose
-`length` was smaller at snapshot time. Because bytes are only ever appended and never
-overwritten, those snapshots remain valid indefinitely. They simply ignore bytes beyond
-their own `length` boundary.
+Old `PieceTableState` snapshots hold a `GrowableBuffer` whose `length` was fixed at
+snapshot time. Sequential descendants may write only beyond that boundary. If an older
+version is used to create a different descendant, the copy-on-branch rule above gives it
+independent storage before writing. Consequently every snapshot continues to expose the
+same bytes for its lifetime, including snapshots captured inside a transaction that is
+later rolled back.
 
 ### 2.4 Deleted bytes and compaction
 

@@ -47,10 +47,10 @@ This repository currently implements a core text engine and state runtime:
 
 ## Verification Snapshot
 
-- Latest verified functional test run: 2026-06-27
+- Latest verified functional test run: 2026-06-29
 - Command: `pnpm test`
-- Result: `23` test files, `985` tests passed
-- Latest verified perf test run: 2026-06-27
+- Result: `24` test files, `993` tests passed
+- Latest verified perf test run: 2026-06-29
 - Command: `pnpm test:perf`
 - Result: `1` test file, `30` tests passed
 
