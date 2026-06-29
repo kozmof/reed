@@ -55,6 +55,6 @@ This repository currently implements a core text engine and state runtime:
 - Result: `1` test file, `30` tests passed
 
 [spec/06-testing.md](spec/06-testing.md) is the source of truth for the latest
-verified run and per-suite coverage; keep these counts in sync with it.
+verified run and per-suite coverage. Keep these counts in sync with it.
 
 See domain files under `/spec` for implementation-level details and constraints.

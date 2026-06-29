@@ -76,6 +76,6 @@ Fully implemented:
 
 ### 2.3 Attention layer
 
-Implemented in `src/store/core/attention.ts`, with full coverage in `src/store/core/attention.test.ts`: piece-anchored boundary references that survive RB-tree rebalancing and edit migration. Exposed publicly via the `attention` namespace (`src/api/attention.ts`).
+Implemented in `src/store/core/attention.ts` and fully covered by `src/store/core/attention.test.ts`. The layer provides piece-anchored boundary references that survive RB-tree rebalancing and edit migration. Exposed publicly via the `attention` namespace (`src/api/attention.ts`).
 
 See [10-attention.md](10-attention.md) for the full design, API, and migration semantics.

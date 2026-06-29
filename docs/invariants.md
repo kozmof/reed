@@ -1,10 +1,10 @@
 # Reed Document Store — Core Invariants
 
 This document captures the key invariants that must hold across the three main
-data structures: the **piece table**, the **line index**, and the
-**reconciliation lifecycle**. Violating any of these invariants can produce
-silent data corruption, incorrect line-number lookups, or assertion failures at
-mode boundaries (e.g., `asEagerLineIndex`).
+data structures, the piece table, the line index, and the reconciliation
+lifecycle. Violating any of these invariants can produce silent data corruption,
+incorrect line-number lookups, or assertion failures at mode boundaries (for
+example, `asEagerLineIndex`).
 
 ---
 
@@ -29,7 +29,7 @@ node.subtreeAddLength === (node.bufferType === 'add' ? node.length : 0)
 ```
 
 These fields are recomputed automatically by `withPieceNode` whenever `left`,
-`right`, or `length` changes. **Never mutate them directly.**
+`right`, or `length` changes. Never mutate them directly.
 
 ### 1.2 Red-Black Invariants
 
@@ -38,7 +38,7 @@ Standard RB-tree invariants hold after every structural operation:
 - The root is always black.
 - No red node has a red parent.
 - Every path from root to null has the same number of black nodes
-  (the _black-height_ invariant).
+  (the black-height invariant).
 
 `fixInsertWithPath` restores invariants after insertion.  
 `fixRedViolations` restores the red-property after a right-spine graft (chunk
@@ -47,7 +47,7 @@ loading).
 ### 1.3 Immutability
 
 All `PieceNode` values are frozen (`Object.freeze`). Tree operations return new
-nodes with structural sharing; they never mutate existing nodes.
+nodes with structural sharing and never mutate existing nodes.
 
 ### 1.4 Chunk Piece Ordering
 
@@ -71,13 +71,13 @@ It can be in one of two evaluation modes:
 
 `node.subtreeByteLength` is the sum of `lineLength` for all nodes in the
 subtree. It is updated by `withLineIndexNode` on every structural change and
-is **never** marked dirty. Callers may rely on it for O(tree height) byte-offset
+is never marked dirty. Callers may rely on it for O(tree height) byte-offset
 arithmetic even in lazy mode.
 
 ### 2.2 `subtreeLineCount` Is Always Accurate
 
 `node.subtreeLineCount` equals `1 + left.subtreeLineCount + right.subtreeLineCount`.
-Accurate in both modes; used for O(tree height) line-number lookups.
+It is accurate in both modes and is used for O(tree height) line-number lookups.
 
 #### Tree height
 
@@ -89,8 +89,8 @@ O(tree height), and O(log n) when the tree is balanced.
 
 `lineIndex.unloadedLineCount` equals the sum of
 `unloadedLineCountsByChunk.values()`. Only `withLineIndexState` may replace the
-per-chunk map; it recomputes this aggregate so `getLineCountFromIndex` remains
-O(1).
+per-chunk map, and it recomputes this aggregate so `getLineCountFromIndex`
+remains O(1).
 
 ### 2.3 `documentOffset` in Eager Mode
 
@@ -119,7 +119,7 @@ ranges, ≤ 32 by default).
 
 ### 2.5 `lineLength` Is Always Accurate
 
-`node.lineLength` is the byte length of the line **including** its trailing
+`node.lineLength` is the byte length of the line, including its trailing
 newline (if any). It is updated eagerly by `lineIndexInsert` / `lineIndexDelete`
 and never requires reconciliation.
 
@@ -212,8 +212,8 @@ This section is the single source of truth for the three monotonic counters on
 
 ### 5.1 `revision` — global state revision
 
-`state.revision` is a **global state revision**, not a content version. It
-increments by **exactly 1** on every state-changing action:
+`state.revision` is a global state revision, not a content version. It
+increments by exactly 1 on every state-changing action:
 
 - content edits — `INSERT`, `DELETE`, `REPLACE`, `APPLY_REMOTE`
 - `SET_SELECTION`
@@ -221,33 +221,34 @@ increments by **exactly 1** on every state-changing action:
 - `LOAD_CHUNK`, `EVICT_CHUNK`
 
 Because it moves on selection and history actions too, `revision` alone cannot
-tell you that _content_ changed. To detect a content change, compare piece-table
+tell you that content changed. To detect a content change, compare piece-table
 reference identity: `state.pieceTable === prev.pieceTable` (O(1) via structural
 sharing) holds whenever content is unchanged.
 
 ### 5.2 Content-neutral operations MUST NOT increment `revision`
 
 Some operations produce a new immutable state reference (so subscribers fire) but
-are **content-neutral** and **MUST NOT** increment `revision`, so they are never
+are content-neutral and MUST NOT increment `revision`, so they are never
 misread as content edits:
 
 - reconciliation (`reconcileNow` / `getEagerSnapshot`) — resolves line offsets
-  in place; visible text is unchanged
+  in place, leaving the visible text unchanged
 - `CREATE_ATTENTION` / `DELETE_ATTENTION` — mutate the piece-anchored reference
   layer only
 - `DECLARE_CHUNK_METADATA` — registers line counts for unloaded chunks
 
-Canonical wording for such operations: _"content-neutral: produces a new immutable
-state reference but MUST NOT increment `revision`."_
+Canonical wording for such operations: "content-neutral: produces a new immutable
+state reference but MUST NOT increment `revision`."
 
 ### 5.3 `selectionRevision`
 
 Increments only on `SET_SELECTION`. Inline selections carried by a content edit do
-**not** move it — it strictly tracks `SET_SELECTION` dispatches.
+not move it. It strictly tracks `SET_SELECTION` dispatches.
 
 ### 5.4 `lineIndex.lastReconciledRevision`
 
-Set to `state.revision` at reconciliation time (the revision _before_ reconcile,
-not after — reconciliation does not increment `revision`). It never decreases.
+Set to `state.revision` at reconciliation time, the revision before reconcile
+rather than after, because reconciliation does not increment `revision`. It never
+decreases.
 Compare `lineIndex.lastReconciledRevision < state.revision` to detect a stale
 index.

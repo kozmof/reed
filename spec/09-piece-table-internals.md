@@ -170,7 +170,7 @@ One piece becomes three:
 ```
 
 `originalBuffer` is never modified. `addBuffer` only grows. Only O(log n) tree nodes
-are allocated; all untouched subtrees are structurally shared with the previous snapshot.
+are allocated, and all untouched subtrees are structurally shared with the previous snapshot.
 
 ---
 
@@ -239,7 +239,7 @@ All rebalancing is O(log n).
 ### 5.1 Purpose
 
 For large documents, loading the entire content upfront is impractical. The chunk system
-allows the document to be populated incrementally: the backing store sends fixed-size
+allows the document to be populated incrementally. The backing store sends fixed-size
 byte arrays one at a time, and each arrives as a `LOAD_CHUNK` action. Chunks that have
 already been scrolled past can be evicted (`EVICT_CHUNK`) to free memory, and
 re-loaded on demand when that region is visited again.
@@ -288,9 +288,9 @@ evicted. This is the intended failure mode when a region is accessed before re-l
 
 ### 5.4 Why chunks cannot be transparently merged into `originalBuffer`
 
-Once all chunks have arrived it may seem that `chunkMap` could be collapsed: concatenate
-every chunk buffer into `originalBuffer` and retag all `ChunkPieceNode`s as
-`OriginalPieceNode`s. There are two blockers:
+Once all chunks have arrived it may seem that `chunkMap` could be collapsed by
+concatenating every chunk buffer into `originalBuffer` and retagging all
+`ChunkPieceNode`s as `OriginalPieceNode`s. There are two blockers:
 
 1. `start` offsets must be remapped. Each chunk piece's `start` is relative to its
    own chunk buffer. After concatenation the correct offset would be

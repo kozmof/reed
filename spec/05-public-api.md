@@ -45,7 +45,7 @@ Returns `ReconcilableDocumentStore` with:
 - `rollbackTransaction()`
 - `scheduleReconciliation()`
 - `reconcileNow()` — reconcile and return `DocumentState<'eager'>`
-- `reconcileIfCurrent(snapshot)` — reconcile only if `snapshot` is still current; returns `DocumentState<'eager'> | null`
+- `reconcileIfCurrent(snapshot)` — reconcile only if `snapshot` is still current, returning `DocumentState<'eager'> | null`
 - `getEagerSnapshot()` — return current state with eager line-index without incrementing revision
 - `whenReconciled()` — resolve with eager state after background reconciliation completes
 - `setViewport(startLine, endLine)`
@@ -54,18 +54,18 @@ Returns `ReconcilableDocumentStore` with:
 Supported config fields (`DocumentStoreConfig`):
 
 - `content`
-- `logger` — optional diagnostics sink; omit to keep the library silent
+- `logger` — optional diagnostics sink. Omit it to keep the library silent
 - `historyLimit`
 - `chunkSize`
 - `encoding` — currently only `'utf-8'` is supported
 - `lineEnding`
 - `undoGroupTimeout`
 - `normalizeInsertedLineEndings` — coerce line endings on `INSERT`/`REPLACE` to match `lineEnding`
-- `totalFileSize` — pre-declared file size used for chunk sizing; must be a non-negative safe integer
+- `totalFileSize` — pre-declared file size used for chunk sizing, and must be a non-negative safe integer
 - `maxDirtyRanges` — dirty-range count threshold before a full line-index rebuild is triggered
 - `reconcileMode` — `'idle'` (default, uses `requestIdleCallback`) | `'sync'` (same-tick) | `'none'` (manual)
 - `scheduler` — custom `ReconciliationSchedulerFactory` (preferred) or pre-built
-  `ReconciliationScheduler` (backward compatibility); mutually exclusive with `reconcileMode`
+  `ReconciliationScheduler` (backward compatibility), and mutually exclusive with `reconcileMode`
 
 ### 2.2 `store.createDocumentStoreWithEvents(config?)`
 
@@ -171,7 +171,7 @@ Traversal namespace for O(n) operations:
 
 ### 4.4 Attention namespace (`attention`)
 
-Piece-anchored boundary references (the third Reed layer); state is immutable and caller-owned:
+Piece-anchored boundary references (the third Reed layer). State is immutable and caller-owned:
 
 - `attention.emptyState`: initial `AttentionLayerState`
 - points: `createPoint`, `resolvePoint`

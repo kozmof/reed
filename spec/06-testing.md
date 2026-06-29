@@ -56,7 +56,7 @@ Implemented coverage is strongest in:
 Current gaps relative to roadmap/spec ambitions:
 
 - `createStreamingDocumentLoader` directly covers viewport validation, stale-request cache trimming, multi-chunk viewport transitions, and boundary eviction/reload
-- the performance suite enforces a 500 ms local-processing budget for a 100-chunk viewport; end-to-end I/O latency remains loader- and product-specific
+- the performance suite enforces a 500 ms local-processing budget for a 100-chunk viewport, while end-to-end I/O latency remains loader- and product-specific
 
 The randomized high-scale streaming stress suite (`chunk-stress.test.ts`) closes the
 previously-acknowledged gap. It drives long seeded sequences of viewport-driven
