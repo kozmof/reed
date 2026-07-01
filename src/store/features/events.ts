@@ -204,9 +204,15 @@ export function createEventEmitter(logger?: Pick<ReedLogger, "error">): Document
       }
       typeHandlers.add(handler as EventHandler<AnyDocumentEvent>);
 
+      let active = true;
       return () => {
-        typeHandlers!.delete(handler as EventHandler<AnyDocumentEvent>);
-        if (typeHandlers!.size === 0) {
+        if (!active) return;
+        active = false;
+        typeHandlers.delete(handler as EventHandler<AnyDocumentEvent>);
+        // A stale unsubscribe may outlive removeAllListeners() and a later
+        // registration for the same event type. Only remove the map entry when
+        // it still points at the Set this subscription originally joined.
+        if (typeHandlers.size === 0 && handlers.get(type) === typeHandlers) {
           handlers.delete(type);
         }
       };

@@ -62,6 +62,34 @@ describe("Event Emitter", () => {
       emitter.emit("save", createSaveEvent(state));
       expect(handler).toHaveBeenCalledTimes(1); // Still 1, not called again
     });
+
+    it("should not let a stale unsubscribe remove newer handlers", () => {
+      const emitter = createEventEmitter();
+      const oldHandler = vi.fn();
+      const newHandler = vi.fn();
+      const unsubscribeOld = emitter.addEventListener("save", oldHandler);
+
+      emitter.removeAllListeners();
+      emitter.addEventListener("save", newHandler);
+      unsubscribeOld();
+      emitter.emit("save", createSaveEvent(createInitialState()));
+
+      expect(oldHandler).not.toHaveBeenCalled();
+      expect(newHandler).toHaveBeenCalledTimes(1);
+    });
+
+    it("should make unsubscribe idempotent across re-registration", () => {
+      const emitter = createEventEmitter();
+      const handler = vi.fn();
+      const unsubscribe = emitter.addEventListener("save", handler);
+
+      unsubscribe();
+      emitter.addEventListener("save", handler);
+      unsubscribe();
+      emitter.emit("save", createSaveEvent(createInitialState()));
+
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("removeEventListener", () => {

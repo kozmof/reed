@@ -1220,6 +1220,39 @@ describe("Editor Use Cases", () => {
       expect(listener).toHaveBeenCalledTimes(1); // Still 1, not notified
     });
 
+    it("should make unsubscribe idempotent across re-subscription", () => {
+      const store = createDocumentStore({ content: "" });
+      const listener = vi.fn();
+      const unsubscribeOld = store.subscribe(listener);
+
+      unsubscribeOld();
+      store.subscribe(listener);
+      unsubscribeOld();
+      store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it("should independently unsubscribe duplicate callbacks during notification", () => {
+      const store = createDocumentStore({ content: "" });
+      const listener = vi.fn();
+      let unsubscribeSecond: (() => void) | undefined;
+      const unsubscribeFirst = store.subscribe(() => {
+        unsubscribeFirst();
+        unsubscribeSecond?.();
+      });
+      unsubscribeSecond = store.subscribe(listener);
+      const unsubscribeDuplicate = store.subscribe(listener);
+
+      store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+      store.dispatch(DocumentActions.insert(byteOffset(1), "B"));
+
+      expect(listener).toHaveBeenCalledTimes(3);
+      unsubscribeDuplicate();
+      store.dispatch(DocumentActions.insert(byteOffset(2), "C"));
+      expect(listener).toHaveBeenCalledTimes(3);
+    });
+
     it("should not notify when state does not change", () => {
       const store = createDocumentStore({ content: "" });
       const listener = vi.fn();

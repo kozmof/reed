@@ -184,12 +184,18 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
     } else {
       listeners.push(listener);
     }
+    let active = true;
     return () => {
+      if (!active) return;
+      active = false;
+      const idx = listeners.indexOf(listener);
+      if (idx === -1) return;
       if (notifying) {
-        listeners = listeners.filter((l) => l !== listener);
+        // Preserve the active iteration snapshot while removing only this
+        // subscription when the same callback was registered more than once.
+        listeners = [...listeners.slice(0, idx), ...listeners.slice(idx + 1)];
       } else {
-        const idx = listeners.indexOf(listener);
-        if (idx !== -1) listeners.splice(idx, 1);
+        listeners.splice(idx, 1);
       }
     };
   }
