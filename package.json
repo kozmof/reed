@@ -1,6 +1,6 @@
 {
   "name": "@kozmof/reed",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": false,
   "description": "A fast, immutable text engine for building editors, built on a piece table and usable with any UI framework.",
   "keywords": [
