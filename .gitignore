@@ -29,5 +29,6 @@ tmp/
 .pnpm-store
 
 .claude
+.codex
 
 coverage
