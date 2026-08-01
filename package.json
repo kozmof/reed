@@ -1,6 +1,6 @@
 {
   "name": "@kozmof/reed",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": false,
   "description": "A fast, immutable text engine for building editors, built on a piece table and usable with any UI framework.",
   "keywords": [
@@ -51,16 +51,16 @@
     "preflight": "pnpm publish --dry-run",
     "pack:check-name": "v=$(echo $npm_package_version) && name='kozmof-reed-'$v && echo $name",
     "pack:check-counts": "name=$(pnpm run --silent pack:check-name) && echo $(tar -tzf ~/$name.tgz | wc -l)",
-    "pack:check-compare": "counts=$(pnpm run --silent pack:check-counts) && if [ $counts -ne 97 ]; then echo ERROR: check files in tgz; exit 1; else echo OK; fi"
+    "pack:check-compare": "counts=$(pnpm run --silent pack:check-counts) && if [ $counts -ne 99 ]; then echo ERROR: check files in tgz; exit 1; else echo OK; fi"
   },
   "devDependencies": {
-    "@types/node": "^25.9.4",
+    "@types/node": "^25.9.5",
     "@vitest/coverage-v8": "4.1.9",
     "oxfmt": "^0.44.0",
-    "oxlint": "^1.71.0",
+    "oxlint": "^1.76.0",
     "typescript": "~5.9.3",
-    "vite": "^7.3.5",
-    "vitest": "^4.1.9"
+    "vite": "^7.3.6",
+    "vitest": "^4.1.10"
   },
   "engines": {
     "node": ">=20"
