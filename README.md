@@ -137,7 +137,7 @@ const state = doc.getSnapshot();
 
 query.getLineCount(state); // total lines
 query.findLineAtPosition(state, position.byteOffset(7)); // line node at a byte offset
-query.findLineByNumber(state, 2); // line node by 1-based line number
+query.findLineByNumber(state, 2); // third line node (line numbers are 0-based)
 query.getLineStartOffset(state, 1); // byte offset where a line starts
 query.getLength(state.pieceTable); // document length in bytes
 query.getText(state.pieceTable, position.byteOffset(0), position.byteOffset(5)); // substring

@@ -25,7 +25,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import type { ChunkMetadata, LineIndexNode } from "../../types/state.js";
+import type { ChunkMetadata } from "../../types/state.js";
 import { createDocumentStore } from "./store.js";
 import { createStreamingDocumentLoader } from "./streaming-loader.js";
 import { getValue } from "../core/piece-table.js";
@@ -36,6 +36,10 @@ import {
   randomInt,
   type LargeContentOptions,
 } from "../../../test-utils/large-content.js";
+import {
+  assertLineIndexInvariants,
+  assertPieceTableInvariants,
+} from "../../../test-utils/invariants.js";
 
 const encoder = new TextEncoder();
 
@@ -114,31 +118,6 @@ async function flushPrefetches(): Promise<void> {
 }
 
 /**
- * Validate subtree-aggregate exactness on a reconciled line index: every node's
- * subtree counts must equal the sum of its children plus itself. These are the
- * aggregates that O(log n) line/offset navigation reads, so any drift here would
- * corrupt lookups. Tree balance is intentionally outside this invariant.
- */
-function assertLineIndexAggregates(node: LineIndexNode | null): void {
-  if (node === null) return;
-
-  assertLineIndexAggregates(node.left);
-  assertLineIndexAggregates(node.right);
-
-  const leftLines = node.left?.subtreeLineCount ?? 0;
-  const rightLines = node.right?.subtreeLineCount ?? 0;
-  expect(node.subtreeLineCount).toBe(1 + leftLines + rightLines);
-
-  const leftBytes = node.left?.subtreeByteLength ?? 0;
-  const rightBytes = node.right?.subtreeByteLength ?? 0;
-  expect(node.subtreeByteLength).toBe(node.lineLength + leftBytes + rightBytes);
-
-  const leftChars = node.left?.subtreeCharLength ?? 0;
-  const rightChars = node.right?.subtreeCharLength ?? 0;
-  expect(node.subtreeCharLength).toBe(node.charLength + leftChars + rightChars);
-}
-
-/**
  * The heart of the suite: read the *actual* resident chunk set and assert the
  * assembled document, its byte length, and its reconciled line index all match
  * a from-scratch rebuild of exactly those chunks.
@@ -173,7 +152,8 @@ function assertConsistent(
     ).toBe(getCharStartOffset(rebuilt.root, line));
   }
 
-  assertLineIndexAggregates(reconciled.lineIndex.root);
+  assertLineIndexInvariants(reconciled.lineIndex.root, context);
+  assertPieceTableInvariants(pieceTable, context, true);
 
   // With no user edits, eviction never refuses, so the resident set must stay
   // within the memory ceiling (configured max, or the pinned window if larger).
