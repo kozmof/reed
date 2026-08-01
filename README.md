@@ -28,9 +28,9 @@ const state = doc.getSnapshot();
 console.log(scan.getValue(state.pieceTable)); // "hello, world"
 ```
 
-## Core concepts
+## Namespaces
 
-Reed's runtime is organized into named namespaces:
+Reed's runtime is organized into namespaces.
 
 | Namespace     | Use it for                                                        |
 | ------------- | ----------------------------------------------------------------- |
@@ -44,7 +44,7 @@ Reed's runtime is organized into named namespaces:
 | `position.*`  | Branded offset constructors (`byteOffset`, `charOffset`, …)       |
 | `attention.*` | Piece-anchored references that survive edits                      |
 
-Types are exported flat and can be imported directly:
+Types are exported flat and can be imported directly.
 
 ```ts
 import type { DocumentState, InsertAction, ByteOffset } from "@kozmof/reed";
@@ -66,7 +66,7 @@ const doc = store.createDocumentStore({
 });
 ```
 
-The store holds the current document state and notifies subscribers on every change:
+The store holds the current document state and notifies subscribers on every change.
 
 ```ts
 const state = doc.getSnapshot(); // current immutable DocumentState
@@ -118,7 +118,7 @@ history.getUndoCount(doc.getSnapshot());
 
 ### Replacing the whole document
 
-For "set the editor to this string" (e.g. loading a file or reverting), use the `diff` namespace, which computes a minimal edit instead of clearing and re-inserting:
+For updating the whole editor (e.g. loading a file or reverting), use the `diff` namespace, which computes a minimal edit instead of clearing and re-inserting.
 
 ```ts
 import { diff } from "@kozmof/reed";
@@ -180,7 +180,7 @@ for (const line of visible.lines) {
 
 ## Reacting to changes with events
 
-`createDocumentStoreWithEvents` adds typed event emission on top of the base store. Subscribe to specific change types instead of a generic notification:
+`createDocumentStoreWithEvents` adds typed event emission on top of the base store. Subscribe to specific change types instead of a generic notification.
 
 ```ts
 import { store, position } from "@kozmof/reed";
@@ -225,7 +225,7 @@ Use `insertWithAttention` / `deleteWithAttention` to keep the piece table and at
 
 ## Working with large files
 
-Reed supports chunked, streaming loads for files that don't fit comfortably in memory. `createChunkManager` and `createStreamingDocumentLoader` are flat exports (not part of the `store` namespace) and take the store plus a `ChunkLoader` that fetches raw bytes for a chunk index:
+Reed supports chunked, streaming loads for files that don't fit comfortably in memory. `createChunkManager` and `createStreamingDocumentLoader` are flat exports (not part of the `store` namespace) and take the store plus a `ChunkLoader` that fetches raw bytes for a chunk index.
 
 ```ts
 import { createChunkManager, createStreamingDocumentLoader } from "@kozmof/reed";
@@ -243,7 +243,7 @@ const manager = createChunkManager(doc, loader);
 await manager.ensureLoaded(0);
 ```
 
-Background re-indexing after edits is handled by a reconciliation scheduler. A fully-resolved (eager) state can be forced when needed immediately, for example before an `O(n)` export:
+Background re-indexing after edits is handled by a reconciliation scheduler. A fully-resolved (eager) state can be forced when needed immediately, for example before an `O(n)` export.
 
 ```ts
 const eager = doc.reconcileNow(); // returns a fully reconciled DocumentState
@@ -251,7 +251,7 @@ const eager = doc.reconcileNow(); // returns a fully reconciled DocumentState
 
 See [spec/03-loading-and-history.md](spec/03-loading-and-history.md) for the chunk lifecycle.
 
-## Designs
+## Design Overview
 
 1. Deterministic, pure reducers: every transition is a pure function of `(state, action)`.
 2. Immutable state with structural sharing: snapshots are safe to hold, compare by reference, and diff.
