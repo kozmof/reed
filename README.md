@@ -1,6 +1,6 @@
 # reed
 
-Reed is a fast, immutable text engine for building editors. It's built on a piece table and works with any UI framework.
+Reed is a fast, immutable text processor for building editors. It's built on a piece table and works with any UI framework.
 
 ## Installation
 
