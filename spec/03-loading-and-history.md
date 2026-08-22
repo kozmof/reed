@@ -1,6 +1,6 @@
-# Loading & History Status
+# Loading and history status
 
-## 1. Loading / Large-Document Capabilities
+## 1. Loading and large-document support
 
 ### 1.1 Implemented
 

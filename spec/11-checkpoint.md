@@ -2,7 +2,7 @@
 
 ## 1. Status
 
-Implemented.
+Reed can save an eager document state as JSON-safe data and restore it without replaying edits.
 
 | Concern               | Location                                |
 | --------------------- | --------------------------------------- |

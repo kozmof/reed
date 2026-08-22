@@ -2,7 +2,7 @@
 
 ## 1. Entry Points
 
-Current public runtime surface is exported from `src/index.ts` as namespaces:
+The public runtime API is exported from `src/index.ts` through these namespaces.
 
 - `store`
 - `query`

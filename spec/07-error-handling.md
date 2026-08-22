@@ -1,6 +1,8 @@
 # Error Handling Status
 
-## 1. Implemented Error-Handling Behavior
+Reed validates actions and isolates failures at store boundaries. This document records the implemented behavior and known gaps.
+
+## 1. Implemented error handling
 
 ### 1.1 Input validation in reducer
 

@@ -1,8 +1,8 @@
-# Rendering & Viewport Status
+# Rendering and viewport status
 
 ## 1. Scope of Current Rendering Layer
 
-Current rendering code is a pure selector/utilities layer in `src/store/features/rendering.ts`, surfaced via `rendering.*`.
+Reed provides rendering selectors and utilities through `rendering.*`. Their implementation is in `src/store/features/rendering.ts`.
 
 Implemented utilities:
 

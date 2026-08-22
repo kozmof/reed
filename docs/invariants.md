@@ -1,10 +1,8 @@
-# Reed Document Store — Core Invariants
+# Reed document store invariants
 
-This document captures the key invariants that must hold across the three main
-data structures, the piece table, the line index, and the reconciliation
-lifecycle. Violating any of these invariants can produce silent data corruption,
-incorrect line-number lookups, or assertion failures at mode boundaries (for
-example, `asEagerLineIndex`).
+These invariants keep the piece table, line index, and reconciliation lifecycle
+consistent. A violation can corrupt data, break line-number lookups, or trigger
+an assertion at a mode boundary such as `asEagerLineIndex`.
 
 ---
 

@@ -1,8 +1,8 @@
-# Reed Specification (Current Codebase Status)
+# Reed specification
 
 ## Scope
 
-This repository currently implements a core text engine and state runtime:
+Reed provides a text engine and state runtime for building editors.
 
 - immutable `DocumentState` snapshots
 - piece table + line index data structures
@@ -17,7 +17,7 @@ This repository currently implements a core text engine and state runtime:
 1. Deterministic, pure reducer-based state transitions
 2. Immutable state with structural sharing
 3. Byte-accurate text model with explicit byte/char conversion utilities
-4. Separate complexity layers: `query` (fast lookups) vs `scan` (full traversals)
+4. Separate complexity layers for fast `query` lookups and full `scan` traversals
 5. Status-first specifications that distinguish implemented behavior from planned work
 
 ## Specification Documents
@@ -52,10 +52,10 @@ This repository currently implements a core text engine and state runtime:
 
 - Latest verified functional test run: 2026-08-22
 - Command: `pnpm test`
-- Result: `26` test files, `1092` tests passed
+- Result: `26` test files, `1096` tests passed
 - Latest verified perf test run: 2026-08-22
 - Command: `pnpm test:perf`
-- Result: `1` test file, `33` tests passed
+- Result: `1` test file, `34` tests passed
 
 [spec/06-testing.md](spec/06-testing.md) is the source of truth for the latest
 verified run and per-suite coverage. Keep these counts in sync with it.

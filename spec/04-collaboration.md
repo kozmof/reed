@@ -2,7 +2,7 @@
 
 ## 1. What Exists Today
 
-Current codebase has collaboration action primitives, not a full collaboration stack.
+Reed provides actions for applying remote changes. It does not provide a complete collaboration system.
 
 Implemented:
 

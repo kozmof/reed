@@ -1,6 +1,6 @@
 # reed
 
-Reed is a fast, immutable text processor for building editors. It's built on a piece table and works with any UI framework.
+Reed is a fast, immutable text engine for building editors. It uses a piece table and works with any UI framework.
 
 ## Installation
 
@@ -9,8 +9,6 @@ npm install @kozmof/reed
 # or
 pnpm add @kozmof/reed
 ```
-
-Reed is ESM-only and ships its own type declarations.
 
 ## Quick start
 
@@ -51,7 +49,7 @@ Types are exported flat and can be imported directly.
 import type { DocumentState, InsertAction, ByteOffset } from "@kozmof/reed";
 ```
 
-> `query` vs `scan`: anything on a hot path (every keystroke, scroll, or render) belongs in `query`. Reserve `scan` for one-off work like exporting the document or background analysis, since every `scan.*` call walks the whole document.
+Use `query` on hot paths such as keystrokes, scrolling, and rendering. Reserve `scan` for occasional work such as exporting a document or running background analysis. Every `scan.*` call walks the whole document.
 
 ## Creating a store
 
@@ -119,7 +117,7 @@ history.getUndoCount(doc.getSnapshot());
 
 ### Replacing the whole document
 
-For updating the whole editor (e.g. loading a file or reverting), use the `diff` namespace, which computes a minimal edit instead of clearing and re-inserting.
+To update the whole editor, such as when loading or reverting a file, use the `diff` namespace. It computes a minimal edit instead of clearing and reinserting the content.
 
 ```ts
 import { diff } from "@kozmof/reed";

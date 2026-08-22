@@ -1,4 +1,6 @@
-# Implementation Status (Current)
+# Implementation status
+
+This document summarizes the subsystems implemented in the current codebase.
 
 ## 1. Implemented Subsystems
 

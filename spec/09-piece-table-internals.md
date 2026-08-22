@@ -2,9 +2,9 @@
 
 ## 1. Overview
 
-The piece table stores document content as a Red-Black tree of lightweight piece nodes.
-Each node does not hold text directly. It holds a `(bufferType, start, length)` window
-into one of two backing byte buffers:
+The piece table stores document content in a red-black tree of lightweight nodes.
+Each node points to a `(bufferType, start, length)` window in one of two backing byte
+buffers instead of holding text directly.
 
 - `originalBuffer: Uint8Array` — immutable, loaded once from the initial content string.
 - `addBuffer: GrowableBuffer` — append-only, grows as the user edits.

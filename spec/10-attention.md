@@ -1,8 +1,8 @@
 # Attention Layer
 
-## 1. What Exists Today
+## 1. Current status
 
-The attention layer (`src/store/core/attention.ts`) is the third independent Reed layer, alongside the piece table (content) and the line index (navigation):
+The attention layer keeps references attached to text as the document changes. It works alongside the piece table for content and the line index for navigation.
 
 | Layer      | Responsibility | Module                          |
 | ---------- | -------------- | ------------------------------- |
@@ -10,7 +10,7 @@ The attention layer (`src/store/core/attention.ts`) is the third independent Ree
 | Line Index | navigation     | `src/store/core/line-index.ts`  |
 | Attention  | references     | `src/store/core/attention.ts`   |
 
-It provides piece-anchored references into mutable text. A reference survives tree rotations, rebalancing, inserts, and deletes without the caller re-tracking offsets.
+A piece-anchored reference survives tree rotations, rebalancing, inserts, and deletes. The caller does not need to track its offset again after each edit.
 
 The module is fully implemented and covered by `src/store/core/attention.test.ts`.
 
