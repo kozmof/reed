@@ -38,7 +38,12 @@ import {
   type LogCost,
   type NLogNCost,
 } from "../../types/cost-doc.js";
-import { createLineIndexNode, withLineIndexNode, withLineIndexState } from "./state.js";
+import {
+  createLineIndexNode,
+  withLineIndexNode,
+  withLineIndexNodeOffsets,
+  withLineIndexState,
+} from "./state.js";
 import {
   fixInsertWithPath,
   fixRedViolations,
@@ -902,7 +907,7 @@ function updateOffsetsAfterLine(
   }
 
   if (newLeft !== node.left || newRight !== node.right || newOffset !== node.documentOffset) {
-    return withLineIndexNode(node, {
+    return withLineIndexNodeOffsets(node, {
       left: newLeft,
       right: newRight,
       documentOffset: newOffset,

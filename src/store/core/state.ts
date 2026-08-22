@@ -762,6 +762,30 @@ export type LineIndexNodeUpdates<M extends EvaluationMode = EvaluationMode> = Pa
  * field is type-checked against that mode. Callers using the default union mode are
  * unprotected by design — the internal rb-tree operations work on unparameterized nodes.
  */
+/**
+ * Rewrite a node during an offset repair, copying its subtree aggregates.
+ *
+ * The accepted changes are `documentOffset` and children that themselves differ
+ * only in their offsets. No such edit can alter `subtreeLineCount`,
+ * `subtreeByteLength`, or `subtreeCharLength`, so recomputing them is wasted
+ * work. Skipping it roughly halves the cost of repairing a line, which is
+ * nearly all of what a viewport reconcile does.
+ *
+ * Use `withLineIndexNode` for anything that changes a line's length or the
+ * structure of the tree. The narrow `changes` type keeps those out by
+ * construction.
+ */
+export function withLineIndexNodeOffsets<M extends EvaluationMode = EvaluationMode>(
+  node: LineIndexNode<M>,
+  changes: {
+    readonly left?: LineIndexNode<M> | null;
+    readonly right?: LineIndexNode<M> | null;
+    readonly documentOffset?: LineIndexNode<M>["documentOffset"];
+  },
+): LineIndexNode<M> {
+  return Object.freeze({ ...node, ...changes }) as LineIndexNode<M>;
+}
+
 export function withLineIndexNode<M extends EvaluationMode = EvaluationMode>(
   node: LineIndexNode<M>,
   changes: LineIndexNodeUpdates<M>,

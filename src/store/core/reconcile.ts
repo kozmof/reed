@@ -17,7 +17,12 @@ import type {
   EvaluationMode,
 } from "../../types/state.js";
 import { $beginCost, $proveCtx, type NLogNCost } from "../../types/cost-doc.js";
-import { withLineIndexNode, withLineIndexState, asEagerLineIndex } from "./state.js";
+import {
+  withLineIndexNode,
+  withLineIndexNodeOffsets,
+  withLineIndexState,
+  asEagerLineIndex,
+} from "./state.js";
 
 // =============================================================================
 // Dirty Range Management
@@ -197,7 +202,7 @@ function repairLineRange(
     selfLine >= fromLine && selfLine <= toLine && node.documentOffset !== selfOffset;
 
   if (newLeft !== node.left || newRight !== node.right || repairSelf) {
-    return withLineIndexNode(node, {
+    return withLineIndexNodeOffsets(node, {
       left: newLeft,
       right: newRight,
       documentOffset: repairSelf ? selfOffset : node.documentOffset,

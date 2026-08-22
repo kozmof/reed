@@ -1374,3 +1374,54 @@ describe("offset cache stays exact under randomized viewport reconciliation", ()
     expect(() => assertEagerOffsets(reconcileFull(state, 1))).not.toThrow();
   });
 });
+
+describe("offset repair preserves subtree aggregates", () => {
+  // reconcileRange rewrites nodes with withLineIndexNodeOffsets, which copies
+  // subtreeLineCount / subtreeByteLength / subtreeCharLength instead of
+  // recomputing them. That is only sound because an offset repair cannot change
+  // a line's length or the shape of the tree, so pin it.
+  const aggregates = (root: LineIndexNode | null): unknown[] => {
+    if (root === null) return [];
+    return [
+      [root.subtreeLineCount, root.subtreeByteLength, root.subtreeCharLength],
+      ...aggregates(root.left),
+      ...aggregates(root.right),
+    ];
+  };
+
+  it("leaves every aggregate untouched across a viewport repair", () => {
+    let state: LineIndexState = createLineIndexState("héllo\nwörld\n🎉 x\n".repeat(20));
+    state = lineIndexInsertLazy(state, byteOffset(0), "zz", 1);
+    const before = aggregates(state.root);
+
+    const reconciled = reconcileViewport(state, 5, 25, 1);
+
+    expect(aggregates(reconciled.root)).toEqual(before);
+    expect(reconciled.lineCount).toBe(state.lineCount);
+  });
+
+  it("leaves every aggregate untouched across a full reconcile", () => {
+    let state: LineIndexState = createLineIndexState("one\ntwo\nthree\nfour\n");
+    state = lineIndexInsertLazy(state, byteOffset(4), "xx", 1);
+    const before = aggregates(state.root);
+
+    const reconciled = reconcileFull(state, 1);
+
+    expect(aggregates(reconciled.root)).toEqual(before);
+    expect(() => assertEagerOffsets(reconciled)).not.toThrow();
+  });
+
+  it("keeps repaired nodes frozen", () => {
+    let state: LineIndexState = createLineIndexState("a\nb\nc\nd\ne\n");
+    state = lineIndexInsertLazy(state, byteOffset(0), "q", 1);
+    const reconciled = reconcileFull(state, 1);
+
+    const visit = (node: LineIndexNode | null): void => {
+      if (node === null) return;
+      expect(Object.isFrozen(node)).toBe(true);
+      visit(node.left);
+      visit(node.right);
+    };
+    visit(reconciled.root);
+  });
+});
