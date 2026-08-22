@@ -2,11 +2,11 @@
 
 ## 1. Latest Verified Run
 
-- Date: 2026-06-29
+- Date: 2026-08-22
 - Functional command: `pnpm test`
-- Functional result: `24` test files, `993` tests passed
+- Functional result: `26` test files, `1087` tests passed
 - Perf command: `pnpm test:perf`
-- Perf result: `1` test file, `30` tests passed
+- Perf result: `1` test file, `33` tests passed
 
 ## 2. Current Test Suites
 
@@ -35,6 +35,9 @@ Functional suites (`pnpm test`):
 - `src/store/features/chunk-metadata.test.ts`: DECLARE_CHUNK_METADATA and pre-declared line-count queries
 - `src/store/features/streaming-loader.test.ts`: `createStreamingDocumentLoader` viewport/prefetch lifecycle
 - `src/store/features/chunk-stress.test.ts`: seeded randomized high-scale streaming stress (load/evict/reload consistency)
+- `src/store/features/checkpoint.test.ts`: checkpoint capture/restore round trips, store entry points, and the payload rejection matrix
+- `src/store/features/model-based.test.ts`: seeded edit sequences checked against a string model, including mid-sequence checkpoint restore
+- `src/index.test.ts`: public entry point namespace wiring
 
 Performance suite (`pnpm test:perf`):
 
@@ -50,6 +53,13 @@ Implemented coverage is strongest in:
 - store semantics (`batch`, nested transactions, rollback, snapshot gating)
 - event semantics including `APPLY_REMOTE` `content-change` emission and `affectedRanges` correctness for multi-change batches
 - selector-level rendering and byte/char conversion logic
+- checkpoint round trips for text, line offsets, history, attention, and chunked documents, with a rejection test per validation code
+- line-index offset-cache maintenance, covering newline-free lazy edits and reconciliation of lines inserted with a null offset
+
+The checkpoint suite pairs example-based tests with a model-based one. The model test swaps a
+restored store in mid-sequence every 40 steps and keeps editing, so drift in piece identities
+or in an allocator cursor shows up in later steps rather than at the moment of restore. It also
+asserts strict red-black balance on the bulk-loaded piece tree.
 
 ## 4. Coverage Boundaries
 

@@ -436,7 +436,7 @@ export function lineIndexInsert(
     );
   }
 
-  // If no newlines, just update the length of the affected line
+  // No newlines: just update the length of the affected line
   if (newlinePositions.length === 0) {
     return $proveCtx(
       $beginCost("O(n)"),
@@ -474,7 +474,14 @@ export function lineIndexInsert(
 }
 
 /**
- * Update line length when inserting text without newlines.
+ * Update the length of the line containing `position`, without touching the
+ * cached `documentOffset` of the lines after it.
+ *
+ * Reads are unaffected. `getLineStartOffset` derives offsets from
+ * `subtreeByteLength`, which `withLineIndexNode` keeps current on every
+ * mutation. The cached offsets of later lines are now behind by `lengthDelta`,
+ * and it is the caller's job to shift them or to record a dirty range that
+ * defers the shift. See `updateLineLengthLazy` and docs/invariants.md 2.3.
  */
 function updateLineLength(
   state: LineIndexState,
@@ -493,41 +500,107 @@ function updateLineLength(
     });
   }
 
-  const newRoot = updateLineLengthInTree(state.root, position, lengthDelta, charLengthDelta);
+  return withLineIndexState(state, {
+    root: updateLineLengthInTree(state.root, position, lengthDelta, charLengthDelta).root,
+  });
+}
+
+/**
+ * Lazy counterpart of `updateLineLength`. Updates the line's length and records
+ * a dirty range carrying the delta, so reconciliation restores exact offsets for
+ * every line after the edited one.
+ *
+ * A newline-free edit shifts every later line without adding or removing one, so
+ * there is no structural work to do and it is tempting to skip the bookkeeping
+ * entirely. Skipping it strands the cached offsets permanently, because
+ * reconciliation only visits lines that a dirty range covers. Typing is exactly
+ * this case, which makes recording it the difference between a cache that
+ * converges and one that drifts forever.
+ */
+function updateLineLengthLazy(
+  state: LineIndexState,
+  position: ByteOffset,
+  lengthDelta: number,
+  charLengthDelta: number = 0,
+): LineIndexState {
+  if (state.root === null) {
+    return updateLineLength(state, position, lengthDelta, charLengthDelta);
+  }
+
+  // The descent already locates the line, so it reports the line number too
+  // rather than paying for a second O(log n) walk to find it.
+  const { root: newRoot, lineNumber } = updateLineLengthInTree(
+    state.root,
+    position,
+    lengthDelta,
+    charLengthDelta,
+  );
+
+  // Nothing sits after the edited line, so no cached offset moved. This covers
+  // appending to the end of a document, the most common edit of all.
+  if (lengthDelta === 0 || lineNumber + 1 >= state.lineCount) {
+    return withLineIndexState(state, { root: newRoot });
+  }
+
+  const newDirtyRange = createDirtyRange(lineNumber + 1, END_OF_DOCUMENT, lengthDelta);
+  const mergedRanges: DirtyLineRangeList =
+    state.dirtyRanges === "full-rebuild-needed"
+      ? "full-rebuild-needed"
+      : mergeDirtyRanges([...state.dirtyRanges, newDirtyRange], state.maxDirtyRanges);
+
   return withLineIndexState(state, {
     root: newRoot,
+    dirtyRanges: mergedRanges,
+    rebuildPending: true,
   });
 }
 
 /**
  * Update line length in the tree at the given position.
+ *
+ * Returns the rewritten subtree along with the number of the line that was
+ * updated, counted from the start of that subtree. Callers need the line number
+ * to maintain offsets after the edit, and the descent already knows it.
  */
 function updateLineLengthInTree(
   node: LineIndexNode,
   position: number,
   lengthDelta: number,
   charLengthDelta: number = 0,
-): LineIndexNode {
+): { root: LineIndexNode; lineNumber: number } {
+  const leftLineCount = node.left?.subtreeLineCount ?? 0;
   const leftByteLength = node.left?.subtreeByteLength ?? 0;
   const lineStart = leftByteLength;
   const lineEnd = lineStart + node.lineLength;
 
   if (position < lineStart && node.left !== null) {
     // Position is in left subtree
-    return withLineIndexNode(node, {
-      left: updateLineLengthInTree(node.left, position, lengthDelta, charLengthDelta),
-    });
+    const result = updateLineLengthInTree(node.left, position, lengthDelta, charLengthDelta);
+    return {
+      root: withLineIndexNode(node, { left: result.root }),
+      lineNumber: result.lineNumber,
+    };
   } else if (position >= lineEnd && node.right !== null) {
     // Position is in right subtree
-    return withLineIndexNode(node, {
-      right: updateLineLengthInTree(node.right, position - lineEnd, lengthDelta, charLengthDelta),
-    });
+    const result = updateLineLengthInTree(
+      node.right,
+      position - lineEnd,
+      lengthDelta,
+      charLengthDelta,
+    );
+    return {
+      root: withLineIndexNode(node, { right: result.root }),
+      lineNumber: leftLineCount + 1 + result.lineNumber,
+    };
   } else {
     // Position is in this line - update its length
-    return withLineIndexNode(node, {
-      lineLength: node.lineLength + lengthDelta,
-      charLength: node.charLength + charLengthDelta,
-    });
+    return {
+      root: withLineIndexNode(node, {
+        lineLength: node.lineLength + lengthDelta,
+        charLength: node.charLength + charLengthDelta,
+      }),
+      lineNumber: leftLineCount,
+    };
   }
 }
 
@@ -562,7 +635,12 @@ function appendLinesStructural(
   if (position >= totalLength) {
     newRoot = addToLastLine(newRoot, textBeforeFirstNewline, firstCharDelta);
   } else {
-    newRoot = updateLineLengthInTree(newRoot, position, textBeforeFirstNewline, firstCharDelta);
+    newRoot = updateLineLengthInTree(
+      newRoot,
+      position,
+      textBeforeFirstNewline,
+      firstCharDelta,
+    ).root;
   }
 
   // Insert new lines for remaining newlines
@@ -1541,7 +1619,7 @@ export function lineIndexInsertLazy(
     return $proveCtx($beginCost("O(n)"), rebuildFromReadText(state, readText, currentRevision));
   }
 
-  // No newlines: simple length update (O(log n), no lazy needed)
+  // No newlines: update the line's length and defer the offsets after it
   if (newlinePositions.length === 0) {
     return $proveCtx(
       $beginCost("O(n)"),
@@ -1585,9 +1663,6 @@ export function lineIndexInsertLazy(
     ),
   );
 }
-
-// updateLineLengthLazy is identical to updateLineLength - reuse it directly
-const updateLineLengthLazy = updateLineLength;
 
 /**
  * Append lines at the end with lazy tracking.

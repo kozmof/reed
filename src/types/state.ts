@@ -635,7 +635,18 @@ type CustomSchedulerConfig = {
   scheduler: ReconciliationScheduler | ReconciliationSchedulerFactory;
   reconcileMode?: never;
 };
-type ReconcileOptions = ReconcileModeConfig | CustomSchedulerConfig;
+export type ReconcileOptions = ReconcileModeConfig | CustomSchedulerConfig;
+
+/**
+ * The part of a store's configuration that belongs to the store instance rather
+ * than to its state: diagnostics and reconciliation scheduling.
+ *
+ * Everything else in `DocumentStoreConfig` — content, history limit, line
+ * ending, chunk size — describes state, and a restored store takes those from
+ * its checkpoint. `createDocumentStoreFromCheckpoint` therefore accepts only
+ * this narrower config.
+ */
+export type DocumentStoreRuntimeConfig = { logger?: ReedLogger } & ReconcileOptions;
 
 export interface ReedLogger {
   warn?(message: string, ...args: readonly unknown[]): void;

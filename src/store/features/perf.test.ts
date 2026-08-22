@@ -10,7 +10,8 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { createDocumentStore } from "./store.js";
+import { createDocumentStore, createDocumentStoreFromCheckpoint } from "./store.js";
+import { createCheckpoint, encodeCheckpoint, decodeCheckpoint } from "./checkpoint.js";
 import { createStreamingDocumentLoader } from "./streaming-loader.js";
 import { createInitialState, withLineIndexState } from "../core/state.js";
 import { DocumentActions } from "./actions.js";
@@ -735,5 +736,72 @@ describe("Multibyte content (kanji + emoji)", () => {
     expect(final.lineIndex.dirtyRanges.length).toBe(0);
     expect(final.lineIndex.rebuildPending).toBe(false);
     expect(final.lineIndex.lineCount).toBe(initialLineCount + EDITS);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. Checkpoint capture and restore
+// ---------------------------------------------------------------------------
+
+describe("Checkpoint capture and restore", () => {
+  it(`captures and restores a ${LINES_MD.toLocaleString()}-line document`, () => {
+    const store = createDocumentStore({ content: content_md });
+    const state = store.reconcileNow();
+
+    let checkpoint!: ReturnType<typeof createCheckpoint>;
+    const captureMs = bench(() => {
+      checkpoint = createCheckpoint(state);
+    });
+    assertPerf(`createCheckpoint (${LINES_MD.toLocaleString()} lines)`, captureMs, 6_000);
+
+    let restored!: ReturnType<typeof createDocumentStoreFromCheckpoint>;
+    const restoreMs = bench(() => {
+      restored = createDocumentStoreFromCheckpoint(checkpoint, { reconcileMode: "none" });
+    });
+    assertPerf(`restoreCheckpoint (${LINES_MD.toLocaleString()} lines)`, restoreMs, 6_000);
+
+    expect(restored.getSnapshot().lineIndex.lineCount).toBe(state.lineIndex.lineCount);
+    expect(restored.getSnapshot().pieceTable.totalLength).toBe(state.pieceTable.totalLength);
+    store.dispose();
+    restored.dispose();
+  });
+
+  it("encodes a normalized checkpoint at roughly document size", () => {
+    const store = createDocumentStore({ content: content_sm });
+    const state = store.reconcileNow();
+    const documentBytes = state.pieceTable.totalLength;
+
+    let encoded!: string;
+    const ms = bench(() => {
+      encoded = encodeCheckpoint(state, { mode: "normalized" });
+    });
+    assertPerf(`encodeCheckpoint normalized (${LINES_SM.toLocaleString()} lines)`, ms, 5_000);
+
+    // base64 costs 4 bytes per 3, plus the line list and envelope.
+    console.log(
+      `[PERF] normalized payload: ${(encoded.length / documentBytes).toFixed(2)}× document bytes`,
+    );
+    expect(encoded.length).toBeLessThan(documentBytes * 3);
+    expect(decodeCheckpoint(encoded).pieceTable.totalLength).toBe(documentBytes);
+    store.dispose();
+  });
+
+  it(`string round-trip of a ${LINES_MD.toLocaleString()}-line document`, () => {
+    const store = createDocumentStore({ content: content_md });
+    const state = store.reconcileNow();
+
+    let json!: string;
+    const ms = bench(
+      () => {
+        json = encodeCheckpoint(state);
+        decodeCheckpoint(json);
+      },
+      1,
+      STABLE_READ_BENCH,
+    );
+
+    assertPerf(`encode + decode (${LINES_MD.toLocaleString()} lines)`, ms, 12_000);
+    expect(decodeCheckpoint(json).lineIndex.lineCount).toBe(state.lineIndex.lineCount);
+    store.dispose();
   });
 });

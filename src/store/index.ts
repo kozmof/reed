@@ -6,8 +6,19 @@
 export {
   createDocumentStore,
   createDocumentStoreWithEvents,
+  createDocumentStoreFromCheckpoint,
+  createDocumentStoreWithEventsFromCheckpoint,
   isDocumentStore,
 } from "./features/store.js";
+
+// Checkpoint capture/restore
+export {
+  createCheckpoint,
+  restoreCheckpoint,
+  encodeCheckpoint,
+  decodeCheckpoint,
+  isCheckpoint,
+} from "./features/checkpoint.js";
 
 // Action creators
 export { DocumentActions, serializeAction, deserializeAction } from "./features/actions.js";

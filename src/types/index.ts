@@ -35,8 +35,35 @@ export type {
   DocumentState,
   DocumentStoreConfigBase,
   DocumentStoreConfig,
+  DocumentStoreRuntimeConfig,
+  ReedLogger,
   ChunkMetadata,
 } from "./state.js";
+
+// Checkpoint format types
+export type {
+  DocumentCheckpoint,
+  CheckpointOptions,
+  CheckpointMode,
+  CheckpointFormat,
+  CheckpointBufferTag,
+  CheckpointPiece,
+  CheckpointChunk,
+  CheckpointChunkMetadata,
+  CheckpointLine,
+  CheckpointPieceTable,
+  CheckpointLineIndex,
+  CheckpointSelection,
+  CheckpointHistory,
+  CheckpointHistoryEntry,
+  CheckpointHistoryChange,
+  CheckpointMetadata,
+  CheckpointAttention,
+  CheckpointAttentionLayer,
+  CheckpointErrorCode,
+} from "./checkpoint.js";
+
+export { CHECKPOINT_FORMAT, CHECKPOINT_VERSION, CheckpointError } from "./checkpoint.js";
 
 export type { NonEmptyReadonlyArray } from "./utils.js";
 export type { ReadTextFn, DeleteBoundaryContext } from "./operations.js";

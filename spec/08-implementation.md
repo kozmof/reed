@@ -34,7 +34,23 @@ Implemented in:
 
 Includes immutable reducer transitions, undo/redo, nested transactions, batching, snapshot-gated reconciliation, `whenReconciled`, background maintenance scheduling, and emergency reset paths.
 
-### 1.4 Diff, events, rendering selectors
+### 1.4 Checkpoint capture and restore
+
+Implemented in:
+
+- `src/store/features/checkpoint.ts`
+- `src/types/checkpoint.ts`
+- `src/api/checkpoint.ts`
+- `src/store/core/base64.ts`
+
+Serializes a `DocumentState<'eager'>` to JSON-safe data and rebuilds it, with balanced
+bulk-loading of both trees (`buildPieceTree`, `buildLineIndexTree`) and fail-closed
+validation on restore. Store entry points are `createDocumentStoreFromCheckpoint` and
+`createDocumentStoreWithEventsFromCheckpoint`.
+
+See [11-checkpoint.md](11-checkpoint.md).
+
+### 1.5 Diff, events, rendering selectors
 
 Implemented in:
 
@@ -44,7 +60,7 @@ Implemented in:
 
 Includes diff/setValue helpers, typed event emitter/store wrapper, and viewport/line selection utilities.
 
-### 1.5 Public query/scan/history/diff layers
+### 1.6 Public query/scan/history/diff layers
 
 Implemented in:
 

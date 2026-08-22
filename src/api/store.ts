@@ -6,6 +6,8 @@ import type { DocumentState } from "../types/state.js";
 import {
   createDocumentStore,
   createDocumentStoreWithEvents,
+  createDocumentStoreFromCheckpoint,
+  createDocumentStoreWithEventsFromCheckpoint,
   isDocumentStore,
   withTransaction,
 } from "../store/features/store.js";
@@ -56,6 +58,8 @@ export const store = {
   // Store lifecycle
   createDocumentStore,
   createDocumentStoreWithEvents,
+  createDocumentStoreFromCheckpoint,
+  createDocumentStoreWithEventsFromCheckpoint,
   isDocumentStore,
   withTransaction,
 

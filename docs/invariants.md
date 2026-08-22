@@ -104,10 +104,37 @@ node.documentOffset === sum of lineLength for all lines before this line
 `asEagerLineIndex` throws if `dirtyRanges.length !== 0 || rebuildPending`.
 Call it only after reconciliation is complete.
 
+`documentOffset` is a cache, not the source of truth. Reads derive offsets from
+`subtreeByteLength` through `getLineStartOffset`, which is exact in both modes
+(2.1). Reconciliation maintains the cache by deriving each repaired line's offset
+from the same aggregates, so a repair does not depend on the recorded delta being
+right, and a line inserted with a null offset gets a real one.
+
+Maintaining the cache requires that every edit which moves later lines either
+updates their offsets or records a dirty range describing the move. An edit that
+does neither strands them, because reconciliation only visits lines a dirty range
+covers.
+
+#### Known gap: newline-free changes on the eager strategy
+
+`eagerStrategy` in `edit.ts`, used by undo and redo, updates the edited line's
+length without shifting the lines after it and without recording a dirty range.
+The cached offsets of those lines stay behind, and no later reconciliation
+repairs them.
+
+Shifting them costs a full O(n) tree rewrite per change, which measured about
+230× slower on 200 undo and 200 redo operations over a 200,000-line document
+(15 ms to 3,461 ms). Keeping an exact absolute-offset cache and O(log n) undo of
+character edits are not both available, so the fast path stands and this
+paragraph records the cost of changing that decision. Nothing in the read path
+is affected.
+
 ### 2.4 `documentOffset` in Lazy Mode
 
 After an insert or delete, lines downstream of the edit have stale
-`documentOffset` values. The correct offset for line `L` is:
+`documentOffset` values, and a dirty range records the move. This holds for
+newline-free edits too, which change no line count and so are easy to mistake for
+pure length updates. The correct offset for line `L` is:
 
 ```
 correct_offset(L) = node.documentOffset + sum of offsetDelta for all dirty
@@ -252,3 +279,45 @@ rather than after, because reconciliation does not increment `revision`. It neve
 decreases.
 Compare `lineIndex.lastReconciledRevision < state.revision` to detect a stale
 index.
+
+---
+
+## 5. Checkpoint Restore Invariants
+
+A checkpoint is untrusted input. `restoreCheckpoint` assembles no state until the payload has
+been shown to satisfy the invariants above, and raises `CheckpointError` otherwise.
+
+### 5.1 Aggregates and Offsets Are Rebuilt, Not Read
+
+Restore stores no subtree aggregate and no line byte offset. Both trees are bulk-loaded through
+`createPieceNode`, `createChunkPieceNode`, and `createLineIndexNode`, which recompute every
+aggregate from the children, and line offsets are recomputed as prefix sums of the line
+lengths. Invariants 1.1, 2.1, 2.2, and 2.3 therefore hold by construction on a restored state.
+
+Bulk loading uses median-split recursion with the deepest real nodes colored red, so invariant
+1.2 holds as well. Tree topology is not preserved across a round trip, and nothing depends on
+it, since attention anchors to `PieceID` rather than to tree shape.
+
+### 5.2 Checked Before Assembly
+
+- every piece range lies inside the buffer it names, and chunk pieces name a chunk present in the payload
+- chunk pieces appear in ascending `chunkIndex` order, as invariant 1.4 requires
+- piece lengths sum to `totalLength`, and line lengths cover the same span
+- no duplicate piece id and no duplicate attention id
+- every attention point names a piece in the payload with a boundary inside that piece
+
+### 5.3 Allocator Cursors Stay Ahead of Live Identities
+
+`pieceTable.nextPieceID` exceeds every `p<n>` identity in the payload, and
+`attention.nextID` exceeds every `a<n>` identity. Without this, the first edit after restore
+would mint an id that is already anchored. Identities that do not match those patterns are
+opaque and place no constraint on the allocator.
+
+### 5.4 History Byte Lengths Are Derived
+
+Restore recomputes `byteLength` and `oldByteLength` from their strings rather than reading
+them, so invariant 4 cannot be violated by an edited payload.
+
+History selections are checked for shape but not against the current document length. An undo
+entry describes an older revision, so its offsets may legitimately sit past the end of the
+document as it stands now.

@@ -13,6 +13,7 @@ Current public runtime surface is exported from `src/index.ts` as namespaces:
 - `diff`
 - `position`
 - `attention`
+- `checkpoint`
 
 Types are exported flat from the same entry file.
 
@@ -75,7 +76,19 @@ Wraps the base store and adds:
 - `removeEventListener(type, handler)`
 - `events` emitter handle
 
-### 2.3 Flat `createChunkManager(store, loader, config?)`
+### 2.3 `store.createDocumentStoreFromCheckpoint(checkpoint, config?)`
+
+Returns a `ReconcilableDocumentStore` whose state comes from a checkpoint. Throws
+`CheckpointError` before creating anything when the payload is not restorable.
+
+`store.createDocumentStoreWithEventsFromCheckpoint(checkpoint, config?)` is the event-store
+counterpart. Restoring emits no events.
+
+Config is `DocumentStoreRuntimeConfig`, which accepts only `logger` and either
+`reconcileMode` or `scheduler`. State-bearing options come from the checkpoint, and passing
+one throws.
+
+### 2.4 Flat `createChunkManager(store, loader, config?)`
 
 Returns a `ChunkManager` with:
 
@@ -88,7 +101,7 @@ Requires a user-supplied `ChunkLoader` with `loadChunk(chunkIndex): Promise<Uint
 
 Config (`ChunkManagerConfig`): `maxLoadedChunks`, `fetchStrategy`.
 
-### 2.4 Flat `createStreamingDocumentLoader(store, loader, metadata, config?)`
+### 2.5 Flat `createStreamingDocumentLoader(store, loader, metadata, config?)`
 
 Returns a `StreamingDocumentLoader` with:
 
@@ -97,13 +110,13 @@ Returns a `StreamingDocumentLoader` with:
 
 Config (`StreamingDocumentLoaderConfig`): `prefetchWindowSize`, `chunkManagerConfig`.
 
-### 2.5 Flat `createReconciliationScheduler(mode, options)`
+### 2.6 Flat `createReconciliationScheduler(mode, options)`
 
 Creates a scheduler for background line-index reconciliation and add-buffer compaction.
 
 Modes: `'idle'`, `'sync'`, `'none'`.
 
-### 2.6 Additional store namespace exports
+### 2.7 Additional store namespace exports
 
 - `store.withTransaction(store, fn)`
 - `store.isDocumentStore(value)`
@@ -181,6 +194,21 @@ Piece-anchored boundary references (the third Reed layer). State is immutable an
 - edit support: `insertWithAttention`, `deleteWithAttention`, `migrateSplits`
 
 See [10-attention.md](10-attention.md) for the full design and migration semantics.
+
+### 4.5 Checkpoint namespace (`checkpoint`)
+
+Capture a `DocumentState<'eager'>` as JSON-safe data and load it back:
+
+- `checkpoint.create(state, options?)`: state to `DocumentCheckpoint`
+- `checkpoint.restore(checkpoint)`: `DocumentCheckpoint` to `DocumentState<'eager'>`
+- `checkpoint.encode(state, options?)` / `checkpoint.decode(json)`: the same round trip through a string
+- `checkpoint.isCheckpoint(value)`: envelope guard, not full validation
+
+Options (`CheckpointOptions`): `mode` (`'exact'` default, `'normalized'`), `compact` (default true).
+
+Restore is fail-closed and raises `CheckpointError` with a stable `code`.
+
+See [11-checkpoint.md](11-checkpoint.md) for the wire format and validation contract.
 
 ## 5. Write APIs
 

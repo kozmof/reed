@@ -3,7 +3,12 @@
  * Factory function that creates a DocumentStore with encapsulated state.
  */
 
-import type { DocumentState, DocumentStoreConfig } from "../../types/state.js";
+import type {
+  DocumentState,
+  DocumentStoreConfig,
+  DocumentStoreRuntimeConfig,
+} from "../../types/state.js";
+import type { DocumentCheckpoint } from "../../types/checkpoint.js";
 import type { DocumentAction } from "../../types/actions.js";
 import type {
   DocumentStore,
@@ -13,6 +18,7 @@ import type {
   Unsubscribe,
 } from "../../types/store.js";
 import { createInitialState, withState } from "../core/state.js";
+import { restoreCheckpoint } from "./checkpoint.js";
 import { documentReducer } from "./reducer.js";
 import { reconcileFull, reconcileViewport } from "../core/line-index.js";
 import { getBufferStats, compactAddBuffer } from "../core/piece-table.js";
@@ -52,8 +58,23 @@ const AUTO_COMPACT_MIN_BYTES = 16384; // 16 KB
  * @returns A new DocumentStore instance
  */
 export function createDocumentStore(config: DocumentStoreConfig = {}): ReconcilableDocumentStore {
+  return createStoreOverState(createInitialState(config), config);
+}
+
+/**
+ * Shared store body. Takes the state to start from, so a store can be built
+ * either from configuration (`createDocumentStore`) or from an already-assembled
+ * state (`createDocumentStoreFromCheckpoint`).
+ *
+ * The runtime it owns — listeners, transaction depth, scheduler, reconciliation
+ * waiters — always starts fresh, whatever the state's history.
+ */
+function createStoreOverState(
+  initialState: DocumentState,
+  config: DocumentStoreRuntimeConfig,
+): ReconcilableDocumentStore {
   // Internal mutable state
-  let state = createInitialState(config);
+  let state = initialState;
   const whenReconciledWaiters: Array<{
     resolve(state: DocumentState<"eager">): void;
     reject(error: Error): void;
@@ -492,8 +513,18 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
 export function createDocumentStoreWithEvents(
   config: DocumentStoreConfig = {},
 ): DocumentStoreWithEvents {
-  const baseStore = createDocumentStore(config);
-  const emitter = createEventEmitter(config.logger);
+  return withEvents(createDocumentStore(config), config.logger);
+}
+
+/**
+ * Wrap a store in the typed event layer. Shared by the config-built and
+ * checkpoint-built entry points.
+ */
+function withEvents(
+  baseStore: ReconcilableDocumentStore,
+  logger: DocumentStoreRuntimeConfig["logger"],
+): DocumentStoreWithEvents {
+  const emitter = createEventEmitter(logger);
   let disposed = false;
 
   // Depth-indexed event buffer. Each entry corresponds to one open transaction level.
@@ -709,6 +740,81 @@ export function createDocumentStoreWithEvents(
     removeEventListener,
     events: emitter,
   };
+}
+
+/**
+ * Configuration keys that describe state rather than runtime. A restored store
+ * takes each of these from its checkpoint, so passing one would be silently
+ * ignored — reject it instead.
+ */
+const STATE_BEARING_CONFIG_KEYS = [
+  "content",
+  "historyLimit",
+  "chunkSize",
+  "encoding",
+  "lineEnding",
+  "normalizeInsertedLineEndings",
+  "undoGroupTimeout",
+  "totalFileSize",
+  "maxDirtyRanges",
+] as const;
+
+function assertRuntimeOnlyConfig(config: DocumentStoreRuntimeConfig): void {
+  const offending = STATE_BEARING_CONFIG_KEYS.filter(
+    (key) => (config as Record<string, unknown>)[key] !== undefined,
+  );
+  if (offending.length > 0) {
+    throw new Error(
+      `createDocumentStoreFromCheckpoint: ${offending.join(", ")} describe${offending.length === 1 ? "s" : ""} state and come${offending.length === 1 ? "s" : ""} from the checkpoint; only logger and reconcileMode/scheduler may be configured`,
+    );
+  }
+}
+
+/**
+ * Create a store whose state comes from a checkpoint rather than from config.
+ *
+ * The checkpoint is validated first: a payload that would break a piece-table or
+ * line-index invariant raises `CheckpointError` and no store is created.
+ *
+ * Only runtime configuration is accepted. Content, history limit, line ending,
+ * chunk size, and the rest of the state-bearing options come from the
+ * checkpoint. Store runtime always starts fresh — no listeners, no open
+ * transaction, and a new reconciliation scheduler — so a caller restoring a
+ * chunked document rebuilds its `ChunkManager` as well.
+ *
+ * @example
+ * ```ts
+ * const store = createDocumentStoreFromCheckpoint(JSON.parse(saved), {
+ *   reconcileMode: "idle",
+ * });
+ * ```
+ *
+ * @throws CheckpointError when the checkpoint is not restorable
+ * @throws Error when `config` carries a state-bearing option
+ */
+export function createDocumentStoreFromCheckpoint(
+  checkpoint: DocumentCheckpoint,
+  config: DocumentStoreRuntimeConfig = {},
+): ReconcilableDocumentStore {
+  assertRuntimeOnlyConfig(config);
+  return createStoreOverState(restoreCheckpoint(checkpoint), config);
+}
+
+/**
+ * Checkpoint-restoring counterpart of `createDocumentStoreWithEvents`.
+ *
+ * Restoring does not emit events — the returned store starts with no listeners,
+ * and the first event a subscriber sees is the one their own first dispatch
+ * produces.
+ *
+ * @throws CheckpointError when the checkpoint is not restorable
+ * @throws Error when `config` carries a state-bearing option
+ */
+export function createDocumentStoreWithEventsFromCheckpoint(
+  checkpoint: DocumentCheckpoint,
+  config: DocumentStoreRuntimeConfig = {},
+): DocumentStoreWithEvents {
+  return withEvents(createDocumentStoreFromCheckpoint(checkpoint, config), config.logger);
 }
 
 /**

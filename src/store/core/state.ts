@@ -16,6 +16,7 @@ import type {
   HistoryState,
   DocumentMetadata,
   ChunkMetadata,
+  BufferType,
 } from "../../types/state.js";
 import type { ReadonlyUint8Array } from "../../types/branded.js";
 import { byteOffset, byteLength, pieceID } from "../../types/branded.js";
@@ -285,6 +286,63 @@ export function createChunkPieceNode(
 }
 
 /**
+ * One piece in document order, as consumed by `buildPieceTree`.
+ * `chunkIndex` is required for `'chunk'` pieces and ignored otherwise.
+ */
+export interface PieceDescriptor {
+  readonly id: PieceID;
+  readonly bufferType: BufferType;
+  readonly start: ByteOffset;
+  readonly length: ByteLength;
+  readonly chunkIndex?: number;
+}
+
+/**
+ * Build a balanced Red-Black tree from pieces already in document order.
+ *
+ * The piece-table counterpart of `buildLineIndexTree`, using the same
+ * median-split recursion and the same "color the deepest real nodes red"
+ * rule to equalize black-height. Because every node is built through
+ * `createPieceNode` / `createChunkPieceNode`, `subtreeLength` and
+ * `subtreeAddLength` are recomputed from the children rather than trusted from
+ * the input — bulk-loading a piece list cannot violate invariants §1.1.
+ *
+ * Used to rebuild a piece table from a checkpoint, where the original tree
+ * topology was not serialized (nothing depends on it: attention anchors to
+ * `PieceID`, not to tree shape).
+ */
+export function buildPieceTree(
+  pieces: readonly PieceDescriptor[],
+  start: number = 0,
+  end: number = pieces.length - 1,
+  depth: number = 0,
+  deepestDepth: number = Math.floor(Math.log2(pieces.length)),
+): PieceNode | null {
+  if (start > end) {
+    return null;
+  }
+
+  const mid = Math.floor((start + end) / 2);
+  const piece = pieces[mid]!; // start <= mid <= end, all within bounds
+
+  const left = buildPieceTree(pieces, start, mid - 1, depth + 1, deepestDepth);
+  const right = buildPieceTree(pieces, mid + 1, end, depth + 1, deepestDepth);
+
+  const color = depth > 0 && depth === deepestDepth ? "red" : "black";
+  return piece.bufferType === "chunk"
+    ? createChunkPieceNode(
+        piece.chunkIndex ?? 0,
+        piece.start,
+        piece.length,
+        color,
+        left,
+        right,
+        piece.id,
+      )
+    : createPieceNode(piece.bufferType, piece.start, piece.length, color, left, right, piece.id);
+}
+
+/**
  * Create a piece table state from initial content.
  * Chunked mode is not applicable here — initial content is loaded eagerly.
  */
@@ -463,6 +521,18 @@ export function createLineIndexState(content: string, maxDirtyRanges: number = 3
 }
 
 /**
+ * One line in document order, as consumed by `buildLineIndexTree`.
+ */
+export interface LineDescriptor {
+  /** Byte offset where the line starts. */
+  readonly offset: number;
+  /** Line length in bytes, including its newline. */
+  readonly length: number;
+  /** Line length in UTF-16 code units. */
+  readonly charLength: number;
+}
+
+/**
  * Build a balanced Red-Black tree from sorted line data.
  *
  * Median-split recursion creates a near-complete tree whose leaves appear on the
@@ -473,10 +543,10 @@ export function createLineIndexState(content: string, maxDirtyRanges: number = 3
  * Follow-on insert/delete operations use the standard `fixInsertWithPath` rebalancer,
  * which handles arbitrary topologies and introduces red nodes as needed.
  */
-function buildLineIndexTree(
-  lines: { offset: number; length: number; charLength: number }[],
-  start: number,
-  end: number,
+export function buildLineIndexTree(
+  lines: readonly LineDescriptor[],
+  start: number = 0,
+  end: number = lines.length - 1,
   depth: number = 0,
   deepestDepth: number = Math.floor(Math.log2(lines.length)),
 ): LineIndexNode | null {

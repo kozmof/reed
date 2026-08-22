@@ -11,6 +11,7 @@
  * - `history.*`   — undo/redo state queries
  * - `diff.*`      — diff algorithm and setValue operations
  * - `position.*`  — branded position constructors, arithmetic, and constants
+ * - `checkpoint.*` — capture state as JSON-safe data and load it back
  *
  * Algorithmic complexity is documented on each namespace member with
  * `@complexity` JSDoc tags; the cost algebra itself is internal to `store/core`.
@@ -51,8 +52,35 @@ export type {
   DocumentState,
   DocumentStoreConfigBase,
   DocumentStoreConfig,
+  DocumentStoreRuntimeConfig,
+  ReedLogger,
   ChunkMetadata,
 } from "./types/index.js";
+
+// Checkpoint format types
+export type {
+  DocumentCheckpoint,
+  CheckpointOptions,
+  CheckpointMode,
+  CheckpointFormat,
+  CheckpointBufferTag,
+  CheckpointPiece,
+  CheckpointChunk,
+  CheckpointChunkMetadata,
+  CheckpointLine,
+  CheckpointPieceTable,
+  CheckpointLineIndex,
+  CheckpointSelection,
+  CheckpointHistory,
+  CheckpointHistoryEntry,
+  CheckpointHistoryChange,
+  CheckpointMetadata,
+  CheckpointAttention,
+  CheckpointAttentionLayer,
+  CheckpointErrorCode,
+} from "./types/index.js";
+
+export { CHECKPOINT_FORMAT, CHECKPOINT_VERSION, CheckpointError } from "./types/index.js";
 
 // Action types
 export type {
@@ -171,4 +199,5 @@ export {
   diff,
   position,
   attention,
+  checkpoint,
 } from "./api/index.js";

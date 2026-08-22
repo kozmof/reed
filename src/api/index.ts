@@ -10,12 +10,19 @@
  * - `diff.*`      — diff algorithm and setValue operations
  * - `position.*`  — branded position constructors, arithmetic, and constants
  * - `attention.*` — piece-anchored boundary references (the third Reed layer)
+ * - `checkpoint.*` — capture state as JSON-safe data and load it back
  *
  * Algorithmic complexity is documented on each namespace member with
  * `@complexity` JSDoc tags; the cost algebra itself is internal to `store/core`.
  */
 
-export type { QueryApi, QueryLineIndexApi, ScanApi, HistoryApi } from "./interfaces.js";
+export type {
+  QueryApi,
+  QueryLineIndexApi,
+  ScanApi,
+  HistoryApi,
+  CheckpointApi,
+} from "./interfaces.js";
 export { store } from "./store.js";
 export { query } from "./query.js";
 export { scan } from "./scan.js";
@@ -25,3 +32,4 @@ export { history } from "./history.js";
 export { diff } from "./diff.js";
 export { position } from "./position.js";
 export { attention } from "./attention.js";
+export { checkpoint } from "./checkpoint.js";

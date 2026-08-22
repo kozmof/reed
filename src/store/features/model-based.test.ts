@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { attentionID, byteOffset } from "../../types/branded.js";
 import { getTextForAttention } from "../core/attention.js";
-import { createDocumentStore } from "./store.js";
+import { createDocumentStore, createDocumentStoreFromCheckpoint } from "./store.js";
+import { createCheckpoint, restoreCheckpoint } from "./checkpoint.js";
 import { DocumentActions } from "./actions.js";
 import {
   assertDocumentMatchesModel,
@@ -87,6 +88,68 @@ describe("model-based document transitions", () => {
       assertPieceTableInvariants(snapshot.pieceTable, `attention step=${step}`);
     }
     assertDocumentMatchesModel(store.reconcileNow(), model, "attention final");
+  });
+});
+
+describe("checkpoint round-trip model", () => {
+  it("keeps editing correctly after swapping in a restored store mid-sequence", () => {
+    const inserts = ["a", "XYZ", "\n", "\r\n", "π終", "two\nlines"];
+    for (const seed of [5, 53, 509, 4093]) {
+      const rng = rngFor(seed);
+      let store = createDocumentStore({ content: "seed\ntext", reconcileMode: "none" });
+      let model = "seed\ntext";
+
+      // The inserts include multi-byte text, so char indices into the model are
+      // converted to byte offsets before dispatch. Every insert is BMP, so any
+      // char index is also a code-point boundary.
+      const toByte = (text: string, charIndex: number): number =>
+        new TextEncoder().encode(text.slice(0, charIndex)).length;
+
+      for (let step = 0; step < 200; step++) {
+        const operation = int(rng, 0, 2);
+        if (operation === 0 || model.length === 0) {
+          const position = int(rng, 0, model.length);
+          const text = inserts[int(rng, 0, inserts.length - 1)]!;
+          store.dispatch(
+            DocumentActions.insert(byteOffset(toByte(model, position)), text, undefined, step),
+          );
+          model = model.slice(0, position) + text + model.slice(position);
+        } else {
+          const start = int(rng, 0, model.length - 1);
+          const end = int(rng, start + 1, model.length);
+          const byteStart = byteOffset(toByte(model, start));
+          const byteEnd = byteOffset(toByte(model, end));
+          if (operation === 1) {
+            store.dispatch(DocumentActions.delete(byteStart, byteEnd, undefined, step));
+            model = model.slice(0, start) + model.slice(end);
+          } else {
+            const text = inserts[int(rng, 0, inserts.length - 1)]!;
+            store.dispatch(DocumentActions.replace(byteStart, byteEnd, text, undefined, step));
+            model = model.slice(0, start) + text + model.slice(end);
+          }
+        }
+
+        if (step % 40 === 39) {
+          const context = `checkpoint seed=${seed} step=${step}`;
+          const checkpoint = createCheckpoint(store.reconcileNow());
+
+          // The restored state must satisfy the model and the full RB contract,
+          // including the coloring the bulk builder chose.
+          const restored = restoreCheckpoint(checkpoint);
+          assertDocumentMatchesModel(restored, model, context);
+          assertPieceTableInvariants(restored.pieceTable, context, true);
+
+          // Continue the sequence on the restored store, so any drift in piece
+          // identities or the allocator cursor shows up in later steps.
+          const next = createDocumentStoreFromCheckpoint(checkpoint, { reconcileMode: "none" });
+          store.dispose();
+          store = next;
+        }
+      }
+
+      assertDocumentMatchesModel(store.reconcileNow(), model, `checkpoint seed=${seed} final`);
+      store.dispose();
+    }
   });
 });
 

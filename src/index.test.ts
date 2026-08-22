@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   attention,
+  checkpoint,
   diff,
   events,
   history,
@@ -14,6 +15,7 @@ import {
 describe("public package entry point", () => {
   it("initializes every runtime namespace", () => {
     expect(attention.emptyState).toBeDefined();
+    expect(checkpoint.create).toBeTypeOf("function");
     expect(diff.diff).toBeTypeOf("function");
     expect(events.createEventEmitter).toBeTypeOf("function");
     expect(history.canUndo).toBeTypeOf("function");
@@ -21,6 +23,23 @@ describe("public package entry point", () => {
     expect(rendering.getVisibleLines).toBeTypeOf("function");
     expect(scan.getValue).toBeTypeOf("function");
     expect(store.createDocumentStore).toBeTypeOf("function");
+  });
+
+  it("round-trips a store through the checkpoint namespace", () => {
+    const documentStore = store.createDocumentStore({
+      content: "checkpoint me",
+      reconcileMode: "none",
+    });
+    documentStore.dispatch(store.DocumentActions.insert(position.byteOffset(0), "please "));
+
+    const encoded = checkpoint.encode(documentStore.getEagerSnapshot());
+    expect(checkpoint.isCheckpoint(JSON.parse(encoded))).toBe(true);
+
+    const restored = store.createDocumentStoreFromCheckpoint(JSON.parse(encoded));
+    expect(scan.getValue(restored.getSnapshot().pieceTable)).toBe("please checkpoint me");
+
+    documentStore.dispose();
+    restored.dispose();
   });
 
   it("executes façade-defined position and eviction helpers", () => {

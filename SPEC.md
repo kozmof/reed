@@ -10,6 +10,7 @@ This repository currently implements a core text engine and state runtime:
 - store factory with transactions and reconciliation helpers
 - chunk loading/eviction runtime and high-level streaming loader
 - query/scan API namespaces and selector-level rendering helpers
+- checkpoint capture and restore for saving state and loading it back
 
 ## Design Principles (Implemented)
 
@@ -33,6 +34,7 @@ This repository currently implements a core text engine and state runtime:
 | [spec/08-implementation.md](spec/08-implementation.md)               | Status        | Implemented subsystems, subsystem notes, and near-term priorities           |
 | [spec/09-piece-table-internals.md](spec/09-piece-table-internals.md) | Internals     | Add-buffer, chunk-buffer, and piece-table lifecycle details                 |
 | [spec/10-attention.md](spec/10-attention.md)                         | References    | Piece-anchored attention layer: points, spans, and edit migration           |
+| [spec/11-checkpoint.md](spec/11-checkpoint.md)                       | Persistence   | Checkpoint wire format, capture modes, and restore validation               |
 
 ## Current API Snapshot
 
@@ -43,16 +45,17 @@ This repository currently implements a core text engine and state runtime:
 - Action creators: `DocumentActions`
 - Read layers: `query.*`, `scan.*`
 - Reference layer: `attention.*` (piece-anchored references)
+- Persistence layer: `checkpoint.*` plus `createDocumentStoreFromCheckpoint`
 - Write helpers: `documentReducer`, `setValue`, diff-based action computation
 
 ## Verification Snapshot
 
-- Latest verified functional test run: 2026-06-29
+- Latest verified functional test run: 2026-08-22
 - Command: `pnpm test`
-- Result: `24` test files, `993` tests passed
-- Latest verified perf test run: 2026-06-29
+- Result: `26` test files, `1087` tests passed
+- Latest verified perf test run: 2026-08-22
 - Command: `pnpm test:perf`
-- Result: `1` test file, `30` tests passed
+- Result: `1` test file, `33` tests passed
 
 [spec/06-testing.md](spec/06-testing.md) is the source of truth for the latest
 verified run and per-suite coverage. Keep these counts in sync with it.

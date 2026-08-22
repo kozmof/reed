@@ -43,6 +43,7 @@ Reed's runtime is organized into namespaces.
 | `events.*`    | Event emitter and document event factories                        |
 | `position.*`  | Branded offset constructors (`byteOffset`, `charOffset`, …)       |
 | `attention.*` | Piece-anchored references that survive edits                      |
+| `checkpoint.*`| Saving a document state as JSON-safe data and loading it back     |
 
 Types are exported flat and can be imported directly.
 
@@ -250,6 +251,48 @@ const eager = doc.reconcileNow(); // returns a fully reconciled DocumentState
 ```
 
 See [spec/03-loading-and-history.md](spec/03-loading-and-history.md) for the chunk lifecycle.
+
+## Saving and restoring state
+
+`getSnapshot()` hands you the current in-memory state. To persist one, use the `checkpoint`
+namespace. It turns a state into JSON-safe data and loads it back without replaying the edits
+that produced it.
+
+```ts
+import { store, checkpoint, scan } from "@kozmof/reed";
+
+// Capture. Checkpoints are taken from a fully reconciled state.
+localStorage.setItem("draft", checkpoint.encode(doc.getEagerSnapshot()));
+
+// Restore into a fresh store.
+const saved = JSON.parse(localStorage.getItem("draft")!);
+const restored = store.createDocumentStoreFromCheckpoint(saved);
+
+scan.getValue(restored.getSnapshot().pieceTable);
+```
+
+A checkpoint carries the whole document state, including undo history, selection, attention
+references, and loaded chunks. Editing continues from where it left off, so undo still walks
+back through edits made before the save.
+
+It does not carry store runtime. The restored store has no subscribers, no open transaction,
+and a new reconciliation scheduler, so re-subscribe and rebuild any `ChunkManager` after
+restoring.
+
+Restore is fail-closed. A truncated or hand-edited payload raises `CheckpointError` with a
+`code` naming the problem, rather than loading a document that would corrupt later edits. That
+makes `checkpoint.decode` safe to point at untrusted JSON.
+
+For a smaller payload, capture in normalized mode. It flattens the document to its text and
+drops the edit-by-edit piece structure, keeping history, selection, and attention references
+intact.
+
+```ts
+const compact = checkpoint.encode(doc.getEagerSnapshot(), { mode: "normalized" });
+```
+
+See [spec/11-checkpoint.md](spec/11-checkpoint.md) for the wire format and the full validation
+contract.
 
 ## Design Overview
 

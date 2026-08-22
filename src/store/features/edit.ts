@@ -169,7 +169,15 @@ interface LineIndexStrategy {
   ): LineIndexState;
 }
 
-/** Eager strategy: updates byte offsets immediately (used by undo/redo after reconcile). */
+/**
+ * Eager strategy: applies structural changes immediately, with no dirty ranges
+ * (used by undo/redo after reconcile).
+ *
+ * Caveat: a change that adds or removes no newline updates the edited line's
+ * length but leaves the cached `documentOffset` of later lines behind, and
+ * records nothing for reconciliation to repair. Reads are unaffected, since they
+ * derive offsets from `subtreeByteLength`. See docs/invariants.md 2.3.
+ */
 export const eagerStrategy: LineIndexStrategy = {
   insert: (li, pos, text, readText) => liInsert(li, pos, text, readText),
   delete: (li, pos, end, text, ctx) => liDelete(li, pos, end, text, ctx),

@@ -149,29 +149,49 @@ export function mergeDirtyRanges(
 // =============================================================================
 
 /**
- * Update offset for a specific line in the tree.
+ * Repair one line's cached offset from the tree's own aggregates.
+ *
+ * The descent accumulates `subtreeByteLength`, which `withLineIndexNode` keeps
+ * exact on every mutation, so it arrives at the line's true byte offset and
+ * writes that. This is the same walk `getLineStartOffset` performs for reads,
+ * fused with the write.
+ *
+ * Deriving beats adding a delta to whatever the node currently holds. A line
+ * inserted by the lazy path carries `documentOffset: null` and has no base to
+ * add to, so delta arithmetic gave it the delta itself as an absolute offset.
+ * Deriving also makes the repair independent of whether the recorded delta was
+ * right, which keeps a single mis-recorded edit from corrupting the cache
+ * permanently.
+ *
+ * Returns `node` unchanged when the offset is already correct, so a clean
+ * subtree costs no allocations.
  */
-function updateLineOffsetByNumber(
+function repairLineOffset(
   node: LineIndexNode,
   lineNumber: number,
-  offsetDelta: number,
+  offsetBefore: number,
 ): LineIndexNode {
   const leftLineCount = node.left?.subtreeLineCount ?? 0;
+  const leftByteLength = node.left?.subtreeByteLength ?? 0;
 
   if (lineNumber < leftLineCount && node.left !== null) {
     return withLineIndexNode(node, {
-      left: updateLineOffsetByNumber(node.left, lineNumber, offsetDelta),
+      left: repairLineOffset(node.left, lineNumber, offsetBefore),
     });
   } else if (lineNumber > leftLineCount && node.right !== null) {
     return withLineIndexNode(node, {
-      right: updateLineOffsetByNumber(node.right, lineNumber - leftLineCount - 1, offsetDelta),
-    });
-  } else {
-    return withLineIndexNode(node, {
-      documentOffset:
-        node.documentOffset === null ? offsetDelta : node.documentOffset + offsetDelta,
+      right: repairLineOffset(
+        node.right,
+        lineNumber - leftLineCount - 1,
+        offsetBefore + leftByteLength + node.lineLength,
+      ),
     });
   }
+
+  const correctOffset = offsetBefore + leftByteLength;
+  return node.documentOffset === correctOffset
+    ? node
+    : withLineIndexNode(node, { documentOffset: correctOffset });
 }
 
 /**
@@ -277,17 +297,24 @@ export function reconcileRange(
     }
   }
 
-  // Sweep [clampedStart, clampedEnd] with a running cumulative delta — O(K + V)
+  // Sweep [clampedStart, clampedEnd], repairing each line the ranges cover.
+  //
+  // The sweep tracks the cumulative delta only to know whether a line is still
+  // covered by a dirty range. The repaired offset itself is derived from the
+  // tree, so a line whose delta happens to cancel out is repaired too — that is
+  // how a lazily inserted line with a null offset gets a real one.
   let newRoot = state.root!;
   let cumDelta = 0;
   let evtIdx = 0;
+  let covered = false;
   for (let line = clampedStart; line <= clampedEnd; line++) {
     while (evtIdx < events.length && events[evtIdx]!.line === line) {
       cumDelta += events[evtIdx]!.delta;
       evtIdx++;
+      covered = true;
     }
-    if (cumDelta !== 0) {
-      newRoot = updateLineOffsetByNumber(newRoot, line, cumDelta);
+    if (covered || cumDelta !== 0) {
+      newRoot = repairLineOffset(newRoot, line, 0);
     }
   }
 

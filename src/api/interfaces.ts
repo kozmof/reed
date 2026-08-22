@@ -38,6 +38,7 @@ import type {
   InsertWithAttentionResult,
   DeleteWithAttentionResult,
 } from "../store/core/attention.js";
+import type { DocumentCheckpoint, CheckpointOptions } from "../types/checkpoint.js";
 
 // =============================================================================
 // Query namespace interfaces
@@ -197,4 +198,20 @@ export interface AttentionApi {
     start: number,
     end: number,
   ): AttentionLayerState;
+}
+
+// =============================================================================
+// Checkpoint namespace interface
+// =============================================================================
+
+/**
+ * Contract for the `checkpoint` namespace — capture a state as JSON-safe data
+ * and load it back.
+ */
+export interface CheckpointApi {
+  create(state: DocumentState<"eager">, options?: CheckpointOptions): DocumentCheckpoint;
+  restore(checkpoint: DocumentCheckpoint): DocumentState<"eager">;
+  encode(state: DocumentState<"eager">, options?: CheckpointOptions): string;
+  decode(json: string): DocumentState<"eager">;
+  isCheckpoint(value: unknown): value is DocumentCheckpoint;
 }

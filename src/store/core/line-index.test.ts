@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import type { LineIndexNode } from "../../types/state.js";
+import type { LineIndexNode, LineIndexState } from "../../types/state.js";
 import {
   lineIndexInsert,
   lineIndexDelete,
@@ -1184,5 +1184,123 @@ describe("dirty-range utilities", () => {
     expect(getOffsetDeltaForLine(ranges, 0)).toBe(5);
     // Line outside every range
     expect(getOffsetDeltaForLine(ranges, 9)).toBe(0);
+  });
+});
+
+describe("newline-free lazy edits defer their offsets", () => {
+  // A newline-free edit adds no line, so it is tempting to treat it as a pure
+  // length update. Doing that strands the cached documentOffset of every later
+  // line: reconciliation applies dirty-range deltas rather than recomputing, so
+  // a delta that was never recorded can never be repaired.
+  const fiveLines = () => createLineIndexState("a\na\na\na\na\n");
+
+  it("records a dirty range carrying the byte delta", () => {
+    const next = lineIndexInsertLazy(fiveLines(), byteOffset(0), "xy", 1);
+
+    expect(next.rebuildPending).toBe(true);
+    expect(next.dirtyRanges).toEqual([
+      { startLine: 1, endLine: Number.MAX_SAFE_INTEGER, offsetDelta: 2 },
+    ]);
+  });
+
+  it("records a negative delta for a deletion", () => {
+    const next = lineIndexDeleteLazy(fiveLines(), byteOffset(0), byteOffset(1), "a", 1);
+
+    expect(next.rebuildPending).toBe(true);
+    expect(next.dirtyRanges).toEqual([
+      { startLine: 1, endLine: Number.MAX_SAFE_INTEGER, offsetDelta: -1 },
+    ]);
+  });
+
+  it("reconciles to exact offsets afterwards", () => {
+    const next = lineIndexInsertLazy(fiveLines(), byteOffset(0), "xy", 1);
+    const reconciled = reconcileFull(next, 1);
+
+    expect(() => assertEagerOffsets(reconciled)).not.toThrow();
+    expect(collectLines(reconciled.root).map((line) => line.documentOffset)).toEqual([
+      0, 4, 6, 8, 10, 12,
+    ]);
+  });
+
+  it("stays exact across a run of edits on different lines", () => {
+    let state = fiveLines();
+    state = lineIndexInsertLazy(state, byteOffset(0), "x", 1);
+    state = lineIndexInsertLazy(state, byteOffset(5), "yy", 2);
+    state = lineIndexDeleteLazy(state, byteOffset(1), byteOffset(2), "a", 3);
+
+    const reconciled = reconcileFull(state, 3);
+    expect(() => assertEagerOffsets(reconciled)).not.toThrow();
+  });
+
+  it("defers nothing when no line follows the edited one", () => {
+    // Appending to the last line moves no other line, so there is nothing to
+    // reconcile and the state stays clean.
+    const state = createLineIndexState("a\nbb");
+    const next = lineIndexInsertLazy(state, byteOffset(4), "cc", 1);
+
+    expect(next.rebuildPending).toBe(false);
+    expect(next.dirtyRanges).toEqual([]);
+    expect(() => assertEagerOffsets(next as LineIndexState<"eager">)).not.toThrow();
+  });
+
+  it("merges repeated edits to one line into a single range", () => {
+    let state: LineIndexState = fiveLines();
+    for (let i = 0; i < 10; i++) {
+      state = lineIndexInsertLazy(state, byteOffset(0), "x", i + 1);
+    }
+
+    expect(state.dirtyRanges).toEqual([
+      { startLine: 1, endLine: Number.MAX_SAFE_INTEGER, offsetDelta: 10 },
+    ]);
+    expect(() => assertEagerOffsets(reconcileFull(state, 10))).not.toThrow();
+  });
+});
+
+describe("reconciliation derives offsets rather than adding deltas", () => {
+  it("gives a lazily inserted line its real offset, not the delta", () => {
+    // Lines inserted by the lazy path carry documentOffset: null. Adding a delta
+    // to null has no base to work from, so the line used to end up holding the
+    // delta itself as though it were an absolute offset.
+    let state: LineIndexState = createLineIndexState("a\na\na\na\na\n");
+    state = lineIndexInsertLazy(state, byteOffset(0), "X\n", 1);
+    state = lineIndexInsertLazy(state, byteOffset(6), "Y\n", 2);
+
+    const reconciled = reconcileFull(state, 2);
+
+    expect(collectLines(reconciled.root).map((line) => line.documentOffset)).toEqual([
+      0, 2, 4, 6, 8, 10, 12, 14,
+    ]);
+    expect(() => assertEagerOffsets(reconciled)).not.toThrow();
+  });
+
+  it("leaves no null offset behind in an eager state", () => {
+    let state: LineIndexState = createLineIndexState("one\ntwo\nthree\n");
+    state = lineIndexInsertLazy(state, byteOffset(4), "inserted\n", 1);
+
+    const reconciled = reconcileFull(state, 1);
+    for (const line of collectLines(reconciled.root)) {
+      expect(line.documentOffset).not.toBeNull();
+    }
+    expect(() => assertEagerOffsets(reconciled)).not.toThrow();
+  });
+
+  it("repairs a range whose recorded deltas cancel out", () => {
+    let state: LineIndexState = createLineIndexState("a\na\na\na\n");
+    state = lineIndexInsertLazy(state, byteOffset(0), "xx", 1);
+    state = lineIndexDeleteLazy(state, byteOffset(0), byteOffset(2), "xx", 2);
+
+    const reconciled = reconcileFull(state, 2);
+    expect(() => assertEagerOffsets(reconciled)).not.toThrow();
+  });
+
+  it("reconciles a viewport window to exact offsets", () => {
+    let state: LineIndexState = createLineIndexState("line\n".repeat(40));
+    state = lineIndexInsertLazy(state, byteOffset(0), "zz", 1);
+
+    const reconciled = reconcileViewport(state, 0, 10, 1);
+    for (let line = 0; line <= 10; line++) {
+      const node = findLineByNumber(reconciled.root, line);
+      expect(node?.documentOffset).toBe(getLineStartOffset(reconciled.root, line));
+    }
   });
 });
