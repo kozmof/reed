@@ -6,7 +6,7 @@
 - Functional command: `pnpm test`
 - Functional result: `26` test files, `1092` tests passed
 - Perf command: `pnpm test:perf`
-- Perf result: `1` test file, `33` tests passed
+- Perf result: `1` test file, `34` tests passed
 
 ## 2. Current Test Suites
 

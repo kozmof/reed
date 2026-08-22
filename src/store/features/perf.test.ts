@@ -18,7 +18,9 @@ import { DocumentActions } from "./actions.js";
 import { byteOffset } from "../../types/branded.js";
 import { query } from "../../api/query.js";
 import { rebuildLineIndex, getLineStartOffset, getCharStartOffset } from "../core/line-index.js";
+import { reconcileViewport } from "../core/reconcile.js";
 import { getText } from "../core/piece-table.js";
+import type { LineIndexState } from "../../types/state.js";
 import { generateLargeContent, makeDeterministicRng } from "../../../test-utils/large-content.js";
 
 // ---------------------------------------------------------------------------
@@ -70,6 +72,43 @@ function assertPerf(label: string, elapsedMs: number, thresholdMs: number, itera
     `[PERF] ${label}: ${elapsedMs.toFixed(1)} ms${iterations > 1 ? ` / ${iterations} iters${perOp}` : ""}`,
   );
   expect(elapsedMs, `${label} exceeded ${thresholdMs} ms`).toBeLessThan(thresholdMs);
+}
+
+/**
+ * Fail a reconciliation benchmark that has nothing to repair.
+ *
+ * Reconcile paths return the state unchanged in O(1) when there is no pending
+ * work, so an unguarded benchmark can time an empty call and still pass its
+ * threshold — the faster the number looks, the more likely it measured nothing.
+ *
+ * `'full-rebuild-needed'` counts as pending work here: `reconcileFull` takes its
+ * slow path on the sentinel and rebuilds the whole tree. Use
+ * {@link expectRepairableWindow} for the viewport path, which does not.
+ */
+function expectPendingRepair(lineIndex: LineIndexState, label: string): void {
+  const ranges = lineIndex.dirtyRanges;
+  if (ranges === "full-rebuild-needed") return;
+  expect(
+    ranges.length,
+    `${label}: nothing to reconcile — benchmark would time a no-op`,
+  ).toBeGreaterThan(0);
+}
+
+/**
+ * Stricter form of {@link expectPendingRepair} for viewport benchmarks.
+ *
+ * `reconcileRange` refuses the `'full-rebuild-needed'` sentinel outright, so a
+ * window benchmark that reaches it silently measures nothing. The sentinel is
+ * reachable here rather than hypothetical: every `setViewport` splits a dirty
+ * range into left/right remainders, so a long enough loop grows the range count
+ * past `maxDirtyRanges` and collapses it.
+ */
+function expectRepairableWindow(lineIndex: LineIndexState, label: string): void {
+  const ranges = lineIndex.dirtyRanges;
+  expect(ranges, `${label}: dirty ranges collapsed to a full-rebuild sentinel`).not.toBe(
+    "full-rebuild-needed",
+  );
+  expectPendingRepair(lineIndex, label);
 }
 
 // ---------------------------------------------------------------------------
@@ -367,6 +406,7 @@ describe("Reconciliation", () => {
       const len = store.getSnapshot().pieceTable.totalLength;
       store.dispatch(DocumentActions.insert(byteOffset(len), `line${i}\n`));
     }
+    expectPendingRepair(store.getSnapshot().lineIndex, "reconcileNow");
 
     const ms = bench(() => {
       store.reconcileNow();
@@ -387,12 +427,17 @@ describe("Reconciliation", () => {
     expect(result!.lineCount).toBe(LINES_LG);
   });
 
-  it("setViewport reconciles 500-line window on 100k-line document", () => {
+  it("setViewport reconciles 500-line window on 900k-line document", () => {
     const ITERS = 20;
     const WINDOW = 500;
     const store = createDocumentStore({ content: content_lg });
-    // Touch document to create dirty state
-    store.dispatch(DocumentActions.insert(byteOffset(0), "x"));
+    // Touch document to create dirty state. The edit must carry a newline: the
+    // lazy path records no dirty range for an insert that adds none, which
+    // leaves nothing for setViewport to repair (docs/invariants.md 2.3, and the
+    // caveat on `eagerStrategy` in edit.ts). This benchmark used to insert "x"
+    // and so timed an empty call.
+    store.dispatch(DocumentActions.insert(byteOffset(0), "a\nb"));
+    expectRepairableWindow(store.getSnapshot().lineIndex, "setViewport");
 
     const lineCount = store.getSnapshot().lineIndex.lineCount;
     const rng = makeDeterministicRng(500);
@@ -400,7 +445,39 @@ describe("Reconciliation", () => {
       const start = Math.floor(rng() * (lineCount - WINDOW));
       store.setViewport(start, start + WINDOW);
     }, ITERS);
-    assertPerf(`setViewport (${WINDOW} lines) × ${ITERS}`, ms, 5_000, ITERS);
+    // Cold: the first call dominates the total, so this measures the store path
+    // end to end (listener notification, scheduled reconciliation) rather than
+    // steady-state repair cost. See the reconcileViewport benchmark below.
+    assertPerf(`setViewport cold (${WINDOW} lines) × ${ITERS}`, ms, 5_000, ITERS);
+  });
+
+  it("reconcileViewport repairs a 500-line window on a 900k-line document", () => {
+    const ITERS = 100;
+    const WINDOW = 500;
+    const store = createDocumentStore({ content: content_lg });
+    store.dispatch(DocumentActions.insert(byteOffset(0), "a\nb"));
+
+    const dirty = store.getSnapshot().lineIndex;
+    const revision = store.getSnapshot().revision;
+    expectRepairableWindow(dirty, "reconcileViewport");
+
+    const rng = makeDeterministicRng(500);
+    // `dirty` is immutable and reused, so every iteration starts from the same
+    // pending repair: no range consumption, no dirty-range cap collapse, and no
+    // dispatch cost inside the timed loop. Driving the store instead would let
+    // the window repairs eat the dirty ranges and decay into timing no-ops.
+    const ms = bench(
+      () => {
+        const start = Math.floor(rng() * (dirty.lineCount - WINDOW));
+        reconcileViewport(dirty, start, start + WINDOW, revision);
+      },
+      ITERS,
+      STABLE_READ_BENCH,
+    );
+
+    assertPerf(`reconcileViewport (${WINDOW} lines)`, ms, 2_000, ITERS);
+    expect(reconcileViewport(dirty, 0, WINDOW, revision)).not.toBe(dirty);
+    store.dispose();
   });
 });
 
@@ -728,6 +805,8 @@ describe("Multibyte content (kanji + emoji)", () => {
       const len = store.getSnapshot().pieceTable.totalLength;
       store.dispatch(DocumentActions.insert(byteOffset(len), tokens[i % tokens.length] + "\n"));
     }
+    expectPendingRepair(store.getSnapshot().lineIndex, "reconcileNow multibyte");
+
     const ms = bench(() => {
       store.reconcileNow();
     });
