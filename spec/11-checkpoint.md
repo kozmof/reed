@@ -73,13 +73,28 @@ Byte buffers are base64. Both trees are stored as flat in-order lists.
     "loadedChunks": [],
     "chunks": [],
     "chunkMetadata": [],
-    "pieces": [["p12", "o", 0, 120], ["p13", "a", 0, 5]]
+    "pieces": [
+      ["p12", "o", 0, 120],
+      ["p13", "a", 0, 5],
+    ],
   },
-  "lineIndex": { "maxDirtyRanges": 32, "unloadedLineCounts": [], "lines": [[12, 12], [40, 38]] },
+  "lineIndex": {
+    "maxDirtyRanges": 32,
+    "unloadedLineCounts": [],
+    "lines": [
+      [12, 12],
+      [40, 38],
+    ],
+  },
   "selection": { "ranges": [[3, 7]], "primaryIndex": 0 },
   "history": { "limit": 1000, "coalesceTimeout": 0, "undo": [], "redo": [] },
-  "metadata": { "encoding": "utf-8", "lineEnding": "lf", "normalizeInsertedLineEndings": false, "isDirty": true },
-  "attention": { "nextID": 5, "attentions": [["a0", "p12", 0, "p13", 5]] }
+  "metadata": {
+    "encoding": "utf-8",
+    "lineEnding": "lf",
+    "normalizeInsertedLineEndings": false,
+    "isDirty": true,
+  },
+  "attention": { "nextID": 5, "attentions": [["a0", "p12", 0, "p13", 5]] },
 }
 ```
 
@@ -118,10 +133,10 @@ constraint on the allocator.
 
 ## 4. Capture modes
 
-| Mode           | Keeps                                   | Costs                                          |
-| -------------- | --------------------------------------- | ---------------------------------------------- |
-| `exact`        | Piece list, piece identities, both buffers | Payload carries the original and add buffers |
-| `normalized`   | Text, history, selection, metadata       | Piece identities change, attentions re-anchored |
+| Mode         | Keeps                                      | Costs                                           |
+| ------------ | ------------------------------------------ | ----------------------------------------------- |
+| `exact`      | Piece list, piece identities, both buffers | Payload carries the original and add buffers    |
+| `normalized` | Text, history, selection, metadata         | Piece identities change, attentions re-anchored |
 
 `normalized` collapses the document to a single original-buffer piece and rebuilds the line
 index from the text. Attentions are resolved to byte ranges at capture and re-created against
@@ -189,12 +204,12 @@ own first dispatch produces.
 
 ## 7. Complexity
 
-| Operation | Cost                                                             |
-| --------- | ---------------------------------------------------------------- |
-| `create`  | O(n) over pieces, lines, buffer bytes, and history text          |
-| `restore` | O(n) validation plus O(n) bulk-load of both trees                |
-| `encode`  | `create` plus `JSON.stringify`                                   |
-| `decode`  | `JSON.parse` plus `restore`                                      |
+| Operation | Cost                                                    |
+| --------- | ------------------------------------------------------- |
+| `create`  | O(n) over pieces, lines, buffer bytes, and history text |
+| `restore` | O(n) validation plus O(n) bulk-load of both trees       |
+| `encode`  | `create` plus `JSON.stringify`                          |
+| `decode`  | `JSON.parse` plus `restore`                             |
 
 Capture cost is dominated by base64 encoding the buffers. Measured on a 50,000-line document,
 capture runs in roughly 70 ms and restore in roughly 25 ms.

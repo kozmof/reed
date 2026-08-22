@@ -32,18 +32,18 @@ console.log(scan.getValue(state.pieceTable)); // "hello, world"
 
 Reed's runtime is organized into namespaces.
 
-| Namespace     | Use it for                                                        |
-| ------------- | ----------------------------------------------------------------- |
-| `store.*`     | Store lifecycle, action creators, type guards                     |
-| `query.*`     | O(1) / O(log n) reads: line lookups, cursor positioning           |
-| `scan.*`      | O(n) reads: full-document serialization, analysis                 |
-| `rendering.*` | Viewport calculation, position ↔ line/column conversion           |
-| `history.*`   | Undo/redo state queries                                           |
-| `diff.*`      | Diff algorithm and `setValue` (replace whole content efficiently) |
-| `events.*`    | Event emitter and document event factories                        |
-| `position.*`  | Branded offset constructors (`byteOffset`, `charOffset`, …)       |
-| `attention.*` | Piece-anchored references that survive edits                      |
-| `checkpoint.*`| Saving a document state as JSON-safe data and loading it back     |
+| Namespace      | Use it for                                                        |
+| -------------- | ----------------------------------------------------------------- |
+| `store.*`      | Store lifecycle, action creators, type guards                     |
+| `query.*`      | O(1) / O(log n) reads: line lookups, cursor positioning           |
+| `scan.*`       | O(n) reads: full-document serialization, analysis                 |
+| `rendering.*`  | Viewport calculation, position ↔ line/column conversion           |
+| `history.*`    | Undo/redo state queries                                           |
+| `diff.*`       | Diff algorithm and `setValue` (replace whole content efficiently) |
+| `events.*`     | Event emitter and document event factories                        |
+| `position.*`   | Branded offset constructors (`byteOffset`, `charOffset`, …)       |
+| `attention.*`  | Piece-anchored references that survive edits                      |
+| `checkpoint.*` | Saving a document state as JSON-safe data and loading it back     |
 
 Types are exported flat and can be imported directly.
 
