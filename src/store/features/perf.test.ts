@@ -139,7 +139,7 @@ describe("Load: createInitialState", () => {
     const ms = bench(() => {
       state = createInitialState({ content: content_sm });
     });
-    assertPerf(`createInitialState (${LINES_SM.toLocaleString()} lines)`, ms, 3_000);
+    assertPerf(`createInitialState (${LINES_SM.toLocaleString()} lines)`, ms, 100);
     // Sanity: line count matches
     expect(state!.lineIndex.lineCount).toBe(LINES_SM);
   });
@@ -149,7 +149,7 @@ describe("Load: createInitialState", () => {
     const ms = bench(() => {
       state = createInitialState({ content: content_md });
     });
-    assertPerf(`createInitialState (${LINES_MD.toLocaleString()} lines)`, ms, 6_000);
+    assertPerf(`createInitialState (${LINES_MD.toLocaleString()} lines)`, ms, 250);
     expect(state!.lineIndex.lineCount).toBe(LINES_MD);
   });
 
@@ -158,7 +158,7 @@ describe("Load: createInitialState", () => {
     const ms = bench(() => {
       state = createInitialState({ content: content_lg });
     });
-    assertPerf(`createInitialState (${LINES_LG.toLocaleString()} lines)`, ms, 10_000);
+    assertPerf(`createInitialState (${LINES_LG.toLocaleString()} lines)`, ms, 2_000);
     expect(state!.lineIndex.lineCount).toBe(LINES_LG);
   });
 });
@@ -184,7 +184,7 @@ describe("Balanced line-index queries (O(log n))", () => {
       ITERS,
       STABLE_READ_BENCH,
     );
-    assertPerf(`getLineStartOffset (${LINES_LG.toLocaleString()} lines)`, ms, 1_000, ITERS);
+    assertPerf(`getLineStartOffset (${LINES_LG.toLocaleString()} lines)`, ms, 100, ITERS);
 
     expect(getLineStartOffset(root, 0)).toBe(0);
     const lastLineStart = getLineStartOffset(root, lineCount - 1);
@@ -204,7 +204,7 @@ describe("Balanced line-index queries (O(log n))", () => {
       ITERS,
       STABLE_READ_BENCH,
     );
-    assertPerf(`findLineByNumber (${LINES_LG.toLocaleString()} lines)`, ms, 1_000, ITERS);
+    assertPerf(`findLineByNumber (${LINES_LG.toLocaleString()} lines)`, ms, 100, ITERS);
 
     expect(query.findLineByNumber(state, Math.floor(lineCount / 2))).not.toBeNull();
   });
@@ -221,7 +221,7 @@ describe("Balanced line-index queries (O(log n))", () => {
       ITERS,
       STABLE_READ_BENCH,
     );
-    assertPerf(`findLineAtPosition (${LINES_LG.toLocaleString()} lines)`, ms, 1_000, ITERS);
+    assertPerf(`findLineAtPosition (${LINES_LG.toLocaleString()} lines)`, ms, 100, ITERS);
 
     const probe = query.findLineAtPosition(state, byteOffset(Math.floor(totalBytes / 2)));
     expect(probe).not.toBeNull();
@@ -238,7 +238,7 @@ describe("Balanced line-index queries (O(log n))", () => {
       ITERS,
       STABLE_READ_BENCH,
     );
-    assertPerf(`getLineCount (O(1))`, ms, 100, ITERS);
+    assertPerf(`getLineCount (O(1))`, ms, 20, ITERS);
     expect(query.getLineCount(state)).toBe(LINES_LG);
   });
 
@@ -252,7 +252,7 @@ describe("Balanced line-index queries (O(log n))", () => {
     const iterations = 1_000;
 
     const ms = bench(() => query.getLineCount(state), iterations, STABLE_READ_BENCH);
-    assertPerf("getLineCount (100,000 unloaded chunks)", ms, 100, iterations);
+    assertPerf("getLineCount (100,000 unloaded chunks)", ms, 20, iterations);
     expect(query.getLineCount(state)).toBe(100_001);
   });
 });
@@ -269,7 +269,7 @@ describe("Piece table reads (getText)", () => {
     const ms = bench(() => {
       result = getText(state.pieceTable, byteOffset(0), byteOffset(total));
     });
-    assertPerf(`getText full doc (${LINES_LG.toLocaleString()} lines)`, ms, 2_000);
+    assertPerf(`getText full doc (${LINES_LG.toLocaleString()} lines)`, ms, 500);
     expect(result).toBe(content_lg);
   });
 
@@ -287,7 +287,7 @@ describe("Piece table reads (getText)", () => {
       ITERS,
       STABLE_READ_BENCH,
     );
-    assertPerf(`getText 200-byte slice`, ms, 1_000, ITERS);
+    assertPerf(`getText 200-byte slice`, ms, 50, ITERS);
 
     const probeStart = Math.floor(total / 3);
     const probe = getText(state.pieceTable, byteOffset(probeStart), byteOffset(probeStart + SLICE));
@@ -331,7 +331,7 @@ describe("Streaming viewport latency", () => {
     await loader.setViewport(0, chunkCount - 1);
     const elapsedMs = performance.now() - start;
 
-    assertPerf("load 100-chunk viewport", elapsedMs, 500);
+    assertPerf("load 100-chunk viewport", elapsedMs, 100);
     expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(chunkCount);
     loader.dispose();
     store.dispose();
@@ -350,7 +350,7 @@ describe("Edits via store.dispatch", () => {
       const len = store.getSnapshot().pieceTable.totalLength;
       store.dispatch(DocumentActions.insert(byteOffset(len), "x"));
     }, ITERS);
-    assertPerf(`append × ${ITERS}`, ms, 5_000, ITERS);
+    assertPerf(`append × ${ITERS}`, ms, 500, ITERS);
     expect(store.getSnapshot().pieceTable.totalLength).toBe(content_md.length + ITERS);
   });
 
@@ -360,7 +360,7 @@ describe("Edits via store.dispatch", () => {
     const ms = bench(() => {
       store.dispatch(DocumentActions.insert(byteOffset(0), "x"));
     }, ITERS);
-    assertPerf(`prepend × ${ITERS}`, ms, 5_000, ITERS);
+    assertPerf(`prepend × ${ITERS}`, ms, 500, ITERS);
     expect(store.getSnapshot().pieceTable.totalLength).toBe(content_md.length + ITERS);
   });
 
@@ -372,7 +372,7 @@ describe("Edits via store.dispatch", () => {
       const mid = byteOffset(Math.floor(len / 2));
       store.dispatch(DocumentActions.insert(mid, "x"));
     }, ITERS);
-    assertPerf(`midpoint insert × ${ITERS}`, ms, 5_000, ITERS);
+    assertPerf(`midpoint insert × ${ITERS}`, ms, 500, ITERS);
     expect(store.getSnapshot().pieceTable.totalLength).toBe(content_md.length + ITERS);
   });
 
@@ -387,7 +387,7 @@ describe("Edits via store.dispatch", () => {
       const start = Math.floor(rng() * (len - 1));
       store.dispatch(DocumentActions.delete(byteOffset(start), byteOffset(start + 1)));
     }, ITERS);
-    assertPerf(`random delete × ${ITERS}`, ms, 5_000, ITERS);
+    assertPerf(`random delete × ${ITERS}`, ms, 500, ITERS);
     expect(store.getSnapshot().pieceTable.totalLength).toBe(content_lg.length - ITERS);
   });
 });
@@ -411,7 +411,7 @@ describe("Reconciliation", () => {
     const ms = bench(() => {
       store.reconcileNow();
     });
-    assertPerf(`reconcileNow after ${EDITS} edits`, ms, 10_000);
+    assertPerf(`reconcileNow after ${EDITS} edits`, ms, 100);
 
     const state = store.getSnapshot();
     expect(state.lineIndex.dirtyRanges.length).toBe(0);
@@ -423,7 +423,7 @@ describe("Reconciliation", () => {
     const ms = bench(() => {
       result = rebuildLineIndex(content_lg);
     });
-    assertPerf(`rebuildLineIndex (${LINES_LG.toLocaleString()} lines)`, ms, 10_000);
+    assertPerf(`rebuildLineIndex (${LINES_LG.toLocaleString()} lines)`, ms, 2_000);
     expect(result!.lineCount).toBe(LINES_LG);
   });
 
@@ -448,7 +448,7 @@ describe("Reconciliation", () => {
     // Cold: the first call dominates the total, so this measures the store path
     // end to end (listener notification, scheduled reconciliation) rather than
     // steady-state repair cost. See the reconcileViewport benchmark below.
-    assertPerf(`setViewport cold (${WINDOW} lines) × ${ITERS}`, ms, 5_000, ITERS);
+    assertPerf(`setViewport cold (${WINDOW} lines) × ${ITERS}`, ms, 250, ITERS);
   });
 
   it("reconcileViewport repairs a 500-line window on a 900k-line document", () => {
@@ -475,7 +475,7 @@ describe("Reconciliation", () => {
       STABLE_READ_BENCH,
     );
 
-    assertPerf(`reconcileViewport (${WINDOW} lines)`, ms, 2_000, ITERS);
+    assertPerf(`reconcileViewport (${WINDOW} lines)`, ms, 100, ITERS);
     expect(reconcileViewport(dirty, 0, WINDOW, revision)).not.toBe(dirty);
     store.dispose();
   });
@@ -507,7 +507,7 @@ describe("Undo / redo", () => {
         store.dispatch(DocumentActions.redo());
       }
     });
-    assertPerf(`${STEPS} undo + ${STEPS} redo`, ms, 5_000);
+    assertPerf(`${STEPS} undo + ${STEPS} redo`, ms, 500);
     expect(store.getSnapshot().pieceTable.totalLength).toBe(content_md.length + insertedBytes);
   });
 });
@@ -628,7 +628,7 @@ describe("Mixed edit workload", () => {
       }
     }, ITERS);
 
-    assertPerf(`mixed workload × ${ITERS} (${queries} queries)`, ms, 10_000, ITERS);
+    assertPerf(`mixed workload × ${ITERS} (${queries} queries)`, ms, 500, ITERS);
     expect(queries).toBeGreaterThan(0);
     expect(store.getSnapshot().pieceTable.totalLength).toBe(expectedLength);
   });
@@ -657,7 +657,7 @@ describe("Multibyte content (kanji + emoji)", () => {
     const ms = bench(() => {
       state = createInitialState({ content: content_mb });
     });
-    assertPerf(`createInitialState multibyte (${LINES_MB.toLocaleString()} lines)`, ms, 6_000);
+    assertPerf(`createInitialState multibyte (${LINES_MB.toLocaleString()} lines)`, ms, 250);
     expect(state!.lineIndex.lineCount).toBe(LINES_MB);
 
     // Byte size must exceed JS string length due to multi-byte chars
@@ -679,7 +679,7 @@ describe("Multibyte content (kanji + emoji)", () => {
       ITERS,
       STABLE_READ_BENCH,
     );
-    assertPerf(`getLineStartOffset byte (multibyte)`, ms, 1_000, ITERS);
+    assertPerf(`getLineStartOffset byte (multibyte)`, ms, 100, ITERS);
 
     expect(getLineStartOffset(root, 0)).toBe(0);
     const lastStart = getLineStartOffset(root, lineCount - 1);
@@ -701,7 +701,7 @@ describe("Multibyte content (kanji + emoji)", () => {
       ITERS,
       STABLE_READ_BENCH,
     );
-    assertPerf(`getCharStartOffset UTF-16 (multibyte)`, ms, 1_000, ITERS);
+    assertPerf(`getCharStartOffset UTF-16 (multibyte)`, ms, 100, ITERS);
 
     // Sanity: for multibyte content, char offsets must differ from byte offsets
     const byteOff = getLineStartOffset(root, LINES_MB - 1);
@@ -726,7 +726,7 @@ describe("Multibyte content (kanji + emoji)", () => {
       ITERS,
       STABLE_READ_BENCH,
     );
-    assertPerf(`findLineAtCharPosition (multibyte)`, ms, 1_000, ITERS);
+    assertPerf(`findLineAtCharPosition (multibyte)`, ms, 100, ITERS);
 
     expect(totalChars).toBeGreaterThan(0);
     expect(query.findLineAtCharPosition(state, 0)?.lineNumber).toBe(0);
@@ -742,7 +742,7 @@ describe("Multibyte content (kanji + emoji)", () => {
     const ms = bench(() => {
       result = getText(state.pieceTable, byteOffset(0), byteOffset(total));
     });
-    assertPerf(`getText full multibyte doc`, ms, 2_000);
+    assertPerf(`getText full multibyte doc`, ms, 100);
     expect(result!).toBe(content_mb);
   });
 
@@ -761,7 +761,7 @@ describe("Multibyte content (kanji + emoji)", () => {
       store.dispatch(DocumentActions.insert(byteOffset(len), tokens[tokenIndex]!));
       insertedBytes += tokenBytes[tokenIndex]!;
     }, ITERS);
-    assertPerf(`append kanji/emoji × ${ITERS}`, ms, 5_000, ITERS);
+    assertPerf(`append kanji/emoji × ${ITERS}`, ms, 500, ITERS);
     expect(store.getSnapshot().pieceTable.totalLength).toBe(initialBytes + insertedBytes);
   });
 
@@ -790,7 +790,7 @@ describe("Multibyte content (kanji + emoji)", () => {
       store.dispatch(DocumentActions.insert(byteOffset(off), tokens[tokenIndex]!));
       insertedBytes += tokenBytes[tokenIndex]!;
     }, ITERS);
-    assertPerf(`insert kanji/emoji at line boundary × ${ITERS}`, ms, 5_000, ITERS);
+    assertPerf(`insert kanji/emoji at line boundary × ${ITERS}`, ms, 500, ITERS);
     const final = store.getSnapshot();
     expect(final.pieceTable.totalLength).toBe(initialBytes + insertedBytes);
     expect(final.lineIndex.lineCount).toBe(initialLineCount + ITERS);
@@ -810,7 +810,7 @@ describe("Multibyte content (kanji + emoji)", () => {
     const ms = bench(() => {
       store.reconcileNow();
     });
-    assertPerf(`reconcileNow after ${EDITS} multibyte edits`, ms, 10_000);
+    assertPerf(`reconcileNow after ${EDITS} multibyte edits`, ms, 100);
     const final = store.getSnapshot();
     expect(final.lineIndex.dirtyRanges.length).toBe(0);
     expect(final.lineIndex.rebuildPending).toBe(false);
@@ -831,13 +831,13 @@ describe("Checkpoint capture and restore", () => {
     const captureMs = bench(() => {
       checkpoint = createCheckpoint(state);
     });
-    assertPerf(`createCheckpoint (${LINES_MD.toLocaleString()} lines)`, captureMs, 6_000);
+    assertPerf(`createCheckpoint (${LINES_MD.toLocaleString()} lines)`, captureMs, 750);
 
     let restored!: ReturnType<typeof createDocumentStoreFromCheckpoint>;
     const restoreMs = bench(() => {
       restored = createDocumentStoreFromCheckpoint(checkpoint, { reconcileMode: "none" });
     });
-    assertPerf(`restoreCheckpoint (${LINES_MD.toLocaleString()} lines)`, restoreMs, 6_000);
+    assertPerf(`restoreCheckpoint (${LINES_MD.toLocaleString()} lines)`, restoreMs, 400);
 
     expect(restored.getSnapshot().lineIndex.lineCount).toBe(state.lineIndex.lineCount);
     expect(restored.getSnapshot().pieceTable.totalLength).toBe(state.pieceTable.totalLength);
@@ -854,7 +854,7 @@ describe("Checkpoint capture and restore", () => {
     const ms = bench(() => {
       encoded = encodeCheckpoint(state, { mode: "normalized" });
     });
-    assertPerf(`encodeCheckpoint normalized (${LINES_SM.toLocaleString()} lines)`, ms, 5_000);
+    assertPerf(`encodeCheckpoint normalized (${LINES_SM.toLocaleString()} lines)`, ms, 500);
 
     // base64 costs 4 bytes per 3, plus the line list and envelope.
     console.log(
@@ -879,7 +879,7 @@ describe("Checkpoint capture and restore", () => {
       STABLE_READ_BENCH,
     );
 
-    assertPerf(`encode + decode (${LINES_MD.toLocaleString()} lines)`, ms, 12_000);
+    assertPerf(`encode + decode (${LINES_MD.toLocaleString()} lines)`, ms, 1_000);
     expect(decodeCheckpoint(json).lineIndex.lineCount).toBe(state.lineIndex.lineCount);
     store.dispose();
   });

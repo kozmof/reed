@@ -116,7 +116,7 @@ export interface ChunkManager {
  *   loadChunk: async (i) => fetchBytes(`/file/chunk/${i}`),
  * });
  * await manager.ensureLoaded(0);
- * const text = query.getText(store.getSnapshot());
+ * const text = scan.getValue(store.getSnapshot().pieceTable);
  * ```
  */
 export function createChunkManager(
