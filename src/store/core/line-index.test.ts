@@ -1304,3 +1304,73 @@ describe("reconciliation derives offsets rather than adding deltas", () => {
     }
   });
 });
+
+describe("offset cache stays exact under randomized viewport reconciliation", () => {
+  // reconcileRange repairs a window by walking the tree and pruning subtrees
+  // outside it. Seeded sequences mix edit shapes and window placements so the
+  // pruning arithmetic is exercised against ranges that start, end, or sit
+  // wholly inside each window.
+  const rngFor = (seed: number) => {
+    let value = seed >>> 0;
+    return () => {
+      value = (value * 1664525 + 1013904223) >>> 0;
+      return value / 0x100000000;
+    };
+  };
+
+  it("matches a from-scratch rebuild after mixed edits and windows", () => {
+    for (const seed of [11, 97, 613, 2749]) {
+      const rng = rngFor(seed);
+      let text = "line\n".repeat(60);
+      let state: LineIndexState = createLineIndexState(text);
+
+      for (let step = 0; step < 60; step++) {
+        const at = Math.floor(rng() * text.length);
+        if (rng() < 0.5) {
+          const inserted = rng() < 0.5 ? "z" : "z\n";
+          state = lineIndexInsertLazy(state, byteOffset(at), inserted, step + 1);
+          text = text.slice(0, at) + inserted + text.slice(at);
+        } else if (at < text.length) {
+          const removed = text.slice(at, at + 1);
+          state = lineIndexDeleteLazy(state, byteOffset(at), byteOffset(at + 1), removed, step + 1);
+          text = text.slice(0, at) + text.slice(at + 1);
+        }
+
+        // Reconcile a random window, the way a scrolling viewport would.
+        const windowStart = Math.floor(rng() * state.lineCount);
+        const windowEnd = Math.min(windowStart + 10, state.lineCount - 1);
+        state = reconcileViewport(state, windowStart, windowEnd, step + 1);
+
+        // Every line the window covered now has to carry its true offset.
+        for (let line = windowStart; line <= windowEnd; line++) {
+          const node = findLineByNumber(state.root, line);
+          expect(node?.documentOffset, `seed=${seed} step=${step} line=${line}`).toBe(
+            getLineStartOffset(state.root, line),
+          );
+        }
+      }
+
+      const reconciled = reconcileFull(state, 60);
+      expect(() => assertEagerOffsets(reconciled), `seed=${seed}`).not.toThrow();
+      expect(collectLines(reconciled.root).map((line) => line.lineLength)).toEqual(
+        collectLines(rebuildLineIndex(text).root).map((line) => line.lineLength),
+      );
+    }
+  });
+
+  it("repairs a window that starts inside a dirty range", () => {
+    let state: LineIndexState = createLineIndexState("line\n".repeat(40));
+    state = lineIndexInsertLazy(state, byteOffset(0), "zz", 1);
+
+    // The dirty range is [1, end]; reconcile a window strictly inside it.
+    state = reconcileViewport(state, 20, 25, 1);
+    for (let line = 20; line <= 25; line++) {
+      const node = findLineByNumber(state.root, line);
+      expect(node?.documentOffset).toBe(getLineStartOffset(state.root, line));
+    }
+
+    // Lines outside the window keep waiting for their turn.
+    expect(state.rebuildPending).toBe(true);
+    expect(() => assertEagerOffsets(reconcileFull(state, 1))).not.toThrow();
+  });
+});

@@ -149,49 +149,61 @@ export function mergeDirtyRanges(
 // =============================================================================
 
 /**
- * Repair one line's cached offset from the tree's own aggregates.
+ * Repair the cached offsets of every line in `[fromLine, toLine]` from the
+ * tree's own aggregates, in one pruned in-order pass.
  *
- * The descent accumulates `subtreeByteLength`, which `withLineIndexNode` keeps
- * exact on every mutation, so it arrives at the line's true byte offset and
- * writes that. This is the same walk `getLineStartOffset` performs for reads,
- * fused with the write.
+ * `firstLine` and `firstOffset` describe where this subtree starts, so the walk
+ * carries the true byte offset down with it. `subtreeLineCount` and
+ * `subtreeByteLength` are exact at all times (invariants 2.1 and 2.2), which
+ * lets a subtree lying entirely outside the range return untouched.
  *
- * Deriving beats adding a delta to whatever the node currently holds. A line
+ * Deriving beats adding a delta to whatever a node currently holds. A line
  * inserted by the lazy path carries `documentOffset: null` and has no base to
  * add to, so delta arithmetic gave it the delta itself as an absolute offset.
  * Deriving also makes the repair independent of whether the recorded delta was
- * right, which keeps a single mis-recorded edit from corrupting the cache
- * permanently.
+ * right, so one mis-recorded edit cannot corrupt the cache permanently.
  *
- * Returns `node` unchanged when the offset is already correct, so a clean
- * subtree costs no allocations.
+ * Nodes already holding the correct offset are returned as they are, so a clean
+ * window costs no allocations.
  */
-function repairLineOffset(
-  node: LineIndexNode,
-  lineNumber: number,
-  offsetBefore: number,
-): LineIndexNode {
+function repairLineRange(
+  node: LineIndexNode | null,
+  fromLine: number,
+  toLine: number,
+  firstLine: number,
+  firstOffset: number,
+): LineIndexNode | null {
+  if (node === null) return null;
+
+  // Prune whole subtrees that fall outside the window.
+  const lastLine = firstLine + node.subtreeLineCount - 1;
+  if (lastLine < fromLine || firstLine > toLine) return node;
+
   const leftLineCount = node.left?.subtreeLineCount ?? 0;
   const leftByteLength = node.left?.subtreeByteLength ?? 0;
+  const selfLine = firstLine + leftLineCount;
+  const selfOffset = firstOffset + leftByteLength;
 
-  if (lineNumber < leftLineCount && node.left !== null) {
+  const newLeft = repairLineRange(node.left, fromLine, toLine, firstLine, firstOffset);
+  const newRight = repairLineRange(
+    node.right,
+    fromLine,
+    toLine,
+    selfLine + 1,
+    selfOffset + node.lineLength,
+  );
+
+  const repairSelf =
+    selfLine >= fromLine && selfLine <= toLine && node.documentOffset !== selfOffset;
+
+  if (newLeft !== node.left || newRight !== node.right || repairSelf) {
     return withLineIndexNode(node, {
-      left: repairLineOffset(node.left, lineNumber, offsetBefore),
-    });
-  } else if (lineNumber > leftLineCount && node.right !== null) {
-    return withLineIndexNode(node, {
-      right: repairLineOffset(
-        node.right,
-        lineNumber - leftLineCount - 1,
-        offsetBefore + leftByteLength + node.lineLength,
-      ),
+      left: newLeft,
+      right: newRight,
+      documentOffset: repairSelf ? selfOffset : node.documentOffset,
     });
   }
-
-  const correctOffset = offsetBefore + leftByteLength;
-  return node.documentOffset === correctOffset
-    ? node
-    : withLineIndexNode(node, { documentOffset: correctOffset });
+  return node;
 }
 
 /**
@@ -283,39 +295,21 @@ export function reconcileRange(
   const clampedEnd = Math.min(endLine, state.lineCount - 1);
   if (clampedStart > clampedEnd) return $proveCtx($beginCost("O(n log n)"), state);
 
-  // Build sweep events from sorted, non-overlapping dirty ranges — O(K)
-  // Each range contributes a +delta event at its effective start and
-  // a -delta event at its effective end+1 within [clampedStart, clampedEnd].
-  const events: Array<{ line: number; delta: number }> = [];
+  // Repair each dirty range clipped to [clampedStart, clampedEnd] — O(K) passes,
+  // each O(V + log n) for the V lines it covers. The ranges are sorted and
+  // non-overlapping (mergeDirtyRanges guarantees both), so no line is walked
+  // twice.
+  //
+  // The recorded `offsetDelta` is not consulted. Repair derives each offset from
+  // the tree, so a range only has to say which lines moved, not by how much.
+  // That also repairs a line whose recorded delta is zero, which is how a lazily
+  // inserted line with a null offset gets a real one.
+  let newRoot = state.root!;
   for (const range of dirtyRanges) {
     const effectiveStart = Math.max(range.startLine, clampedStart);
     const effectiveEnd = Math.min(range.endLine, clampedEnd);
     if (effectiveStart > effectiveEnd) continue;
-    events.push({ line: effectiveStart, delta: range.offsetDelta });
-    if (effectiveEnd < clampedEnd) {
-      events.push({ line: effectiveEnd + 1, delta: -range.offsetDelta });
-    }
-  }
-
-  // Sweep [clampedStart, clampedEnd], repairing each line the ranges cover.
-  //
-  // The sweep tracks the cumulative delta only to know whether a line is still
-  // covered by a dirty range. The repaired offset itself is derived from the
-  // tree, so a line whose delta happens to cancel out is repaired too — that is
-  // how a lazily inserted line with a null offset gets a real one.
-  let newRoot = state.root!;
-  let cumDelta = 0;
-  let evtIdx = 0;
-  let covered = false;
-  for (let line = clampedStart; line <= clampedEnd; line++) {
-    while (evtIdx < events.length && events[evtIdx]!.line === line) {
-      cumDelta += events[evtIdx]!.delta;
-      evtIdx++;
-      covered = true;
-    }
-    if (covered || cumDelta !== 0) {
-      newRoot = repairLineOffset(newRoot, line, 0);
-    }
+    newRoot = repairLineRange(newRoot, effectiveStart, effectiveEnd, 0, 0)!;
   }
 
   // Keep only the parts of dirty ranges that are outside [clampedStart, clampedEnd].
