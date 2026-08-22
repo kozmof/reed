@@ -160,6 +160,51 @@ describe("DECLARE_CHUNK_METADATA", () => {
     const next = documentReducer(state, DocumentActions.declareChunkMetadata([]));
     expect(next).toBe(state);
   });
+
+  it("rejects metadata whose byte length exceeds chunkSize", () => {
+    const state = createInitialState({ chunkSize: 64 });
+    const next = documentReducer(
+      state,
+      DocumentActions.declareChunkMetadata([{ chunkIndex: 0, byteLength: 65, lineCount: 1 }]),
+    );
+    expect(next).toBe(state);
+  });
+
+  it("rejects metadata that contradicts known file geometry", () => {
+    const state = createInitialState({ chunkSize: 8, totalFileSize: 10 });
+    const next = documentReducer(
+      state,
+      DocumentActions.declareChunkMetadata([{ chunkIndex: 1, byteLength: 8, lineCount: 1 }]),
+    );
+    expect(next).toBe(state);
+  });
+
+  it("rejects conflicting redeclarations and treats identical ones as no-ops", () => {
+    const state0 = createInitialState({ chunkSize: 64 });
+    const declaration = { chunkIndex: 0, byteLength: 64, lineCount: 5 };
+    const state1 = documentReducer(state0, DocumentActions.declareChunkMetadata([declaration]));
+    const identical = documentReducer(state1, DocumentActions.declareChunkMetadata([declaration]));
+    const conflicting = documentReducer(
+      state1,
+      DocumentActions.declareChunkMetadata([{ ...declaration, lineCount: 999 }]),
+    );
+    expect(identical).toBe(state1);
+    expect(conflicting).toBe(state1);
+    expect(conflicting.lineIndex.unloadedLineCount).toBe(5);
+  });
+
+  it("rejects conflicting duplicate indexes atomically", () => {
+    const state = createInitialState({ chunkSize: 64 });
+    const next = documentReducer(
+      state,
+      DocumentActions.declareChunkMetadata([
+        { chunkIndex: 0, byteLength: 64, lineCount: 5 },
+        { chunkIndex: 0, byteLength: 64, lineCount: 6 },
+      ]),
+    );
+    expect(next).toBe(state);
+    expect(next.pieceTable.chunkMetadata.size).toBe(0);
+  });
 });
 
 describe("DocumentStoreConfig.totalFileSize", () => {

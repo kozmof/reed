@@ -193,11 +193,45 @@ export function declareChunkMetadata(
     return state;
   }
 
+  const { chunkSize, totalFileSize } = state.pieceTable;
+  const expectedChunkCount = totalFileSize > 0 ? Math.ceil(totalFileSize / chunkSize) : undefined;
+  const entriesByIndex = new Map<number, (typeof action.metadata)[number]>();
+
+  // Validate the complete declaration before changing either side-cache. The
+  // reducer is the final invariant boundary because callers may dispatch the
+  // public action directly instead of going through StreamingDocumentLoader.
+  for (const entry of action.metadata) {
+    if (entry.byteLength === 0 || entry.byteLength > chunkSize) return state;
+    if (expectedChunkCount !== undefined) {
+      if (entry.chunkIndex >= expectedChunkCount) return state;
+      const expectedByteLength = Math.min(chunkSize, totalFileSize - entry.chunkIndex * chunkSize);
+      if (entry.byteLength !== expectedByteLength) return state;
+    }
+
+    const priorInAction = entriesByIndex.get(entry.chunkIndex);
+    if (
+      priorInAction !== undefined &&
+      (priorInAction.byteLength !== entry.byteLength || priorInAction.lineCount !== entry.lineCount)
+    ) {
+      return state;
+    }
+    entriesByIndex.set(entry.chunkIndex, entry);
+
+    const prior = state.pieceTable.chunkMetadata.get(entry.chunkIndex);
+    if (
+      prior !== undefined &&
+      (prior.byteLength !== entry.byteLength || prior.lineCount !== entry.lineCount)
+    ) {
+      return state;
+    }
+  }
+
   const metadata = new Map(state.pieceTable.chunkMetadata);
   const unloadedCounts = new Map(state.lineIndex.unloadedLineCountsByChunk);
   let changed = false;
-  for (const entry of action.metadata) {
+  for (const entry of entriesByIndex.values()) {
     if (state.pieceTable.loadedChunks.has(entry.chunkIndex)) continue;
+    if (metadata.has(entry.chunkIndex)) continue;
     metadata.set(entry.chunkIndex, entry);
     unloadedCounts.set(entry.chunkIndex, entry.lineCount);
     changed = true;
