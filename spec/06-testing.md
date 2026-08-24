@@ -4,7 +4,7 @@
 
 - Date: 2026-08-24
 - Functional command: `pnpm test`
-- Functional result: `28` test files, `1131` tests passed
+- Functional result: `28` test files, `1133` tests passed
 - Perf command: `pnpm test:perf`
 - Perf result: `1` test file, `34` tests passed
 
@@ -54,7 +54,7 @@ Implemented coverage is strongest in:
 - event semantics including `APPLY_REMOTE` `content-change` emission and `affectedRanges` correctness for multi-change batches
 - selector-level rendering and byte/char conversion logic
 - checkpoint round trips for text, line offsets, history, attention, and chunked documents, with a rejection test per validation code
-- line-index offset-cache maintenance, covering newline-free lazy edits and reconciliation of lines inserted with a null offset
+- line-index offset-cache maintenance, covering newline-free lazy edits, lines inserted with a null offset, and viewport repair after dirty ranges collapse to the full-rebuild sentinel
 
 The checkpoint suite pairs example-based tests with a model-based one. The model test swaps a
 restored store in mid-sequence every 40 steps and keeps editing, so drift in piece identities

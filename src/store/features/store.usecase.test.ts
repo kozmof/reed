@@ -8,7 +8,12 @@ import { pstackSize } from "../../types/state.js";
 import { createDocumentStore, withTransaction } from "./store.js";
 import { DocumentActions } from "./actions.js";
 import { byteOffset, byteLength } from "../../types/branded.js";
-import { rebuildLineIndex, getLineStartOffset, getCharStartOffset } from "../core/line-index.js";
+import {
+  rebuildLineIndex,
+  findLineByNumber,
+  getLineStartOffset,
+  getCharStartOffset,
+} from "../core/line-index.js";
 import { getText, getValue } from "../core/piece-table.js";
 
 function createDeterministicRng(seed: number): () => number {
@@ -746,6 +751,38 @@ describe("Editor Use Cases", () => {
 
       expect(store.getSnapshot()).not.toBe(before);
       expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it("should reconcile visible offsets after dirty ranges collapse to the full sentinel", () => {
+      const content = Array.from({ length: 50 }, (_, i) => `Line ${i}`).join("\n");
+      const store = createDocumentStore({
+        content,
+        maxDirtyRanges: 1,
+        reconcileMode: "none",
+      });
+      const initialRoot = store.getSnapshot().lineIndex.root;
+      const line30 = getLineStartOffset(initialRoot, 30);
+      const line10 = getLineStartOffset(initialRoot, 10);
+
+      store.dispatch(DocumentActions.insert(line30, "x"));
+      store.dispatch(DocumentActions.insert(line10, "y"));
+
+      const before = store.getSnapshot();
+      expect(before.lineIndex.dirtyRanges).toBe("full-rebuild-needed");
+      const staleVisibleLine = findLineByNumber(before.lineIndex.root, 40);
+      expect(staleVisibleLine?.documentOffset).not.toBe(
+        getLineStartOffset(before.lineIndex.root, 40),
+      );
+
+      store.setViewport(38, 42);
+
+      const after = store.getSnapshot();
+      expect(after.lineIndex.dirtyRanges).toBe("full-rebuild-needed");
+      expect(after.lineIndex.rebuildPending).toBe(true);
+      for (let line = 38; line <= 42; line++) {
+        const node = findLineByNumber(after.lineIndex.root, line);
+        expect(node?.documentOffset).toBe(getLineStartOffset(after.lineIndex.root, line));
+      }
     });
 
     it("should resolve whenReconciled and notify subscribers after reconcileNow", async () => {

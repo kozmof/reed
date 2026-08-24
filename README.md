@@ -235,18 +235,25 @@ Use `insertWithAttention` / `deleteWithAttention` to keep the piece table and at
 Reed supports chunked, streaming loads for files that don't fit comfortably in memory. `createChunkManager` and `createStreamingDocumentLoader` are flat exports (not part of the `store` namespace) and take the store plus a `ChunkLoader` that fetches raw bytes for a chunk index.
 
 ```ts
-import { createChunkManager, createStreamingDocumentLoader } from "@kozmof/reed";
+import { store, createChunkManager, createStreamingDocumentLoader } from "@kozmof/reed";
+
+const chunkSize = 64 * 1024;
+const streamedDoc = store.createDocumentStore({
+  content: "",
+  chunkSize,
+  totalFileSize,
+});
 
 const loader = {
   loadChunk: (chunkIndex: number): Promise<Uint8Array> => fetchChunkBytes(chunkIndex),
 };
 
 // High-level: declare chunk metadata, then load/pin/prefetch around a viewport.
-const streaming = createStreamingDocumentLoader(doc, loader, metadata);
+const streaming = createStreamingDocumentLoader(streamedDoc, loader, metadata);
 streaming.setViewport(startChunkIndex, endChunkIndex);
 
 // Or manage chunks directly.
-const manager = createChunkManager(doc, loader);
+const manager = createChunkManager(streamedDoc, loader);
 await manager.ensureLoaded(0);
 ```
 

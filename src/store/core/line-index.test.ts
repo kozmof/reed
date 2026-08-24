@@ -1332,6 +1332,29 @@ describe("reconciliation derives offsets rather than adding deltas", () => {
       expect(node?.documentOffset).toBe(getLineStartOffset(reconciled.root, line));
     }
   });
+
+  it("reconciles viewport offsets when dirty ranges have collapsed to the full sentinel", () => {
+    let state: LineIndexState = createLineIndexState("line\n".repeat(40));
+    state = lineIndexInsertLazy(state, byteOffset(0), "zz", 1);
+    state = withLineIndexState(state, {
+      dirtyRanges: "full-rebuild-needed",
+      rebuildPending: true,
+    });
+
+    const reconciled = reconcileViewport(state, 5, 10, 2);
+
+    expect(reconciled.dirtyRanges).toBe("full-rebuild-needed");
+    expect(reconciled.rebuildPending).toBe(true);
+    expect(reconciled.lastReconciledRevision).toBe(2);
+    for (let line = 5; line <= 10; line++) {
+      const node = findLineByNumber(reconciled.root, line);
+      expect(node?.documentOffset).toBe(getLineStartOffset(reconciled.root, line));
+    }
+
+    const outside = findLineByNumber(reconciled.root, 20);
+    expect(outside?.documentOffset).not.toBe(getLineStartOffset(reconciled.root, 20));
+    expect(reconcileViewport(reconciled, 5, 10, 2)).toBe(reconciled);
+  });
 });
 
 describe("offset cache stays exact under randomized viewport reconciliation", () => {

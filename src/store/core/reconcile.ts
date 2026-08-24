@@ -458,6 +458,24 @@ export function reconcileViewport(
 
   if (!viewportDirty) return $proveCtx($beginCost("O(n log n)"), state);
 
+  // The sentinel means every cached documentOffset may be stale, but it does
+  // not prevent us from deriving exact offsets for the visible window from the
+  // always-current subtree byte-length aggregates. Keep the sentinel afterward
+  // so background reconciliation still repairs the rest of the document.
+  if (dirtyRanges === "full-rebuild-needed") {
+    const newRoot = repairLineRange(state.root, clampedStart, clampedEnd, 0, 0);
+    if (newRoot === state.root && state.lastReconciledRevision === revision) {
+      return $proveCtx($beginCost("O(n log n)"), state);
+    }
+    return $proveCtx(
+      $beginCost("O(n log n)"),
+      withLineIndexState(state, {
+        root: newRoot,
+        lastReconciledRevision: revision,
+      }),
+    );
+  }
+
   // Reconcile only the viewport range
   return reconcileRange(state, clampedStart, clampedEnd, revision);
 }
