@@ -24,6 +24,7 @@ Fully implemented:
   - In-flight deduplication (concurrent `ensureLoaded` calls for the same chunk share one fetch)
   - LRU eviction (`maxLoadedChunks` cap)
   - Chunk pinning via `setActiveChunks` to prevent hot-chunk eviction
+  - Cooperative cancellation via `cancelPendingOutside` and the loader abort signal
 - `DECLARE_CHUNK_METADATA` pre-declares per-chunk byte lengths and line counts so `getLineCount` is accurate on unloaded ranges
 - `createStreamingDocumentLoader(store, loader, metadata, config)` wraps the common lifecycle:
   - declares all chunk metadata on construction
@@ -84,6 +85,7 @@ Important current behavior:
 - `content-change` for local text edits and `APPLY_REMOTE`
 - `selection-change`
 - `history-change`
+- `attention-change` when attention records are created, deleted, or migrated
 - `dirty-change`
 
 `save` event type exists in the event system but is not auto-triggered by reducer/store actions.

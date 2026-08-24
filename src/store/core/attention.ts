@@ -77,6 +77,16 @@ export const emptyAttentionLayerState: AttentionLayerState = Object.freeze({
   nextID: 0,
 });
 
+function isValidAttentionBoundary(boundary: number): boolean {
+  return Number.isSafeInteger(boundary) && boundary >= 0;
+}
+
+function assertValidAttentionBoundary(boundary: number, what: string): void {
+  if (!isValidAttentionBoundary(boundary)) {
+    throw new RangeError(`${what} boundary must be a non-negative safe integer`);
+  }
+}
+
 function freezeAttentionPoint(point: AttentionPoint): AttentionPoint {
   return Object.freeze({ pieceID: point.pieceID, boundary: point.boundary });
 }
@@ -161,7 +171,8 @@ export function resolvePoint(
  * Create a new Attention spanning [start, end) and add it to the layer.
  * Returns [newState, id].
  *
- * `start` and `end` are stored as given; the caller owns the `start <= end`
+ * `start` and `end` boundaries must be non-negative safe integers. The points
+ * are otherwise stored as given, and the caller owns the `start <= end`
  * invariant. An inverted or zero-width span simply resolves to an empty range
  * (`getTextForAttention` returns "").
  *
@@ -172,6 +183,8 @@ export function createAttention(
   start: AttentionPoint,
   end: AttentionPoint,
 ): ConstCost<[AttentionLayerState, AttentionID]> {
+  assertValidAttentionBoundary(start.boundary, "start");
+  assertValidAttentionBoundary(end.boundary, "end");
   const id = attentionID(`a${state.nextID}`);
   const attention: Attention = Object.freeze({
     id,
@@ -258,7 +271,7 @@ function resolvePointWithIndex(index: PieceOffsetIndex, point: AttentionPoint): 
   if (entry === undefined) return null;
   // Fail closed on a corrupt boundary in either direction: a negative boundary
   // would produce an offset before the piece, an over-length one past it.
-  if (point.boundary < 0 || point.boundary > entry.length) return null;
+  if (!isValidAttentionBoundary(point.boundary) || point.boundary > entry.length) return null;
   return byteOffset(entry.offset + point.boundary);
 }
 
@@ -509,7 +522,13 @@ function migratePointForDelete(
   deletedLength: number,
 ): AttentionPoint {
   const entry = oldIndex.get(point.pieceID);
-  if (entry === undefined || point.boundary > entry.length) return point; // dangling: leave as-is
+  if (
+    entry === undefined ||
+    !isValidAttentionBoundary(point.boundary) ||
+    point.boundary > entry.length
+  ) {
+    return point; // dangling: leave as-is
+  }
 
   const offset = entry.offset + point.boundary;
   if (offset < start) return point; // strictly before the cut — piece + boundary still valid

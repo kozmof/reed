@@ -16,6 +16,7 @@ Reed validates actions and isolates failures at store boundaries. This document 
 
 - Store listener exceptions are caught so one failing listener does not block others.
 - Event handler exceptions are caught per handler in the emitter.
+- Event payload preparation errors are caught after dispatch, so a committed edit still returns successfully.
 
 ### 1.3 Transaction safety
 

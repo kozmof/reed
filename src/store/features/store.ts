@@ -545,18 +545,30 @@ function withEvents(
   }
 
   /**
-   * Emit appropriate events based on action type and state changes.
+   * Prepare appropriate events based on action type and state changes.
+   *
+   * Event payloads are derived immediately after dispatch rather than while a
+   * transaction is being committed. The buffered functions only emit already
+   * constructed events, so event derivation cannot turn a successful commit
+   * into an apparent failure.
    */
-  function emitEventsForAction(
+  function prepareEventsForAction(
     action: DocumentAction,
     prevState: DocumentState,
     nextState: DocumentState,
-  ): void {
-    if (disposed) return;
+  ): Array<() => void> {
+    if (disposed) return [];
+    const events: Array<() => void> = [];
+
+    function prepare<K extends keyof DocumentEventMap>(type: K, event: DocumentEventMap[K]): void {
+      events.push(() => {
+        if (!disposed) emitter.emit(type, event);
+      });
+    }
 
     // Content change events for local text edits and remote content updates
     if (isTextEditAction(action) || action.type === "APPLY_REMOTE") {
-      emitter.emit(
+      prepare(
         "content-change",
         createContentChangeEvent(
           action,
@@ -569,12 +581,12 @@ function withEvents(
 
     // Selection change events
     if (action.type === "SET_SELECTION") {
-      emitter.emit("selection-change", createSelectionChangeEvent(prevState, nextState));
+      prepare("selection-change", createSelectionChangeEvent(prevState, nextState));
     }
 
     // History change events
     if (action.type === "UNDO" || action.type === "REDO") {
-      emitter.emit(
+      prepare(
         "history-change",
         createHistoryChangeEvent(action.type === "UNDO" ? "undo" : "redo", prevState, nextState),
       );
@@ -584,7 +596,7 @@ function withEvents(
     // from CREATE_ATTENTION / DELETE_ATTENTION or from a content edit re-anchoring
     // points. Compared by reference (copy-on-write) so unchanged edits cost nothing.
     if (prevState.attention !== nextState.attention) {
-      emitter.emit(
+      prepare(
         "attention-change",
         createAttentionChangeEvent(
           prevState,
@@ -596,8 +608,10 @@ function withEvents(
 
     // Dirty state change events
     if (prevState.metadata.isDirty !== nextState.metadata.isDirty) {
-      emitter.emit("dirty-change", createDirtyChangeEvent(nextState.metadata.isDirty, nextState));
+      prepare("dirty-change", createDirtyChangeEvent(nextState.metadata.isDirty, nextState));
     }
+
+    return events;
   }
 
   /**
@@ -609,9 +623,15 @@ function withEvents(
     const nextState = baseStore.dispatch(action);
 
     if (nextState !== prevState) {
-      const prev = prevState;
-      const next = nextState;
-      bufferOrEmit(() => emitEventsForAction(action, prev, next));
+      try {
+        for (const emit of prepareEventsForAction(action, prevState, nextState)) {
+          bufferOrEmit(emit);
+        }
+      } catch (error) {
+        // The state transition has already committed. Event metadata is
+        // observational and must not make callers believe the edit failed.
+        reportCaughtError(logger, "Event preparation threw an error", error);
+      }
     }
 
     return nextState;

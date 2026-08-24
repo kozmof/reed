@@ -376,7 +376,16 @@ export function createDirtyChangeEvent(isDirty: boolean, state: DocumentState): 
 
 function clampPosition(position: number, totalLength: number): ByteOffset {
   if (!Number.isFinite(position)) return byteOffset(0);
-  return byteOffset(Math.max(0, Math.min(position, totalLength)));
+  return safeByteOffset(Math.max(0, Math.min(position, totalLength)));
+}
+
+function safeByteOffset(position: number): ByteOffset {
+  if (!Number.isFinite(position)) return byteOffset(0);
+  return byteOffset(Math.max(0, Math.min(Math.trunc(position), Number.MAX_SAFE_INTEGER)));
+}
+
+function addOffset(position: number, length: number): ByteOffset {
+  return safeByteOffset(position + length);
 }
 
 function normalizeLineEndings(text: string, lineEnding: "lf" | "crlf" | "cr"): string {
@@ -419,7 +428,7 @@ export function getAffectedRanges(
           : clampPosition(action.start, prevState.pieceTable.totalLength);
       const text =
         prevState === undefined ? action.text : insertedTextForState(action.text, prevState);
-      return [[start, byteOffset(start + utf8ByteLength(text))]];
+      return [[start, addOffset(start, utf8ByteLength(text))]];
     }
     case "DELETE": {
       if (prevState === undefined) return [[action.start, action.end]];
@@ -435,10 +444,10 @@ export function getAffectedRanges(
       const text =
         prevState === undefined ? action.text : insertedTextForState(action.text, prevState);
       const insertLength = utf8ByteLength(text);
-      return [[start, byteOffset(start + insertLength)]];
+      return [[start, addOffset(start, insertLength)]];
     }
     case "APPLY_REMOTE": {
-      type Entry = { start: number; size: number; byteChange: number };
+      type Entry = { type: "insert" | "delete"; start: number; end: number };
       const entries: Entry[] = [];
       let totalLength = prevState?.pieceTable.totalLength;
 
@@ -450,7 +459,7 @@ export function getAffectedRanges(
           if (len > 0) {
             const start =
               totalLength === undefined ? change.start : clampPosition(change.start, totalLength);
-            entries.push({ start, size: len, byteChange: len });
+            entries.push({ type: "insert", start, end: start + len });
             if (totalLength !== undefined) totalLength += len;
           }
         } else if (
@@ -460,12 +469,11 @@ export function getAffectedRanges(
         ) {
           const start =
             totalLength === undefined ? change.start : clampPosition(change.start, totalLength);
-          const rawEnd = byteOffset(change.start + change.length);
+          const rawEnd = addOffset(change.start, change.length);
           const end = totalLength === undefined ? rawEnd : clampPosition(rawEnd, totalLength);
-          const size = end - start;
-          if (size > 0) {
-            entries.push({ start, size, byteChange: -size });
-            if (totalLength !== undefined) totalLength -= size;
+          if (end > start) {
+            entries.push({ type: "delete", start, end });
+            if (totalLength !== undefined) totalLength -= end - start;
           }
         }
       }
@@ -474,19 +482,37 @@ export function getAffectedRanges(
         return [[byteOffset(0), byteOffset(0)]];
       if (entries.length === 0) return [[byteOffset(0), byteOffset(0)]];
 
-      // Adjust each entry's start to nextState coordinate space.
-      // Each entry.start is in intermediate space (after applying all previous entries).
-      // A subsequent entry j that sits at or before entry i's start shifts entry i by entry j's byteChange.
+      // Each entry is expressed in the intermediate coordinate space in which it
+      // was applied. Transform both boundaries through all subsequent edits. A
+      // scalar delta is insufficient here: a later deletion may overlap only part
+      // (or all) of an earlier range and must collapse the covered boundaries.
       const ranges: [ByteOffset, ByteOffset][] = [];
       for (let i = 0; i < entries.length; i++) {
         const ei = entries[i]!;
-        let delta = 0;
+        let start = ei.start;
+        let end = ei.end;
         for (let j = i + 1; j < entries.length; j++) {
           const ej = entries[j]!;
-          if (ej.start <= ei.start) delta += ej.byteChange;
+          if (ej.type === "insert") {
+            const length = ej.end - ej.start;
+            if (ej.start <= start) {
+              start += length;
+              end += length;
+            } else if (ej.start < end) {
+              end += length;
+            }
+          } else {
+            const length = ej.end - ej.start;
+            const transformBoundary = (boundary: number): number => {
+              if (boundary <= ej.start) return boundary;
+              if (boundary >= ej.end) return boundary - length;
+              return ej.start;
+            };
+            start = transformBoundary(start);
+            end = transformBoundary(end);
+          }
         }
-        const s = ei.start + delta;
-        ranges.push([byteOffset(s), byteOffset(s + ei.size)]);
+        ranges.push([safeByteOffset(start), safeByteOffset(Math.max(start, end))]);
       }
       return ranges;
     }

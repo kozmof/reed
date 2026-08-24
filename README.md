@@ -298,6 +298,8 @@ const restoredState = checkpoint.decode(untrustedJson, {
   maxLines: 500_000,
   maxHistoryEntries: 2_000,
   maxAttentions: 10_000,
+  maxCollectionItems: 1_000_000,
+  maxStringCodeUnits: 20_000_000,
 });
 ```
 

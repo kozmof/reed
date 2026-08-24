@@ -91,11 +91,15 @@ interface RestoreLimits {
   readonly maxLines: number;
   readonly maxHistoryEntries: number;
   readonly maxAttentions: number;
+  readonly maxCollectionItems: number;
+  readonly maxStringCodeUnits: number;
 }
 
 interface RestoreBudget {
   readonly limits: RestoreLimits;
   remainingBufferBytes: number;
+  remainingCollectionItems: number;
+  remainingStringCodeUnits: number;
 }
 
 const UNLIMITED_RESTORE_RESOURCE = Number.MAX_SAFE_INTEGER;
@@ -116,6 +120,8 @@ function normalizeRestoreOptions(options: CheckpointRestoreOptions): RestoreLimi
     maxLines: readRestoreLimit(options.maxLines, "maxLines"),
     maxHistoryEntries: readRestoreLimit(options.maxHistoryEntries, "maxHistoryEntries"),
     maxAttentions: readRestoreLimit(options.maxAttentions, "maxAttentions"),
+    maxCollectionItems: readRestoreLimit(options.maxCollectionItems, "maxCollectionItems"),
+    maxStringCodeUnits: readRestoreLimit(options.maxStringCodeUnits, "maxStringCodeUnits"),
   };
 }
 
@@ -126,7 +132,22 @@ function assertResourceLimit(actual: number, limit: number, what: string): void 
 }
 
 function createRestoreBudget(limits: RestoreLimits): RestoreBudget {
-  return { limits, remainingBufferBytes: limits.maxBufferBytes };
+  return {
+    limits,
+    remainingBufferBytes: limits.maxBufferBytes,
+    remainingCollectionItems: limits.maxCollectionItems,
+    remainingStringCodeUnits: limits.maxStringCodeUnits,
+  };
+}
+
+function consumeRestoreBudget(
+  budget: RestoreBudget,
+  remaining: "remainingCollectionItems" | "remainingStringCodeUnits",
+  amount: number,
+  what: string,
+): void {
+  assertResourceLimit(amount, budget[remaining], what);
+  budget[remaining] -= amount;
 }
 
 // =============================================================================
@@ -369,17 +390,24 @@ function readObject(value: unknown, what: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function readArray(value: unknown, what: string): readonly unknown[] {
+function readArray(value: unknown, what: string, budget: RestoreBudget): readonly unknown[] {
   if (!Array.isArray(value)) {
     fail("MALFORMED", `${what} must be an array`);
   }
+  consumeRestoreBudget(budget, "remainingCollectionItems", value.length, `${what} array elements`);
   return value;
 }
 
-function readString(value: unknown, what: string): string {
+function readString(value: unknown, what: string, budget: RestoreBudget): string {
   if (typeof value !== "string") {
     fail("MALFORMED", `${what} must be a string`);
   }
+  consumeRestoreBudget(
+    budget,
+    "remainingStringCodeUnits",
+    value.length,
+    `${what} string code units`,
+  );
   return value;
 }
 
@@ -405,19 +433,29 @@ function readFiniteNumber(value: unknown, what: string): number {
   return value;
 }
 
-function readEnum<T extends string>(value: unknown, allowed: readonly T[], what: string): T {
-  if (typeof value !== "string" || !allowed.includes(value as T)) {
+function readEnum<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  what: string,
+  budget: RestoreBudget,
+): T {
+  const stringValue = readString(value, what, budget);
+  if (!allowed.includes(stringValue as T)) {
     fail("MALFORMED", `${what} must be one of ${allowed.join(", ")}`);
   }
-  return value as T;
+  return stringValue as T;
 }
 
-function readOptionalString(value: unknown, what: string): string | undefined {
-  return value === undefined ? undefined : readString(value, what);
+function readOptionalString(
+  value: unknown,
+  what: string,
+  budget: RestoreBudget,
+): string | undefined {
+  return value === undefined ? undefined : readString(value, what, budget);
 }
 
 function readBytes(value: unknown, what: string, budget: RestoreBudget): Uint8Array {
-  const base64 = readString(value, what);
+  const base64 = readString(value, what, budget);
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
   const decodedLength =
     base64.length % 4 === 0 ? (base64.length / 4) * 3 - padding : Math.ceil(base64.length / 4) * 3;
@@ -457,6 +495,7 @@ function restorePieces(
   originalLength: number,
   addLength: number,
   chunkMap: Map<number, Uint8Array>,
+  budget: RestoreBudget,
 ): { pieces: PieceDescriptor[]; totalLength: number; lengthByID: Map<PieceID, number> } {
   const pieces: PieceDescriptor[] = [];
   const lengthByID = new Map<PieceID, number>();
@@ -465,9 +504,9 @@ function restorePieces(
 
   for (let i = 0; i < raw.length; i++) {
     const what = `pieceTable.pieces[${i}]`;
-    const tuple = readArray(raw[i], what);
-    const id = pieceID(readString(tuple[0], `${what}[0]`));
-    const tag = readEnum(tuple[1], ["o", "a", "c"] as const, `${what}[1]`);
+    const tuple = readArray(raw[i], what, budget);
+    const id = pieceID(readString(tuple[0], `${what}[0]`, budget));
+    const tag = readEnum(tuple[1], ["o", "a", "c"] as const, `${what}[1]`, budget);
     const start = readCount(tuple[2], `${what}[2]`);
     const length = readCount(tuple[3], `${what}[3]`);
 
@@ -545,11 +584,11 @@ function restorePieceTable(
     chunkSize > 0 && totalFileSize > 0 ? Math.ceil(totalFileSize / chunkSize) : undefined;
 
   const chunkMap = new Map<number, Uint8Array>();
-  const rawChunks = readArray(source.chunks, "pieceTable.chunks");
+  const rawChunks = readArray(source.chunks, "pieceTable.chunks", budget);
   let lastChunkIndex = -1;
   for (let i = 0; i < rawChunks.length; i++) {
     const what = `pieceTable.chunks[${i}]`;
-    const tuple = readArray(rawChunks[i], what);
+    const tuple = readArray(rawChunks[i], what, budget);
     const chunkIndex = readCount(tuple[0], `${what}[0]`);
     if (chunkIndex <= lastChunkIndex) {
       fail("MALFORMED", `${what}[0] must be unique and strictly ascending`);
@@ -569,11 +608,11 @@ function restorePieceTable(
   }
 
   const chunkMetadata = new Map<number, ChunkMetadata>();
-  const rawMetadata = readArray(source.chunkMetadata, "pieceTable.chunkMetadata");
+  const rawMetadata = readArray(source.chunkMetadata, "pieceTable.chunkMetadata", budget);
   let lastMetadataIndex = -1;
   for (let i = 0; i < rawMetadata.length; i++) {
     const what = `pieceTable.chunkMetadata[${i}]`;
-    const tuple = readArray(rawMetadata[i], what);
+    const tuple = readArray(rawMetadata[i], what, budget);
     const chunkIndex = readCount(tuple[0], `${what}[0]`);
     const byteLengthValue = readCount(tuple[1], `${what}[1]`);
     const lineCount = readCount(tuple[2], `${what}[2]`);
@@ -597,7 +636,7 @@ function restorePieceTable(
   }
 
   const loadedChunks = new Set<number>();
-  const rawLoaded = readArray(source.loadedChunks, "pieceTable.loadedChunks");
+  const rawLoaded = readArray(source.loadedChunks, "pieceTable.loadedChunks", budget);
   let lastLoadedIndex = -1;
   for (let i = 0; i < rawLoaded.length; i++) {
     const chunkIndex = readCount(rawLoaded[i], `pieceTable.loadedChunks[${i}]`);
@@ -642,13 +681,14 @@ function restorePieceTable(
     );
   }
 
-  const rawPieces = readArray(source.pieces, "pieceTable.pieces");
+  const rawPieces = readArray(source.pieces, "pieceTable.pieces", budget);
   assertResourceLimit(rawPieces.length, budget.limits.maxPieces, "pieceTable.pieces");
   const { pieces, totalLength, lengthByID } = restorePieces(
     rawPieces,
     originalBuffer.length,
     addBytes.length,
     chunkMap,
+    budget,
   );
 
   const declaredLength = readCount(source.totalLength, "pieceTable.totalLength");
@@ -694,10 +734,11 @@ function restoreLineIndex(
   raw: unknown,
   totalLength: number,
   revision: number,
-  limits: RestoreLimits,
+  budget: RestoreBudget,
 ): LineIndexState<"eager"> {
+  const { limits } = budget;
   const source = readObject(raw, "lineIndex");
-  const rawLines = readArray(source.lines, "lineIndex.lines");
+  const rawLines = readArray(source.lines, "lineIndex.lines", budget);
   assertResourceLimit(rawLines.length, limits.maxLines, "lineIndex.lines");
   if (rawLines.length === 0) {
     fail("MALFORMED", "lineIndex.lines is empty: even an empty document has one line");
@@ -710,7 +751,7 @@ function restoreLineIndex(
   let coveredLength = 0;
   for (let i = 0; i < rawLines.length; i++) {
     const what = `lineIndex.lines[${i}]`;
-    const tuple = readArray(rawLines[i], what);
+    const tuple = readArray(rawLines[i], what, budget);
     const length = readCount(tuple[0], `${what}[0]`);
     const charLength = readCount(tuple[1], `${what}[1]`);
     lines.push({ offset: coveredLength, length, charLength });
@@ -726,11 +767,11 @@ function restoreLineIndex(
 
   const unloadedLineCountsByChunk = new Map<number, number>();
   let unloadedLineCount = 0;
-  const rawUnloaded = readArray(source.unloadedLineCounts, "lineIndex.unloadedLineCounts");
+  const rawUnloaded = readArray(source.unloadedLineCounts, "lineIndex.unloadedLineCounts", budget);
   let lastUnloadedIndex = -1;
   for (let i = 0; i < rawUnloaded.length; i++) {
     const what = `lineIndex.unloadedLineCounts[${i}]`;
-    const tuple = readArray(rawUnloaded[i], what);
+    const tuple = readArray(rawUnloaded[i], what, budget);
     const chunkIndex = readCount(tuple[0], `${what}[0]`);
     const count = readCount(tuple[1], `${what}[1]`);
     if (chunkIndex <= lastUnloadedIndex) {
@@ -768,9 +809,14 @@ function restoreLineIndex(
  *   History entries describe older revisions, so their selections may point past
  *   the end of the current document and are only checked structurally.
  */
-function restoreSelection(raw: unknown, what: string, maxOffset: number | null): SelectionState {
+function restoreSelection(
+  raw: unknown,
+  what: string,
+  maxOffset: number | null,
+  budget: RestoreBudget,
+): SelectionState {
   const source = readObject(raw, what);
-  const rawRanges = readArray(source.ranges, `${what}.ranges`);
+  const rawRanges = readArray(source.ranges, `${what}.ranges`, budget);
   if (rawRanges.length === 0) {
     fail("SELECTION_OUT_OF_RANGE", `${what}.ranges is empty: a selection always has one range`);
   }
@@ -778,7 +824,7 @@ function restoreSelection(raw: unknown, what: string, maxOffset: number | null):
   const ranges: SelectionRange[] = [];
   for (let i = 0; i < rawRanges.length; i++) {
     const rangeWhat = `${what}.ranges[${i}]`;
-    const tuple = readArray(rawRanges[i], rangeWhat);
+    const tuple = readArray(rawRanges[i], rangeWhat, budget);
     const anchor = readCount(tuple[0], `${rangeWhat}[0]`);
     const head = readCount(tuple[1], `${rangeWhat}[1]`);
     if (maxOffset !== null && (anchor > maxOffset || head > maxOffset)) {
@@ -804,17 +850,17 @@ function restoreSelection(raw: unknown, what: string, maxOffset: number | null):
   });
 }
 
-function restoreHistoryChange(raw: unknown, what: string): HistoryChange {
-  const tuple = readArray(raw, what);
-  const kind = readEnum(tuple[0], ["i", "d", "r"] as const, `${what}[0]`);
+function restoreHistoryChange(raw: unknown, what: string, budget: RestoreBudget): HistoryChange {
+  const tuple = readArray(raw, what, budget);
+  const kind = readEnum(tuple[0], ["i", "d", "r"] as const, `${what}[0]`, budget);
   const position = byteOffset(readCount(tuple[1], `${what}[1]`));
-  const text = readString(tuple[2], `${what}[2]`);
+  const text = readString(tuple[2], `${what}[2]`, budget);
   // Byte lengths are derived, never trusted: a stored length that disagreed with
   // its text would misplace every offset an undo computes from it.
   const textLength = byteLength(utf8ByteLength(text));
 
   if (kind === "r") {
-    const oldText = readString(tuple[3], `${what}[3]`);
+    const oldText = readString(tuple[3], `${what}[3]`, budget);
     return Object.freeze({
       type: "replace",
       position,
@@ -832,22 +878,28 @@ function restoreHistoryChange(raw: unknown, what: string): HistoryChange {
   });
 }
 
-function restoreHistoryEntry(raw: unknown, what: string): HistoryEntry {
+function restoreHistoryEntry(raw: unknown, what: string, budget: RestoreBudget): HistoryEntry {
   const source = readObject(raw, what);
-  const rawChanges = readArray(source.changes, `${what}.changes`);
+  const rawChanges = readArray(source.changes, `${what}.changes`, budget);
   const changes = rawChanges.map((change, i) =>
-    restoreHistoryChange(change, `${what}.changes[${i}]`),
+    restoreHistoryChange(change, `${what}.changes[${i}]`, budget),
   );
 
   return Object.freeze({
     changes: Object.freeze(changes),
-    selectionBefore: restoreSelection(source.selectionBefore, `${what}.selectionBefore`, null),
-    selectionAfter: restoreSelection(source.selectionAfter, `${what}.selectionAfter`, null),
+    selectionBefore: restoreSelection(
+      source.selectionBefore,
+      `${what}.selectionBefore`,
+      null,
+      budget,
+    ),
+    selectionAfter: restoreSelection(source.selectionAfter, `${what}.selectionAfter`, null, budget),
     timestamp: readFiniteNumber(source.timestamp, `${what}.timestamp`),
   });
 }
 
-function restoreHistory(raw: unknown, limits: RestoreLimits): HistoryState {
+function restoreHistory(raw: unknown, budget: RestoreBudget): HistoryState {
+  const { limits } = budget;
   const source = readObject(raw, "history");
   const limit = readCount(source.limit, "history.limit");
   if (limit < 1) {
@@ -859,8 +911,8 @@ function restoreHistory(raw: unknown, limits: RestoreLimits): HistoryState {
     fail("HISTORY_INVALID", "history.coalesceTimeout must be a non-negative number");
   }
 
-  const rawUndo = readArray(source.undo, "history.undo");
-  const rawRedo = readArray(source.redo, "history.redo");
+  const rawUndo = readArray(source.undo, "history.undo", budget);
+  const rawRedo = readArray(source.redo, "history.redo", budget);
   assertResourceLimit(rawUndo.length + rawRedo.length, limits.maxHistoryEntries, "history entries");
   const readStack = (rawEntries: readonly unknown[], what: string): HistoryEntry[] => {
     if (rawEntries.length > limit) {
@@ -869,7 +921,7 @@ function restoreHistory(raw: unknown, limits: RestoreLimits): HistoryState {
         `${what} holds ${rawEntries.length} entries, past the declared limit of ${limit}`,
       );
     }
-    return rawEntries.map((entry, i) => restoreHistoryEntry(entry, `${what}[${i}]`));
+    return rawEntries.map((entry, i) => restoreHistoryEntry(entry, `${what}[${i}]`, budget));
   };
 
   return Object.freeze({
@@ -880,9 +932,9 @@ function restoreHistory(raw: unknown, limits: RestoreLimits): HistoryState {
   });
 }
 
-function restoreMetadata(raw: unknown): DocumentMetadata {
+function restoreMetadata(raw: unknown, budget: RestoreBudget): DocumentMetadata {
   const source = readObject(raw, "metadata");
-  const filePath = readOptionalString(source.filePath, "metadata.filePath");
+  const filePath = readOptionalString(source.filePath, "metadata.filePath", budget);
   const lastSaved =
     source.lastSaved === undefined
       ? undefined
@@ -890,8 +942,13 @@ function restoreMetadata(raw: unknown): DocumentMetadata {
 
   return Object.freeze({
     filePath,
-    encoding: readEnum(source.encoding, ["utf-8"] as const, "metadata.encoding"),
-    lineEnding: readEnum(source.lineEnding, ["lf", "crlf", "cr"] as const, "metadata.lineEnding"),
+    encoding: readEnum(source.encoding, ["utf-8"] as const, "metadata.encoding", budget),
+    lineEnding: readEnum(
+      source.lineEnding,
+      ["lf", "crlf", "cr"] as const,
+      "metadata.lineEnding",
+      budget,
+    ),
     normalizeInsertedLineEndings: readBoolean(
       source.normalizeInsertedLineEndings,
       "metadata.normalizeInsertedLineEndings",
@@ -904,10 +961,11 @@ function restoreMetadata(raw: unknown): DocumentMetadata {
 function restoreAttention(
   raw: unknown,
   lengthByID: Map<PieceID, number>,
-  limits: RestoreLimits,
+  budget: RestoreBudget,
 ): AttentionLayerState {
+  const { limits } = budget;
   const source = readObject(raw, "attention");
-  const rawAttentions = readArray(source.attentions, "attention.attentions");
+  const rawAttentions = readArray(source.attentions, "attention.attentions", budget);
   assertResourceLimit(rawAttentions.length, limits.maxAttentions, "attention.attentions");
   const attentions = new Map<AttentionID, Attention>();
 
@@ -916,7 +974,7 @@ function restoreAttention(
     rawBoundary: unknown,
     what: string,
   ): { pieceID: PieceID; boundary: number } => {
-    const id = pieceID(readString(rawID, `${what}.pieceID`));
+    const id = pieceID(readString(rawID, `${what}.pieceID`, budget));
     const boundary = readCount(rawBoundary, `${what}.boundary`);
     const pieceLength = lengthByID.get(id);
     if (pieceLength === undefined) {
@@ -933,8 +991,8 @@ function restoreAttention(
 
   for (let i = 0; i < rawAttentions.length; i++) {
     const what = `attention.attentions[${i}]`;
-    const tuple = readArray(rawAttentions[i], what);
-    const id = attentionID(readString(tuple[0], `${what}[0]`));
+    const tuple = readArray(rawAttentions[i], what, budget);
+    const id = attentionID(readString(tuple[0], `${what}[0]`, budget));
     if (attentions.has(id)) {
       fail("ID_COLLISION", `${what} repeats attention id ${id}`);
     }
@@ -1039,6 +1097,7 @@ export function restoreCheckpoint(
       `expected format '${CHECKPOINT_FORMAT}' but found ${JSON.stringify(source.format)}`,
     );
   }
+  readString(source.format, "checkpoint.format", budget);
   const version = readCount(source.version, "checkpoint.version");
   if (version !== CHECKPOINT_VERSION) {
     fail(
@@ -1046,11 +1105,11 @@ export function restoreCheckpoint(
       `checkpoint version ${version} is unsupported; this build reads version ${CHECKPOINT_VERSION}`,
     );
   }
-  readEnum(source.mode, ["exact", "normalized"] as const, "checkpoint.mode");
+  readEnum(source.mode, ["exact", "normalized"] as const, "checkpoint.mode", budget);
 
   const revision = readCount(source.revision, "checkpoint.revision");
   const { pieceTable, lengthByID } = restorePieceTable(source.pieceTable, budget);
-  const lineIndex = restoreLineIndex(source.lineIndex, pieceTable.totalLength, revision, limits);
+  const lineIndex = restoreLineIndex(source.lineIndex, pieceTable.totalLength, revision, budget);
   validateChunkLineIndex(pieceTable, lineIndex);
 
   return Object.freeze({
@@ -1058,10 +1117,10 @@ export function restoreCheckpoint(
     selectionRevision: readCount(source.selectionRevision, "checkpoint.selectionRevision"),
     pieceTable,
     lineIndex,
-    selection: restoreSelection(source.selection, "selection", pieceTable.totalLength),
-    history: restoreHistory(source.history, limits),
-    metadata: restoreMetadata(source.metadata),
-    attention: restoreAttention(source.attention, lengthByID, limits),
+    selection: restoreSelection(source.selection, "selection", pieceTable.totalLength, budget),
+    history: restoreHistory(source.history, budget),
+    metadata: restoreMetadata(source.metadata, budget),
+    attention: restoreAttention(source.attention, lengthByID, budget),
   });
 }
 

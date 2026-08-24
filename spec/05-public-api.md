@@ -51,6 +51,7 @@ Returns `ReconcilableDocumentStore` with:
 - `whenReconciled()` — resolve with eager state after background reconciliation completes
 - `setViewport(startLine, endLine)`
 - `emergencyReset()`
+- `dispose()`
 
 Supported config fields (`DocumentStoreConfig`):
 
@@ -76,7 +77,7 @@ Wraps the base store and adds:
 - `removeEventListener(type, handler)`
 - `events` emitter handle
 
-### 2.3 `store.createDocumentStoreFromCheckpoint(checkpoint, config?)`
+### 2.3 `store.createDocumentStoreFromCheckpoint(checkpoint, config?, restoreOptions?)`
 
 Returns a `ReconcilableDocumentStore` whose state comes from a checkpoint. Throws
 `CheckpointError` before creating anything when the payload is not restorable.
@@ -95,11 +96,14 @@ Returns a `ChunkManager` with:
 - `ensureLoaded(chunkIndex)` — load a chunk if not already in memory
 - `prefetch(chunkIndex)` — speculatively load one chunk
 - `setActiveChunks(chunkIndices)` — pin chunks to prevent LRU eviction
+- `cancelPendingOutside(chunkIndices)` — abort pending loads outside the current working set
 - `dispose()` — cancel in-flight loads and release resources
 
-Requires a user-supplied `ChunkLoader` with `loadChunk(chunkIndex): Promise<Uint8Array>`.
+Requires a user-supplied `ChunkLoader` with
+`loadChunk(chunkIndex, signal?): Promise<Uint8Array>`. The optional abort signal is canceled when
+the manager drops a pending load or is disposed.
 
-Config (`ChunkManagerConfig`): `maxLoadedChunks`, `fetchStrategy`.
+Config (`ChunkManagerConfig`): `maxLoadedChunks`, `fetchStrategy`, `logger`.
 
 ### 2.5 Flat `createStreamingDocumentLoader(store, loader, metadata, config?)`
 
@@ -139,6 +143,7 @@ Supported event types:
 - `content-change`
 - `selection-change`
 - `history-change`
+- `attention-change`
 - `save`
 - `dirty-change`
 
@@ -147,6 +152,7 @@ Auto-emitted by `store.createDocumentStoreWithEvents`:
 - `content-change` (`INSERT/DELETE/REPLACE/APPLY_REMOTE`)
 - `selection-change` (`SET_SELECTION`)
 - `history-change` (`UNDO/REDO`)
+- `attention-change` (create, delete, or content edits that rewrite stored points)
 - `dirty-change` (when dirty flag changes)
 
 Note:

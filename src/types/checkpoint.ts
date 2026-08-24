@@ -222,6 +222,13 @@ export interface CheckpointRestoreOptions {
   readonly maxHistoryEntries?: number;
   /** Maximum number of attention records. */
   readonly maxAttentions?: number;
+  /**
+   * Maximum combined number of array elements traversed while restoring.
+   * This includes nested tuples, history changes, and selection ranges.
+   */
+  readonly maxCollectionItems?: number;
+  /** Maximum combined UTF-16 code units across restored string values. */
+  readonly maxStringCodeUnits?: number;
 }
 
 /**

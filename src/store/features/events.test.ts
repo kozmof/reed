@@ -486,6 +486,19 @@ describe("getAffectedRanges", () => {
       [2, 3], // "Z" at [2, 3) in nextState (last change, no adjustment needed)
     ]);
   });
+
+  it("collapses an earlier range covered by a later remote delete", () => {
+    const state = createInitialState({ content: "abc" });
+    const action = DocumentActions.applyRemote([
+      { type: "insert", start: byteOffset(0), text: "X" },
+      { type: "delete", start: byteOffset(0), length: byteLength(4) },
+    ]);
+
+    expect(getAffectedRanges(action, state)).toEqual([
+      [0, 0],
+      [0, 4],
+    ]);
+  });
 });
 
 describe("Batch event emission with intermediate states", () => {
@@ -534,6 +547,29 @@ describe("Store event integration", () => {
     };
     expect(event.action.type).toBe("APPLY_REMOTE");
     expect(event.affectedRanges).toEqual([[5, 6]]);
+  });
+
+  it("keeps an overlapping remote edit successful after its state commits", () => {
+    const store = createDocumentStoreWithEvents({ content: "abc", reconcileMode: "none" });
+    const handler = vi.fn();
+    store.addEventListener("content-change", handler);
+    const action = DocumentActions.applyRemote([
+      { type: "insert", start: byteOffset(0), text: "X" },
+      { type: "delete", start: byteOffset(0), length: byteLength(4) },
+    ]);
+
+    let next;
+    expect(() => {
+      next = store.dispatch(action);
+    }).not.toThrow();
+
+    expect(next).toBe(store.getSnapshot());
+    expect(store.getSnapshot().pieceTable.totalLength).toBe(0);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0]![0].affectedRanges).toEqual([
+      [0, 0],
+      [0, 4],
+    ]);
   });
 
   it("should emit dirty-change for APPLY_REMOTE when document becomes dirty", () => {

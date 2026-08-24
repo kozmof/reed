@@ -1129,9 +1129,26 @@ describe("restore rejects untrustworthy payloads", () => {
       () => restoreCheckpoint(base, { maxPieces: 0 }),
       () => restoreCheckpoint(base, { maxLines: 0 }),
       () => restoreCheckpoint(base, { maxHistoryEntries: 0 }),
+      () => restoreCheckpoint(base, { maxCollectionItems: 0 }),
+      () => restoreCheckpoint(base, { maxStringCodeUnits: 0 }),
     ];
 
     for (const attempt of attempts) expectResourceLimit(attempt);
+  });
+
+  it("limits nested history collections and text", () => {
+    const manyChanges = clone(base);
+    manyChanges.history.undo[0]!.changes = Array.from(
+      { length: 1_000 },
+      () => ["i", 0, "x"] as const,
+    );
+    expectResourceLimit(() =>
+      restoreCheckpoint(manyChanges, { maxCollectionItems: 200 }),
+    );
+
+    const longText = clone(base);
+    longText.history.undo[0]!.changes = [["i", 0, "x".repeat(1_000)]];
+    expectResourceLimit(() => restoreCheckpoint(longText, { maxStringCodeUnits: 500 }));
   });
 
   it("limits attention records", () => {
@@ -1145,6 +1162,7 @@ describe("restore rejects untrustworthy payloads", () => {
 
   it("rejects invalid restore limits", () => {
     expect(() => restoreCheckpoint(base, { maxPieces: -1 })).toThrow(RangeError);
+    expect(() => restoreCheckpoint(base, { maxStringCodeUnits: -1 })).toThrow(RangeError);
     expect(() => decodeCheckpoint(JSON.stringify(base), { maxJsonLength: NaN })).toThrow(
       RangeError,
     );
@@ -1153,7 +1171,7 @@ describe("restore rejects untrustworthy payloads", () => {
   it("forwards restore limits through live store factories", () => {
     expectResourceLimit(() => createDocumentStoreFromCheckpoint(base, {}, { maxPieces: 0 }));
     expectResourceLimit(() =>
-      createDocumentStoreWithEventsFromCheckpoint(base, {}, { maxPieces: 0 }),
+      createDocumentStoreWithEventsFromCheckpoint(base, {}, { maxCollectionItems: 0 }),
     );
   });
 

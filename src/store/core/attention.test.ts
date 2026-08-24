@@ -142,6 +142,18 @@ describe("createAttention / getAttention / deleteAttention", () => {
     expect(attention!.end).toEqual(pt5);
   });
 
+  it("rejects invalid point boundaries", () => {
+    const point = { pieceID: pieceID("p0"), boundary: -1 };
+    expect(() => createAttention(emptyAttentionLayerState, point, point)).toThrow(RangeError);
+    expect(() =>
+      createAttention(
+        emptyAttentionLayerState,
+        { ...point, boundary: 0 },
+        { ...point, boundary: 0.5 },
+      ),
+    ).toThrow(RangeError);
+  });
+
   it("getAttention returns null for unknown ID", () => {
     expect(getAttention(emptyAttentionLayerState, attentionID("nonexistent"))).toBeNull();
   });
@@ -468,6 +480,22 @@ describe("fail-closed resolution", () => {
     // Forge a boundary past the piece end — must fail closed, not return a bogus offset.
     const overflow = { pieceID: pt.pieceID, boundary: 999 };
     expect(resolvePoint(state.root, overflow)).toBeNull();
+    expect(resolvePoint(state.root, { ...pt, boundary: -1 })).toBeNull();
+    expect(resolvePoint(state.root, { ...pt, boundary: 1.5 })).toBeNull();
+  });
+
+  it("does not heal malformed fractional boundaries during delete migration", () => {
+    const state = createPieceTableState("abc");
+    const id = attentionID("malformed");
+    const point = Object.freeze({ pieceID: state.root!.id, boundary: 1.5 });
+    const attention = Object.freeze({ id, start: point, end: point });
+    const layer = Object.freeze({ attentions: new Map([[id, attention]]), nextID: 1 });
+    const next = del(state, 1, 2);
+
+    const migrated = migrateDelete(layer, state.root, next.root, 1, 2);
+
+    expect(migrated).toBe(layer);
+    expect(resolveAttention(next.root, migrated, id)).toBeNull();
   });
 
   it("a raw delete that cuts the anchored piece dangles (null), never a corrupt offset", () => {

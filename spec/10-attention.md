@@ -51,7 +51,7 @@ Reed stores only the two boundary points. Higher-level structure (groups, trees,
 
 ### 4.2 Attentions
 
-- `createAttention(state, start, end): [state, id]` — store a new span, mint its ID. The caller owns the `start <= end` invariant, and an inverted or zero-width span resolves to an empty range. `O(1)`.
+- `createAttention(state, start, end): [state, id]` — store a new span and mint its ID. Boundaries must be non-negative safe integers. Invalid boundaries throw `RangeError`. The caller owns the `start <= end` invariant, and an inverted or zero-width span resolves to an empty range. `O(1)`.
 - `getAttention(state, id): Attention | null` — `O(1)`.
 - `deleteAttention(state, id): state` — no-op for an unknown ID. `O(1)`.
 
@@ -109,7 +109,7 @@ Complexity: `O(n + A · log n)`. The delete and pre-delete indexing are `O(n)`, 
 Resolution never returns a silently-wrong offset. A point resolves to `null` when:
 
 - its `pieceID` is no longer in the tree, or
-- its `boundary` is negative or exceeds the piece's current length (e.g. the piece was cut by a delete).
+- its `boundary` is negative, non-integer, unsafe, or exceeds the piece's current length (e.g. the piece was cut by a delete).
 
 Already-dangling points are left untouched by delete migration. They stay dangling rather than re-anchoring to garbage.
 

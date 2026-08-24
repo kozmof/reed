@@ -160,8 +160,9 @@ corrupts later edits.
 Every field is read through a narrowing reader, so malformed values are rejected. Add resource
 limits when decoding input from outside the application. `maxJsonLength` rejects oversized JSON
 before parsing. The remaining limits cap decoded buffer bytes, pieces, logical lines, history
-entries, and attention records before Reed rebuilds the state trees. Omitted limits remain
-unrestricted for backward compatibility.
+entries and attention records before Reed rebuilds the state trees.
+`maxCollectionItems` caps cumulative array elements. `maxStringCodeUnits` caps cumulative
+string code units. Omitted limits remain unrestricted for backward compatibility.
 
 `CheckpointError` carries a stable `code`.
 
