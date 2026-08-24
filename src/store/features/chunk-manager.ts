@@ -143,6 +143,15 @@ export function createChunkManager(
       `maxLoadedChunks must be a positive integer: ${String(config.maxLoadedChunks)}`,
     );
   }
+  if (
+    config.fetchStrategy !== undefined &&
+    config.fetchStrategy !== "parallel" &&
+    config.fetchStrategy !== "queue"
+  ) {
+    throw new RangeError(
+      `fetchStrategy must be 'parallel' or 'queue': ${String(config.fetchStrategy)}`,
+    );
+  }
   const maxLoadedChunks = config.maxLoadedChunks ?? 8;
   const fetchStrategy = config.fetchStrategy ?? "parallel";
   const logger = config.logger;

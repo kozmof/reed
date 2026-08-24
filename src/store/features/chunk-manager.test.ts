@@ -394,6 +394,15 @@ describe("ChunkManager config validation", () => {
       /maxLoadedChunks must be a positive integer/,
     );
   });
+
+  it("throws for an invalid fetchStrategy", () => {
+    const store = makeStore();
+    expect(() =>
+      createChunkManager(store, makeLoader({}), {
+        fetchStrategy: "serial" as unknown as "queue",
+      }),
+    ).toThrow("fetchStrategy must be 'parallel' or 'queue'");
+  });
 });
 
 describe("ChunkManager chunk integrity", () => {

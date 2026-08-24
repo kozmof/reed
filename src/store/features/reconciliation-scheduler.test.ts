@@ -19,6 +19,16 @@ describe("ReconciliationScheduler", () => {
     vi.restoreAllMocks();
   });
 
+  it("rejects an invalid mode at the public runtime boundary", () => {
+    expect(() =>
+      createReconciliationScheduler("later" as unknown as "idle", {
+        hasPendingWork: () => false,
+        shouldDefer: () => false,
+        performWork() {},
+      }),
+    ).toThrow("Reconciliation mode must be one of 'idle', 'sync', or 'none'");
+  });
+
   it("mode 'none' ignores schedule but still supports runNow", () => {
     let workCount = 0;
     const scheduler = createReconciliationScheduler("none", {

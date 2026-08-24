@@ -21,6 +21,29 @@ function int(rng: () => number, min: number, max: number): number {
   return min + Math.floor(rng() * (max - min + 1));
 }
 
+const utf8Encoder = new TextEncoder();
+const utf8Decoder = new TextDecoder();
+
+function canonicalUtf8(text: string): string {
+  return utf8Decoder.decode(utf8Encoder.encode(text));
+}
+
+function bytePosition(text: string, codeUnitIndex: number): number {
+  return utf8Encoder.encode(text.slice(0, codeUnitIndex)).length;
+}
+
+/** UTF-16 indexes that do not split a valid surrogate pair. */
+function textBoundaries(text: string): number[] {
+  const boundaries = [0];
+  for (let i = 0; i < text.length; ) {
+    const first = text.charCodeAt(i);
+    const second = i + 1 < text.length ? text.charCodeAt(i + 1) : -1;
+    i += first >= 0xd800 && first <= 0xdbff && second >= 0xdc00 && second <= 0xdfff ? 2 : 1;
+    boundaries.push(i);
+  }
+  return boundaries;
+}
+
 describe("model-based document transitions", () => {
   it("matches a plain string across long seeded edit sequences", () => {
     const inserts = ["a", "XYZ", "\n", "\r", "\r\n", "two\nlines", ""];
@@ -88,6 +111,65 @@ describe("model-based document transitions", () => {
       assertPieceTableInvariants(snapshot.pieceTable, `attention step=${step}`);
     }
     assertDocumentMatchesModel(store.reconcileNow(), model, "attention final");
+  });
+
+  it("matches UTF-8 semantics across generated Unicode and malformed UTF-16 edits", () => {
+    const inserts = ["π", "終", "🙂", "a\r\n🚀", "\ud800", "\udc00", "e\u0301", "\n", ""];
+
+    for (const seed of [23, 211, 2017, 20011]) {
+      const rng = rngFor(seed);
+      const store = createDocumentStore({
+        content: "A🙂\r\n終",
+        reconcileMode: "none",
+      });
+      let model = "A🙂\r\n終";
+
+      for (let step = 0; step < 220; step++) {
+        const boundaries = textBoundaries(model);
+        const operation = int(rng, 0, 2);
+        const rawInsert = inserts[int(rng, 0, inserts.length - 1)]!;
+        const inserted = canonicalUtf8(rawInsert);
+
+        if (operation === 0 || boundaries.length === 1) {
+          const index = boundaries[int(rng, 0, boundaries.length - 1)]!;
+          store.dispatch(
+            DocumentActions.insert(
+              byteOffset(bytePosition(model, index)),
+              rawInsert,
+              undefined,
+              step,
+            ),
+          );
+          model = model.slice(0, index) + inserted + model.slice(index);
+        } else {
+          const startBoundary = int(rng, 0, boundaries.length - 2);
+          const endBoundary = int(rng, startBoundary + 1, boundaries.length - 1);
+          const start = boundaries[startBoundary]!;
+          const end = boundaries[endBoundary]!;
+          const byteStart = byteOffset(bytePosition(model, start));
+          const byteEnd = byteOffset(bytePosition(model, end));
+
+          if (operation === 1) {
+            store.dispatch(DocumentActions.delete(byteStart, byteEnd, undefined, step));
+            model = model.slice(0, start) + model.slice(end);
+          } else {
+            store.dispatch(DocumentActions.replace(byteStart, byteEnd, rawInsert, undefined, step));
+            model = model.slice(0, start) + inserted + model.slice(end);
+          }
+        }
+
+        if (step % 20 === 0) {
+          assertDocumentMatchesModel(
+            store.reconcileNow(),
+            model,
+            `unicode seed=${seed} step=${step}`,
+          );
+        }
+      }
+
+      assertDocumentMatchesModel(store.reconcileNow(), model, `unicode seed=${seed} final`);
+      store.dispose();
+    }
   });
 });
 

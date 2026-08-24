@@ -17,7 +17,11 @@ import type {
   StoreListener,
   Unsubscribe,
 } from "../../types/store.js";
-import { createInitialState, withState } from "../core/state.js";
+import {
+  assertValidDocumentStoreRuntimeConfig,
+  createInitialState,
+  withState,
+} from "../core/state.js";
 import { restoreCheckpoint } from "./checkpoint.js";
 import { documentReducer } from "./reducer.js";
 import { reconcileFull, reconcileViewport } from "../core/line-index.js";
@@ -36,7 +40,7 @@ import {
   type DocumentEventMap,
 } from "./events.js";
 import { isTextEditAction } from "../../types/actions.js";
-import { reportCaughtError } from "./diagnostics.js";
+import { MAX_OBSERVER_REENTRANT_STEPS, reportCaughtError } from "./diagnostics.js";
 import {
   createReconciliationScheduler,
   type ReconciliationSchedulerOptions,
@@ -175,6 +179,7 @@ function createStoreOverState(
       return;
     }
     notifying = true;
+    let deliveryPasses = 0;
     try {
       do {
         notificationPending = false;
@@ -185,6 +190,17 @@ function createStoreOverState(
             // Don't let one listener's error affect others
             reportCaughtError(logger, "Store listener threw an error", error);
           }
+        }
+        deliveryPasses++;
+        if (notificationPending && deliveryPasses >= MAX_OBSERVER_REENTRANT_STEPS) {
+          notificationPending = false;
+          reportCaughtError(
+            logger,
+            "Store listener notification cycle exceeded the re-entrancy limit",
+            new Error(
+              `A listener requested more than ${MAX_OBSERVER_REENTRANT_STEPS} synchronous notification passes`,
+            ),
+          );
         }
       } while (notificationPending);
     } finally {
@@ -821,6 +837,7 @@ export function createDocumentStoreFromCheckpoint(
   config: DocumentStoreRuntimeConfig = {},
   restoreOptions: CheckpointRestoreOptions = {},
 ): ReconcilableDocumentStore {
+  assertValidDocumentStoreRuntimeConfig(config);
   assertRuntimeOnlyConfig(config);
   return createStoreOverState(restoreCheckpoint(checkpoint, restoreOptions), config);
 }

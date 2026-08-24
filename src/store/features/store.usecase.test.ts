@@ -6,6 +6,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { pstackSize } from "../../types/state.js";
 import { createDocumentStore, withTransaction } from "./store.js";
+import { MAX_OBSERVER_REENTRANT_STEPS } from "./diagnostics.js";
 import { DocumentActions } from "./actions.js";
 import { byteOffset, byteLength } from "../../types/branded.js";
 import {
@@ -1358,6 +1359,30 @@ describe("Editor Use Cases", () => {
 
       expect(observedLengths).toEqual([1, 2]);
       expect(store.getSnapshot().pieceTable.totalLength).toBe(2);
+    });
+
+    it("bounds a listener that dispatches on every notification pass", () => {
+      const error = vi.fn();
+      const store = createDocumentStore({
+        content: "",
+        reconcileMode: "none",
+        logger: { error },
+      });
+      let listenerCalls = 0;
+
+      store.subscribe(() => {
+        listenerCalls++;
+        const end = store.getSnapshot().pieceTable.totalLength;
+        store.dispatch(DocumentActions.insert(byteOffset(end), "x"));
+      });
+
+      expect(() => store.dispatch(DocumentActions.insert(byteOffset(0), "A"))).not.toThrow();
+      expect(listenerCalls).toBe(MAX_OBSERVER_REENTRANT_STEPS);
+      expect(store.getSnapshot().pieceTable.totalLength).toBe(1 + MAX_OBSERVER_REENTRANT_STEPS);
+      expect(error).toHaveBeenCalledWith(
+        "Store listener notification cycle exceeded the re-entrancy limit",
+        expect.any(Error),
+      );
     });
   });
 

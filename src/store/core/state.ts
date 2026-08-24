@@ -7,6 +7,7 @@ import type {
   DocumentState,
   DocumentStoreConfig,
   DocumentStoreConfigBase,
+  DocumentStoreRuntimeConfig,
   PieceTableState,
   PieceNode,
   EvaluationMode,
@@ -59,11 +60,42 @@ const DEFAULT_CONFIG: Required<Omit<DocumentStoreConfigBase, "logger">> & {
   normalizeInsertedLineEndings: false,
 };
 
-function assertValidDocumentStoreConfig(config: DocumentStoreConfig): void {
+export function assertValidDocumentStoreRuntimeConfig(config: DocumentStoreRuntimeConfig): void {
   if (config.scheduler !== undefined && config.reconcileMode !== undefined) {
     throw new Error(
       "DocumentStoreConfig cannot include both 'scheduler' and 'reconcileMode' at the same time",
     );
+  }
+  if (
+    config.reconcileMode !== undefined &&
+    config.reconcileMode !== "idle" &&
+    config.reconcileMode !== "sync" &&
+    config.reconcileMode !== "none"
+  ) {
+    throw new Error(
+      `reconcileMode must be one of 'idle', 'sync', or 'none': ${String(config.reconcileMode)}`,
+    );
+  }
+  if (
+    config.scheduler !== undefined &&
+    typeof config.scheduler !== "function" &&
+    (typeof config.scheduler !== "object" ||
+      config.scheduler === null ||
+      typeof config.scheduler.schedule !== "function" ||
+      typeof config.scheduler.cancel !== "function" ||
+      typeof config.scheduler.runNow !== "function" ||
+      typeof config.scheduler.isRunning !== "boolean")
+  ) {
+    throw new TypeError(
+      "scheduler must be a factory function or an object with schedule, cancel, and runNow methods plus boolean isRunning",
+    );
+  }
+}
+
+function assertValidDocumentStoreConfig(config: DocumentStoreConfig): void {
+  assertValidDocumentStoreRuntimeConfig(config);
+  if (config.content !== undefined && typeof config.content !== "string") {
+    throw new TypeError("content must be a string");
   }
   if (config.encoding !== undefined && config.encoding !== "utf-8") {
     throw new Error(`encoding must be 'utf-8': ${String(config.encoding)}`);
@@ -97,6 +129,12 @@ function assertValidDocumentStoreConfig(config: DocumentStoreConfig): void {
     (!Number.isInteger(config.maxDirtyRanges) || config.maxDirtyRanges < 1)
   ) {
     throw new Error("maxDirtyRanges must be a positive integer");
+  }
+  if (
+    config.normalizeInsertedLineEndings !== undefined &&
+    typeof config.normalizeInsertedLineEndings !== "boolean"
+  ) {
+    throw new TypeError("normalizeInsertedLineEndings must be a boolean");
   }
   if (
     config.lineEnding !== undefined &&

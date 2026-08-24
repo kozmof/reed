@@ -4,7 +4,7 @@
 
 - Date: 2026-08-24
 - Functional command: `pnpm test`
-- Functional result: `28` test files, `1133` tests passed
+- Functional result: `28` test files, `1143` tests passed
 - Perf command: `pnpm test:perf`
 - Perf result: `1` test file, `34` tests passed
 
@@ -52,9 +52,12 @@ Implemented coverage is strongest in:
 - line-index and piece-table correctness across multiline/mixed-line-ending workloads
 - store semantics (`batch`, nested transactions, rollback, snapshot gating)
 - event semantics including `APPLY_REMOTE` `content-change` emission and `affectedRanges` correctness for multi-change batches
+- bounded, non-recursive delivery for store listeners and typed events that dispatch during callbacks
 - selector-level rendering and byte/char conversion logic
 - checkpoint round trips for text, line offsets, history, attention, and chunked documents, with a rejection test per validation code
 - line-index offset-cache maintenance, covering newline-free lazy edits, lines inserted with a null offset, and viewport repair after dirty ranges collapse to the full-rebuild sentinel
+- runtime rejection of invalid store, scheduler, and chunk-manager configuration from JavaScript callers
+- seeded Unicode edit sequences, including emoji, combining marks, CRLF boundaries, and malformed UTF-16 input normalized through UTF-8
 
 The checkpoint suite pairs example-based tests with a model-based one. The model test swaps a
 restored store in mid-sequence every 40 steps and keeps editing, so drift in piece identities

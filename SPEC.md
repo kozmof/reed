@@ -50,14 +50,8 @@ Reed provides a text engine and state runtime for building editors.
 
 ## Verification Snapshot
 
-- Latest verified functional test run: 2026-08-24
-- Command: `pnpm test`
-- Result: `27` test files, `1111` tests passed
-- Latest verified perf test run: 2026-08-24
-- Command: `pnpm test:perf`
-- Result: `1` test file, `34` tests passed
-
-[spec/06-testing.md](spec/06-testing.md) is the source of truth for the latest
-verified run and per-suite coverage. Keep these counts in sync with it.
+[spec/06-testing.md](spec/06-testing.md) records the latest verified commands,
+results, and per-suite coverage. Verification counts live there so they cannot
+drift between status documents.
 
 See domain files under `/spec` for implementation-level details and constraints.

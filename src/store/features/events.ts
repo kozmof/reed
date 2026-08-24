@@ -7,7 +7,7 @@ import type { DocumentState, ReedLogger } from "../../types/state.js";
 import type { ContentChangeAction, DocumentAction } from "../../types/actions.js";
 import { byteOffset, type ByteOffset, type AttentionID } from "../../types/branded.js";
 import { utf8ByteLength } from "../core/encoding.js";
-import { reportCaughtError } from "./diagnostics.js";
+import { MAX_OBSERVER_REENTRANT_STEPS, reportCaughtError } from "./diagnostics.js";
 
 // =============================================================================
 // Event Types
@@ -192,6 +192,49 @@ export interface DocumentEventEmitter {
  */
 export function createEventEmitter(logger?: Pick<ReedLogger, "error">): DocumentEventEmitter {
   const handlers = new Map<string, Set<EventHandler<AnyDocumentEvent>>>();
+  type QueuedEvent = {
+    [K in keyof DocumentEventMap]: { readonly type: K; readonly event: DocumentEventMap[K] };
+  }[keyof DocumentEventMap];
+  const pendingEvents: QueuedEvent[] = [];
+  let emitting = false;
+
+  function drainEvents(): void {
+    if (emitting) return;
+    emitting = true;
+    let deliverySteps = 0;
+    try {
+      while (pendingEvents.length > 0) {
+        if (deliverySteps >= MAX_OBSERVER_REENTRANT_STEPS) {
+          pendingEvents.length = 0;
+          reportCaughtError(
+            logger,
+            "Document event cycle exceeded the re-entrancy limit",
+            new Error(
+              `Event handlers queued more than ${MAX_OBSERVER_REENTRANT_STEPS} synchronous events`,
+            ),
+          );
+          break;
+        }
+
+        const queued = pendingEvents.shift()!;
+        const typeHandlers = handlers.get(queued.type);
+        if (typeHandlers) {
+          // Snapshot handlers to guarantee stable delivery under subscribe/unsubscribe churn.
+          const handlersSnapshot = Array.from(typeHandlers);
+          for (const handler of handlersSnapshot) {
+            try {
+              handler(queued.event);
+            } catch (error) {
+              reportCaughtError(logger, `Event handler error for '${queued.type}'`, error);
+            }
+          }
+        }
+        deliverySteps++;
+      }
+    } finally {
+      emitting = false;
+    }
+  }
 
   return {
     addEventListener<K extends keyof DocumentEventMap>(
@@ -233,18 +276,8 @@ export function createEventEmitter(logger?: Pick<ReedLogger, "error">): Document
     },
 
     emit<K extends keyof DocumentEventMap>(type: K, event: DocumentEventMap[K]): void {
-      const typeHandlers = handlers.get(type);
-      if (typeHandlers) {
-        // Snapshot handlers to guarantee stable delivery under subscribe/unsubscribe churn.
-        const handlersSnapshot = Array.from(typeHandlers);
-        for (const handler of handlersSnapshot) {
-          try {
-            handler(event);
-          } catch (error) {
-            reportCaughtError(logger, `Event handler error for '${type}'`, error);
-          }
-        }
-      }
+      pendingEvents.push({ type, event } as QueuedEvent);
+      drainEvents();
     },
 
     removeAllListeners(): void {

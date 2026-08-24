@@ -17,6 +17,8 @@ Reed validates actions and isolates failures at store boundaries. This document 
 - Store listener exceptions are caught so one failing listener does not block others.
 - Event handler exceptions are caught per handler in the emitter.
 - Event payload preparation errors are caught after dispatch, so a committed edit still returns successfully.
+- Nested store notifications and typed events drain iteratively instead of recursing.
+- A callback cycle stops after 100 synchronous delivery steps and reports through the configured logger. State changes committed before the limit remain committed.
 
 ### 1.3 Transaction safety
 
@@ -31,7 +33,14 @@ Reed validates actions and isolates failures at store boundaries. This document 
 - `store.dispatchValidated(store, value)` validates unknown external input before dispatch.
 - Direct `dispatch()` is the trusted typed boundary and does not repeat runtime validation.
 
-### 1.5 Snapshot safety for reconciliation
+### 1.5 Runtime configuration validation
+
+- Store creation rejects unsupported reconciliation modes and malformed scheduler objects.
+- Store creation rejects invalid runtime content and line-ending normalization values.
+- `createChunkManager` rejects unsupported fetch strategies.
+- `createReconciliationScheduler` rejects unsupported modes when called directly.
+
+### 1.6 Snapshot safety for reconciliation
 
 - `isCurrentSnapshot()` lets callers detect stale snapshots.
 - `reconcileIfCurrent(snapshot)` returns `null` for stale snapshots instead of mutating current state from an outdated reference.

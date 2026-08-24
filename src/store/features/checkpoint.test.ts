@@ -630,6 +630,16 @@ describe("restoring into a live store", () => {
     restored.dispose();
   });
 
+  it("rejects invalid runtime configuration on restored stores", () => {
+    const checkpoint = createCheckpoint(createDocumentStore({ content: "hi" }).getEagerSnapshot());
+
+    expect(() =>
+      createDocumentStoreFromCheckpoint(checkpoint, {
+        reconcileMode: "later" as unknown as "idle",
+      }),
+    ).toThrow("reconcileMode must be one of 'idle', 'sync', or 'none'");
+  });
+
   it("refuses state-bearing configuration instead of ignoring it", () => {
     const checkpoint = createCheckpoint(createDocumentStore({ content: "hi" }).getEagerSnapshot());
 
@@ -1142,9 +1152,7 @@ describe("restore rejects untrustworthy payloads", () => {
       { length: 1_000 },
       () => ["i", 0, "x"] as const,
     );
-    expectResourceLimit(() =>
-      restoreCheckpoint(manyChanges, { maxCollectionItems: 200 }),
-    );
+    expectResourceLimit(() => restoreCheckpoint(manyChanges, { maxCollectionItems: 200 }));
 
     const longText = clone(base);
     longText.history.undo[0]!.changes = [["i", 0, "x".repeat(1_000)]];

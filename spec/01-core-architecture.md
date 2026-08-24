@@ -73,7 +73,7 @@ Notes:
 
 ### 3.3 Remote edits
 
-`APPLY_REMOTE` applies insert/delete changes to piece table + lazy line index, marks dirty, increments revision, and does not push history.
+`APPLY_REMOTE` sends insert/delete changes through the same untracked structural edit path as local edits. That path updates the piece table, lazy line index, and attention layer together. Remote edits then mark the document dirty and increment the revision without pushing history.
 
 ## 4. Store Runtime
 

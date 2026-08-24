@@ -10,24 +10,14 @@
 
 import type { DocumentState, SelectionRange, NonEmptyReadonlyArray } from "../../types/state.js";
 import type { DocumentAction } from "../../types/actions.js";
-import type { ByteOffset } from "../../types/branded.js";
 import { byteOffset } from "../../types/branded.js";
 import { withState } from "../core/state.js";
-import { getText } from "../core/piece-table.js";
-import {
-  lineIndexInsertLazy as liInsertLazy,
-  lineIndexDeleteLazy as liDeleteLazy,
-} from "../core/line-index.js";
 import {
   validatePosition,
   validateRange,
   getTextRange,
-  pieceTableInsert,
-  pieceTableDelete,
   applyEdit,
-  getDeleteBoundaryContext,
-  shouldRebuildLineIndexForDelete,
-  rebuildLineIndexFromPieceTableState,
+  applyUntrackedEdit,
 } from "./edit.js";
 import { historyUndo, historyRedo } from "./history.js";
 import { createPoint, createAttention, deleteAttention } from "../core/attention.js";
@@ -198,11 +188,11 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
           if (insertText.length === 0) continue;
           didApplyChange = true;
           const position = validatePosition(change.start, newState.pieceTable.totalLength);
-          newState = pieceTableInsert(newState, position, insertText).state;
-          const readText = (start: ByteOffset, end: ByteOffset) =>
-            getText(newState.pieceTable, start, end);
-          const li = liInsertLazy(newState.lineIndex, position, insertText, nextRevision, readText);
-          newState = withState(newState, { lineIndex: li });
+          newState = applyUntrackedEdit(
+            newState,
+            { kind: "insert", position, insertText },
+            nextRevision,
+          );
         } else if (change.type === "delete" && change.length > 0) {
           const { start, end, valid } = validateRange(
             change.start,
@@ -211,24 +201,12 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
           );
           if (!valid || end - start <= 0) continue;
           didApplyChange = true;
-          // Capture deleted text before deleting for line index update
           const deletedText = getTextRange(newState, start, end);
-          const deleteContext = getDeleteBoundaryContext(newState, start, end);
-          if (shouldRebuildLineIndexForDelete(deletedText, deleteContext)) {
-            newState = pieceTableDelete(newState, start, end);
-            newState = rebuildLineIndexFromPieceTableState(newState);
-          } else {
-            const li = liDeleteLazy(
-              newState.lineIndex,
-              start,
-              end,
-              deletedText,
-              nextRevision,
-              deleteContext,
-            );
-            newState = pieceTableDelete(newState, start, end);
-            newState = withState(newState, { lineIndex: li });
-          }
+          newState = applyUntrackedEdit(
+            newState,
+            { kind: "delete", position: start, deleteEnd: end, deletedText },
+            nextRevision,
+          );
         }
       }
       if (!didApplyChange) {

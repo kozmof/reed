@@ -36,6 +36,8 @@ Implemented in:
 
 Includes immutable reducer transitions, undo/redo, nested transactions, batching, snapshot-gated reconciliation, `whenReconciled`, background maintenance scheduling, and emergency reset paths.
 
+Local and remote text changes share one untracked structural edit path for piece-table mutation, attention migration, CRLF handling, and lazy line-index maintenance. Observer delivery is iterative and bounded so a self-triggering callback cannot recurse or monopolize the call stack indefinitely.
+
 ### 1.4 Checkpoint capture and restore
 
 Implemented in:

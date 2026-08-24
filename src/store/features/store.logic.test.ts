@@ -196,6 +196,33 @@ describe("State Factories", () => {
       );
     });
 
+    it("throws for an invalid reconcileMode", () => {
+      expect(() =>
+        createInitialState({
+          reconcileMode: "later" as unknown as "idle",
+        }),
+      ).toThrow("reconcileMode must be one of 'idle', 'sync', or 'none'");
+    });
+
+    it("throws for an invalid scheduler object", () => {
+      expect(() =>
+        createInitialState({
+          scheduler: { schedule() {} } as unknown as NonNullable<DocumentStoreConfig["scheduler"]>,
+        }),
+      ).toThrow("scheduler must be a factory function or an object");
+    });
+
+    it("throws for non-string content and non-boolean normalization config", () => {
+      expect(() => createInitialState({ content: 42 as unknown as string })).toThrow(
+        "content must be a string",
+      );
+      expect(() =>
+        createInitialState({
+          normalizeInsertedLineEndings: "yes" as unknown as boolean,
+        }),
+      ).toThrow("normalizeInsertedLineEndings must be a boolean");
+    });
+
     it("accepts each valid lineEnding", () => {
       for (const lineEnding of ["lf", "crlf", "cr"] as const) {
         expect(() => createInitialState({ lineEnding })).not.toThrow();

@@ -546,21 +546,17 @@ export function applyInverseChange(state: DocumentState, change: HistoryChange):
  * `op.deleteEnd !== undefined` guards that previously coupled delete-phase
  * decisions to insert-phase behavior.
  */
-export type EditOperation =
+export type StructuralEditOperation =
   | {
       readonly kind: "insert";
       readonly position: ByteOffset;
       readonly insertText: string;
-      readonly timestamp?: number | undefined;
-      readonly selection?: NonEmptyReadonlyArray<SelectionRange> | undefined;
     }
   | {
       readonly kind: "delete";
       readonly position: ByteOffset;
       readonly deleteEnd: ByteOffset;
       readonly deletedText: string;
-      readonly timestamp?: number | undefined;
-      readonly selection?: NonEmptyReadonlyArray<SelectionRange> | undefined;
     }
   | {
       readonly kind: "replace";
@@ -568,9 +564,72 @@ export type EditOperation =
       readonly deleteEnd: ByteOffset;
       readonly deletedText: string;
       readonly insertText: string;
-      readonly timestamp?: number | undefined;
-      readonly selection?: NonEmptyReadonlyArray<SelectionRange> | undefined;
     };
+
+export type EditOperation = StructuralEditOperation & {
+  readonly timestamp?: number | undefined;
+  readonly selection?: NonEmptyReadonlyArray<SelectionRange> | undefined;
+};
+
+/**
+ * Apply the structural portion of an edit without history, metadata, selection,
+ * or revision bookkeeping.
+ *
+ * Local edits and APPLY_REMOTE both use this path so piece-table mutation,
+ * attention migration, CRLF boundary handling, and lazy line-index maintenance
+ * cannot drift into separate implementations. `revision` is the revision that
+ * owns the resulting dirty ranges; the caller commits it after composing any
+ * additional structural edits.
+ */
+export function applyUntrackedEdit(
+  state: DocumentState,
+  op: StructuralEditOperation,
+  revision: number,
+): DocumentState {
+  const strategy = lazyStrategy(revision);
+  let newState = state;
+
+  const deleteContext =
+    op.kind !== "insert"
+      ? getDeleteBoundaryContext(newState, op.position, op.deleteEnd)
+      : undefined;
+  const needsRebuild =
+    op.kind !== "insert" && shouldRebuildLineIndexForDelete(op.deletedText, deleteContext);
+
+  if (op.kind !== "insert") {
+    if (needsRebuild) {
+      newState = pieceTableDelete(newState, op.position, op.deleteEnd);
+    } else {
+      const delLineIndex = strategy.delete(
+        newState.lineIndex,
+        op.position,
+        op.deleteEnd,
+        op.deletedText,
+        deleteContext,
+      );
+      newState = pieceTableDelete(newState, op.position, op.deleteEnd);
+      newState = withState(newState, { lineIndex: delLineIndex });
+    }
+  }
+
+  if (op.kind !== "delete" && op.insertText.length > 0) {
+    const result = pieceTableInsert(newState, op.position, op.insertText);
+    newState = result.state;
+    if (!needsRebuild) {
+      const readText = (start: ByteOffset, end: ByteOffset) =>
+        getText(newState.pieceTable, start, end);
+      const insLineIndex = strategy.insert(
+        newState.lineIndex,
+        op.position,
+        op.insertText,
+        readText,
+      );
+      newState = withState(newState, { lineIndex: insLineIndex });
+    }
+  }
+
+  return needsRebuild ? rebuildLineIndexFromPieceTableState(newState) : newState;
+}
 
 /**
  * Apply a text edit through the unified pipeline:
@@ -587,65 +646,7 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
     throw new TypeError("Edit selection ranges must be non-empty");
   }
   const nextRevision = state.revision + 1;
-  const strategy = lazyStrategy(nextRevision);
-  let newState: DocumentState = state;
-
-  // Determine upfront whether CRLF semantics require a full line-index rebuild.
-  // Using op.kind narrowing rather than op.deleteEnd !== undefined guards means
-  // the delete-phase decision is structurally visible rather than inferred from
-  // an optional field, and TypeScript enforces which fields are present in each branch.
-  const deleteContext =
-    op.kind !== "insert"
-      ? getDeleteBoundaryContext(newState, op.position, op.deleteEnd)
-      : undefined;
-  const needsRebuild =
-    op.kind !== "insert" && shouldRebuildLineIndexForDelete(op.deletedText, deleteContext);
-
-  // Delete phase
-  if (op.kind !== "insert") {
-    if (needsRebuild) {
-      // Skip lazy line-index update — a full rebuild will follow after the insert phase.
-      newState = pieceTableDelete(newState, op.position, op.deleteEnd);
-    } else {
-      // Lazy line-index update is computed from the current (pre-delete) state because
-      // dirty-range tracking only needs the deleted text's line-break structure, not the
-      // post-delete byte layout. The resulting dirty range is reconciled later against
-      // the updated piece table.
-      const delLineIndex = strategy.delete(
-        newState.lineIndex,
-        op.position,
-        op.deleteEnd,
-        op.deletedText,
-        deleteContext,
-      );
-      newState = pieceTableDelete(newState, op.position, op.deleteEnd);
-      newState = withState(newState, { lineIndex: delLineIndex });
-    }
-  }
-
-  // Insert phase
-  if (op.kind !== "delete") {
-    if (op.insertText.length > 0) {
-      const result = pieceTableInsert(newState, op.position, op.insertText);
-      newState = result.state;
-      if (!needsRebuild) {
-        const readText = (start: ByteOffset, end: ByteOffset) =>
-          getText(newState.pieceTable, start, end);
-        const insLineIndex = strategy.insert(
-          newState.lineIndex,
-          op.position,
-          op.insertText,
-          readText,
-        );
-        newState = withState(newState, { lineIndex: insLineIndex });
-      }
-    }
-  }
-
-  // Rebuild phase: single consolidated decision point, chosen before any mutation above.
-  if (needsRebuild) {
-    newState = rebuildLineIndexFromPieceTableState(newState);
-  }
+  let newState = applyUntrackedEdit(state, op, nextRevision);
 
   // Apply inline selection so historyPush records the correct selectionBefore.
   // Inline edit selections describe the pre-edit document, so clamp to the original length.

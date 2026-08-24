@@ -16,6 +16,7 @@ import { createInitialState } from "./../core/state.js";
 import { DocumentActions } from "./actions.js";
 import { createDocumentStoreWithEvents } from "./store.js";
 import { byteOffset, byteLength } from "../../types/branded.js";
+import { MAX_OBSERVER_REENTRANT_STEPS } from "./diagnostics.js";
 
 describe("Event Emitter", () => {
   describe("addEventListener", () => {
@@ -197,6 +198,45 @@ describe("Event Emitter", () => {
 
       expect(saveHandler).toHaveBeenCalledTimes(1);
       expect(dirtyHandler).not.toHaveBeenCalled();
+    });
+
+    it("queues nested emits instead of recursively invoking handlers", () => {
+      const emitter = createEventEmitter();
+      const state = createInitialState();
+      const order: string[] = [];
+      let eventNumber = 0;
+
+      emitter.addEventListener("save", () => {
+        eventNumber++;
+        order.push(`first-${eventNumber}`);
+        if (eventNumber < 3) emitter.emit("save", createSaveEvent(state));
+      });
+      emitter.addEventListener("save", () => {
+        order.push(`second-${eventNumber}`);
+      });
+
+      emitter.emit("save", createSaveEvent(state));
+
+      expect(order).toEqual(["first-1", "second-1", "first-2", "second-2", "first-3", "second-3"]);
+    });
+
+    it("bounds an event handler that emits indefinitely", () => {
+      const error = vi.fn();
+      const emitter = createEventEmitter({ error });
+      const state = createInitialState();
+      let handlerCalls = 0;
+
+      emitter.addEventListener("save", () => {
+        handlerCalls++;
+        emitter.emit("save", createSaveEvent(state));
+      });
+
+      expect(() => emitter.emit("save", createSaveEvent(state))).not.toThrow();
+      expect(handlerCalls).toBe(MAX_OBSERVER_REENTRANT_STEPS);
+      expect(error).toHaveBeenCalledWith(
+        "Document event cycle exceeded the re-entrancy limit",
+        expect.any(Error),
+      );
     });
   });
 });

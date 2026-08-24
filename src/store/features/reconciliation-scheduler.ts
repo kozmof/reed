@@ -85,6 +85,11 @@ export function createReconciliationScheduler(
   mode: "idle" | "sync" | "none",
   options: ReconciliationSchedulerOptions,
 ): ReconciliationScheduler {
+  if (mode !== "idle" && mode !== "sync" && mode !== "none") {
+    throw new RangeError(
+      `Reconciliation mode must be one of 'idle', 'sync', or 'none': ${String(mode)}`,
+    );
+  }
   const { hasPendingWork, shouldDefer, performWork } = options;
 
   let idleCallbackId: number | null = null;
