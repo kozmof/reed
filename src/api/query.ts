@@ -79,10 +79,10 @@ function getLineRangeChecked(state: DocumentState, lineNumber: number) {
 /**
  * Return the byte range of a line without requiring reconciliation.
  *
- * Works on any `DocumentState` regardless of mode. Returns `null` when the
- * requested line does not exist or its precise offset has not yet been
- * reconciled. Use when rendering or displaying lines where a best-effort result
- * is acceptable and reconciliation overhead must be avoided on the critical path.
+ * Works on any `DocumentState` regardless of mode. The range stays exact in lazy
+ * states because it is derived from current subtree byte-length aggregates rather
+ * than cached `documentOffset` values. Returns `null` only when the line does not
+ * exist.
  */
 function getLineRangePrecise(state: DocumentState, lineNumber: number) {
   return getLineRangePreciseFromIndex(state.lineIndex, lineNumber);

@@ -206,6 +206,25 @@ export interface CheckpointOptions {
 }
 
 /**
+ * Optional resource limits for restoring a checkpoint from untrusted input.
+ * Omitted limits remain unrestricted for backward compatibility.
+ */
+export interface CheckpointRestoreOptions {
+  /** Maximum UTF-16 code units accepted by `decodeCheckpoint`. */
+  readonly maxJsonLength?: number;
+  /** Maximum combined decoded size of original, add, and chunk buffers. */
+  readonly maxBufferBytes?: number;
+  /** Maximum number of piece-table pieces. */
+  readonly maxPieces?: number;
+  /** Maximum total logical lines, including lines declared for unloaded chunks. */
+  readonly maxLines?: number;
+  /** Maximum combined number of undo and redo entries. */
+  readonly maxHistoryEntries?: number;
+  /** Maximum number of attention records. */
+  readonly maxAttentions?: number;
+}
+
+/**
  * Why a checkpoint was rejected. Codes are stable across releases so callers can
  * branch on them (e.g. re-load from source on `VERSION_UNSUPPORTED`, report
  * corruption otherwise).
@@ -236,7 +255,9 @@ export type CheckpointErrorCode =
   /** An attention point names an unknown piece or an out-of-range boundary. */
   | "ATTENTION_DANGLING"
   /** `'normalized'` capture was requested for a chunked document. */
-  | "CHUNKED_NORMALIZE";
+  | "CHUNKED_NORMALIZE"
+  /** A configured restore resource limit was exceeded. */
+  | "RESOURCE_LIMIT";
 
 /**
  * Thrown by `restoreCheckpoint` / `decodeCheckpoint` when a payload cannot be

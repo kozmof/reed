@@ -61,6 +61,7 @@ export type {
 export type {
   DocumentCheckpoint,
   CheckpointOptions,
+  CheckpointRestoreOptions,
   CheckpointMode,
   CheckpointFormat,
   CheckpointBufferTag,

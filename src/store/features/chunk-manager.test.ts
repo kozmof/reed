@@ -292,6 +292,31 @@ describe("ChunkManager.prefetch", () => {
   });
 });
 
+describe("ChunkManager.cancelPendingOutside", () => {
+  it("does not start canceled work that is waiting in the fetch queue", async () => {
+    const store = makeStore();
+    let resolveFirst!: (bytes: Uint8Array) => void;
+    const firstLoad = new Promise<Uint8Array>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const loadChunk = vi.fn((chunkIndex: number) =>
+      chunkIndex === 0 ? firstLoad : Promise.resolve(makeBytes("ccccdddd")),
+    );
+    const manager = createChunkManager(store, { loadChunk }, { fetchStrategy: "queue" });
+
+    const first = manager.ensureLoaded(0);
+    const canceled = manager.ensureLoaded(1);
+    await Promise.resolve();
+    manager.cancelPendingOutside([0]);
+    resolveFirst(makeBytes("aaaabbbb"));
+    await Promise.all([first, canceled]);
+
+    expect(loadChunk).toHaveBeenCalledTimes(1);
+    expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(true);
+    expect(store.getSnapshot().pieceTable.chunkMap.has(1)).toBe(false);
+    manager.dispose();
+  });
+});
 describe("ChunkManager.dispose", () => {
   it("prevents ensureLoaded from dispatching after disposal", async () => {
     const store = makeStore();

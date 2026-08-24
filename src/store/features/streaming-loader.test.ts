@@ -263,4 +263,45 @@ describe("StreamingDocumentLoader", () => {
     ).toThrow(/chunk 1 declares 1 bytes; expected 2/);
     store.dispose();
   });
+
+  it("cancels pending loads outside a superseding viewport", async () => {
+    const store = createDocumentStore({ chunkSize: 1 });
+    let staleSignal: AbortSignal | undefined;
+
+    const loadChunk = vi.fn((chunkIndex: number, signal?: AbortSignal): Promise<Uint8Array> => {
+      if (chunkIndex === 0) {
+        staleSignal = signal;
+        return new Promise<Uint8Array>((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      }
+      return Promise.resolve(new Uint8Array([48 + chunkIndex]));
+    });
+    const metadata = Array.from({ length: 3 }, (_, chunkIndex) => ({
+      chunkIndex,
+      byteLength: 1,
+      lineCount: 0,
+    }));
+    const streamingLoader = createStreamingDocumentLoader(
+      store,
+      { loadChunk, totalChunkCount: metadata.length },
+      metadata,
+      { prefetchWindowSize: 0, chunkManagerConfig: { maxLoadedChunks: 2 } },
+    );
+
+    const staleViewport = streamingLoader.setViewport(0, 0);
+    await vi.waitFor(() => expect(staleSignal).toBeDefined());
+    const currentViewport = streamingLoader.setViewport(2, 2);
+    await Promise.all([staleViewport, currentViewport]);
+
+    expect(staleSignal?.aborted).toBe(true);
+    expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
+    expect(store.getSnapshot().pieceTable.chunkMap.has(2)).toBe(true);
+    streamingLoader.dispose();
+    store.dispose();
+  });
 });

@@ -1,28 +1,32 @@
 /**
- * Checkpoint namespace — capture a document state as JSON-safe data and load it
- * back without replaying the edits that produced it.
+ * The checkpoint namespace captures a document state as JSON-safe data and loads
+ * it without replaying the edits that produced it.
  *
- * `store.getSnapshot()` returns an in-memory `DocumentState`; a *checkpoint* is
- * that state serialized. Capture takes a `DocumentState<'eager'>`, so reach for
+ * `store.getSnapshot()` returns an in-memory `DocumentState`. A checkpoint
+ * serializes that state. Capture takes a `DocumentState<'eager'>`, so reach for
  * `store.getEagerSnapshot()` (or `await store.whenReconciled()`) rather than
- * `getSnapshot()` — a checkpoint never carries pending reconciliation work.
+ * `getSnapshot()`. Checkpoints never carry pending reconciliation work.
  *
- * Restore is fail-closed: a payload that would violate a piece-table or
+ * Restore fails closed. A payload that would violate a piece-table or
  * line-index invariant raises `CheckpointError` instead of loading.
+ * Add restore limits when input comes from outside the application.
  *
  * @example
  * ```ts
- * import { store, checkpoint } from "@kozmof/reed";
+ * import { checkpoint } from "@kozmof/reed";
  *
  * const saved = checkpoint.encode(doc.getEagerSnapshot());
  * localStorage.setItem("draft", saved);
  *
- * const restored = store.createDocumentStoreFromCheckpoint(
- *   JSON.parse(localStorage.getItem("draft")!),
- * );
+ * const restored = checkpoint.decode(localStorage.getItem("draft")!, {
+ *   maxJsonLength: 10_000_000,
+ *   maxBufferBytes: 8_000_000,
+ *   maxPieces: 100_000,
+ *   maxLines: 500_000,
+ * });
  * ```
  *
- * @see store.createDocumentStoreFromCheckpoint — restore straight into a live store
+ * @see store.createDocumentStoreFromCheckpoint to restore straight into a live store
  */
 
 import {

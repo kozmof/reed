@@ -656,7 +656,12 @@ export interface ReedLogger {
 export interface DocumentStoreConfigBase {
   /** Initial document content */
   content?: string;
-  /** Optional diagnostics sink. Omit to keep the library silent. */
+  /**
+   * Optional diagnostics sink for caught callback failures.
+   *
+   * Without a logger, Reed uses `globalThis.reportError` when available and
+   * falls back to `console.error`.
+   */
   logger?: ReedLogger;
   /** Maximum history entries (default: 1000) */
   historyLimit?: number;

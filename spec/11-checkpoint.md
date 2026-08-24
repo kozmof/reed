@@ -157,8 +157,13 @@ Restore is fail-closed. A payload that would produce a state violating a documen
 raises `CheckpointError` before any state is assembled, rather than loading a piece table that
 corrupts later edits.
 
-Every field is read through a narrowing reader, so `decodeCheckpoint` is safe on untrusted
-JSON. `CheckpointError` carries a stable `code`:
+Every field is read through a narrowing reader, so malformed values are rejected. Add resource
+limits when decoding input from outside the application. `maxJsonLength` rejects oversized JSON
+before parsing. The remaining limits cap decoded buffer bytes, pieces, logical lines, history
+entries, and attention records before Reed rebuilds the state trees. Omitted limits remain
+unrestricted for backward compatibility.
+
+`CheckpointError` carries a stable `code`.
 
 | Code                     | Rejected because                                                  |
 | ------------------------ | ----------------------------------------------------------------- |
@@ -175,6 +180,7 @@ JSON. `CheckpointError` carries a stable `code`:
 | `HISTORY_INVALID`        | Bad limit, bad coalesce timeout, or a stack deeper than its limit |
 | `ATTENTION_DANGLING`     | An attention names an unknown piece or an out-of-range boundary   |
 | `CHUNKED_NORMALIZE`      | `normalized` capture requested for a chunked document             |
+| `RESOURCE_LIMIT`         | A configured restore resource limit was exceeded                  |
 
 Error messages name the failing field by path, for example
 `pieceTable.pieces[3][2] must be a non-negative safe integer`.
@@ -186,13 +192,13 @@ revision, so its offsets may legitimately point past the end of the current docu
 
 ```ts
 checkpoint.create(state, options?)   // DocumentState<'eager'> -> DocumentCheckpoint
-checkpoint.restore(checkpoint)       // DocumentCheckpoint -> DocumentState<'eager'>
+checkpoint.restore(checkpoint, restoreOptions?) // DocumentCheckpoint -> DocumentState<'eager'>
 checkpoint.encode(state, options?)   // DocumentState<'eager'> -> string
-checkpoint.decode(json)              // string -> DocumentState<'eager'>
+checkpoint.decode(json, restoreOptions?)        // string -> DocumentState<'eager'>
 checkpoint.isCheckpoint(value)       // cheap envelope guard
 
-store.createDocumentStoreFromCheckpoint(checkpoint, config?)
-store.createDocumentStoreWithEventsFromCheckpoint(checkpoint, config?)
+store.createDocumentStoreFromCheckpoint(checkpoint, config?, restoreOptions?)
+store.createDocumentStoreWithEventsFromCheckpoint(checkpoint, config?, restoreOptions?)
 ```
 
 The store entry points accept `DocumentStoreRuntimeConfig`, which is `logger` plus

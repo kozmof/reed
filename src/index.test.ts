@@ -69,9 +69,22 @@ describe("public package entry point", () => {
       store.dispatchValidated(documentStore, { type: "INSERT", start: 0.5, text: "x" }),
     ).toThrow(/integer/);
 
+    const inserted = store.dispatchValidated(documentStore, {
+      type: "INSERT",
+      start: 0,
+      text: ">> ",
+    });
+    expect(scan.getValue(inserted.pieceTable)).toBe(">> Hello😀World");
     const next = store.setValue(documentStore, "Hello😂World", { strategy: "diff" });
     expect(next).toBe(documentStore.getSnapshot());
     expect(scan.getValue(next.pieceTable)).toBe("Hello😂World");
+
+    const fast = store.setValue(documentStore, "fast replacement");
+    expect(scan.getValue(fast.pieceTable)).toBe("fast replacement");
+    expect(store.setValue(documentStore, "fast replacement")).toBe(fast);
+    expect(() => store.setValue(documentStore, 123 as unknown as string)).toThrow(
+      /must be a string/,
+    );
     documentStore.dispose();
   });
 });

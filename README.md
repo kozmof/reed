@@ -286,8 +286,23 @@ and a new reconciliation scheduler, so re-subscribe and rebuild any `ChunkManage
 restoring.
 
 Restore is fail-closed. A truncated or hand-edited payload raises `CheckpointError` with a
-`code` naming the problem, rather than loading a document that would corrupt later edits. That
-makes `checkpoint.decode` safe to point at untrusted JSON.
+`code` naming the problem. Add resource limits when the payload comes from outside your
+application. The JSON length is checked before parsing. Buffer and collection limits are checked
+before Reed rebuilds the state trees.
+
+```ts
+const restoredState = checkpoint.decode(untrustedJson, {
+  maxJsonLength: 10_000_000,
+  maxBufferBytes: 8_000_000,
+  maxPieces: 100_000,
+  maxLines: 500_000,
+  maxHistoryEntries: 2_000,
+  maxAttentions: 10_000,
+});
+```
+
+Use `store.dispatchValidated(doc, value)` for actions received from JSON, plugins, workers, or the
+network. Use `doc.dispatch(action)` for actions created by trusted TypeScript code.
 
 For a smaller payload, capture in normalized mode. It flattens the document to its text and
 drops the edit-by-edit piece structure, keeping history, selection, and attention references

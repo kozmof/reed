@@ -36,6 +36,7 @@ import type { PieceID, AttentionID, ReadonlyUint8Array } from "../../types/brand
 import { byteOffset, byteLength, pieceID, attentionID } from "../../types/branded.js";
 import type {
   DocumentCheckpoint,
+  CheckpointRestoreOptions,
   CheckpointOptions,
   CheckpointMode,
   CheckpointPiece,
@@ -81,6 +82,51 @@ import {
 
 function fail(code: CheckpointErrorCode, message: string): never {
   throw new CheckpointError(code, message);
+}
+
+interface RestoreLimits {
+  readonly maxJsonLength: number;
+  readonly maxBufferBytes: number;
+  readonly maxPieces: number;
+  readonly maxLines: number;
+  readonly maxHistoryEntries: number;
+  readonly maxAttentions: number;
+}
+
+interface RestoreBudget {
+  readonly limits: RestoreLimits;
+  remainingBufferBytes: number;
+}
+
+const UNLIMITED_RESTORE_RESOURCE = Number.MAX_SAFE_INTEGER;
+
+function readRestoreLimit(value: number | undefined, what: string): number {
+  if (value === undefined) return UNLIMITED_RESTORE_RESOURCE;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(`${what} must be a non-negative safe integer`);
+  }
+  return value;
+}
+
+function normalizeRestoreOptions(options: CheckpointRestoreOptions): RestoreLimits {
+  return {
+    maxJsonLength: readRestoreLimit(options.maxJsonLength, "maxJsonLength"),
+    maxBufferBytes: readRestoreLimit(options.maxBufferBytes, "maxBufferBytes"),
+    maxPieces: readRestoreLimit(options.maxPieces, "maxPieces"),
+    maxLines: readRestoreLimit(options.maxLines, "maxLines"),
+    maxHistoryEntries: readRestoreLimit(options.maxHistoryEntries, "maxHistoryEntries"),
+    maxAttentions: readRestoreLimit(options.maxAttentions, "maxAttentions"),
+  };
+}
+
+function assertResourceLimit(actual: number, limit: number, what: string): void {
+  if (actual > limit) {
+    fail("RESOURCE_LIMIT", `${what} ${actual} exceeds the configured limit of ${limit}`);
+  }
+}
+
+function createRestoreBudget(limits: RestoreLimits): RestoreBudget {
+  return { limits, remainingBufferBytes: limits.maxBufferBytes };
 }
 
 // =============================================================================
@@ -370,11 +416,19 @@ function readOptionalString(value: unknown, what: string): string | undefined {
   return value === undefined ? undefined : readString(value, what);
 }
 
-function readBytes(value: unknown, what: string): Uint8Array {
+function readBytes(value: unknown, what: string, budget: RestoreBudget): Uint8Array {
   const base64 = readString(value, what);
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  const decodedLength =
+    base64.length % 4 === 0 ? (base64.length / 4) * 3 - padding : Math.ceil(base64.length / 4) * 3;
+  assertResourceLimit(decodedLength, budget.remainingBufferBytes, `${what} decoded bytes`);
   try {
-    return decodeBase64(base64);
+    const bytes = decodeBase64(base64);
+    assertResourceLimit(bytes.length, budget.remainingBufferBytes, `${what} decoded bytes`);
+    budget.remainingBufferBytes -= bytes.length;
+    return bytes;
   } catch (error) {
+    if (error instanceof CheckpointError) throw error;
     fail("MALFORMED", `${what} is not valid base64: ${(error as Error).message}`);
   }
 }
@@ -474,13 +528,16 @@ function restorePieces(
   return { pieces, totalLength, lengthByID };
 }
 
-function restorePieceTable(raw: unknown): {
+function restorePieceTable(
+  raw: unknown,
+  budget: RestoreBudget,
+): {
   pieceTable: PieceTableState;
   lengthByID: Map<PieceID, number>;
 } {
   const source = readObject(raw, "pieceTable");
-  const originalBuffer = readBytes(source.originalBuffer, "pieceTable.originalBuffer");
-  const addBytes = readBytes(source.addBuffer, "pieceTable.addBuffer");
+  const originalBuffer = readBytes(source.originalBuffer, "pieceTable.originalBuffer", budget);
+  const addBytes = readBytes(source.addBuffer, "pieceTable.addBuffer", budget);
   const chunkSize = readCount(source.chunkSize, "pieceTable.chunkSize");
   const nextExpectedChunk = readCount(source.nextExpectedChunk, "pieceTable.nextExpectedChunk");
   const totalFileSize = readCount(source.totalFileSize, "pieceTable.totalFileSize");
@@ -497,7 +554,7 @@ function restorePieceTable(raw: unknown): {
     if (chunkIndex <= lastChunkIndex) {
       fail("MALFORMED", `${what}[0] must be unique and strictly ascending`);
     }
-    const bytes = readBytes(tuple[1], `${what}[1]`);
+    const bytes = readBytes(tuple[1], `${what}[1]`, budget);
     if (chunkSize === 0 || bytes.length === 0 || bytes.length > chunkSize) {
       fail("MALFORMED", `${what} has ${bytes.length} bytes but chunkSize is ${chunkSize}`);
     }
@@ -585,8 +642,10 @@ function restorePieceTable(raw: unknown): {
     );
   }
 
+  const rawPieces = readArray(source.pieces, "pieceTable.pieces");
+  assertResourceLimit(rawPieces.length, budget.limits.maxPieces, "pieceTable.pieces");
   const { pieces, totalLength, lengthByID } = restorePieces(
-    readArray(source.pieces, "pieceTable.pieces"),
+    rawPieces,
     originalBuffer.length,
     addBytes.length,
     chunkMap,
@@ -635,9 +694,11 @@ function restoreLineIndex(
   raw: unknown,
   totalLength: number,
   revision: number,
+  limits: RestoreLimits,
 ): LineIndexState<"eager"> {
   const source = readObject(raw, "lineIndex");
   const rawLines = readArray(source.lines, "lineIndex.lines");
+  assertResourceLimit(rawLines.length, limits.maxLines, "lineIndex.lines");
   if (rawLines.length === 0) {
     fail("MALFORMED", "lineIndex.lines is empty: even an empty document has one line");
   }
@@ -680,6 +741,11 @@ function restoreLineIndex(
     lastUnloadedIndex = chunkIndex;
   }
 
+  assertResourceLimit(
+    rawLines.length + unloadedLineCount,
+    limits.maxLines,
+    "lineIndex total lines",
+  );
   const maxDirtyRanges = readCount(source.maxDirtyRanges, "lineIndex.maxDirtyRanges");
   if (maxDirtyRanges < 1) {
     fail("MALFORMED", "lineIndex.maxDirtyRanges must be a positive integer");
@@ -781,7 +847,7 @@ function restoreHistoryEntry(raw: unknown, what: string): HistoryEntry {
   });
 }
 
-function restoreHistory(raw: unknown): HistoryState {
+function restoreHistory(raw: unknown, limits: RestoreLimits): HistoryState {
   const source = readObject(raw, "history");
   const limit = readCount(source.limit, "history.limit");
   if (limit < 1) {
@@ -793,8 +859,10 @@ function restoreHistory(raw: unknown): HistoryState {
     fail("HISTORY_INVALID", "history.coalesceTimeout must be a non-negative number");
   }
 
-  const readStack = (value: unknown, what: string): HistoryEntry[] => {
-    const rawEntries = readArray(value, what);
+  const rawUndo = readArray(source.undo, "history.undo");
+  const rawRedo = readArray(source.redo, "history.redo");
+  assertResourceLimit(rawUndo.length + rawRedo.length, limits.maxHistoryEntries, "history entries");
+  const readStack = (rawEntries: readonly unknown[], what: string): HistoryEntry[] => {
     if (rawEntries.length > limit) {
       fail(
         "HISTORY_INVALID",
@@ -805,8 +873,8 @@ function restoreHistory(raw: unknown): HistoryState {
   };
 
   return Object.freeze({
-    undoStack: pstackFromArray(readStack(source.undo, "history.undo")),
-    redoStack: pstackFromArray(readStack(source.redo, "history.redo")),
+    undoStack: pstackFromArray(readStack(rawUndo, "history.undo")),
+    redoStack: pstackFromArray(readStack(rawRedo, "history.redo")),
     limit,
     coalesceTimeout,
   });
@@ -833,9 +901,14 @@ function restoreMetadata(raw: unknown): DocumentMetadata {
   });
 }
 
-function restoreAttention(raw: unknown, lengthByID: Map<PieceID, number>): AttentionLayerState {
+function restoreAttention(
+  raw: unknown,
+  lengthByID: Map<PieceID, number>,
+  limits: RestoreLimits,
+): AttentionLayerState {
   const source = readObject(raw, "attention");
   const rawAttentions = readArray(source.attentions, "attention.attentions");
+  assertResourceLimit(rawAttentions.length, limits.maxAttentions, "attention.attentions");
   const attentions = new Map<AttentionID, Attention>();
 
   const readPoint = (
@@ -947,9 +1020,17 @@ function validateChunkLineIndex(
  * allocator cursor that would reissue a live id — raises `CheckpointError` with
  * a `code` naming the failure.
  *
+ * Use `options` to bound decoded buffers and collection sizes before restoring
+ * input from outside the application. Omitted limits remain unrestricted.
+ *
  * @throws CheckpointError when the payload is not a restorable checkpoint
  */
-export function restoreCheckpoint(checkpoint: DocumentCheckpoint): DocumentState<"eager"> {
+export function restoreCheckpoint(
+  checkpoint: DocumentCheckpoint,
+  options: CheckpointRestoreOptions = {},
+): DocumentState<"eager"> {
+  const limits = normalizeRestoreOptions(options);
+  const budget = createRestoreBudget(limits);
   const source = readObject(checkpoint, "checkpoint");
 
   if (source.format !== CHECKPOINT_FORMAT) {
@@ -968,8 +1049,8 @@ export function restoreCheckpoint(checkpoint: DocumentCheckpoint): DocumentState
   readEnum(source.mode, ["exact", "normalized"] as const, "checkpoint.mode");
 
   const revision = readCount(source.revision, "checkpoint.revision");
-  const { pieceTable, lengthByID } = restorePieceTable(source.pieceTable);
-  const lineIndex = restoreLineIndex(source.lineIndex, pieceTable.totalLength, revision);
+  const { pieceTable, lengthByID } = restorePieceTable(source.pieceTable, budget);
+  const lineIndex = restoreLineIndex(source.lineIndex, pieceTable.totalLength, revision, limits);
   validateChunkLineIndex(pieceTable, lineIndex);
 
   return Object.freeze({
@@ -978,24 +1059,33 @@ export function restoreCheckpoint(checkpoint: DocumentCheckpoint): DocumentState
     pieceTable,
     lineIndex,
     selection: restoreSelection(source.selection, "selection", pieceTable.totalLength),
-    history: restoreHistory(source.history),
+    history: restoreHistory(source.history, limits),
     metadata: restoreMetadata(source.metadata),
-    attention: restoreAttention(source.attention, lengthByID),
+    attention: restoreAttention(source.attention, lengthByID, limits),
   });
 }
 
 /**
  * Parse and restore a checkpoint string produced by `encodeCheckpoint`.
  *
+ * Use `options.maxJsonLength` to reject oversized strings before `JSON.parse`.
+ * The remaining restore limits apply after parsing and before state trees are
+ * rebuilt.
+ *
  * @throws CheckpointError when the string is not valid JSON or not a restorable
  *         checkpoint
  */
-export function decodeCheckpoint(json: string): DocumentState<"eager"> {
+export function decodeCheckpoint(
+  json: string,
+  options: CheckpointRestoreOptions = {},
+): DocumentState<"eager"> {
+  const maxJsonLength = readRestoreLimit(options.maxJsonLength, "maxJsonLength");
+  assertResourceLimit(json.length, maxJsonLength, "checkpoint JSON length");
   let parsed: unknown;
   try {
     parsed = JSON.parse(json);
   } catch (error) {
     fail("NOT_A_CHECKPOINT", `checkpoint is not valid JSON: ${(error as Error).message}`);
   }
-  return restoreCheckpoint(parsed as DocumentCheckpoint);
+  return restoreCheckpoint(parsed as DocumentCheckpoint, options);
 }

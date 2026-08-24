@@ -8,7 +8,7 @@ import type {
   DocumentStoreConfig,
   DocumentStoreRuntimeConfig,
 } from "../../types/state.js";
-import type { DocumentCheckpoint } from "../../types/checkpoint.js";
+import type { DocumentCheckpoint, CheckpointRestoreOptions } from "../../types/checkpoint.js";
 import type { DocumentAction } from "../../types/actions.js";
 import type {
   DocumentStore,
@@ -36,6 +36,7 @@ import {
   type DocumentEventMap,
 } from "./events.js";
 import { isTextEditAction } from "../../types/actions.js";
+import { reportCaughtError } from "./diagnostics.js";
 import {
   createReconciliationScheduler,
   type ReconciliationSchedulerOptions,
@@ -182,7 +183,7 @@ function createStoreOverState(
             listener();
           } catch (error) {
             // Don't let one listener's error affect others
-            logger?.error?.("Store listener threw an error:", error);
+            reportCaughtError(logger, "Store listener threw an error", error);
           }
         }
       } while (notificationPending);
@@ -782,6 +783,9 @@ function assertRuntimeOnlyConfig(config: DocumentStoreRuntimeConfig): void {
  * transaction, and a new reconciliation scheduler — so a caller restoring a
  * chunked document rebuilds its `ChunkManager` as well.
  *
+ * Pass resource limits as the third argument when the checkpoint comes from
+ * outside the application.
+ *
  * @example
  * ```ts
  * const store = createDocumentStoreFromCheckpoint(JSON.parse(saved), {
@@ -795,9 +799,10 @@ function assertRuntimeOnlyConfig(config: DocumentStoreRuntimeConfig): void {
 export function createDocumentStoreFromCheckpoint(
   checkpoint: DocumentCheckpoint,
   config: DocumentStoreRuntimeConfig = {},
+  restoreOptions: CheckpointRestoreOptions = {},
 ): ReconcilableDocumentStore {
   assertRuntimeOnlyConfig(config);
-  return createStoreOverState(restoreCheckpoint(checkpoint), config);
+  return createStoreOverState(restoreCheckpoint(checkpoint, restoreOptions), config);
 }
 
 /**
@@ -807,14 +812,21 @@ export function createDocumentStoreFromCheckpoint(
  * and the first event a subscriber sees is the one their own first dispatch
  * produces.
  *
+ * Pass resource limits as the third argument when the checkpoint comes from
+ * outside the application.
+ *
  * @throws CheckpointError when the checkpoint is not restorable
  * @throws Error when `config` carries a state-bearing option
  */
 export function createDocumentStoreWithEventsFromCheckpoint(
   checkpoint: DocumentCheckpoint,
   config: DocumentStoreRuntimeConfig = {},
+  restoreOptions: CheckpointRestoreOptions = {},
 ): DocumentStoreWithEvents {
-  return withEvents(createDocumentStoreFromCheckpoint(checkpoint, config), config.logger);
+  return withEvents(
+    createDocumentStoreFromCheckpoint(checkpoint, config, restoreOptions),
+    config.logger,
+  );
 }
 
 /**

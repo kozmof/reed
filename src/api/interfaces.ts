@@ -40,7 +40,11 @@ import type {
   InsertWithAttentionResult,
   DeleteWithAttentionResult,
 } from "../store/core/attention.js";
-import type { DocumentCheckpoint, CheckpointOptions } from "../types/checkpoint.js";
+import type {
+  DocumentCheckpoint,
+  CheckpointOptions,
+  CheckpointRestoreOptions,
+} from "../types/checkpoint.js";
 import type {
   VisibleLine,
   ViewportConfig,
@@ -247,8 +251,11 @@ export interface AttentionApi {
  */
 export interface CheckpointApi {
   create(state: DocumentState<"eager">, options?: CheckpointOptions): DocumentCheckpoint;
-  restore(checkpoint: DocumentCheckpoint): DocumentState<"eager">;
+  restore(
+    checkpoint: DocumentCheckpoint,
+    options?: CheckpointRestoreOptions,
+  ): DocumentState<"eager">;
   encode(state: DocumentState<"eager">, options?: CheckpointOptions): string;
-  decode(json: string): DocumentState<"eager">;
+  decode(json: string, options?: CheckpointRestoreOptions): DocumentState<"eager">;
   isCheckpoint(value: unknown): value is DocumentCheckpoint;
 }

@@ -54,12 +54,12 @@
   },
   "devDependencies": {
     "@types/node": "^25.9.5",
-    "@vitest/coverage-v8": "4.1.9",
+    "@vitest/coverage-v8": "4.1.10",
     "oxfmt": "^0.44.0",
     "oxlint": "^1.76.0",
     "typescript": "~5.9.3",
     "vite": "^7.3.6",
-    "vitest": "^4.1.10"
+    "vitest": "4.1.10"
   },
   "engines": {
     "node": ">=20"

@@ -94,6 +94,14 @@ export interface ChunkManager {
   setActiveChunks(chunkIndices: readonly number[]): void;
 
   /**
+   * Cancel pending loads for chunks outside `chunkIndices`.
+   *
+   * Canceled requests settle without dispatching `LOAD_CHUNK`. This is useful
+   * when a newer viewport makes older fetches unnecessary.
+   */
+  cancelPendingOutside(chunkIndices: readonly number[]): void;
+
+  /**
    * Dispose this manager.
    * After disposal, ensureLoaded / prefetch are no-ops and in-flight fetches
    * receive an abort signal. Fetches that have not yet dispatched LOAD_CHUNK
@@ -250,12 +258,12 @@ export function createChunkManager(
     abortControllers.set(chunkIndex, abortController);
 
     const fetch = (): Promise<void> =>
-      disposed
+      disposed || abortController.signal.aborted
         ? Promise.resolve()
         : loader
             .loadChunk(chunkIndex, abortController.signal)
             .then((data) => {
-              if (disposed) return;
+              if (disposed || abortController.signal.aborted) return;
               if (data.length === 0)
                 throw new Error(`ChunkLoader returned empty data for chunk ${chunkIndex}`);
               // Reject lengths that contradict the declared file geometry before
@@ -284,9 +292,8 @@ export function createChunkManager(
               evictIfOverLimit(chunkIndex);
             })
             .catch((error: unknown) => {
-              // Disposal is successful cancellation from the manager caller's
-              // perspective. Pending ensureLoaded() calls continue to resolve.
-              if (disposed && abortController.signal.aborted) return;
+              // Manager-owned cancellation settles pending calls without loading.
+              if (abortController.signal.aborted) return;
               throw error;
             })
             .finally(() => {
@@ -353,6 +360,14 @@ export function createChunkManager(
     evictIfOverLimit();
   }
 
+  function cancelPendingOutside(chunkIndices: readonly number[]): void {
+    if (disposed) return;
+    const retained = new Set(chunkIndices);
+    for (const [chunkIndex, controller] of abortControllers) {
+      if (!retained.has(chunkIndex)) controller.abort();
+    }
+  }
+
   function dispose(): void {
     if (disposed) return;
     disposed = true;
@@ -365,5 +380,5 @@ export function createChunkManager(
     activeChunks.clear();
   }
 
-  return { ensureLoaded, prefetch, setActiveChunks, dispose };
+  return { ensureLoaded, prefetch, setActiveChunks, cancelPendingOutside, dispose };
 }

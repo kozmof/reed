@@ -72,6 +72,18 @@ function expectRejection(
   throw new Error(`expected restore to reject with ${code}`);
 }
 
+/** Run a restore and assert that its configured resource budget rejects it. */
+function expectResourceLimit(run: () => unknown): void {
+  try {
+    run();
+  } catch (error) {
+    expect(error).toBeInstanceOf(CheckpointError);
+    expect((error as CheckpointError).code).toBe("RESOURCE_LIMIT");
+    return;
+  }
+  throw new Error("expected restore to reject with RESOURCE_LIMIT");
+}
+
 /** A store carrying edits from every action that touches content. */
 function editedStore() {
   const store = createDocumentStore({ content: "hello world\nsecond line\n" });
@@ -508,6 +520,13 @@ describe("chunked documents", () => {
     expect(restored.pieceTable.chunkMetadata.get(2)).toEqual(state.pieceTable.chunkMetadata.get(2));
     expect(restored.lineIndex.unloadedLineCount).toBe(state.lineIndex.unloadedLineCount);
     expect(getLineCountFromIndex(restored.lineIndex)).toBe(getLineCountFromIndex(state.lineIndex));
+  });
+
+  it("counts lines declared for unloaded chunks against the restore limit", () => {
+    const checkpoint = createCheckpoint(chunkedState());
+    const loadedLineCount = checkpoint.lineIndex.lines.length;
+
+    expectResourceLimit(() => restoreCheckpoint(checkpoint, { maxLines: loadedLineCount }));
   });
 
   it("keeps loading chunks after restore", () => {
@@ -1097,6 +1116,45 @@ describe("restore rejects untrustworthy payloads", () => {
     } catch (error) {
       expect((error as CheckpointError).code).toBe("NOT_A_CHECKPOINT");
     }
+  });
+
+  it("enforces configured resource limits", () => {
+    const encoded = JSON.stringify(base);
+    const oversizedMalformed = clone(base);
+    oversizedMalformed.pieceTable.originalBuffer = "AAAAA";
+    const attempts: readonly (() => unknown)[] = [
+      () => decodeCheckpoint(encoded, { maxJsonLength: encoded.length - 1 }),
+      () => restoreCheckpoint(base, { maxBufferBytes: 0 }),
+      () => restoreCheckpoint(oversizedMalformed, { maxBufferBytes: 1 }),
+      () => restoreCheckpoint(base, { maxPieces: 0 }),
+      () => restoreCheckpoint(base, { maxLines: 0 }),
+      () => restoreCheckpoint(base, { maxHistoryEntries: 0 }),
+    ];
+
+    for (const attempt of attempts) expectResourceLimit(attempt);
+  });
+
+  it("limits attention records", () => {
+    const state = createDocumentStore({ content: "hello world" }).getEagerSnapshot();
+    const point = createPoint(state.pieceTable.root, byteOffset(6))!;
+    const [attention] = createAttention(state.attention, point, point);
+    const checkpoint = createCheckpoint({ ...state, attention } as DocumentState<"eager">);
+
+    expectResourceLimit(() => restoreCheckpoint(checkpoint, { maxAttentions: 0 }));
+  });
+
+  it("rejects invalid restore limits", () => {
+    expect(() => restoreCheckpoint(base, { maxPieces: -1 })).toThrow(RangeError);
+    expect(() => decodeCheckpoint(JSON.stringify(base), { maxJsonLength: NaN })).toThrow(
+      RangeError,
+    );
+  });
+
+  it("forwards restore limits through live store factories", () => {
+    expectResourceLimit(() => createDocumentStoreFromCheckpoint(base, {}, { maxPieces: 0 }));
+    expectResourceLimit(() =>
+      createDocumentStoreWithEventsFromCheckpoint(base, {}, { maxPieces: 0 }),
+    );
   });
 
   it("names the failing field in its message", () => {

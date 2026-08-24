@@ -223,6 +223,8 @@ export function createStreamingDocumentLoader(
     for (let i = windowStart; i <= windowEnd; i++) windowChunks.push(i);
     latestWindowChunks = windowChunks;
     manager.setActiveChunks(windowChunks);
+    // Stop work owned only by older viewport requests.
+    manager.cancelPendingOutside(windowChunks);
 
     // Load viewport chunks (awaited — caller needs them visible).
     const viewportLoads: Promise<void>[] = [];

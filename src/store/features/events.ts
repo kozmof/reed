@@ -7,6 +7,7 @@ import type { DocumentState, ReedLogger } from "../../types/state.js";
 import type { ContentChangeAction, DocumentAction } from "../../types/actions.js";
 import { byteOffset, type ByteOffset, type AttentionID } from "../../types/branded.js";
 import { utf8ByteLength } from "../core/encoding.js";
+import { reportCaughtError } from "./diagnostics.js";
 
 // =============================================================================
 // Event Types
@@ -240,7 +241,7 @@ export function createEventEmitter(logger?: Pick<ReedLogger, "error">): Document
           try {
             handler(event);
           } catch (error) {
-            logger?.error?.(`Event handler error for '${type}':`, error);
+            reportCaughtError(logger, `Event handler error for '${type}'`, error);
           }
         }
       }
