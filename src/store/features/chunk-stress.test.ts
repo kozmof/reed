@@ -17,8 +17,8 @@
  *   same chunks. Any piece ordering bug, lost-byte bug, or stale line/char
  *   offset surfaces as a mismatch — with a logged seed for replay.
  *
- * Strict red-black balance is not asserted: lazy deletion preserves ordering and
- * aggregates, while lookup complexity is O(tree height) until a balanced rebuild.
+ * Strict red-black balance is asserted after every reconciled step, including
+ * persistent deletion paths.
  *
  * CRLF configs deliberately let byte-aligned chunk boundaries split "\r\n"
  * pairs, exercising the CR/LF/CRLF-aware boundary path under load/evict/reload.
@@ -38,6 +38,7 @@ import {
 } from "../../../test-utils/large-content.js";
 import {
   assertLineIndexInvariants,
+  assertLineIndexRedBlackProperties,
   assertPieceTableInvariants,
 } from "../../../test-utils/invariants.js";
 
@@ -153,6 +154,7 @@ function assertConsistent(
   }
 
   assertLineIndexInvariants(reconciled.lineIndex.root, context);
+  assertLineIndexRedBlackProperties(reconciled.lineIndex.root, context);
   assertPieceTableInvariants(pieceTable, context, true);
 
   // With no user edits, eviction never refuses, so the resident set must stay

@@ -50,8 +50,8 @@ open transaction, so that state becomes its committed baseline.
 
 ## 3. Format
 
-The envelope is `{ format: 'reed-checkpoint', version: 1, mode, ... }`. Restore rejects a
-`format` it does not recognize and a `version` newer than the one it was built against.
+The envelope is `{ format: 'reed-checkpoint', version: 1, mode, ... }`. Restore rejects an
+unknown `format` and every version other than `1`. No version migration exists yet.
 
 Byte buffers are base64. Both trees are stored as flat in-order lists.
 
@@ -163,7 +163,7 @@ JSON. `CheckpointError` carries a stable `code`:
 | Code                     | Rejected because                                                  |
 | ------------------------ | ----------------------------------------------------------------- |
 | `NOT_A_CHECKPOINT`       | Not an object, wrong `format`, or unparseable JSON                |
-| `VERSION_UNSUPPORTED`    | Written by a newer Reed                                           |
+| `VERSION_UNSUPPORTED`    | The checkpoint version is not supported by this build             |
 | `MALFORMED`              | A field is missing or has the wrong runtime type                  |
 | `PIECE_OUT_OF_BOUNDS`    | A piece range falls outside the buffer it reads from              |
 | `CHUNK_MISSING`          | A chunk piece names a chunk absent from the payload               |

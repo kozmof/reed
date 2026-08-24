@@ -143,7 +143,10 @@ attention.getTextForAttention(pt, att, id); // "world"
 
 ### 8.1 Migration on edits
 
-All content edits re-anchor points: `INSERT`, `DELETE`, `REPLACE`, `APPLY_REMOTE`, and `UNDO` / `REDO`. Migration is centralized in the two `DocumentState` edit wrappers (`pieceTableInsert` / `pieceTableDelete` in `edit.ts`), which every edit path funnels through. Inserts heal via `migrateSplits` (§5.1), and deletes via `migrateDelete` (§5.2). Chunk streaming (`LOAD_CHUNK` / `EVICT_CHUNK`) does not migrate attentions. Chunked-mode tracking is out of scope.
+All content edits re-anchor points through the two `DocumentState` edit wrappers in `edit.ts`.
+Chunk loads keep existing piece identities, so resolved offsets follow the tree automatically.
+Chunk eviction is refused when the target chunk owns an attention endpoint. This prevents a
+loaded reference from becoming dangling after eviction and reload.
 
 ### 8.2 Attention actions
 

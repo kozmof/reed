@@ -69,19 +69,19 @@ It can be in one of two evaluation modes:
 
 `node.subtreeByteLength` is the sum of `lineLength` for all nodes in the
 subtree. It is updated by `withLineIndexNode` on every structural change and
-is never marked dirty. Callers may rely on it for O(tree height) byte-offset
+is never marked dirty. Callers may rely on it for O(log n) byte-offset
 arithmetic even in lazy mode.
 
 ### 2.2 `subtreeLineCount` Is Always Accurate
 
 `node.subtreeLineCount` equals `1 + left.subtreeLineCount + right.subtreeLineCount`.
-It is accurate in both modes and is used for O(tree height) line-number lookups.
+It is accurate in both modes and is used for O(log n) line-number lookups.
 
 #### Tree height
 
-Lazy deletion preserves ordering and subtree aggregates but does not guarantee
-strict red-black balance between full rebuilds. Line-index navigation is therefore
-O(tree height), and O(log n) when the tree is balanced.
+Small multiline deletions use persistent red-black deletion, while large range
+removals rebuild the retained lines once. Both paths preserve red-black
+invariants. Insertion does the same, so line-index navigation is O(log n).
 
 #### Unloaded line-count cache
 
@@ -113,19 +113,11 @@ updates their offsets or records a dirty range describing the move. An edit that
 does neither strands them, because reconciliation only visits lines a dirty range
 covers.
 
-#### Known gap: newline-free changes on the eager strategy
+#### Eager offset maintenance
 
-`eagerStrategy` in `edit.ts`, used by undo and redo, updates the edited line's
-length without shifting the lines after it and without recording a dirty range.
-The cached offsets of those lines stay behind, and no later reconciliation
-repairs them.
-
-Shifting them costs a full O(n) tree rewrite per change, which measured about
-230× slower on 200 undo and 200 redo operations over a 200,000-line document
-(15 ms to 3,461 ms). Keeping an exact absolute-offset cache and O(log n) undo of
-character edits are not both available, so the fast path stands and this
-paragraph records the cost of changing that decision. Nothing in the read path
-is affected.
+`eagerStrategy` is used by undo and redo. Newline-free changes update the edited
+line and shift every later cached offset in the same transition. This costs O(n)
+in the number of downstream lines and preserves the eager-state contract.
 
 ### 2.4 `documentOffset` in Lazy Mode
 

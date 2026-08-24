@@ -8,7 +8,9 @@ Reed validates actions and isolates failures at store boundaries. This document 
 
 - Edit positions are validated/clamped to document bounds.
 - Invalid ranges (`start > end`) become no-op edits.
-- Non-finite positions are warned and treated as `0`.
+- The trusted reducer treats non-finite positions as `0`. Unknown external input
+  should go through `store.dispatchValidated()`, which rejects non-finite and
+  non-integer positions.
 
 ### 1.2 Subscriber and event isolation
 
@@ -25,6 +27,8 @@ Reed validates actions and isolates failures at store boundaries. This document 
 
 - `deserializeAction()` throws on invalid payloads.
 - `validateAction()` provides structured validation errors.
+- `store.dispatchValidated(store, value)` validates unknown external input before dispatch.
+- Direct `dispatch()` is the trusted typed boundary and does not repeat runtime validation.
 
 ### 1.5 Snapshot safety for reconciliation
 

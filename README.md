@@ -119,12 +119,18 @@ The selection supplied to an edit is restored by undo. Redo derives its caret fr
 
 ### Replacing the whole document
 
-To update the whole editor, such as when loading or reverting a file, use the `diff` namespace. It computes a minimal edit instead of clearing and reinserting the content.
+Use `store.setValue` to update a live store when loading or reverting a file. The default fast strategy computes one changed range and preserves store notifications, events, history, and rollback behavior.
 
 ```ts
-import { diff } from "@kozmof/reed";
+import { store } from "@kozmof/reed";
 
-const nextState = diff.setValue(doc.getSnapshot(), "completely new content");
+store.setValue(doc, "completely new content");
+```
+
+Pass `{ strategy: "diff" }` when fine-grained history matters. Use `diff.setValue` only for pure transitions that return a detached `DocumentState`.
+
+```ts
+store.setValue(doc, "completely new content", { strategy: "diff" });
 ```
 
 ## Reading the document

@@ -126,6 +126,35 @@ function hasAddPieceTouchingRange(
   return found;
 }
 
+/**
+ * Return true when removing `chunkIndex` would delete a piece identity used by
+ * an attention point. Offsets before/after other chunks resolve through the
+ * current tree automatically; only removal of the anchored piece can dangle a
+ * point, so eviction is refused just as it is for overlapping user edits.
+ */
+function hasAttentionAnchoredToChunk(state: DocumentState, chunkIndex: number): boolean {
+  if (state.attention.attentions.size === 0) return false;
+
+  const anchoredPieceIDs = new Set<PieceID>();
+  for (const attention of state.attention.attentions.values()) {
+    anchoredPieceIDs.add(attention.start.pieceID);
+    anchoredPieceIDs.add(attention.end.pieceID);
+  }
+
+  let found = false;
+  pieceTableInOrder(state.pieceTable.root, (node) => {
+    if (
+      node.bufferType === "chunk" &&
+      node.chunkIndex === chunkIndex &&
+      anchoredPieceIDs.has(node.id)
+    ) {
+      found = true;
+      return true;
+    }
+  });
+  return found;
+}
+
 function buildBalancedPieceTree(
   pieces: readonly PieceNode[],
   lo: number,
@@ -314,6 +343,7 @@ export function evictChunk(state: DocumentState, action: EvictChunkAction): Docu
   const { chunkIndex } = action;
   const chunkBytes = state.pieceTable.chunkMap.get(chunkIndex);
   if (chunkBytes === undefined) return state;
+  if (hasAttentionAnchoredToChunk(state, chunkIndex)) return state;
 
   const range = findPristineChunkRange(state.pieceTable.root, chunkIndex, chunkBytes.length);
   if (range === null || hasAddPieceTouchingRange(state.pieceTable.root, range.start, range.end)) {

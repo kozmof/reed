@@ -80,6 +80,31 @@ export function assertLineIndexInvariants(
   return totals;
 }
 
+/** Assert the strict red-black properties of a line-index tree. */
+export function assertLineIndexRedBlackProperties(
+  root: LineIndexNode | null,
+  context = "line index",
+): void {
+  if (root !== null) {
+    expect(root.color, `${context}: root color`).toBe("black");
+  }
+
+  function visit(node: LineIndexNode | null): number {
+    if (node === null) return 1;
+    if (node.color === "red") {
+      expect(node.left?.color, `${context}: red-left violation`).not.toBe("red");
+      expect(node.right?.color, `${context}: red-right violation`).not.toBe("red");
+    }
+
+    const leftBlackHeight = visit(node.left);
+    const rightBlackHeight = visit(node.right);
+    expect(leftBlackHeight, `${context}: black-height`).toBe(rightBlackHeight);
+    return leftBlackHeight + (node.color === "black" ? 1 : 0);
+  }
+
+  visit(root);
+}
+
 /** Compare an eager document snapshot with a plain-string reference model. */
 export function assertDocumentMatchesModel(
   state: DocumentState<"eager">,

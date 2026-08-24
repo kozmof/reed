@@ -27,6 +27,7 @@ import {
   withState,
   withPieceNode,
   withLineIndexNode,
+  asEagerLineIndex,
 } from "./../core/state.js";
 import { DocumentActions, serializeAction, deserializeAction } from "./actions.js";
 import {
@@ -36,7 +37,7 @@ import {
   validateAction,
 } from "../../types/actions.js";
 import { createDocumentStore, isDocumentStore } from "./store.js";
-import { getLineCountFromIndex } from "./../core/line-index.js";
+import { assertEagerOffsets, getLineCountFromIndex } from "./../core/line-index.js";
 import { byteOffset, byteLength, type ByteOffset } from "../../types/branded.js";
 import type { PieceNode } from "../../types/state.js";
 
@@ -676,6 +677,17 @@ describe("Document Reducer", () => {
       state = documentReducer(state, DocumentActions.undo());
       expect(state.pieceTable.totalLength).toBe(0);
       expect(getLineCountFromIndex(state.lineIndex)).toBe(1);
+    });
+
+    it("keeps eager cached offsets exact after newline-free undo and redo", () => {
+      let state = createInitialState({ content: "one\ntwo\nthree" });
+      state = documentReducer(state, DocumentActions.insert(byteOffset(1), "X"));
+
+      state = documentReducer(state, DocumentActions.undo());
+      expect(() => assertEagerOffsets(asEagerLineIndex(state.lineIndex), 10)).not.toThrow();
+
+      state = documentReducer(state, DocumentActions.redo());
+      expect(() => assertEagerOffsets(asEagerLineIndex(state.lineIndex), 10)).not.toThrow();
     });
 
     it("should update line count after redoing an insert with newlines", () => {

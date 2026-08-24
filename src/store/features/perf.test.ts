@@ -431,11 +431,8 @@ describe("Reconciliation", () => {
     const ITERS = 20;
     const WINDOW = 500;
     const store = createDocumentStore({ content: content_lg });
-    // Touch document to create dirty state. The edit must carry a newline: the
-    // lazy path records no dirty range for an insert that adds none, which
-    // leaves nothing for setViewport to repair (docs/invariants.md 2.3, and the
-    // caveat on `eagerStrategy` in edit.ts). This benchmark used to insert "x"
-    // and so timed an empty call.
+    // Touch the document with a structural edit so viewport reconciliation has
+    // inserted lines as well as downstream offset changes to repair.
     store.dispatch(DocumentActions.insert(byteOffset(0), "a\nb"));
     expectRepairableWindow(store.getSnapshot().lineIndex, "setViewport");
 

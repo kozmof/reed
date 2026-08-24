@@ -673,6 +673,15 @@ describe("restoring into a live store", () => {
 describe("restore rejects untrustworthy payloads", () => {
   const base = createCheckpoint(editedStore().getEagerSnapshot());
 
+  function loadedChunkCheckpoint(): DocumentCheckpoint {
+    let state: DocumentState = createInitialState({ chunkSize: 16 });
+    state = documentReducer(
+      state,
+      DocumentActions.loadChunk(0, textEncoder.encode("sixteen bytes!!\n")),
+    );
+    return createCheckpoint(state as DocumentState<"eager">);
+  }
+
   it("rejects a non-object", () => {
     expect(() => restoreCheckpoint(null as unknown as DocumentCheckpoint)).toThrow(CheckpointError);
     expect(() => restoreCheckpoint(42 as unknown as DocumentCheckpoint)).toThrow(CheckpointError);
@@ -693,6 +702,16 @@ describe("restore rejects untrustworthy payloads", () => {
       base,
       (d) => {
         d.version = 999;
+      },
+      "VERSION_UNSUPPORTED",
+    );
+  });
+
+  it("rejects an older format version without a migration", () => {
+    expectRejection(
+      base,
+      (d) => {
+        d.version = 0;
       },
       "VERSION_UNSUPPORTED",
     );
@@ -949,6 +968,26 @@ describe("restore rejects untrustworthy payloads", () => {
         d.pieceTable.chunks = [];
       },
       "CHUNK_MISSING",
+    );
+  });
+
+  it("rejects duplicate resident chunk entries", () => {
+    expectRejection(
+      loadedChunkCheckpoint(),
+      (d) => {
+        d.pieceTable.chunks.push([...d.pieceTable.chunks[0]!]);
+      },
+      "MALFORMED",
+    );
+  });
+
+  it("rejects a resident chunk missing from loadedChunks", () => {
+    expectRejection(
+      loadedChunkCheckpoint(),
+      (d) => {
+        d.pieceTable.loadedChunks = [];
+      },
+      "MALFORMED",
     );
   });
 

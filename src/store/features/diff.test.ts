@@ -320,10 +320,12 @@ describe("Diff Algorithm", () => {
       expect(actions.length).toBeGreaterThan(0);
     });
 
-    it("should handle 4-byte emoji (surrogate pairs in buildCharToByteMap)", () => {
-      // '😀' = U+1F600 is encoded as surrogate pair 😀 in JS strings
+    it("applies a 4-byte emoji replacement without splitting its surrogate pair", () => {
       const actions = computeSetValueActions("Hello😀World", "Hello😂World");
-      expect(actions.length).toBeGreaterThan(0);
+      expect(actions).toHaveLength(1);
+      const state = createInitialState({ content: "Hello😀World" });
+      const next = setValueWithDiff(state, "Hello😂World");
+      expect(getValue(next.pieceTable)).toBe("Hello😂World");
     });
 
     it("should correctly apply setValueWithDiff for CJK content", () => {

@@ -10,6 +10,7 @@ import { documentReducer } from "./reducer.js";
 import { DocumentActions } from "./actions.js";
 import { createInitialState } from "../core/state.js";
 import { getLineCountFromIndex } from "../core/line-index.js";
+import { byteOffset } from "../../types/branded.js";
 import { textEncoder } from "../core/encoding.js";
 
 describe("DECLARE_CHUNK_METADATA", () => {
@@ -273,5 +274,20 @@ describe("LOAD_CHUNK integrity", () => {
     const state2 = documentReducer(state1, DocumentActions.loadChunk(1, textEncoder.encode("cc")));
     expect(state2.pieceTable.totalLength).toBe(10);
     expect(state2.pieceTable.chunkMap.has(1)).toBe(true);
+  });
+
+  it("refuses to evict a chunk that owns an attention anchor", () => {
+    let state = createInitialState({ chunkSize: 16 });
+    state = documentReducer(
+      state,
+      DocumentActions.loadChunk(0, textEncoder.encode("chunk text\n")),
+    );
+    state = documentReducer(state, DocumentActions.createAttention(byteOffset(0), byteOffset(5)));
+
+    const beforeEviction = state;
+    const afterEviction = documentReducer(state, DocumentActions.evictChunk(0));
+    expect(afterEviction).toBe(beforeEviction);
+    expect(afterEviction.pieceTable.chunkMap.has(0)).toBe(true);
+    expect(afterEviction.attention.attentions.size).toBe(1);
   });
 });

@@ -466,6 +466,21 @@ export function computeSetValueActions(
     return $proveCtx($beginCost("O(n^2)"), []);
   }
 
+  // Myers operates on JavaScript string indices (UTF-16 code units). A diff can
+  // therefore align on only one half of a surrogate pair — for example 😀 and
+  // 😂 share their high surrogate. Converting that interior code-unit boundary
+  // to a UTF-8 byte offset would produce an edit in the middle of a four-byte
+  // sequence and corrupt the document. The optimized single-range strategy
+  // explicitly normalizes surrogate boundaries, so use it whenever either
+  // input contains surrogate code units. This intentionally trades fine-grained
+  // history for byte correctness on astral and malformed-surrogate input.
+  if (containsSurrogateCodeUnit(oldContent) || containsSurrogateCodeUnit(newContent)) {
+    return $proveCtx(
+      $beginCost("O(n^2)"),
+      computeSetValueActionsOptimized(oldContent, newContent) as DocumentAction[],
+    );
+  }
+
   const diffResult = diff(oldContent, newContent);
   const actions: DocumentAction[] = [];
 
@@ -580,6 +595,14 @@ function isLowSurrogate(code: number): boolean {
  */
 function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff;
+}
+
+function containsSurrogateCodeUnit(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (isHighSurrogate(code) || isLowSurrogate(code)) return true;
+  }
+  return false;
 }
 
 /**

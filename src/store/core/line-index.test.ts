@@ -59,6 +59,35 @@ describe("Line Index Operations", () => {
         assertRBLineIndex(rebuilt.root);
       }
     });
+
+    it("preserves balance through repeated small newline deletions", () => {
+      let state: LineIndexState = createLineIndexState(
+        Array.from({ length: 256 }, (_, i) => `L${i}`).join("\n"),
+      );
+
+      for (let i = 0; i < 96; i++) {
+        const lineNumber = (i * 37) % (state.lineCount - 1);
+        const line = findLineByNumber(state.root, lineNumber)!;
+        const start = getLineStartOffset(state.root, lineNumber) + line.lineLength - 1;
+        state = lineIndexDelete(state, byteOffset(start), byteOffset(start + 1), "\n");
+
+        expect(state.root?.color).toBe("black");
+        assertRBLineIndex(state.root);
+        assertEagerOffsets(state, state.lineCount);
+      }
+    });
+
+    it("preserves balance when a large deletion uses the rebuild path", () => {
+      const content = Array.from({ length: 256 }, (_, i) => `L${i}`).join("\n");
+      const state = createLineIndexState(content);
+      const end = getLineStartOffset(state.root, 100);
+      const next = lineIndexDelete(state, byteOffset(0), byteOffset(end), content.slice(0, end));
+
+      expect(next.lineCount).toBe(156);
+      expect(next.root?.color).toBe("black");
+      assertRBLineIndex(next.root);
+      assertEagerOffsets(next, next.lineCount);
+    });
   });
 
   describe("rebuildLineIndex", () => {

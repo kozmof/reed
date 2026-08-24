@@ -2,9 +2,9 @@
 
 ## 1. Latest Verified Run
 
-- Date: 2026-08-22
+- Date: 2026-08-24
 - Functional command: `pnpm test`
-- Functional result: `26` test files, `1096` tests passed
+- Functional result: `27` test files, `1111` tests passed
 - Perf command: `pnpm test:perf`
 - Perf result: `1` test file, `34` tests passed
 
@@ -83,10 +83,10 @@ index. Building it surfaced and fixed two real correctness defects:
   cases that require it), so evicting a chunk whose boundary split a `\r\n` pair left
   the line index reporting the wrong line count until reload.
 
-The randomized streaming stress suite asserts ordering and subtree aggregates after
-every reconciled step. Strict red-black balance is not guaranteed by lazy deletion,
-so line-index lookup complexity is expressed as O(tree height), with O(log n)
-expected for balanced trees.
+The randomized streaming stress suite asserts ordering, subtree aggregates, and
+strict red-black balance after every reconciled step. Dedicated deletion tests
+cover both persistent deletion and the large-range rebuild path. Line-index
+lookups remain O(log n).
 
 ## 5. Guidance for Spec-Driven Testing
 

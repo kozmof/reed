@@ -16,7 +16,7 @@
 export const CHECKPOINT_FORMAT = "reed-checkpoint";
 export type CheckpointFormat = typeof CHECKPOINT_FORMAT;
 
-/** Current checkpoint format version. Restore rejects anything newer. */
+/** Current checkpoint format version. Restore accepts only this version. */
 export const CHECKPOINT_VERSION = 1;
 
 /**
@@ -213,7 +213,7 @@ export interface CheckpointOptions {
 export type CheckpointErrorCode =
   /** Value is not an object, or its `format` field is not `'reed-checkpoint'`. */
   | "NOT_A_CHECKPOINT"
-  /** Written by a newer Reed than the one restoring it. */
+  /** The checkpoint version is not supported by this build. */
   | "VERSION_UNSUPPORTED"
   /** A required field is missing or has the wrong runtime type. */
   | "MALFORMED"

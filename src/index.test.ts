@@ -62,4 +62,16 @@ describe("public package entry point", () => {
     expect(store.didEvict(beforeEviction, afterEviction, 0)).toBe(true);
     chunkStore.dispose();
   });
+
+  it("validates untrusted actions and replaces a live store value", () => {
+    const documentStore = store.createDocumentStore({ content: "Hello😀World" });
+    expect(() =>
+      store.dispatchValidated(documentStore, { type: "INSERT", start: 0.5, text: "x" }),
+    ).toThrow(/integer/);
+
+    const next = store.setValue(documentStore, "Hello😂World", { strategy: "diff" });
+    expect(next).toBe(documentStore.getSnapshot());
+    expect(scan.getValue(next.pieceTable)).toBe("Hello😂World");
+    documentStore.dispose();
+  });
 });

@@ -120,6 +120,8 @@ Modes: `'idle'`, `'sync'`, `'none'`.
 
 - `store.withTransaction(store, fn)`
 - `store.isDocumentStore(value)`
+- `store.dispatchValidated(store, value)`
+- `store.setValue(store, newContent, options?)`
 - `store.DocumentActions`
 - `store.serializeAction` / `store.deserializeAction`
 - `store.unsafe.documentReducer`
@@ -155,7 +157,7 @@ Note:
 
 ### 4.1 Query namespace (`query`)
 
-Primary selector namespace for O(1)/O(tree height)/bounded operations:
+Primary selector namespace for O(1)/O(log n)/bounded operations:
 
 - `getText`, `getLength`, `getBufferStats`
 - `findPieceAtPosition`

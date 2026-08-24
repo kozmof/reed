@@ -1,5 +1,5 @@
 /**
- * Query namespace — O(1), O(tree height), and bounded linear operations.
+ * Query namespace — O(1), O(log n), and bounded linear operations.
  * Functions here are read-only selectors over immutable document state.
  * For O(n) traversals see `scan.*`. For rendering utilities see `rendering.*`.
  */

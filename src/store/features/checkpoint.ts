@@ -481,35 +481,108 @@ function restorePieceTable(raw: unknown): {
   const source = readObject(raw, "pieceTable");
   const originalBuffer = readBytes(source.originalBuffer, "pieceTable.originalBuffer");
   const addBytes = readBytes(source.addBuffer, "pieceTable.addBuffer");
+  const chunkSize = readCount(source.chunkSize, "pieceTable.chunkSize");
+  const nextExpectedChunk = readCount(source.nextExpectedChunk, "pieceTable.nextExpectedChunk");
+  const totalFileSize = readCount(source.totalFileSize, "pieceTable.totalFileSize");
+  const expectedChunkCount =
+    chunkSize > 0 && totalFileSize > 0 ? Math.ceil(totalFileSize / chunkSize) : undefined;
 
   const chunkMap = new Map<number, Uint8Array>();
   const rawChunks = readArray(source.chunks, "pieceTable.chunks");
+  let lastChunkIndex = -1;
   for (let i = 0; i < rawChunks.length; i++) {
     const what = `pieceTable.chunks[${i}]`;
     const tuple = readArray(rawChunks[i], what);
-    chunkMap.set(readCount(tuple[0], `${what}[0]`), readBytes(tuple[1], `${what}[1]`));
+    const chunkIndex = readCount(tuple[0], `${what}[0]`);
+    if (chunkIndex <= lastChunkIndex) {
+      fail("MALFORMED", `${what}[0] must be unique and strictly ascending`);
+    }
+    const bytes = readBytes(tuple[1], `${what}[1]`);
+    if (chunkSize === 0 || bytes.length === 0 || bytes.length > chunkSize) {
+      fail("MALFORMED", `${what} has ${bytes.length} bytes but chunkSize is ${chunkSize}`);
+    }
+    if (expectedChunkCount !== undefined) {
+      const expectedLength = Math.min(chunkSize, totalFileSize - chunkIndex * chunkSize);
+      if (chunkIndex >= expectedChunkCount || bytes.length !== expectedLength) {
+        fail("MALFORMED", `${what} is incompatible with the declared file geometry`);
+      }
+    }
+    chunkMap.set(chunkIndex, bytes);
+    lastChunkIndex = chunkIndex;
   }
 
   const chunkMetadata = new Map<number, ChunkMetadata>();
   const rawMetadata = readArray(source.chunkMetadata, "pieceTable.chunkMetadata");
+  let lastMetadataIndex = -1;
   for (let i = 0; i < rawMetadata.length; i++) {
     const what = `pieceTable.chunkMetadata[${i}]`;
     const tuple = readArray(rawMetadata[i], what);
     const chunkIndex = readCount(tuple[0], `${what}[0]`);
+    const byteLengthValue = readCount(tuple[1], `${what}[1]`);
+    const lineCount = readCount(tuple[2], `${what}[2]`);
+    if (chunkIndex <= lastMetadataIndex) {
+      fail("MALFORMED", `${what}[0] must be unique and strictly ascending`);
+    }
+    if (chunkSize === 0 || byteLengthValue === 0 || byteLengthValue > chunkSize) {
+      fail("MALFORMED", `${what}[1] is incompatible with chunkSize ${chunkSize}`);
+    }
+    if (expectedChunkCount !== undefined) {
+      const expectedLength = Math.min(chunkSize, totalFileSize - chunkIndex * chunkSize);
+      if (chunkIndex >= expectedChunkCount || byteLengthValue !== expectedLength) {
+        fail("MALFORMED", `${what} is incompatible with the declared file geometry`);
+      }
+    }
     chunkMetadata.set(
       chunkIndex,
-      Object.freeze({
-        chunkIndex,
-        byteLength: readCount(tuple[1], `${what}[1]`),
-        lineCount: readCount(tuple[2], `${what}[2]`),
-      }),
+      Object.freeze({ chunkIndex, byteLength: byteLengthValue, lineCount }),
     );
+    lastMetadataIndex = chunkIndex;
   }
 
   const loadedChunks = new Set<number>();
   const rawLoaded = readArray(source.loadedChunks, "pieceTable.loadedChunks");
+  let lastLoadedIndex = -1;
   for (let i = 0; i < rawLoaded.length; i++) {
-    loadedChunks.add(readCount(rawLoaded[i], `pieceTable.loadedChunks[${i}]`));
+    const chunkIndex = readCount(rawLoaded[i], `pieceTable.loadedChunks[${i}]`);
+    if (chunkIndex <= lastLoadedIndex) {
+      fail("MALFORMED", `pieceTable.loadedChunks[${i}] must be unique and strictly ascending`);
+    }
+    if (chunkSize === 0 || (expectedChunkCount !== undefined && chunkIndex >= expectedChunkCount)) {
+      fail("MALFORMED", `pieceTable.loadedChunks[${i}] is outside the declared chunk geometry`);
+    }
+    loadedChunks.add(chunkIndex);
+    lastLoadedIndex = chunkIndex;
+  }
+
+  if (
+    chunkSize === 0 &&
+    (chunkMap.size > 0 ||
+      chunkMetadata.size > 0 ||
+      loadedChunks.size > 0 ||
+      nextExpectedChunk !== 0)
+  ) {
+    fail("MALFORMED", "non-chunked checkpoints cannot carry chunk runtime state");
+  }
+
+  for (const chunkIndex of chunkMap.keys()) {
+    if (!loadedChunks.has(chunkIndex)) {
+      fail(
+        "MALFORMED",
+        `pieceTable.chunks contains ${chunkIndex} but loadedChunks does not record it`,
+      );
+    }
+    const metadata = chunkMetadata.get(chunkIndex);
+    if (metadata !== undefined && metadata.byteLength !== chunkMap.get(chunkIndex)!.length) {
+      fail("MALFORMED", `chunk ${chunkIndex} disagrees with its declared byteLength`);
+    }
+  }
+
+  const expectedNextChunk = loadedChunks.size === 0 ? 0 : lastLoadedIndex + 1;
+  if (nextExpectedChunk !== expectedNextChunk) {
+    fail(
+      "MALFORMED",
+      `pieceTable.nextExpectedChunk is ${nextExpectedChunk} but loadedChunks requires ${expectedNextChunk}`,
+    );
   }
 
   const { pieces, totalLength, lengthByID } = restorePieces(
@@ -548,11 +621,11 @@ function restorePieceTable(raw: unknown): {
     addBuffer: new GrowableBuffer(addBytes, addBytes.length),
     totalLength,
     chunkMap: readonlyChunkMap,
-    chunkSize: readCount(source.chunkSize, "pieceTable.chunkSize"),
-    nextExpectedChunk: readCount(source.nextExpectedChunk, "pieceTable.nextExpectedChunk"),
+    chunkSize,
+    nextExpectedChunk,
     loadedChunks,
     chunkMetadata,
-    totalFileSize: readCount(source.totalFileSize, "pieceTable.totalFileSize"),
+    totalFileSize,
   });
 
   return { pieceTable, lengthByID };
@@ -593,12 +666,18 @@ function restoreLineIndex(
   const unloadedLineCountsByChunk = new Map<number, number>();
   let unloadedLineCount = 0;
   const rawUnloaded = readArray(source.unloadedLineCounts, "lineIndex.unloadedLineCounts");
+  let lastUnloadedIndex = -1;
   for (let i = 0; i < rawUnloaded.length; i++) {
     const what = `lineIndex.unloadedLineCounts[${i}]`;
     const tuple = readArray(rawUnloaded[i], what);
+    const chunkIndex = readCount(tuple[0], `${what}[0]`);
     const count = readCount(tuple[1], `${what}[1]`);
-    unloadedLineCountsByChunk.set(readCount(tuple[0], `${what}[0]`), count);
+    if (chunkIndex <= lastUnloadedIndex) {
+      fail("MALFORMED", `${what}[0] must be unique and strictly ascending`);
+    }
+    unloadedLineCountsByChunk.set(chunkIndex, count);
     unloadedLineCount += count;
+    lastUnloadedIndex = chunkIndex;
   }
 
   const maxDirtyRanges = readCount(source.maxDirtyRanges, "lineIndex.maxDirtyRanges");
@@ -819,7 +898,7 @@ export function isCheckpoint(value: unknown): value is DocumentCheckpoint {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const candidate = value as Record<string, unknown>;
   if (candidate.format !== CHECKPOINT_FORMAT) return false;
-  if (typeof candidate.version !== "number" || candidate.version > CHECKPOINT_VERSION) return false;
+  if (candidate.version !== CHECKPOINT_VERSION) return false;
   return (
     typeof candidate.pieceTable === "object" &&
     typeof candidate.lineIndex === "object" &&
@@ -830,6 +909,31 @@ export function isCheckpoint(value: unknown): value is DocumentCheckpoint {
   );
 }
 
+function validateChunkLineIndex(
+  pieceTable: PieceTableState,
+  lineIndex: LineIndexState<"eager">,
+): void {
+  if (pieceTable.chunkSize === 0 && lineIndex.unloadedLineCountsByChunk.size > 0) {
+    fail("MALFORMED", "non-chunked checkpoints cannot carry unloaded chunk line counts");
+  }
+
+  for (const [chunkIndex, metadata] of pieceTable.chunkMetadata) {
+    const unloadedCount = lineIndex.unloadedLineCountsByChunk.get(chunkIndex);
+    if (pieceTable.chunkMap.has(chunkIndex)) {
+      if (unloadedCount !== undefined) {
+        fail("MALFORMED", `resident chunk ${chunkIndex} cannot also be counted as unloaded`);
+      }
+    } else if (unloadedCount !== metadata.lineCount) {
+      fail("MALFORMED", `unloaded line count for chunk ${chunkIndex} disagrees with metadata`);
+    }
+  }
+
+  for (const chunkIndex of lineIndex.unloadedLineCountsByChunk.keys()) {
+    if (!pieceTable.chunkMetadata.has(chunkIndex)) {
+      fail("MALFORMED", `lineIndex.unloadedLineCounts names chunk ${chunkIndex} without metadata`);
+    }
+  }
+}
 /**
  * Rebuild a document state from a checkpoint.
  *
@@ -855,22 +959,24 @@ export function restoreCheckpoint(checkpoint: DocumentCheckpoint): DocumentState
     );
   }
   const version = readCount(source.version, "checkpoint.version");
-  if (version > CHECKPOINT_VERSION) {
+  if (version !== CHECKPOINT_VERSION) {
     fail(
       "VERSION_UNSUPPORTED",
-      `checkpoint version ${version} was written by a newer Reed; this build reads up to version ${CHECKPOINT_VERSION}`,
+      `checkpoint version ${version} is unsupported; this build reads version ${CHECKPOINT_VERSION}`,
     );
   }
   readEnum(source.mode, ["exact", "normalized"] as const, "checkpoint.mode");
 
   const revision = readCount(source.revision, "checkpoint.revision");
   const { pieceTable, lengthByID } = restorePieceTable(source.pieceTable);
+  const lineIndex = restoreLineIndex(source.lineIndex, pieceTable.totalLength, revision);
+  validateChunkLineIndex(pieceTable, lineIndex);
 
   return Object.freeze({
     revision,
     selectionRevision: readCount(source.selectionRevision, "checkpoint.selectionRevision"),
     pieceTable,
-    lineIndex: restoreLineIndex(source.lineIndex, pieceTable.totalLength, revision),
+    lineIndex,
     selection: restoreSelection(source.selection, "selection", pieceTable.totalLength),
     history: restoreHistory(source.history),
     metadata: restoreMetadata(source.metadata),

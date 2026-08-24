@@ -3,6 +3,8 @@
  */
 
 import type { DocumentState } from "../types/state.js";
+import type { DocumentAction } from "../types/actions.js";
+import type { DocumentStore } from "../types/store.js";
 import {
   createDocumentStore,
   createDocumentStoreWithEvents,
@@ -53,6 +55,11 @@ import {
   isDocumentAction,
   validateAction,
 } from "../types/actions.js";
+import {
+  computeSetValueActionsFromState,
+  computeSetValueActionsFromStateWithDiff,
+  type SetValueOptions,
+} from "../store/features/diff.js";
 
 export const store = {
   // Store lifecycle
@@ -67,6 +74,10 @@ export const store = {
   DocumentActions,
   serializeAction,
   deserializeAction,
+
+  // Safe boundaries and live-store helpers
+  dispatchValidated,
+  setValue: setStoreValue,
 
   // Type guards
   isTextEditAction,
@@ -129,6 +140,37 @@ export const store = {
     getPieceBuffer,
   },
 } as const;
+
+/**
+ * Validate unknown JSON, plugin, worker, or network input before dispatch.
+ * Direct `dispatch` remains the zero-overhead trusted TypeScript boundary.
+ */
+function dispatchValidated(documentStore: DocumentStore, value: unknown): DocumentState {
+  const validation = validateAction(value, documentStore.getSnapshot().pieceTable.totalLength);
+  if (!validation.valid) {
+    throw new TypeError(`Invalid document action: ${validation.errors.join("; ")}`);
+  }
+  return documentStore.dispatch(value as DocumentAction);
+}
+
+/**
+ * Replace a live store value while preserving notifications, events, and rollback semantics.
+ */
+function setStoreValue(
+  documentStore: DocumentStore,
+  newContent: string,
+  options?: SetValueOptions,
+): DocumentState {
+  if (typeof newContent !== "string") {
+    throw new TypeError("store.setValue: newContent must be a string");
+  }
+  const pieceTable = documentStore.getSnapshot().pieceTable;
+  const actions =
+    options?.strategy === "diff"
+      ? computeSetValueActionsFromStateWithDiff(pieceTable, newContent)
+      : computeSetValueActionsFromState(pieceTable, newContent);
+  return documentStore.batch(actions);
+}
 
 /**
  * Returns true if dispatching EVICT_CHUNK for `chunkIndex` successfully removed
