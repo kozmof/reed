@@ -6,12 +6,12 @@ Reed supplies the document state, viewport reads, selection model, and edit hist
 
 Most editors begin with four namespaces.
 
-| Namespace | Responsibility |
-| --- | --- |
-| `store` | Document lifecycle and edit actions |
-| `query` | Fast state and line queries |
+| Namespace   | Responsibility                        |
+| ----------- | ------------------------------------- |
+| `store`     | Document lifecycle and edit actions   |
+| `query`     | Fast state and line queries           |
 | `rendering` | Visible lines and position conversion |
-| `history` | Undo and redo availability |
+| `history`   | Undo and redo availability            |
 
 Add `attention`, streaming, checkpoints, collaboration, and diff support only when the application needs them.
 
@@ -66,10 +66,7 @@ Convert at the UI boundary.
 import { position, rendering } from "@kozmof/reed";
 
 const documentPosition = rendering.lineColumnToPosition(snapshot, line, column);
-const location = rendering.positionToLineColumn(
-  snapshot,
-  position.byteOffset(bytePosition),
-);
+const location = rendering.positionToLineColumn(snapshot, position.byteOffset(bytePosition));
 
 const selection = position.selectionRange(charAnchor, charHead, snapshot);
 ```
@@ -87,24 +84,18 @@ const caret = position.byteOffset(5);
 const previousByte = position.byteOffset(4);
 
 // Backspace deletes [4, 5) and records the pre-edit caret at 5.
-doc.dispatch(
-  store.DocumentActions.delete(
-    previousByte,
-    caret,
-    [{ anchor: caret, head: caret }],
-  ),
-);
+doc.dispatch(store.DocumentActions.delete(previousByte, caret, [{ anchor: caret, head: caret }]));
 ```
 
 The caret contract is shown below.
 
-| Edit | Recorded selection head | After undo | After redo |
-| --- | ---: | ---: | ---: |
-| Insert `"!!!"` at 11 | 11 | 11 | 14 |
-| Insert without a selection | none | 0 | 14 |
-| Forward delete `[4, 5)` | 4 | 4 | 4 |
-| Backspace delete `[4, 5)` | 5 | 5 | 4 |
-| Replace `[0, 5)` with `"HI"` | 0 | 0 | 2 |
+| Edit                         | Recorded selection head | After undo | After redo |
+| ---------------------------- | ----------------------: | ---------: | ---------: |
+| Insert `"!!!"` at 11         |                      11 |         11 |         14 |
+| Insert without a selection   |                    none |          0 |         14 |
+| Forward delete `[4, 5)`      |                       4 |          4 |          4 |
+| Backspace delete `[4, 5)`    |                       5 |          5 |          4 |
+| Replace `[0, 5)` with `"HI"` |                       0 |          0 |          2 |
 
 After an ordinary input event, update the UI caret from that input operation. After undo or redo, read the restored selection from the returned snapshot.
 
