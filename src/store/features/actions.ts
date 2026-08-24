@@ -30,10 +30,15 @@ import { asReadonlyUint8Array } from "../core/runtime-readonly.js";
 import { encodeBase64, decodeBase64 } from "../core/base64.js";
 
 function freezeSelection(
-  selection: readonly SelectionRange[] | undefined,
-): readonly SelectionRange[] | undefined {
+  selection: NonEmptyReadonlyArray<SelectionRange> | undefined,
+): NonEmptyReadonlyArray<SelectionRange> | undefined {
   if (selection === undefined) return undefined;
-  return Object.freeze(selection.map((range) => Object.freeze({ ...range })));
+  if (selection.length === 0) {
+    throw new TypeError("Selection ranges must be non-empty");
+  }
+  return Object.freeze(
+    selection.map((range) => Object.freeze({ ...range })),
+  ) as unknown as NonEmptyReadonlyArray<SelectionRange>;
 }
 
 function freezeRemoteChanges(changes: readonly RemoteChange[]): readonly RemoteChange[] {
@@ -106,7 +111,7 @@ export const DocumentActions = {
   insert(
     start: ByteOffset,
     text: string,
-    selection?: readonly SelectionRange[],
+    selection?: NonEmptyReadonlyArray<SelectionRange>,
     timestamp: number = Date.now(),
   ): InsertAction {
     const frozenSelection = freezeSelection(selection);
@@ -127,7 +132,7 @@ export const DocumentActions = {
   delete(
     start: ByteOffset,
     end: ByteOffset,
-    selection?: readonly SelectionRange[],
+    selection?: NonEmptyReadonlyArray<SelectionRange>,
     timestamp: number = Date.now(),
   ): DeleteAction {
     const frozenSelection = freezeSelection(selection);
@@ -150,7 +155,7 @@ export const DocumentActions = {
     start: ByteOffset,
     end: ByteOffset,
     text: string,
-    selection?: readonly SelectionRange[],
+    selection?: NonEmptyReadonlyArray<SelectionRange>,
     timestamp: number = Date.now(),
   ): ReplaceAction {
     const frozenSelection = freezeSelection(selection);
@@ -223,7 +228,7 @@ export const DocumentActions = {
     rollbackStart: ByteOffset,
     rollbackEnd: ByteOffset,
     composedText: string,
-    selection?: readonly SelectionRange[],
+    selection?: NonEmptyReadonlyArray<SelectionRange>,
   ): ReplaceAction {
     return DocumentActions.replace(rollbackStart, rollbackEnd, composedText, selection);
   },

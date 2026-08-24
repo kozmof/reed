@@ -552,7 +552,7 @@ export type EditOperation =
       readonly position: ByteOffset;
       readonly insertText: string;
       readonly timestamp?: number | undefined;
-      readonly selection?: readonly SelectionRange[] | undefined;
+      readonly selection?: NonEmptyReadonlyArray<SelectionRange> | undefined;
     }
   | {
       readonly kind: "delete";
@@ -560,7 +560,7 @@ export type EditOperation =
       readonly deleteEnd: ByteOffset;
       readonly deletedText: string;
       readonly timestamp?: number | undefined;
-      readonly selection?: readonly SelectionRange[] | undefined;
+      readonly selection?: NonEmptyReadonlyArray<SelectionRange> | undefined;
     }
   | {
       readonly kind: "replace";
@@ -569,7 +569,7 @@ export type EditOperation =
       readonly deletedText: string;
       readonly insertText: string;
       readonly timestamp?: number | undefined;
-      readonly selection?: readonly SelectionRange[] | undefined;
+      readonly selection?: NonEmptyReadonlyArray<SelectionRange> | undefined;
     };
 
 /**
@@ -581,6 +581,11 @@ export type EditOperation =
  * 5. Mark dirty + increment revision
  */
 export function applyEdit(state: DocumentState, op: EditOperation): DocumentState {
+  // Keep the state invariant intact for JavaScript callers or forged actions that
+  // bypass the typed action creators and dispatchValidated boundary.
+  if (op.selection?.length === 0) {
+    throw new TypeError("Edit selection ranges must be non-empty");
+  }
   const nextRevision = state.revision + 1;
   const strategy = lazyStrategy(nextRevision);
   let newState: DocumentState = state;

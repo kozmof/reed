@@ -46,6 +46,7 @@
     "fmt:check": "oxfmt --check",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
+    "check": "pnpm fmt:check && pnpm lint && pnpm coverage && pnpm test:perf && pnpm build",
     "pack:home": "pnpm pack --pack-destination ~",
     "pack:check": "pnpm pack:home && pnpm pack:check-compare",
     "preflight": "pnpm publish --dry-run",

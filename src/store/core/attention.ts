@@ -544,6 +544,9 @@ export function migrateDelete(
   end: number,
 ): NLogNCost<AttentionLayerState> {
   if (start >= end) return $proveCtx($beginCost("O(n log n)"), state);
+  // Attention is optional for the common editor path. Avoid an otherwise
+  // unnecessary full piece-tree index when there are no points to migrate.
+  if (state.attentions.size === 0) return $proveCtx($beginCost("O(n log n)"), state);
 
   const oldIndex = buildPieceOffsetIndex(oldRoot);
   const deletedLength = end - start;

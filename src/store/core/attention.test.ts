@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import { byteOffset, pieceID, attentionID } from "../../types/branded.js";
+import type { PieceNode } from "../../types/state.js";
 import { createPieceTableState, createEmptyPieceTableState } from "./state.js";
 import { pieceTableInsert, pieceTableDelete } from "./piece-table.js";
 import {
@@ -639,5 +640,17 @@ describe("migrateDelete", () => {
     const pt = createPoint(s0.root, byteOffset(1))!;
     const [layer] = createAttention(emptyAttentionLayerState, pt, pt);
     expect(migrateDelete(layer, s0.root, s0.root, 3, 3)).toBe(layer);
+  });
+
+  it("does not inspect either piece tree when the attention layer is empty", () => {
+    const unreadableRoot = new Proxy({} as PieceNode, {
+      get() {
+        throw new Error("piece tree should not be read");
+      },
+    });
+
+    expect(migrateDelete(emptyAttentionLayerState, unreadableRoot, unreadableRoot, 0, 1)).toBe(
+      emptyAttentionLayerState,
+    );
   });
 });

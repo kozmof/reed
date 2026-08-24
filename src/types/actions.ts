@@ -29,7 +29,7 @@ export interface InsertAction {
    * Use this to pass the logical cursor position inline, eliminating the need for a
    * separate setSelection dispatch before every edit.
    */
-  readonly selection?: readonly SelectionRange[];
+  readonly selection?: NonEmptyReadonlyArray<SelectionRange>;
 }
 
 /**
@@ -48,7 +48,7 @@ export interface DeleteAction {
    * Use this to pass the logical cursor position inline, eliminating the need for a
    * separate setSelection dispatch before every edit.
    */
-  readonly selection?: readonly SelectionRange[];
+  readonly selection?: NonEmptyReadonlyArray<SelectionRange>;
 }
 
 /**
@@ -69,7 +69,7 @@ export interface ReplaceAction {
    * Use this to pass the logical cursor position inline, eliminating the need for a
    * separate setSelection dispatch before every edit.
    */
-  readonly selection?: readonly SelectionRange[];
+  readonly selection?: NonEmptyReadonlyArray<SelectionRange>;
 }
 
 // =============================================================================

@@ -8,6 +8,8 @@ import { describe, it, expect } from "vitest";
 import { DocumentActions, serializeAction, deserializeAction } from "./actions.js";
 import { byteOffset, attentionID } from "../../types/branded.js";
 import type { DocumentAction } from "../../types/actions.js";
+import type { SelectionRange } from "../../types/state.js";
+import type { NonEmptyReadonlyArray } from "../../types/utils.js";
 
 // =============================================================================
 // Round-trip tests
@@ -94,7 +96,7 @@ describe("serializeAction / deserializeAction", () => {
 
   describe("DocumentActions immutability", () => {
     it("snapshots and freezes selection payloads", () => {
-      const selection = [{ anchor: byteOffset(0), head: byteOffset(5) }];
+      const selection = [{ anchor: byteOffset(0), head: byteOffset(5) }] satisfies [SelectionRange];
       const action = DocumentActions.insert(byteOffset(0), "x", selection);
 
       selection[0]!.head = byteOffset(9);
@@ -106,6 +108,20 @@ describe("serializeAction / deserializeAction", () => {
         () =>
           ((action.selection as unknown as Array<{ anchor: number; head: number }>)[0]!.head = 1),
       ).toThrow(TypeError);
+    });
+
+    it("rejects empty inline selections at runtime", () => {
+      const empty = [] as unknown as NonEmptyReadonlyArray<SelectionRange>;
+      const factories = [
+        () => DocumentActions.insert(byteOffset(0), "x", empty),
+        () => DocumentActions.delete(byteOffset(0), byteOffset(1), empty),
+        () => DocumentActions.replace(byteOffset(0), byteOffset(1), "x", empty),
+        () => DocumentActions.insertComposed(byteOffset(0), byteOffset(1), "x", empty),
+      ];
+
+      for (const create of factories) {
+        expect(create).toThrow(new TypeError("Selection ranges must be non-empty"));
+      }
     });
 
     it("snapshots and freezes remote changes", () => {
@@ -268,7 +284,7 @@ describe("serializeAction / deserializeAction", () => {
     });
 
     it("passes selection through to the REPLACE action", () => {
-      const selection = [{ anchor: byteOffset(0), head: byteOffset(5) }];
+      const selection = [{ anchor: byteOffset(0), head: byteOffset(5) }] satisfies [SelectionRange];
       const action = DocumentActions.insertComposed(
         byteOffset(1),
         byteOffset(4),

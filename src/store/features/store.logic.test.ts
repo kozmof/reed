@@ -36,6 +36,7 @@ import {
   isDocumentAction,
   validateAction,
 } from "../../types/actions.js";
+import type { DocumentAction } from "../../types/actions.js";
 import { createDocumentStore, isDocumentStore } from "./store.js";
 import { assertEagerOffsets, getLineCountFromIndex } from "./../core/line-index.js";
 import { byteOffset, byteLength, type ByteOffset } from "../../types/branded.js";
@@ -514,6 +515,22 @@ describe("Document Reducer", () => {
       const entry = pstackPeek(newState.history.undoStack)!;
       expect(entry.selectionBefore.ranges[0].anchor).toBe(5);
       expect(entry.selectionBefore.ranges[0].head).toBe(2);
+    });
+
+    it("rejects a forged empty inline selection before changing state", () => {
+      const state = createInitialState({ content: "Hello" });
+      const forgedAction = {
+        type: "INSERT",
+        start: byteOffset(5),
+        text: "!",
+        selection: [],
+      } as unknown as DocumentAction;
+
+      expect(() => documentReducer(state, forgedAction)).toThrow(
+        new TypeError("Edit selection ranges must be non-empty"),
+      );
+      expect(state.pieceTable.totalLength).toBe(5);
+      expect(state.selection.ranges).toHaveLength(1);
     });
   });
 
