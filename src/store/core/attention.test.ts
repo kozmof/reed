@@ -15,6 +15,7 @@ import {
   deleteAttention,
   getAttention,
   resolveAttention,
+  resolveAllAttentions,
   getTextForAttention,
   findAttentionsAt,
   findAttentionsOverlapping,
@@ -225,6 +226,24 @@ describe("resolveAttention", () => {
     const resolved = resolveAttention(s1.root, layer0, id);
     expect(resolved!.startOffset).toBe(1);
     expect(resolved!.endOffset).toBe(3);
+  });
+
+  it("resolves all attentions with the bulk selector", () => {
+    const state = createPieceTableState("abcdefgh");
+    const p1 = createPoint(state.root, byteOffset(1))!;
+    const p3 = createPoint(state.root, byteOffset(3))!;
+    const p5 = createPoint(state.root, byteOffset(5))!;
+    const [layer1, id1] = createAttention(emptyAttentionLayerState, p1, p3);
+    const [layer2, id2] = createAttention(layer1, p3, p5);
+
+    const resolved = resolveAllAttentions(state.root, layer2);
+
+    expect(resolved.get(id1)).toEqual({ startOffset: 1, endOffset: 3 });
+    expect(resolved.get(id2)).toEqual({ startOffset: 3, endOffset: 5 });
+    expect(Object.isFrozen(resolved)).toBe(true);
+    expect(() =>
+      (resolved as unknown as Map<typeof id1, { startOffset: number; endOffset: number }>).clear(),
+    ).toThrow();
   });
 });
 

@@ -227,17 +227,17 @@ export function rawCharOffset(o: CharOffset): number {
 // =============================================================================
 
 /**
- * Check if a value is a valid offset (non-negative integer).
+ * Check if a value is a valid offset (non-negative safe integer).
  */
 export function isValidOffset(value: number): boolean {
-  return Number.isInteger(value) && value >= 0;
+  return Number.isSafeInteger(value) && value >= 0;
 }
 
 /**
- * Check if a value is a valid line number (non-negative integer).
+ * Check if a value is a valid line number (non-negative safe integer).
  */
 export function isValidLineNumber(value: number): boolean {
-  return Number.isInteger(value) && value >= 0;
+  return Number.isSafeInteger(value) && value >= 0;
 }
 
 // =============================================================================
@@ -246,10 +246,10 @@ export function isValidLineNumber(value: number): boolean {
 
 /**
  * Add a delta to a ByteOffset.
- * Preserves the brand type.
+ * Preserves the brand type and rejects invalid arithmetic results.
  */
 export function addByteOffset(offset: ByteOffset, delta: number): ByteOffset {
-  return (offset + delta) as ByteOffset;
+  return byteOffset(offset + delta);
 }
 
 /**
@@ -261,10 +261,10 @@ export function diffByteOffset(a: ByteOffset, b: ByteOffset): number {
 
 /**
  * Add a delta to a CharOffset.
- * Preserves the brand type.
+ * Preserves the brand type and rejects invalid arithmetic results.
  */
 export function addCharOffset(offset: CharOffset, delta: number): CharOffset {
-  return (offset + delta) as CharOffset;
+  return charOffset(offset + delta);
 }
 
 /**

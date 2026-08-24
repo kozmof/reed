@@ -53,6 +53,14 @@ Chunk pieces are ordered by `chunkIndex` in in-order traversal. This ensures
 that `findReloadInsertionPos` (an O(n) walk) can locate the correct insertion
 point for re-loaded chunks.
 
+### 1.5 UTF-8 boundaries
+
+Every edit range, stored selection, and store-managed attention endpoint must fall on a UTF-8 code-point boundary. The reducer checks these positions before changing state. `query.getText` applies the same rule to bounded public reads.
+
+Use `query.isUtf8Boundary` when a byte position comes from an external source. Rendering conversions return `null` or throw `RangeError` when a byte position splits an encoded code point.
+
+Low-level piece-table and caller-owned attention helpers operate on trusted positions. Validate their offsets at the public boundary before calling them.
+
 ---
 
 ## 2. Line Index Invariants

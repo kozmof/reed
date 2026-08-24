@@ -61,7 +61,7 @@ import {
   type SetValueOptions,
 } from "../store/features/diff.js";
 
-export const store = {
+export const store = Object.freeze({
   // Store lifecycle
   createDocumentStore,
   createDocumentStoreWithEvents,
@@ -93,7 +93,7 @@ export const store = {
    * Prefer the store lifecycle, action creators, query, scan, rendering, history,
    * and diff namespaces for application code.
    */
-  unsafe: {
+  unsafe: Object.freeze({
     // Reducer
     documentReducer,
 
@@ -138,8 +138,8 @@ export const store = {
     getBuffer,
     getBufferSlice,
     getPieceBuffer,
-  },
-} as const;
+  }),
+} as const);
 
 /**
  * Validate unknown JSON, plugin, worker, or network input before dispatch.

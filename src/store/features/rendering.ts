@@ -22,12 +22,14 @@ import {
 } from "../../types/cost-doc.js";
 import {
   findLineAtPosition,
+  findLineByNumber,
   getCharStartOffset,
   findLineAtCharPosition,
   getLineRangePrecise,
   getLineCountFromIndex,
+  getResidentLineCountFromIndex,
 } from "../core/line-index.js";
-import { getText, charToByteOffset } from "../core/piece-table.js";
+import { getText, charToByteOffset, isUtf8Boundary } from "../core/piece-table.js";
 import { textEncoder } from "../core/encoding.js";
 
 // =============================================================================
@@ -72,8 +74,14 @@ export interface VisibleLinesResult {
   readonly firstLine: number;
   /** Last line number in the result (inclusive) */
   readonly lastLine: number;
-  /** Total number of lines in the document */
+  /** Expected total, including metadata for unloaded chunks. */
   readonly totalLines: number;
+  /** Lines represented by the current resident piece/line trees. */
+  readonly residentLineCount: number;
+  /** Whether all declared chunk lines are resident. */
+  readonly isComplete: boolean;
+  /** `lines[*].lineNumber`, `firstLine`, and `lastLine` use resident coordinates. */
+  readonly coordinateSpace: "resident";
 }
 
 /**
@@ -217,22 +225,46 @@ export function getVisibleLines(
 ): LinearCost<VisibleLinesResult> {
   const { startLine, visibleLineCount, overscan = 5 } = config;
   const totalLines = getLineCountFromIndex(state.lineIndex);
+  const residentLineCount = state.lineIndex.lineCount;
 
-  // Calculate actual range with overscan
-  // startLine to startLine + visibleLineCount - 1 gives visibleLineCount lines
+  // Rendering coordinates describe the compact resident document. `totalLines`
+  // remains the expected file count for scroll sizing, while the explicit
+  // residency fields prevent callers from treating unloaded lines as renderable.
   const firstLine = Math.max(0, startLine - overscan);
-  const lastLine = Math.min(totalLines - 1, startLine + visibleLineCount - 1 + overscan);
+  const lastLine = Math.min(residentLineCount - 1, startLine + visibleLineCount - 1 + overscan);
 
   const lines: VisibleLine[] = [];
+  const requested: Array<{
+    lineNumber: number;
+    startOffset: ByteOffset;
+    endOffset: ByteOffset;
+    charLength: number;
+  }> = [];
 
   for (let lineNum = firstLine; lineNum <= lastLine; lineNum++) {
-    // Use getLineRangePrecise to handle dirty line indices correctly
     const range = getLineRangePrecise(state.lineIndex, lineNum);
-    if (range) {
-      const startOffset = range.start;
-      const endOffset = addByteOffset(range.start, range.length);
-      const rawContent = getText(state.pieceTable, startOffset, endOffset);
-      lines.push(createVisibleLine(lineNum, startOffset, endOffset, rawContent));
+    const node = findLineByNumber(state.lineIndex.root, lineNum);
+    if (range === null || node === null) continue;
+    requested.push({
+      lineNumber: lineNum,
+      startOffset: range.start,
+      endOffset: addByteOffset(range.start, range.length),
+      charLength: node.charLength,
+    });
+  }
+
+  // Requested resident lines are contiguous. Read their bytes once, then split
+  // the decoded string with the line index's UTF-16 char lengths. This avoids a
+  // separate piece-tree traversal and allocation for every viewport line.
+  if (requested.length > 0) {
+    const first = requested[0]!;
+    const last = requested[requested.length - 1]!;
+    const viewportText = getText(state.pieceTable, first.startOffset, last.endOffset);
+    let charCursor = 0;
+    for (const line of requested) {
+      const rawContent = viewportText.slice(charCursor, charCursor + line.charLength);
+      charCursor += line.charLength;
+      lines.push(createVisibleLine(line.lineNumber, line.startOffset, line.endOffset, rawContent));
     }
   }
 
@@ -243,6 +275,9 @@ export function getVisibleLines(
       firstLine,
       lastLine,
       totalLines,
+      residentLineCount,
+      isComplete: state.lineIndex.unloadedLineCount === 0,
+      coordinateSpace: "resident" as const,
     }),
   );
 }
@@ -254,9 +289,9 @@ export function getVisibleLine(
   state: DocumentState,
   lineNumber: number,
 ): LinearCost<VisibleLine | null> {
-  const totalLines = getLineCountFromIndex(state.lineIndex);
+  const residentLineCount = state.lineIndex.lineCount;
 
-  if (lineNumber < 0 || lineNumber >= totalLines) {
+  if (lineNumber < 0 || lineNumber >= residentLineCount) {
     return $proveCtx($beginCost("O(n)"), null);
   }
 
@@ -349,6 +384,7 @@ export function estimateTotalHeight(
   config: LineHeightConfig,
 ): LinearCost<number> {
   const totalLines = getLineCountFromIndex(state.lineIndex);
+  const residentLineCount = state.lineIndex.lineCount;
 
   if (!config.softWrap) {
     // Fixed height mode: simple multiplication
@@ -363,10 +399,10 @@ export function estimateTotalHeight(
     // terminators consistently with getVisibleLine/getLineContent.
     const renderedLines = getVisibleLines(state, {
       startLine: 0,
-      visibleLineCount: totalLines,
+      visibleLineCount: residentLineCount,
       overscan: 0,
     }).lines;
-    let totalHeight = 0;
+    let totalHeight = state.lineIndex.unloadedLineCount * config.baseLineHeight;
     for (const line of renderedLines) {
       totalHeight += wrappedHeight(line.content.length, charsPerLine, config.baseLineHeight);
     }
@@ -376,10 +412,10 @@ export function estimateTotalHeight(
   // Large document: sample evenly-spaced rendered lines so mixed newline styles
   // contribute the same wrapped height as the visible-line helpers.
   let sampleHeight = 0;
-  const step = Math.floor(totalLines / SAMPLE_SIZE);
+  const step = Math.max(1, Math.floor(residentLineCount / SAMPLE_SIZE));
   let sampledLines = 0;
 
-  for (let i = 0; i < totalLines; i += step) {
+  for (let i = 0; i < residentLineCount; i += step) {
     const line = getVisibleLine(state, i);
     if (line !== null) {
       sampleHeight += wrappedHeight(line.content.length, charsPerLine, config.baseLineHeight);
@@ -389,7 +425,9 @@ export function estimateTotalHeight(
 
   const avgLineHeight = sampledLines > 0 ? sampleHeight / sampledLines : config.baseLineHeight;
 
-  return $proveCtx($beginCost("O(n)"), Math.ceil(totalLines * avgLineHeight));
+  const residentHeight = residentLineCount * avgLineHeight;
+  const unloadedHeight = state.lineIndex.unloadedLineCount * config.baseLineHeight;
+  return $proveCtx($beginCost("O(n)"), Math.ceil(residentHeight + unloadedHeight));
 }
 
 // =============================================================================
@@ -403,7 +441,10 @@ export function positionToLineColumn(
   state: DocumentState,
   position: ByteOffset,
 ): LinearCost<{ line: number; column: number } | null> {
-  const totalLines = getLineCountFromIndex(state.lineIndex);
+  const totalLines = getResidentLineCountFromIndex(state.lineIndex);
+  if (position <= state.pieceTable.totalLength && !isUtf8Boundary(state.pieceTable, position)) {
+    return $proveCtx($beginCost("O(n)"), null);
+  }
 
   // Use findLineAtPosition to locate the line
   const lineInfo = findLineAtPosition(state.lineIndex.root, position);
@@ -532,6 +573,9 @@ export function lineColumnToPosition(
  * O(log n + line_length) — contract-faithful.
  */
 function byteOffsetToCharOffset(state: DocumentState, position: ByteOffset): LinearCost<number> {
+  if (position <= state.pieceTable.totalLength && !isUtf8Boundary(state.pieceTable, position)) {
+    throw new RangeError(`selection offset (${position}) must be a UTF-8 code-point boundary`);
+  }
   const posNum = position;
   if (posNum <= 0) return $proveCtx($beginCost("O(n)"), 0);
 

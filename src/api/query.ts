@@ -10,6 +10,7 @@ import { $uncostedFn } from "../types/cost-doc.js";
 import {
   getText,
   getLength,
+  isUtf8Boundary,
   findPieceAtPosition,
   getBufferStats,
 } from "../store/core/piece-table.js";
@@ -25,6 +26,20 @@ import {
 } from "../store/core/line-index.js";
 import { asEagerLineIndex } from "../store/core/state.js";
 import type { QueryApi } from "./interfaces.js";
+
+function getTextAtBoundaries(
+  state: Parameters<typeof getText>[0],
+  start: Parameters<typeof getText>[1],
+  end: Parameters<typeof getText>[2],
+) {
+  if (!isUtf8Boundary(state, start)) {
+    throw new RangeError(`text start (${start}) must be a UTF-8 code-point boundary`);
+  }
+  if (!isUtf8Boundary(state, end)) {
+    throw new RangeError(`text end (${end}) must be a UTF-8 code-point boundary`);
+  }
+  return getText(state, start, end);
+}
 
 function isReconciledState(state: DocumentState): state is DocumentState<"eager"> {
   return state.lineIndex.rebuildPending === false && state.lineIndex.dirtyRanges.length === 0;
@@ -88,6 +103,21 @@ function getLineRangePrecise(state: DocumentState, lineNumber: number) {
   return getLineRangePreciseFromIndex(state.lineIndex, lineNumber);
 }
 
+function getResidentLineCount(state: DocumentState): number {
+  return state.lineIndex.lineCount;
+}
+
+function getLineCountInfo(state: DocumentState) {
+  const resident = state.lineIndex.lineCount;
+  const unloaded = state.lineIndex.unloadedLineCount;
+  return Object.freeze({
+    resident,
+    unloaded,
+    expected: resident + unloaded,
+    isComplete: unloaded === 0,
+  });
+}
+
 function getLineCount(state: DocumentState) {
   return getLineCountFromIndexState(state.lineIndex);
 }
@@ -112,9 +142,11 @@ function getSelectionHead(state: DocumentState): ByteOffset | undefined {
 
 export const query: QueryApi = {
   /** @complexity O(log n + m) — tree traversal to collect byte range */
-  getText: $uncostedFn(getText),
+  getText: $uncostedFn(getTextAtBoundaries),
   /** @complexity O(1) — cached totalLength on piece table state */
   getLength: $uncostedFn(getLength),
+  /** @complexity O(log n) — checks the byte at the requested document position */
+  isUtf8Boundary,
   /** @complexity O(1) — cached on piece table state */
   getBufferStats: $uncostedFn(getBufferStats),
   /** @complexity O(log n) — tree walk to find piece at position */
@@ -133,6 +165,10 @@ export const query: QueryApi = {
   getLineRangeChecked: $uncostedFn(getLineRangeChecked),
   /** @complexity O(h) — range lookup safe for eager and lazy states */
   getLineRangePrecise: $uncostedFn(getLineRangePrecise),
+  /** @complexity O(1) — lines represented by the resident line tree */
+  getResidentLineCount,
+  /** @complexity O(1) — resident, unloaded, and expected line counts */
+  getLineCountInfo,
   /** @complexity O(1) — cached lineCount */
   getLineCount: $uncostedFn(getLineCount),
   /** @complexity O(h) — prefix sum via subtreeCharLength */

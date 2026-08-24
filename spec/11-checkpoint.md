@@ -218,6 +218,9 @@ own first dispatch produces.
 | `encode`  | `create` plus `JSON.stringify`                          |
 | `decode`  | `JSON.parse` plus `restore`                             |
 
+Normalized capture builds one piece-offset index and resolves every attention against it. The
+attention step is O(P + A), where P is the piece count and A is the attention count.
+
 Capture cost is dominated by base64 encoding the buffers. Measured on a 50,000-line document,
 capture runs in roughly 70 ms and restore in roughly 25 ms.
 

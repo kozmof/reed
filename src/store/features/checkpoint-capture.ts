@@ -37,7 +37,7 @@ import { CHECKPOINT_FORMAT, CHECKPOINT_VERSION, CheckpointError } from "../../ty
 import { createPieceTableState, createLineIndexState } from "../core/state.js";
 import { collectPieces, compactAddBuffer, getValue } from "../core/piece-table.js";
 import { collectLines } from "../core/line-index.js";
-import { createPoint, resolveAttention } from "../core/attention.js";
+import { createPoint, resolveAllAttentions } from "../core/attention.js";
 import { encodeBase64 } from "../core/base64.js";
 import { asReadonlyMap, unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
 
@@ -189,9 +189,10 @@ function normalizeState(state: DocumentState<"eager">): DocumentState<"eager"> {
   ) as LineIndexState<"eager">;
 
   const attentions = new Map<AttentionID, Attention>();
+  const resolvedAttentions = resolveAllAttentions(state.pieceTable.root, state.attention);
   for (const entry of state.attention.attentions.values()) {
-    const range = resolveAttention(state.pieceTable.root, state.attention, entry.id);
-    if (range === null) continue;
+    const range = resolvedAttentions.get(entry.id);
+    if (range === undefined) continue;
     const start = createPoint(pieceTable.root, range.startOffset);
     const end = createPoint(pieceTable.root, range.endOffset);
     if (start === null || end === null) continue;

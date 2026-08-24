@@ -49,6 +49,10 @@ describe("public package entry point", () => {
     });
     const state = documentStore.getEagerSnapshot();
 
+    expect(query.isUtf8Boundary(state.pieceTable, position.byteOffset(0))).toBe(true);
+    expect(query.isUtf8Boundary(state.pieceTable, position.byteOffset(1))).toBe(false);
+    expect(query.isUtf8Boundary(state.pieceTable, position.byteOffset(4))).toBe(true);
+
     expect(position.selectionRange(0, 2, state)).toEqual({ anchor: 0, head: 4 });
     expect(store.didEvict(state, state, 0)).toBe(false);
     documentStore.dispose();
@@ -61,6 +65,29 @@ describe("public package entry point", () => {
 
     expect(store.didEvict(beforeEviction, afterEviction, 0)).toBe(true);
     chunkStore.dispose();
+  });
+
+  it("rejects edits and selections that split a UTF-8 sequence", () => {
+    const documentStore = store.createDocumentStore({ content: "A😀B", reconcileMode: "none" });
+    const before = documentStore.getSnapshot();
+
+    expect(() =>
+      documentStore.dispatch(store.DocumentActions.insert(position.byteOffset(2), "x")),
+    ).toThrow(/UTF-8 code-point boundary/);
+    expect(() =>
+      documentStore.dispatch(
+        store.DocumentActions.delete(position.byteOffset(1), position.byteOffset(3)),
+      ),
+    ).toThrow(/UTF-8 code-point boundary/);
+    expect(() =>
+      documentStore.dispatch(
+        store.DocumentActions.setSelection([
+          { anchor: position.byteOffset(2), head: position.byteOffset(2) },
+        ]),
+      ),
+    ).toThrow(/UTF-8 code-point boundary/);
+    expect(documentStore.getSnapshot()).toBe(before);
+    documentStore.dispose();
   });
 
   it("validates untrusted actions and replaces a live store value", () => {
@@ -86,5 +113,10 @@ describe("public package entry point", () => {
       /must be a string/,
     );
     documentStore.dispose();
+  });
+
+  it("runtime-freezes public namespace objects", () => {
+    expect(Object.isFrozen(store)).toBe(true);
+    expect(Object.isFrozen(store.unsafe)).toBe(true);
   });
 });

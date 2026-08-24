@@ -32,6 +32,7 @@ import {
   pieceTableDelete as ptDelete,
   getText,
   getRawByte,
+  isUtf8Boundary,
 } from "../core/piece-table.js";
 import type { SplitRecord } from "../core/piece-table.js";
 import { migrateSplits, migrateDelete } from "../core/attention.js";
@@ -644,6 +645,22 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   // bypass the typed action creators and dispatchValidated boundary.
   if (op.selection?.length === 0) {
     throw new TypeError("Edit selection ranges must be non-empty");
+  }
+  if (op.selection) {
+    for (const [index, range] of op.selection.entries()) {
+      const anchor = validatePosition(range.anchor, state.pieceTable.totalLength);
+      const head = validatePosition(range.head, state.pieceTable.totalLength);
+      if (!isUtf8Boundary(state.pieceTable, anchor)) {
+        throw new RangeError(
+          `edit selection[${index}].anchor (${anchor}) must be a UTF-8 code-point boundary`,
+        );
+      }
+      if (!isUtf8Boundary(state.pieceTable, head)) {
+        throw new RangeError(
+          `edit selection[${index}].head (${head}) must be a UTF-8 code-point boundary`,
+        );
+      }
+    }
   }
   const nextRevision = state.revision + 1;
   let newState = applyUntrackedEdit(state, op, nextRevision);

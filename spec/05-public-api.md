@@ -165,7 +165,8 @@ Note:
 
 Primary selector namespace for O(1)/O(log n)/bounded operations:
 
-- `getText`, `getLength`, `getBufferStats`
+- `getText`, which rejects ranges that split UTF-8 code points
+- `getLength`, `isUtf8Boundary`, `getBufferStats`
 - `findPieceAtPosition`
 - `isReconciledState`
 - line lookups and offsets:
@@ -173,7 +174,7 @@ Primary selector namespace for O(1)/O(log n)/bounded operations:
   - `getLineRange` (requires eager state)
   - `getLineRangeChecked` (runtime eager assertion)
   - `getLineRangePrecise` (safe on eager/lazy states)
-  - `getLineCount`, `getCharStartOffset`, `findLineAtCharPosition`
+  - `getResidentLineCount`, `getLineCountInfo`, `getLineCount`, `getCharStartOffset`, `findLineAtCharPosition`
 - low-level `query.lineIndex.*` selectors
 
 ### 4.2 Scan namespace (`scan`)
@@ -189,6 +190,7 @@ Traversal namespace for O(n) operations:
 - `rendering.*`: viewport, visible lines, line/column and selection conversions
   - public results use plain values rather than internal cost brands
   - byte-bearing positions remain `ByteOffset` values
+  - viewport line numbers use resident coordinates and expose expected and resident counts separately
 - `history.*`: `canUndo`, `canRedo`, `getUndoCount`, `getRedoCount`, `isHistoryEmpty`
 - `diff.*`: diff and setValue action synthesis/application helpers
 

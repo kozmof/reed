@@ -23,7 +23,7 @@ import type { ReadonlyUint8Array } from "../../types/branded.js";
 import { byteOffset, byteLength, pieceID } from "../../types/branded.js";
 import type { ByteOffset, ByteLength, PieceID } from "../../types/branded.js";
 import { textEncoder } from "./encoding.js";
-import { emptyAttentionLayerState } from "./attention.js";
+import { emptyAttentionLayerState } from "./attention-state.js";
 import { GrowableBuffer } from "./growable-buffer.js";
 import {
   asReadonlyMap,

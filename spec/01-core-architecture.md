@@ -15,6 +15,8 @@ The piece table and line index remain independent structures. Piece nodes do not
 
 The attention layer (`src/store/core/attention.ts`) provides piece-anchored boundary references that survive tree rebalancing. It is available through the public `attention` namespace. See [10-attention.md](10-attention.md).
 
+The dependency-light attention initializer lives in `src/store/core/attention-state.ts`. Core state imports it directly, which keeps state construction out of the attention and piece-table runtime cycle.
+
 ## 2. Core Data Structures
 
 ### 2.1 Piece Table

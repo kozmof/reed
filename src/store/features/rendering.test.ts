@@ -18,6 +18,8 @@ import {
 } from "./rendering.js";
 import type { ScrollPosition, LineHeightConfig, VisibleLine } from "./rendering.js";
 import { byteOffset, charOffset } from "../../types/branded.js";
+import { documentReducer } from "./reducer.js";
+import { DocumentActions } from "./actions.js";
 
 describe("getVisibleLineRange", () => {
   it("should calculate visible lines from scroll position", () => {
@@ -227,6 +229,34 @@ describe("getVisibleLines", () => {
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.lines)).toBe(true);
     expect(Object.isFrozen(result.lines[0])).toBe(true);
+  });
+
+  it("reports resident coordinates separately from expected unloaded lines", () => {
+    const initial = createInitialState({ chunkSize: 64 });
+    const state = documentReducer(
+      initial,
+      DocumentActions.declareChunkMetadata([{ chunkIndex: 0, byteLength: 64, lineCount: 3 }]),
+    );
+
+    const result = getVisibleLines(state, {
+      startLine: 0,
+      visibleLineCount: 10,
+      overscan: 0,
+    });
+
+    expect(result.lines).toHaveLength(1);
+    expect(result.totalLines).toBe(4);
+    expect(result.residentLineCount).toBe(1);
+    expect(result.isComplete).toBe(false);
+    expect(result.coordinateSpace).toBe("resident");
+    expect(
+      estimateTotalHeight(state, {
+        baseLineHeight: 10,
+        charWidth: 8,
+        viewportWidth: 80,
+        softWrap: true,
+      }),
+    ).toBe(40);
   });
 });
 
@@ -506,6 +536,24 @@ describe("estimateTotalHeight (large document sampling)", () => {
     expect(Number.isFinite(height)).toBe(true);
     expect(height).toBeGreaterThan(0);
   });
+
+  it("uses base height for unloaded lines in large documents", () => {
+    const initial = createInitialState({ chunkSize: 64 });
+    const declared = documentReducer(
+      initial,
+      DocumentActions.declareChunkMetadata([{ chunkIndex: 0, byteLength: 64, lineCount: 150 }]),
+    );
+    const state = documentReducer(declared, DocumentActions.insert(byteOffset(0), "x".repeat(50)));
+
+    expect(
+      estimateTotalHeight(state, {
+        baseLineHeight: 10,
+        charWidth: 8,
+        viewportWidth: 80,
+        softWrap: true,
+      }),
+    ).toBe(1550);
+  });
 });
 
 describe("positionToLineColumn edge cases", () => {
@@ -529,6 +577,11 @@ describe("positionToLineColumn edge cases", () => {
     const result = positionToLineColumn(state, byteOffset(4));
     expect(result).toEqual({ line: 1, column: 1 });
   });
+
+  it("rejects a position inside a UTF-8 sequence", () => {
+    const state = createInitialState({ content: "A😀B" });
+    expect(positionToLineColumn(state, byteOffset(2))).toBeNull();
+  });
 });
 
 describe("selectionToCharOffsets", () => {
@@ -551,6 +604,13 @@ describe("selectionToCharOffsets", () => {
     });
     expect(result.anchor).toBe(0);
     expect(result.head).toBe(2);
+  });
+
+  it("rejects a selection inside a UTF-8 sequence", () => {
+    const state = createInitialState({ content: "A😀B" });
+    expect(() =>
+      selectionToCharOffsets(state, { anchor: byteOffset(2), head: byteOffset(5) }),
+    ).toThrow(/UTF-8 code-point boundary/);
   });
 
   it("should handle zero-length selection at start", () => {

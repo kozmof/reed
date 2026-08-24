@@ -186,6 +186,9 @@ export type {
   DeleteWithAttentionResult,
 } from "./store/index.js";
 
+// Public namespace contracts
+export type { QueryApi, QueryLineIndexApi, LineCountInfo } from "./api/index.js";
+
 // =============================================================================
 // Namespaced runtime exports
 // =============================================================================

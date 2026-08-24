@@ -19,6 +19,7 @@
 export type {
   QueryApi,
   QueryLineIndexApi,
+  LineCountInfo,
   ScanApi,
   HistoryApi,
   CheckpointApi,

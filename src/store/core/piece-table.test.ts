@@ -16,6 +16,7 @@ import {
   compactAddBuffer,
   byteToCharOffset,
   getRawByte,
+  isUtf8Boundary,
 } from "./piece-table.js";
 import { createEmptyPieceTableState, createPieceTableState } from "./state.js";
 import { byteOffset } from "../../types/branded.js";
@@ -809,6 +810,17 @@ describe("Piece Table Operations", () => {
       const state = createPieceTableState("é");
       expect(getRawByte(state, byteOffset(0))).toBe(0xc3);
       expect(getRawByte(state, byteOffset(1))).toBe(0xa9);
+    });
+
+    it("identifies UTF-8 code-point boundaries", () => {
+      const state = createPieceTableState("A😀éZ");
+      expect(isUtf8Boundary(state, byteOffset(0))).toBe(true);
+      expect(isUtf8Boundary(state, byteOffset(1))).toBe(true);
+      expect(isUtf8Boundary(state, byteOffset(2))).toBe(false);
+      expect(isUtf8Boundary(state, byteOffset(5))).toBe(true);
+      expect(isUtf8Boundary(state, byteOffset(6))).toBe(false);
+      expect(isUtf8Boundary(state, byteOffset(8))).toBe(true);
+      expect(isUtf8Boundary(state, byteOffset(9))).toBe(false);
     });
   });
 });

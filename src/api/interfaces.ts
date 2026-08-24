@@ -57,6 +57,17 @@ import type {
 // Query namespace interfaces
 // =============================================================================
 
+/** Resident and expected line counts for eager and partially-loaded documents. */
+export interface LineCountInfo {
+  /** Lines represented by the current resident piece/line trees. */
+  readonly resident: number;
+  /** Newline-terminated lines declared for chunks that are not resident. */
+  readonly unloaded: number;
+  /** `resident + unloaded`; equivalent to `query.getLineCount(state)`. */
+  readonly expected: number;
+  readonly isComplete: boolean;
+}
+
 /**
  * Contract for the `query.lineIndex` sub-namespace.
  * Low-level selectors operating directly on LineIndexState / LineIndexNode.
@@ -88,6 +99,7 @@ export interface QueryLineIndexApi {
 export interface QueryApi {
   getText(state: PieceTableState, start: ByteOffset, end: ByteOffset): string;
   getLength(state: PieceTableState): number;
+  isUtf8Boundary(state: PieceTableState, position: ByteOffset): boolean;
   getBufferStats(state: PieceTableState): BufferStats;
   findPieceAtPosition(root: PieceNode | null, position: ByteOffset): PieceLocation | null;
   isReconciledState(state: DocumentState): boolean;
@@ -106,6 +118,8 @@ export interface QueryApi {
     state: DocumentState,
     lineNumber: number,
   ): { start: ByteOffset; length: ByteLength } | null;
+  getResidentLineCount(state: DocumentState): number;
+  getLineCountInfo(state: DocumentState): LineCountInfo;
   getLineCount(state: DocumentState): number;
   getCharStartOffset(state: DocumentState, lineNumber: number): CharOffset;
   findLineAtCharPosition(

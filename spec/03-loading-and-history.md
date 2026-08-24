@@ -25,7 +25,9 @@ Fully implemented:
   - LRU eviction (`maxLoadedChunks` cap)
   - Chunk pinning via `setActiveChunks` to prevent hot-chunk eviction
   - Cooperative cancellation via `cancelPendingOutside` and the loader abort signal
-- `DECLARE_CHUNK_METADATA` pre-declares per-chunk byte lengths and line counts so `getLineCount` is accurate on unloaded ranges
+- `DECLARE_CHUNK_METADATA` pre-declares per-chunk byte lengths and line counts so `query.getLineCount` reports the expected count across unloaded ranges
+- `query.getResidentLineCount` reports the lines represented by the current line tree
+- `query.getLineCountInfo` returns resident, unloaded, expected, and completion fields together
 - `createStreamingDocumentLoader(store, loader, metadata, config)` wraps the common lifecycle:
   - declares all chunk metadata on construction
   - loads visible viewport chunks

@@ -80,6 +80,8 @@ unsubscribe();
 
 All mutations go through `dispatch` with an action from `store.DocumentActions`. Offsets are byte offsets, built with `position.byteOffset(...)`.
 
+Store actions for edits, selections, and attentions, plus bounded public text reads, require UTF-8 code-point boundaries. Use `query.isUtf8Boundary(state.pieceTable, offset)` when converting raw byte positions from outside Reed. Invalid reads and state changes throw `RangeError`. Low-level caller-owned attention helpers accept trusted positions, so validate those offsets first.
+
 ```ts
 import { store, position } from "@kozmof/reed";
 
@@ -143,10 +145,12 @@ import { query, position } from "@kozmof/reed";
 const state = doc.getSnapshot();
 
 query.getLineCount(state); // total lines
+query.getLineCountInfo(state); // resident, unloaded, and expected line counts
 query.findLineAtPosition(state, position.byteOffset(7)); // line node at a byte offset
 query.findLineByNumber(state, 2); // third line node (line numbers are 0-based)
 query.getLineStartOffset(state, 1); // byte offset where a line starts
 query.getLength(state.pieceTable); // document length in bytes
+query.isUtf8Boundary(state.pieceTable, position.byteOffset(5)); // safe text boundary
 query.getText(state.pieceTable, position.byteOffset(0), position.byteOffset(5)); // substring
 ```
 
@@ -184,6 +188,8 @@ for (const line of visible.lines) {
   paint(line);
 }
 ```
+
+For a partially loaded document, `visible.lines`, `firstLine`, and `lastLine` use compact resident coordinates. Check `visible.coordinateSpace`, `visible.residentLineCount`, and `visible.isComplete`. Use `visible.totalLines` only for expected scroll sizing.
 
 ## Reacting to changes with events
 
@@ -256,6 +262,8 @@ streaming.setViewport(startChunkIndex, endChunkIndex);
 const manager = createChunkManager(streamedDoc, loader);
 await manager.ensureLoaded(0);
 ```
+
+Chunk metadata makes `query.getLineCount(state)` report the expected total before every chunk is loaded. Use `query.getLineCountInfo(state)` to keep expected counts separate from the resident line tree used by rendering selectors.
 
 Background re-indexing after edits is handled by a reconciliation scheduler. A fully-resolved (eager) state can be forced when needed immediately, for example before an `O(n)` export.
 

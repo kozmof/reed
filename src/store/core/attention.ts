@@ -72,10 +72,7 @@ export type {
 // =============================================================================
 
 /** Empty AttentionLayerState — use as the initial value. */
-export const emptyAttentionLayerState: AttentionLayerState = Object.freeze({
-  attentions: asReadonlyMap(new Map<AttentionID, Attention>()),
-  nextID: 0,
-});
+export { emptyAttentionLayerState } from "./attention-state.js";
 
 function isValidAttentionBoundary(boundary: number): boolean {
   return Number.isSafeInteger(boundary) && boundary >= 0;
@@ -311,6 +308,29 @@ export function resolveAttention(
   const range = resolveAttentionWithIndex(buildPieceOffsetIndex(root), state, id);
   if (range === null) return null;
   return $proveCtx($beginCost("O(n)"), range);
+}
+
+/**
+ * Resolve every live attention with one shared piece-offset index.
+ *
+ * Dangling attentions are omitted, matching the fail-closed behavior of
+ * `resolveAttention`. This is intended for bulk consumers such as normalized
+ * checkpoint capture, where resolving each attention independently would
+ * rebuild the same O(P) piece index A times.
+ *
+ * O(P + A), where P is the piece count and A is the attention count.
+ */
+export function resolveAllAttentions(
+  root: PieceNode | null,
+  state: AttentionLayerState,
+): LinearCost<ReadonlyMap<AttentionID, ResolvedRange>> {
+  const index = buildPieceOffsetIndex(root);
+  const resolved = new Map<AttentionID, ResolvedRange>();
+  for (const [id] of state.attentions) {
+    const range = resolveAttentionWithIndex(index, state, id);
+    if (range !== null) resolved.set(id, range);
+  }
+  return $proveCtx($beginCost("O(n)"), asReadonlyMap(resolved));
 }
 
 // =============================================================================

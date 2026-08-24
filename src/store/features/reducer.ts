@@ -12,6 +12,7 @@ import type { DocumentState, SelectionRange, NonEmptyReadonlyArray } from "../..
 import type { DocumentAction } from "../../types/actions.js";
 import { byteOffset } from "../../types/branded.js";
 import { withState } from "../core/state.js";
+import { isUtf8Boundary } from "../core/piece-table.js";
 import {
   validatePosition,
   validateRange,
@@ -43,6 +44,14 @@ function normalizeLineEndings(text: string, lineEnding: "lf" | "crlf" | "cr"): s
   }
 }
 
+function validateBoundaryPosition(state: DocumentState, position: number, what: string) {
+  const clamped = validatePosition(position, state.pieceTable.totalLength);
+  if (!isUtf8Boundary(state.pieceTable, clamped)) {
+    throw new RangeError(`${what} (${clamped}) must be a UTF-8 code-point boundary`);
+  }
+  return clamped;
+}
+
 // =============================================================================
 // Selection Operations
 // =============================================================================
@@ -59,8 +68,8 @@ function setSelection(state: DocumentState, ranges: readonly SelectionRange[]): 
       ranges: Object.freeze(
         ranges.map((r) =>
           Object.freeze({
-            anchor: validatePosition(r.anchor, state.pieceTable.totalLength),
-            head: validatePosition(r.head, state.pieceTable.totalLength),
+            anchor: validateBoundaryPosition(state, r.anchor, "selection anchor"),
+            head: validateBoundaryPosition(state, r.head, "selection head"),
           }),
         ),
       ) as NonEmptyReadonlyArray<SelectionRange>,
@@ -80,7 +89,7 @@ function setSelection(state: DocumentState, ranges: readonly SelectionRange[]): 
 export function documentReducer(state: DocumentState, action: DocumentAction): DocumentState {
   switch (action.type) {
     case "INSERT": {
-      const position = validatePosition(action.start, state.pieceTable.totalLength);
+      const position = validateBoundaryPosition(state, action.start, "INSERT start");
       if (action.text.length === 0) return state;
       const insertText = state.metadata.normalizeInsertedLineEndings
         ? normalizeLineEndings(action.text, state.metadata.lineEnding)
@@ -102,6 +111,8 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       );
       if (!valid) return state;
       if (end - start <= 0) return state;
+      validateBoundaryPosition(state, start, "DELETE start");
+      validateBoundaryPosition(state, end, "DELETE end");
       const deletedText = getTextRange(state, start, end);
       return applyEdit(state, {
         kind: "delete",
@@ -120,6 +131,8 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
         state.pieceTable.totalLength,
       );
       if (!valid) return state;
+      validateBoundaryPosition(state, start, "REPLACE start");
+      validateBoundaryPosition(state, end, "REPLACE end");
       const oldText = getTextRange(state, start, end);
       const replaceText = state.metadata.normalizeInsertedLineEndings
         ? normalizeLineEndings(action.text, state.metadata.lineEnding)
@@ -187,7 +200,11 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
             : change.text;
           if (insertText.length === 0) continue;
           didApplyChange = true;
-          const position = validatePosition(change.start, newState.pieceTable.totalLength);
+          const position = validateBoundaryPosition(
+            newState,
+            change.start,
+            "APPLY_REMOTE insert start",
+          );
           newState = applyUntrackedEdit(
             newState,
             { kind: "insert", position, insertText },
@@ -200,6 +217,8 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
             newState.pieceTable.totalLength,
           );
           if (!valid || end - start <= 0) continue;
+          validateBoundaryPosition(newState, start, "APPLY_REMOTE delete start");
+          validateBoundaryPosition(newState, end, "APPLY_REMOTE delete end");
           didApplyChange = true;
           const deletedText = getTextRange(newState, start, end);
           newState = applyUntrackedEdit(
@@ -235,10 +254,15 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       return evictChunk(state, action);
 
     case "CREATE_ATTENTION": {
-      const total = state.pieceTable.totalLength;
       const root = state.pieceTable.root;
-      const startPoint = createPoint(root, validatePosition(action.start, total));
-      const endPoint = createPoint(root, validatePosition(action.end, total));
+      const startPoint = createPoint(
+        root,
+        validateBoundaryPosition(state, action.start, "attention start"),
+      );
+      const endPoint = createPoint(
+        root,
+        validateBoundaryPosition(state, action.end, "attention end"),
+      );
       // Cannot anchor against an empty tree (or otherwise) — no-op.
       if (startPoint === null || endPoint === null) return state;
       const [newAttention] = createAttention(state.attention, startPoint, endPoint);

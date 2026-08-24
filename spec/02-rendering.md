@@ -25,19 +25,23 @@ Implemented utilities:
 
 ### 2.2 Visible lines
 
-- `getVisibleLines` queries line ranges from line index and extracts text from piece table.
+- `getVisibleLines` resolves resident line ranges, then reads the contiguous viewport text once.
 - Returned lines include offsets and `hasNewline` metadata.
-- Results are immutable/frozen.
+- `totalLines` is the expected count including unloaded chunk metadata.
+- `residentLineCount`, `isComplete`, and `coordinateSpace: "resident"` distinguish renderable resident lines from the expected count.
+- Results are immutable and frozen.
 
 ### 2.3 Height estimation
 
 - Supports fixed-height mode and estimated wrapped-height mode.
 - Wrapped mode uses either full scan for small documents or sampled extrapolation for large documents.
+- Unloaded lines contribute one base-height row because their wrap length is unknown.
 
 ### 2.4 Position conversion
 
-- Byte offset <-> line/column conversions rely on line index + piece table range extraction.
-- Character/byte selection conversion handles UTF-8/UTF-16 differences through helper conversions.
+- Byte offset and line/column conversions use the resident line tree and bounded piece-table reads.
+- A byte position inside a UTF-8 sequence returns `null` for position lookup or throws `RangeError` for selection conversion.
+- Character and byte selection conversion handles UTF-8 and UTF-16 differences through helper conversions.
 
 ## 3. Complexity Model in Code
 

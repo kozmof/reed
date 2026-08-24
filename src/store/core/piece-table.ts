@@ -238,6 +238,20 @@ export function getRawByte(state: PieceTableState, docOffset: ByteOffset): numbe
   return buffer[node.start + offsetInPiece] ?? -1;
 }
 
+/**
+ * Return whether `position` is a valid UTF-8 code-point boundary.
+ *
+ * Document start/end are always boundaries. Inside the document, a position is
+ * valid when the byte at that position is not a UTF-8 continuation byte
+ * (`10xxxxxx`). This is O(log n) and does not decode the surrounding text.
+ */
+export function isUtf8Boundary(state: PieceTableState, position: ByteOffset): boolean {
+  if (position < 0 || position > state.totalLength) return false;
+  if (position === 0 || position === state.totalLength) return true;
+  const byte = getRawByte(state, position);
+  return byte >= 0 && (byte & 0xc0) !== 0x80;
+}
+
 // =============================================================================
 // Types
 // =============================================================================

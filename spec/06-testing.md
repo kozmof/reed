@@ -4,7 +4,7 @@
 
 - Date: 2026-08-24
 - Functional command: `pnpm test`
-- Functional result: `28` test files, `1143` tests passed
+- Functional result: `28` test files, `1154` tests passed
 - Perf command: `pnpm test:perf`
 - Perf result: `1` test file, `34` tests passed
 

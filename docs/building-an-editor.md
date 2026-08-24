@@ -54,11 +54,13 @@ for (const line of viewport.lines) {
 }
 ```
 
-`viewport.totalLines` provides the full line count for scroll sizing. The `lines` array contains only the requested window.
+`viewport.totalLines` provides the expected line count for scroll sizing. The `lines` array contains only the requested resident window. Check `residentLineCount` and `isComplete` before treating the expected count as renderable. Viewport line numbers use the `"resident"` coordinate space reported by `coordinateSpace`.
 
 ## Keep byte and character positions separate
 
 Document positions and selections use UTF-8 byte offsets. Columns returned by `positionToLineColumn` use character positions. DOM selection offsets normally use UTF-16 code units.
+
+Keep byte positions on UTF-8 code-point boundaries. Check raw positions with `query.isUtf8Boundary` before reading, editing, selecting, or creating a store-managed attention. Reed rejects boundary-splitting public reads and state changes.
 
 Convert at the UI boundary.
 

@@ -1278,6 +1278,14 @@ export function getLineCountFromIndex(state: LineIndexState): ConstCost<number> 
 }
 
 /**
+ * Get the number of lines represented by the resident line tree only.
+ * Unlike `getLineCountFromIndex`, this excludes declared unloaded chunks.
+ */
+export function getResidentLineCountFromIndex(state: LineIndexState): ConstCost<number> {
+  return $unsafeDeclare("O(1)", state.lineCount);
+}
+
+/**
  * Get a line's content range (start offset and length).
  * Requires eager state — calling on lazy state with dirty ranges is a compile error.
  * Use `getLineRangePrecise` for state that may have dirty ranges.

@@ -31,6 +31,31 @@ describe("query selectors", () => {
     expect(query.getLineCount(state)).toBe(3);
   });
 
+  it("rejects text ranges that split a UTF-8 sequence", () => {
+    const state = createInitialState({ content: "A😀B" });
+
+    expect(query.getText(state.pieceTable, byteOffset(1), byteOffset(5))).toBe("😀");
+    expect(() => query.getText(state.pieceTable, byteOffset(2), byteOffset(5))).toThrow(
+      /UTF-8 code-point boundary/,
+    );
+  });
+
+  it("distinguishes resident and expected line counts for unloaded chunks", () => {
+    const documentStore = createDocumentStore({ chunkSize: 64, reconcileMode: "none" });
+    documentStore.dispatch(
+      DocumentActions.declareChunkMetadata([{ chunkIndex: 0, byteLength: 64, lineCount: 10 }]),
+    );
+
+    expect(query.getResidentLineCount(documentStore.getSnapshot())).toBe(1);
+    expect(query.getLineCountInfo(documentStore.getSnapshot())).toEqual({
+      resident: 1,
+      unloaded: 10,
+      expected: 11,
+      isComplete: false,
+    });
+    documentStore.dispose();
+  });
+
   it("getCharStartOffset should return char prefix sum for a line", () => {
     const state = createInitialState({ content: "Hello\nWorld" });
     const offset = query.getCharStartOffset(state, 1);

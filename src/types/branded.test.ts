@@ -99,6 +99,7 @@ describe("Branded Types", () => {
       expect(isValidOffset(1.5)).toBe(false);
       expect(isValidOffset(NaN)).toBe(false);
       expect(isValidOffset(Infinity)).toBe(false);
+      expect(isValidOffset(Number.MAX_SAFE_INTEGER + 1)).toBe(false);
     });
 
     it("should validate valid line numbers", () => {
@@ -110,6 +111,7 @@ describe("Branded Types", () => {
     it("should reject invalid line numbers", () => {
       expect(isValidLineNumber(-1)).toBe(false);
       expect(isValidLineNumber(0.5)).toBe(false);
+      expect(isValidLineNumber(Number.MAX_SAFE_INTEGER + 1)).toBe(false);
     });
   });
 
@@ -130,6 +132,12 @@ describe("Branded Types", () => {
       const offset = charOffset(10);
       const result = addCharOffset(offset, 3);
       expect(result).toBe(13);
+    });
+
+    it("should reject invalid arithmetic results", () => {
+      expect(() => addByteOffset(byteOffset(1), -2)).toThrow(RangeError);
+      expect(() => addByteOffset(byteOffset(1), 0.5)).toThrow(RangeError);
+      expect(() => addCharOffset(charOffset(Number.MAX_SAFE_INTEGER), 1)).toThrow(RangeError);
     });
 
     it("should increment line number", () => {
