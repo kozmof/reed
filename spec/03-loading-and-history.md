@@ -60,7 +60,9 @@ Implemented:
 
 - `UNDO`, `REDO`, `HISTORY_CLEAR`
 - timeout-based coalescing for consecutive edits
-- selection restoration on undo/redo
+- selection restoration on undo and redo
+- the optional edit selection records the pre-edit caret restored by undo
+- redo derives its caret from the change kind, placing inserts and replacements after inserted text and deletes at the deletion point
 
 Transaction behavior:
 

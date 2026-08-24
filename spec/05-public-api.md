@@ -179,6 +179,8 @@ Traversal namespace for O(n) operations:
 ### 4.3 Rendering/history/diff namespaces
 
 - `rendering.*`: viewport, visible lines, line/column and selection conversions
+  - public results use plain values rather than internal cost brands
+  - byte-bearing positions remain `ByteOffset` values
 - `history.*`: `canUndo`, `canRedo`, `getUndoCount`, `getRedoCount`, `isHistoryEmpty`
 - `diff.*`: diff and setValue action synthesis/application helpers
 

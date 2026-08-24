@@ -8,7 +8,7 @@ import { canUndo, canRedo, getUndoCount, getRedoCount, isHistoryEmpty } from "./
 import { createInitialState, withState } from "./../core/state.js";
 import { documentReducer } from "./reducer.js";
 import { DocumentActions } from "./actions.js";
-import type { HistoryState } from "../../types/state.js";
+import type { DocumentState, HistoryState } from "../../types/state.js";
 import { pstackFromArray, pstackPush } from "../../types/state.js";
 import { byteOffset, byteLength } from "../../types/branded.js";
 import { makeInsertChange, makeDeleteChange } from "./edit.js";
@@ -463,6 +463,97 @@ describe("History helpers integration", () => {
 
     expect(getRedoCount(state)).toBe(0);
     expect(canRedo(state)).toBe(false);
+  });
+});
+
+// =============================================================================
+// Editor caret contract
+// =============================================================================
+
+describe("undo and redo caret contract", () => {
+  const cursor = (state: DocumentState): number => state.selection.ranges[0]!.head;
+
+  it.each([
+    {
+      name: "insert",
+      content: "hello world",
+      action: DocumentActions.insert(
+        byteOffset(11),
+        "!!!",
+        [{ anchor: byteOffset(11), head: byteOffset(11) }],
+        1,
+      ),
+      undo: 11,
+      redo: 14,
+    },
+    {
+      name: "insert without an explicit selection",
+      content: "hello world",
+      action: DocumentActions.insert(byteOffset(11), "!!!", undefined, 1),
+      undo: 0,
+      redo: 14,
+    },
+    {
+      name: "forward delete",
+      content: "abcdef",
+      action: DocumentActions.delete(
+        byteOffset(4),
+        byteOffset(5),
+        [{ anchor: byteOffset(4), head: byteOffset(4) }],
+        1,
+      ),
+      undo: 4,
+      redo: 4,
+    },
+    {
+      name: "backspace",
+      content: "abcdef",
+      action: DocumentActions.delete(
+        byteOffset(4),
+        byteOffset(5),
+        [{ anchor: byteOffset(5), head: byteOffset(5) }],
+        1,
+      ),
+      undo: 5,
+      redo: 4,
+    },
+    {
+      name: "replace",
+      content: "hello world",
+      action: DocumentActions.replace(
+        byteOffset(0),
+        byteOffset(5),
+        "HI",
+        [{ anchor: byteOffset(0), head: byteOffset(0) }],
+        1,
+      ),
+      undo: 0,
+      redo: 2,
+    },
+  ])("restores the expected caret for $name", ({ content, action, undo, redo }) => {
+    let state = createInitialState({ content });
+    state = documentReducer(state, action);
+    state = documentReducer(state, DocumentActions.undo());
+    expect(cursor(state)).toBe(undo);
+    state = documentReducer(state, DocumentActions.redo());
+    expect(cursor(state)).toBe(redo);
+  });
+
+  it("uses byte offsets for a multibyte insertion", () => {
+    let state = createInitialState({ content: "é" });
+    state = documentReducer(
+      state,
+      DocumentActions.insert(
+        byteOffset(2),
+        "😀",
+        [{ anchor: byteOffset(2), head: byteOffset(2) }],
+        1,
+      ),
+    );
+    state = documentReducer(state, DocumentActions.undo());
+    expect(cursor(state)).toBe(2);
+    state = documentReducer(state, DocumentActions.redo());
+    expect(cursor(state)).toBe(6);
   });
 });
 

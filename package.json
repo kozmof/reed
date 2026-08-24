@@ -34,7 +34,7 @@
     }
   },
   "scripts": {
-    "build": "tsc && vite build && tsc -p tsconfig.types.json",
+    "build": "tsc && vite build && tsc -p tsconfig.types.json && bash scripts/check-public-types.sh",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:perf": "vitest run --config vitest.perf.config.ts",

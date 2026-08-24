@@ -14,6 +14,8 @@
 import type {
   DocumentState,
   HistoryState,
+  SelectionRange,
+  CharSelectionRange,
   LineIndexState,
   LineIndexNode,
   PieceTableState,
@@ -39,6 +41,13 @@ import type {
   DeleteWithAttentionResult,
 } from "../store/core/attention.js";
 import type { DocumentCheckpoint, CheckpointOptions } from "../types/checkpoint.js";
+import type {
+  VisibleLine,
+  ViewportConfig,
+  VisibleLinesResult,
+  ScrollPosition,
+  LineHeightConfig,
+} from "../store/features/rendering.js";
 
 // =============================================================================
 // Query namespace interfaces
@@ -120,6 +129,34 @@ export interface ScanApi {
   collectPieces(root: PieceNode | null): readonly PieceNode[];
   collectLines(root: LineIndexNode | null): readonly LineIndexNode[];
   rebuildLineIndex(content: string): LineIndexState;
+}
+
+// =============================================================================
+// Rendering namespace interface
+// =============================================================================
+
+/**
+ * Contract for the `rendering` namespace.
+ * Complexity is documented on each member rather than carried in result types.
+ */
+export interface RenderingApi {
+  getVisibleLineRange(
+    scroll: ScrollPosition,
+    totalLines: number,
+    overscan?: number,
+  ): { startLine: number; endLine: number };
+  getVisibleLines(state: DocumentState, config: ViewportConfig): VisibleLinesResult;
+  getVisibleLine(state: DocumentState, lineNumber: number): VisibleLine | null;
+  getLineContent(state: DocumentState, lineNumber: number): string | null;
+  estimateLineHeight(line: VisibleLine, config: LineHeightConfig): number;
+  estimateTotalHeight(state: DocumentState, config: LineHeightConfig): number;
+  positionToLineColumn(
+    state: DocumentState,
+    position: ByteOffset,
+  ): { line: number; column: number } | null;
+  lineColumnToPosition(state: DocumentState, line: number, column: number): ByteOffset | null;
+  selectionToCharOffsets(state: DocumentState, range: SelectionRange): CharSelectionRange;
+  charOffsetsToSelection(state: DocumentState, range: CharSelectionRange): SelectionRange;
 }
 
 // =============================================================================
