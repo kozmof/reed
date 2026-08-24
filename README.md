@@ -117,8 +117,6 @@ history.canRedo(doc.getSnapshot()); // boolean
 history.getUndoCount(doc.getSnapshot());
 ```
 
-The selection supplied to an edit is restored by undo. Redo derives its caret from the action kind. See [Building an editor with Reed](docs/building-an-editor.md) for the caret contract and a complete viewport, selection, and history integration.
-
 ### Replacing the whole document
 
 Use `store.setValue` to update a live store when loading or reverting a file. The default fast strategy computes one changed range and preserves store notifications, events, history, and rollback behavior.
@@ -358,7 +356,6 @@ pnpm fmt          # oxfmt
 - [SPEC.md](SPEC.md): current implemented surface and verification status
 - [spec/](spec/): per-domain specifications (architecture, rendering, loading, API, testing, internals)
 - [docs/invariants.md](docs/invariants.md): invariants the engine maintains
-- [docs/building-an-editor.md](docs/building-an-editor.md): viewport, selection, and history integration
 
 ## License
 
