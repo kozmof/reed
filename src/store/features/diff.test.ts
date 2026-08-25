@@ -362,6 +362,28 @@ describe("Diff Algorithm", () => {
       expect(actions.length).toBe(1);
       expect(actions[0]!.type).toBe("REPLACE");
     });
+
+    // A lone surrogate is a character on its own, so the pair guards must not step over it into
+    // the neighbouring pair. Both offsets below used to land inside the emoji's 4-byte sequence.
+    it("should keep offsets on a boundary when a lone low surrogate follows a pair", () => {
+      // "😀\uDC00" — the trailing lone low surrogate encodes to U+FFFD, so the emoji occupies
+      // bytes 0..4 and the lone surrogate bytes 4..7.
+      const actions = computeSetValueActionsOptimized("\u{1F600}\uDC00", "\u{1F600}X");
+      expect(actions.length).toBe(1);
+      const action = actions[0]!;
+      expect(action.type).toBe("REPLACE");
+      expect(action).toMatchObject({ start: 4, end: 7 });
+    });
+
+    it("should keep offsets on a boundary when a lone high surrogate precedes a pair", () => {
+      // "\uD83D😀" — the leading lone high surrogate encodes to U+FFFD (bytes 0..3), so the
+      // emoji occupies bytes 3..7.
+      const actions = computeSetValueActionsOptimized("\uD83D\u{1F600}", "X\u{1F600}");
+      expect(actions.length).toBe(1);
+      const action = actions[0]!;
+      expect(action.type).toBe("REPLACE");
+      expect(action).toMatchObject({ start: 0, end: 3 });
+    });
   });
 
   describe("setValueAuto", () => {

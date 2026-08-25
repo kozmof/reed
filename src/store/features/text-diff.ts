@@ -11,6 +11,7 @@ import type { DocumentAction } from "../../types/actions.js";
 import { byteOffset } from "../../types/branded.js";
 import { DocumentActions } from "./actions.js";
 import { textEncoder } from "../core/encoding.js";
+import { charToByteOffset } from "../core/piece-table-offset-convert.js";
 import { $beginCost, $proveCtx, type LinearCost, type QuadCost } from "../../types/cost-doc.js";
 
 // =============================================================================
@@ -529,9 +530,13 @@ export function computeSetValueActions(
 /**
  * Convert a single string index to a byte index.
  * Used by computeSetValueActionsOptimized which calls it at most twice per invocation.
+ *
+ * Goes through charToByteOffset rather than encoding a slice: slicing mid-surrogate-pair leaves
+ * a lone high surrogate that TextEncoder turns into U+FFFD, which would put the result inside a
+ * code point instead of on a boundary.
  */
 function stringIndexToByteIndex(str: string, index: number): number {
-  return textEncoder.encode(str.slice(0, index)).length;
+  return charToByteOffset(str, index);
 }
 
 /**
@@ -615,8 +620,14 @@ export function computeSetValueActionsOptimized(
     start++;
   }
 
-  // Don't split surrogate pairs - if we stopped at a low surrogate, back up
-  if (start > 0 && isLowSurrogate(oldContent.charCodeAt(start))) {
+  // Don't split surrogate pairs - if we stopped at a low surrogate that completes a pair, back
+  // up. A lone low surrogate is already a character on its own, and backing up over it could land
+  // inside the pair that precedes it.
+  if (
+    start > 0 &&
+    isLowSurrogate(oldContent.charCodeAt(start)) &&
+    isHighSurrogate(oldContent.charCodeAt(start - 1))
+  ) {
     start--;
   }
 
@@ -627,11 +638,21 @@ export function computeSetValueActionsOptimized(
     newEnd--;
   }
 
-  // Don't split surrogate pairs at the end either
-  if (oldEnd < oldContent.length && isHighSurrogate(oldContent.charCodeAt(oldEnd - 1))) {
+  // Don't split surrogate pairs at the end either. Extend only when the high surrogate we
+  // stopped after is actually paired with the code unit at the end index; a lone high surrogate is
+  // its own character, and extending over it could land inside the pair that follows.
+  if (
+    oldEnd < oldContent.length &&
+    isHighSurrogate(oldContent.charCodeAt(oldEnd - 1)) &&
+    isLowSurrogate(oldContent.charCodeAt(oldEnd))
+  ) {
     oldEnd++;
   }
-  if (newEnd < newContent.length && isHighSurrogate(newContent.charCodeAt(newEnd - 1))) {
+  if (
+    newEnd < newContent.length &&
+    isHighSurrogate(newContent.charCodeAt(newEnd - 1)) &&
+    isLowSurrogate(newContent.charCodeAt(newEnd))
+  ) {
     newEnd++;
   }
 
