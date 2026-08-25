@@ -80,7 +80,7 @@ unsubscribe();
 
 All mutations go through `dispatch` with an action from `store.DocumentActions`. Offsets are byte offsets, built with `position.byteOffset(...)`.
 
-Store actions for edits, selections, and attentions, plus bounded public text reads, require UTF-8 code-point boundaries. Use `query.isUtf8Boundary(state.pieceTable, offset)` when converting raw byte positions from outside Reed. Invalid reads and state changes throw `RangeError`. Low-level caller-owned attention helpers accept trusted positions, so validate those offsets first.
+Store actions for edits, selections, and attentions, plus bounded public text reads, require UTF-8 code-point boundaries. Use `query.isUtf8Boundary(state.pieceTable, offset)` when converting raw byte positions from outside Reed. Positions produced by `rendering.lineColumnToPosition` and `rendering.charOffsetsToSelection` are already on boundaries, so the check is for offsets that arrive from elsewhere. Invalid reads and state changes throw `RangeError`. Low-level caller-owned attention helpers accept trusted positions, so validate those offsets first.
 
 ```ts
 import { store, position } from "@kozmof/reed";

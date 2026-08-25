@@ -30,7 +30,6 @@ import {
   getResidentLineCountFromIndex,
 } from "../core/line-index.js";
 import { getText, charToByteOffset, isUtf8Boundary } from "../core/piece-table.js";
-import { textEncoder } from "../core/encoding.js";
 
 // =============================================================================
 // Types
@@ -552,10 +551,14 @@ export function lineColumnToPosition(
             $map((lineContent: string) => ({ resolvedRange, lineContent })),
           ),
         ),
-        $map(({ resolvedRange, lineContent }) => {
+        $andThen(({ resolvedRange, lineContent }) => {
           const clampedColumn = Math.min(toNonNegativeInteger(column), lineContent.length);
-          const columnByteLen = textEncoder.encode(lineContent.slice(0, clampedColumn)).length;
-          return addByteOffset(resolvedRange.start, columnByteLen);
+          // charToByteOffset snaps a column landing inside a surrogate pair forward to the end
+          // of that character, so the result is always a UTF-8 code-point boundary.
+          return $pipe(
+            $from(charToByteOffset(lineContent, charOffset(clampedColumn))),
+            $map((columnByteLen) => addByteOffset(resolvedRange.start, columnByteLen)),
+          );
         }),
       ),
     ),

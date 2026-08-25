@@ -16,6 +16,7 @@ import {
   getCharStartOffset,
 } from "../core/line-index.js";
 import { getText, getValue } from "../core/piece-table.js";
+import { lineColumnToPosition } from "./rendering.js";
 
 function createDeterministicRng(seed: number): () => number {
   let state = seed >>> 0;
@@ -1450,6 +1451,20 @@ describe("Editor Use Cases", () => {
 
       // Replace third "foo" (now at position 16)
       store.dispatch(DocumentActions.replace(byteOffset(16), byteOffset(19), "qux"));
+    });
+
+    it("should insert at a caret column that lands inside a surrogate pair", () => {
+      const store = createDocumentStore({ content: "a😀b" });
+
+      // Column 2 is the low half of the emoji surrogate pair, the position an
+      // arrow key or a click produces. It must resolve to an offset a dispatch accepts.
+      const position = lineColumnToPosition(store.getSnapshot(), 0, 2);
+      expect(position).not.toBeNull();
+
+      store.dispatch(DocumentActions.insert(position!, "X"));
+
+      const state = store.getSnapshot();
+      expect(getValue(state.pieceTable)).toBe("a😀Xb");
     });
 
     it("should simulate code editing with auto-indent", () => {

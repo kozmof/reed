@@ -18,6 +18,7 @@ import {
 } from "./rendering.js";
 import type { ScrollPosition, LineHeightConfig, VisibleLine } from "./rendering.js";
 import { byteOffset, charOffset } from "../../types/branded.js";
+import { isUtf8Boundary } from "../core/piece-table.js";
 import { documentReducer } from "./reducer.js";
 import { DocumentActions } from "./actions.js";
 
@@ -501,6 +502,61 @@ describe("lineColumnToPosition", () => {
     // Line index uses byte positions (UTF-8)
     // '世界\n' is 7 bytes (3+3+1), so line 1 starts at byte position 7
     expect(lineColumnToPosition(state, 1, 0)).toBe(7);
+  });
+
+  it("should snap a column inside a surrogate pair to the end of that character", () => {
+    const state = createInitialState({
+      content: "a😀b",
+    });
+
+    // Column 2 names the low half of the surrogate pair for the emoji.
+    expect(lineColumnToPosition(state, 0, 2)).toBe(5);
+    expect(lineColumnToPosition(state, 0, 3)).toBe(5);
+  });
+
+  it("should return a code-point boundary for every column of a line with an emoji", () => {
+    const content = "a😀b";
+    const state = createInitialState({ content });
+
+    for (let column = 0; column <= content.length; column++) {
+      const position = lineColumnToPosition(state, 0, column);
+      expect(position).not.toBeNull();
+      expect(isUtf8Boundary(state.pieceTable, position!)).toBe(true);
+    }
+  });
+
+  it("should agree with charOffsetsToSelection on the same offset", () => {
+    const content = "a😀b";
+    const state = createInitialState({ content });
+
+    for (let column = 0; column <= content.length; column++) {
+      const selection = charOffsetsToSelection(state, {
+        anchor: charOffset(column),
+        head: charOffset(column),
+      });
+      expect(lineColumnToPosition(state, 0, column)).toBe(selection.anchor);
+    }
+  });
+
+  it("should snap relative to the start of a later line", () => {
+    const state = createInitialState({
+      content: "hi\na😀b",
+    });
+
+    // Line 1 starts at byte 3; column 2 snaps to the end of the emoji (3 + 5).
+    expect(lineColumnToPosition(state, 1, 2)).toBe(8);
+    expect(lineColumnToPosition(state, 1, 3)).toBe(8);
+  });
+
+  it("should round-trip through positionToLineColumn for every column of an emoji line", () => {
+    const content = "a😀b";
+    const state = createInitialState({ content });
+
+    for (let column = 0; column <= content.length; column++) {
+      const position = lineColumnToPosition(state, 0, column);
+      expect(position).not.toBeNull();
+      expect(positionToLineColumn(state, position!)).not.toBeNull();
+    }
   });
 });
 

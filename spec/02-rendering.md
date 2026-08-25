@@ -41,6 +41,7 @@ Implemented utilities:
 
 - Byte offset and line/column conversions use the resident line tree and bounded piece-table reads.
 - A byte position inside a UTF-8 sequence returns `null` for position lookup or throws `RangeError` for selection conversion.
+- In the other direction, a column inside a code point resolves to the end of that character, so `lineColumnToPosition` always returns a code-point boundary. The snap is forward, so a caret UI that wants the start of the character snaps on its own side.
 - Character and byte selection conversion handles UTF-8 and UTF-16 differences through helper conversions.
 
 ## 3. Complexity Model in Code
