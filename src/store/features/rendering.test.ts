@@ -538,6 +538,22 @@ describe("lineColumnToPosition", () => {
     }
   });
 
+  it("should agree with charOffsetsToSelection on a line that is not the first", () => {
+    // On a single-line document a column and an absolute char offset coincide, so this case is
+    // what catches a line-relative-vs-absolute offset mixup. "hi\n" is 3 chars, so column c on
+    // line 1 is absolute char offset 3 + c.
+    const lineContent = "a😀b";
+    const state = createInitialState({ content: `hi\n${lineContent}` });
+
+    for (let column = 0; column <= lineContent.length; column++) {
+      const selection = charOffsetsToSelection(state, {
+        anchor: charOffset(3 + column),
+        head: charOffset(3 + column),
+      });
+      expect(lineColumnToPosition(state, 1, column)).toBe(selection.anchor);
+    }
+  });
+
   it("should snap relative to the start of a later line", () => {
     const state = createInitialState({
       content: "hi\na😀b",
@@ -552,10 +568,22 @@ describe("lineColumnToPosition", () => {
     const content = "a😀b";
     const state = createInitialState({ content });
 
-    for (let column = 0; column <= content.length; column++) {
-      const position = lineColumnToPosition(state, 0, column);
-      expect(position).not.toBeNull();
-      expect(positionToLineColumn(state, position!)).not.toBeNull();
+    // Column 2 sits between the two code units of the emoji, so it snaps forward to column 3.
+    // The round trip is the identity everywhere else.
+    const expected: { column: number; position: number; roundTripped: number }[] = [
+      { column: 0, position: 0, roundTripped: 0 },
+      { column: 1, position: 1, roundTripped: 1 },
+      { column: 2, position: 5, roundTripped: 3 },
+      { column: 3, position: 5, roundTripped: 3 },
+      { column: 4, position: 6, roundTripped: 4 },
+    ];
+
+    for (const { column, position, roundTripped } of expected) {
+      expect(lineColumnToPosition(state, 0, column)).toBe(position);
+      expect(positionToLineColumn(state, byteOffset(position))).toEqual({
+        line: 0,
+        column: roundTripped,
+      });
     }
   });
 });
