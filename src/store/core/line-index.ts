@@ -45,6 +45,11 @@ import {
 } from "./state.js";
 import {
   fixInsertWithPath,
+  removeMinimum,
+  removeNodeWithAtMostOneChild,
+  repairLeftBlackDeficit,
+  repairRightBlackDeficit,
+  type RemoveResult,
   type WithNodeFn,
   type InsertionPathEntry,
   type RootToLeafInsertPath,
@@ -995,14 +1000,12 @@ function rebuildWithDeletedRange(
   });
 }
 
-interface LineDeleteResult {
-  readonly node: LineIndexNode | null;
-  readonly blackHeightDecreased: boolean;
-}
-
-function isBlackLine(node: LineIndexNode | null): boolean {
-  return node === null || node.color === "black";
-}
+/**
+ * Line deletion shares the generic persistent red-black primitives with the
+ * piece table; only rank navigation and node construction stay local, because
+ * those are the parts that depend on line payloads and aggregates.
+ */
+type LineDeleteResult = RemoveResult<LineIndexNode>;
 
 /** Delete one line by rank while propagating the removed black height. */
 function rbDeleteLineByNumber(root: LineIndexNode, lineNumber: number): LineIndexNode | null {
@@ -1020,7 +1023,7 @@ function deleteLineNode(node: LineIndexNode, lineNumber: number): LineDeleteResu
     const deleted = deleteLineNode(node.left, lineNumber);
     const rebuilt = withLineIndexNode(node, { left: deleted.node });
     return deleted.blackHeightDecreased
-      ? repairLeftBlackDeficit(rebuilt)
+      ? repairLeftBlackDeficit(rebuilt, withLine)
       : { node: rebuilt, blackHeightDecreased: false };
   }
 
@@ -1028,12 +1031,12 @@ function deleteLineNode(node: LineIndexNode, lineNumber: number): LineDeleteResu
     const deleted = deleteLineNode(node.right, lineNumber - leftLineCount - 1);
     const rebuilt = withLineIndexNode(node, { right: deleted.node });
     return deleted.blackHeightDecreased
-      ? repairRightBlackDeficit(rebuilt)
+      ? repairRightBlackDeficit(rebuilt, withLine)
       : { node: rebuilt, blackHeightDecreased: false };
   }
 
   if (node.left !== null && node.right !== null) {
-    const extracted = extractMinimumLine(node.right);
+    const extracted = removeMinimum(node.right, withLine);
     const replacement = createLineIndexNode(
       extracted.minimum.documentOffset,
       extracted.minimum.lineLength,
@@ -1043,150 +1046,11 @@ function deleteLineNode(node: LineIndexNode, lineNumber: number): LineDeleteResu
       extracted.minimum.charLength,
     );
     return extracted.blackHeightDecreased
-      ? repairRightBlackDeficit(replacement)
+      ? repairRightBlackDeficit(replacement, withLine)
       : { node: replacement, blackHeightDecreased: false };
   }
 
-  return removeLineNodeWithAtMostOneChild(node);
-}
-
-function removeLineNodeWithAtMostOneChild(node: LineIndexNode): LineDeleteResult {
-  const child = node.left ?? node.right;
-  if (node.color === "red") {
-    return { node: child, blackHeightDecreased: false };
-  }
-  if (child?.color === "red") {
-    return {
-      node: withLineIndexNode(child, { color: "black" }),
-      blackHeightDecreased: false,
-    };
-  }
-  return { node: child, blackHeightDecreased: true };
-}
-
-function extractMinimumLine(
-  node: LineIndexNode,
-): LineDeleteResult & { readonly minimum: LineIndexNode } {
-  if (node.left === null) {
-    return { ...removeLineNodeWithAtMostOneChild(node), minimum: node };
-  }
-
-  const extracted = extractMinimumLine(node.left);
-  const rebuilt = withLineIndexNode(node, { left: extracted.node });
-  const repaired = extracted.blackHeightDecreased
-    ? repairLeftBlackDeficit(rebuilt)
-    : { node: rebuilt, blackHeightDecreased: false };
-  return { ...repaired, minimum: extracted.minimum };
-}
-
-/** Repair a subtree whose left child has lost one black level. */
-function repairLeftBlackDeficit(parent: LineIndexNode): LineDeleteResult {
-  const sibling = parent.right;
-  if (sibling === null) return { node: parent, blackHeightDecreased: true };
-
-  if (sibling.color === "red") {
-    const innerParent = withLineIndexNode(parent, {
-      color: "red",
-      right: sibling.left,
-    });
-    const repaired = repairLeftBlackDeficit(innerParent);
-    return {
-      node: withLineIndexNode(sibling, { color: "black", left: repaired.node }),
-      blackHeightDecreased: repaired.blackHeightDecreased,
-    };
-  }
-
-  if (isBlackLine(sibling.left) && isBlackLine(sibling.right)) {
-    const redSibling = withLineIndexNode(sibling, { color: "red" });
-    if (parent.color === "red") {
-      return {
-        node: withLineIndexNode(parent, { color: "black", right: redSibling }),
-        blackHeightDecreased: false,
-      };
-    }
-    return {
-      node: withLineIndexNode(parent, { right: redSibling }),
-      blackHeightDecreased: true,
-    };
-  }
-
-  if (isBlackLine(sibling.right) && sibling.left?.color === "red") {
-    const rotatedRight = withLineIndexNode(sibling, {
-      color: "red",
-      left: sibling.left.right,
-    });
-    const rotatedSibling = withLineIndexNode(sibling.left, {
-      color: "black",
-      right: rotatedRight,
-    });
-    return repairLeftBlackDeficit(withLineIndexNode(parent, { right: rotatedSibling }));
-  }
-
-  const farChild = sibling.right;
-  const newParent = withLineIndexNode(parent, { color: "black", right: sibling.left });
-  return {
-    node: withLineIndexNode(sibling, {
-      color: parent.color,
-      left: newParent,
-      right: farChild ? withLineIndexNode(farChild, { color: "black" }) : null,
-    }),
-    blackHeightDecreased: false,
-  };
-}
-
-/** Repair a subtree whose right child has lost one black level. */
-function repairRightBlackDeficit(parent: LineIndexNode): LineDeleteResult {
-  const sibling = parent.left;
-  if (sibling === null) return { node: parent, blackHeightDecreased: true };
-
-  if (sibling.color === "red") {
-    const innerParent = withLineIndexNode(parent, {
-      color: "red",
-      left: sibling.right,
-    });
-    const repaired = repairRightBlackDeficit(innerParent);
-    return {
-      node: withLineIndexNode(sibling, { color: "black", right: repaired.node }),
-      blackHeightDecreased: repaired.blackHeightDecreased,
-    };
-  }
-
-  if (isBlackLine(sibling.left) && isBlackLine(sibling.right)) {
-    const redSibling = withLineIndexNode(sibling, { color: "red" });
-    if (parent.color === "red") {
-      return {
-        node: withLineIndexNode(parent, { color: "black", left: redSibling }),
-        blackHeightDecreased: false,
-      };
-    }
-    return {
-      node: withLineIndexNode(parent, { left: redSibling }),
-      blackHeightDecreased: true,
-    };
-  }
-
-  if (isBlackLine(sibling.left) && sibling.right?.color === "red") {
-    const rotatedLeft = withLineIndexNode(sibling, {
-      color: "red",
-      right: sibling.right.left,
-    });
-    const rotatedSibling = withLineIndexNode(sibling.right, {
-      color: "black",
-      left: rotatedLeft,
-    });
-    return repairRightBlackDeficit(withLineIndexNode(parent, { left: rotatedSibling }));
-  }
-
-  const farChild = sibling.left;
-  const newParent = withLineIndexNode(parent, { color: "black", left: sibling.right });
-  return {
-    node: withLineIndexNode(sibling, {
-      color: parent.color,
-      left: farChild ? withLineIndexNode(farChild, { color: "black" }) : null,
-      right: newParent,
-    }),
-    blackHeightDecreased: false,
-  };
+  return removeNodeWithAtMostOneChild(node, withLine);
 }
 
 /**
