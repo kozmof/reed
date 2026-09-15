@@ -15,6 +15,7 @@ import type {
   UndoAction,
   RedoAction,
   HistoryClearAction,
+  MarkSavedAction,
   ApplyRemoteAction,
   RemoteChange,
   CreateAttentionAction,
@@ -83,6 +84,8 @@ function normalizeDeserializedAction(action: DocumentAction): DocumentAction {
       return DocumentActions.redo();
     case "HISTORY_CLEAR":
       return DocumentActions.historyClear();
+    case "MARK_SAVED":
+      return DocumentActions.markSaved(action.timestamp);
     case "APPLY_REMOTE":
       return DocumentActions.applyRemote(action.changes);
     case "CREATE_ATTENTION":
@@ -199,6 +202,24 @@ export const DocumentActions = {
    */
   historyClear(): HistoryClearAction {
     return Object.freeze({ type: "HISTORY_CLEAR" });
+  },
+
+  /**
+   * Record a successful save.
+   *
+   * Dispatch this *after* the caller has persisted the document; Reed performs
+   * no I/O of its own. Clears `metadata.isDirty` and stamps
+   * `metadata.lastSaved`, which makes an event store emit `save` and, when the
+   * document was dirty, `dirty-change`.
+   *
+   * @param timestamp Save time in epoch milliseconds. Defaults to dispatch time.
+   */
+  markSaved(timestamp?: number): MarkSavedAction {
+    return Object.freeze(
+      timestamp === undefined
+        ? { type: "MARK_SAVED" as const }
+        : { type: "MARK_SAVED" as const, timestamp },
+    );
   },
 
   /**

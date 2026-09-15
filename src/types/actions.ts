@@ -110,6 +110,20 @@ export interface HistoryClearAction {
   readonly type: "HISTORY_CLEAR";
 }
 
+/**
+ * Record that the document has been persisted successfully.
+ *
+ * Reed never performs I/O. The caller writes the bytes wherever they belong and
+ * dispatches this **after** the write succeeds, which clears `isDirty` and
+ * stamps `lastSaved`. No event implies that bytes reached durable storage —
+ * only that the caller said so.
+ */
+export interface MarkSavedAction {
+  readonly type: "MARK_SAVED";
+  /** Save time in epoch milliseconds. Defaults to dispatch time. */
+  readonly timestamp?: number | undefined;
+}
+
 // =============================================================================
 // Collaboration Actions
 // =============================================================================
@@ -231,6 +245,7 @@ export type DocumentAction =
   | UndoAction
   | RedoAction
   | HistoryClearAction
+  | MarkSavedAction
   | ApplyRemoteAction
   | CreateAttentionAction
   | DeleteAttentionAction
@@ -254,6 +269,7 @@ export const DocumentActionTypes = strEnum([
   "UNDO",
   "REDO",
   "HISTORY_CLEAR",
+  "MARK_SAVED",
   "APPLY_REMOTE",
   "CREATE_ATTENTION",
   "DELETE_ATTENTION",
@@ -490,6 +506,18 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
     case "REDO":
     case "HISTORY_CLEAR":
       break;
+
+    case "MARK_SAVED": {
+      const savedAction = action as Partial<MarkSavedAction>;
+      if (savedAction.timestamp !== undefined) {
+        if (typeof savedAction.timestamp !== "number" || !Number.isFinite(savedAction.timestamp)) {
+          errors.push('MARK_SAVED action "timestamp" must be a finite number when present');
+        } else if (savedAction.timestamp < 0) {
+          errors.push('MARK_SAVED action "timestamp" must not be negative');
+        }
+      }
+      break;
+    }
 
     case "APPLY_REMOTE": {
       const remoteAction = action as Partial<ApplyRemoteAction>;

@@ -186,6 +186,23 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       });
     }
 
+    case "MARK_SAVED": {
+      // Idempotent: saving an already-clean document is a no-op, so repeated
+      // saves do not churn the revision or emit spurious events.
+      const timestamp = action.timestamp ?? Date.now();
+      if (!state.metadata.isDirty && state.metadata.lastSaved === timestamp) {
+        return state;
+      }
+      return withState(state, {
+        metadata: Object.freeze({
+          ...state.metadata,
+          isDirty: false,
+          lastSaved: timestamp,
+        }),
+        revision: state.revision + 1,
+      });
+    }
+
     case "APPLY_REMOTE": {
       // Apply remote changes from collaboration
       const nextRevision = state.revision + 1;

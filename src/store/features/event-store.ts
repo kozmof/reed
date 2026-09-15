@@ -15,6 +15,7 @@ import {
   createHistoryChangeEvent,
   createAttentionChangeEvent,
   createDirtyChangeEvent,
+  createSaveEvent,
   diffChangedAttentionIds,
   getAffectedRanges,
   type EventHandler,
@@ -111,7 +112,15 @@ export function withEvents(
       );
     }
 
-    // Dirty state change events
+    // Save events. Emitted only for an explicit MARK_SAVED, never inferred from
+    // the document merely becoming clean: the event asserts that the caller
+    // reported a successful save, not that Reed wrote anything anywhere.
+    if (action.type === "MARK_SAVED") {
+      prepare("save", createSaveEvent(nextState));
+    }
+
+    // Dirty state change events. Ordered after 'save' so a listener reacting to
+    // 'dirty-change' already sees the save that caused it.
     if (prevState.metadata.isDirty !== nextState.metadata.isDirty) {
       prepare("dirty-change", createDirtyChangeEvent(nextState.metadata.isDirty, nextState));
     }

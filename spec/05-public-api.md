@@ -153,11 +153,40 @@ Auto-emitted by `store.createDocumentStoreWithEvents`:
 - `selection-change` (`SET_SELECTION`)
 - `history-change` (`UNDO/REDO`)
 - `attention-change` (create, delete, or content edits that rewrite stored points)
+- `save` (`MARK_SAVED`)
 - `dirty-change` (when dirty flag changes)
 
-Note:
+### 3.1 Save lifecycle
 
-- `save` exists as an event type/factory, but is not auto-emitted by reducer/store actions.
+Reed performs no I/O. The caller persists the document and then reports the
+result:
+
+```ts
+await writeFile(path, query.getText(state.pieceTable, ...));
+store.dispatch(DocumentActions.markSaved());
+```
+
+`MARK_SAVED` clears `metadata.isDirty` and stamps `metadata.lastSaved`
+(defaulting to dispatch time). An event store then emits `save`, followed by
+`dirty-change` when the document had been dirty — in that order, so a
+`dirty-change` listener already sees the save that caused it.
+
+Semantics:
+
+- `save` is emitted **only** for an explicit `MARK_SAVED`. It is never inferred
+  from the document becoming clean by other means, and it asserts only that the
+  caller reported success — never that bytes reached durable storage.
+- Saving an already-clean document still emits `save`; there is simply no dirty
+  transition to report. Re-saving at the same timestamp is a no-op that does not
+  advance the revision.
+- Inside a transaction the event is buffered until commit. A rollback discards
+  both the event and the clean state, so a failed write leaves the document
+  dirty.
+- Later edits and remote changes re-dirty the document but preserve
+  `lastSaved`.
+
+Before v3.2.0 the `save` event type and `createSaveEvent` factory existed with
+no transition that could emit them, and `isDirty` was only ever set to `true`.
 
 ## 4. Read APIs
 
