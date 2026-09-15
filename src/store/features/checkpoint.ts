@@ -39,6 +39,7 @@ import type {
   CheckpointErrorCode,
 } from "../../types/checkpoint.js";
 import { CHECKPOINT_FORMAT, CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
+import { migrateCheckpointData } from "./checkpoint-migrate.js";
 import type { PieceDescriptor, LineDescriptor } from "../core/state.js";
 import {
   buildPieceTree,
@@ -847,28 +848,27 @@ export function restoreCheckpoint(
   }
   readString(source.format, "checkpoint.format", budget);
   const version = readCount(source.version, "checkpoint.version");
-  if (version !== CHECKPOINT_VERSION) {
-    fail(
-      "VERSION_UNSUPPORTED",
-      `checkpoint version ${version} is unsupported; this build reads version ${CHECKPOINT_VERSION}`,
-    );
-  }
-  readEnum(source.mode, ["exact", "normalized"] as const, "checkpoint.mode", budget);
+  // Older payloads are brought forward before any field is validated: the
+  // validators below encode the shape of the current version only. Throws
+  // VERSION_UNSUPPORTED when no migration path exists.
+  const migrated =
+    version === CHECKPOINT_VERSION ? source : migrateCheckpointData(source, version).data;
+  readEnum(migrated.mode, ["exact", "normalized"] as const, "checkpoint.mode", budget);
 
-  const revision = readCount(source.revision, "checkpoint.revision");
-  const { pieceTable, lengthByID } = restorePieceTable(source.pieceTable, budget);
-  const lineIndex = restoreLineIndex(source.lineIndex, pieceTable.totalLength, revision, budget);
+  const revision = readCount(migrated.revision, "checkpoint.revision");
+  const { pieceTable, lengthByID } = restorePieceTable(migrated.pieceTable, budget);
+  const lineIndex = restoreLineIndex(migrated.lineIndex, pieceTable.totalLength, revision, budget);
   validateChunkLineIndex(pieceTable, lineIndex);
 
   return Object.freeze({
     revision,
-    selectionRevision: readCount(source.selectionRevision, "checkpoint.selectionRevision"),
+    selectionRevision: readCount(migrated.selectionRevision, "checkpoint.selectionRevision"),
     pieceTable,
     lineIndex,
-    selection: restoreSelection(source.selection, "selection", pieceTable.totalLength, budget),
-    history: restoreHistory(source.history, budget),
-    metadata: restoreMetadata(source.metadata, budget),
-    attention: restoreAttention(source.attention, lengthByID, budget),
+    selection: restoreSelection(migrated.selection, "selection", pieceTable.totalLength, budget),
+    history: restoreHistory(migrated.history, budget),
+    metadata: restoreMetadata(migrated.metadata, budget),
+    attention: restoreAttention(migrated.attention, lengthByID, budget),
   });
 }
 
