@@ -13,13 +13,48 @@ import {
   rebuildLineIndex,
 } from "../src/store/core/line-index.js";
 
-/** Assert persistent piece-tree ordering, aggregates, identity, and RB properties. */
+/**
+ * The maximum height a red-black tree of `count` nodes may have.
+ *
+ * A red-black tree satisfies `h <= 2*log2(n + 1)`; because heights are integers
+ * the floor of that expression is the tightest admissible bound. This is the
+ * property callers actually depend on — `O(log n)` piece-table operations are
+ * a consequence of bounded height, not of the colour rules themselves.
+ */
+export function redBlackHeightBound(count: number): number {
+  return Math.floor(2 * Math.log2(count + 1));
+}
+
+/** Node count and height of a piece tree, for bound checks and diagnostics. */
+export function measurePieceTree(node: PieceNode | null): { count: number; height: number } {
+  if (node === null) return { count: 0, height: 0 };
+  const left = measurePieceTree(node.left);
+  const right = measurePieceTree(node.right);
+  return {
+    count: 1 + left.count + right.count,
+    height: 1 + Math.max(left.height, right.height),
+  };
+}
+
+/**
+ * Assert persistent piece-tree ordering, aggregates, identity, and RB properties.
+ *
+ * `strictRedBlack` additionally checks root blackness, the absence of red-red
+ * edges, uniform black height, and the height bound above. It defaults to
+ * `false` only so that callers asserting a narrower contract stay unchanged;
+ * any test driving live inserts and deletes should pass `true`.
+ */
 export function assertPieceTableInvariants(
   state: PieceTableState,
   context = "piece table",
   strictRedBlack = false,
 ): void {
   const ids = new Set<string>();
+  // Shape is reported alongside every strict failure: a bare "black-height"
+  // mismatch does not say how badly the tree has degraded, and the node count
+  // and height are what identify the offending workload.
+  const shape = strictRedBlack ? measurePieceTree(state.root) : null;
+  const where = shape ? `${context} [pieces=${shape.count} height=${shape.height}]` : context;
 
   function visit(node: PieceNode | null): {
     blackHeight: number;
@@ -27,25 +62,27 @@ export function assertPieceTableInvariants(
     addLength: number;
   } {
     if (node === null) return { blackHeight: 1, length: 0, addLength: 0 };
-    expect(Object.isFrozen(node), `${context}: node ${node.id} is frozen`).toBe(true);
-    expect(ids.has(node.id), `${context}: duplicate piece ID ${node.id}`).toBe(false);
+    expect(Object.isFrozen(node), `${where}: node ${node.id} is frozen`).toBe(true);
+    expect(ids.has(node.id), `${where}: duplicate piece ID ${node.id}`).toBe(false);
     ids.add(node.id);
     if (strictRedBlack && node.color === "red") {
-      expect(node.left?.color, `${context}: red-left violation`).not.toBe("red");
-      expect(node.right?.color, `${context}: red-right violation`).not.toBe("red");
+      expect(node.left?.color, `${where}: red-red edge below ${node.id} (left)`).not.toBe("red");
+      expect(node.right?.color, `${where}: red-red edge below ${node.id} (right)`).not.toBe("red");
     }
     const left = visit(node.left);
     const right = visit(node.right);
     if (strictRedBlack) {
-      expect(left.blackHeight, context + ": black-height").toBe(right.blackHeight);
+      expect(left.blackHeight, `${where}: black-height mismatch at ${node.id}`).toBe(
+        right.blackHeight,
+      );
     }
     const length = node.length + left.length + right.length;
     const addLength =
       (node.bufferType === "add" ? node.length : 0) + left.addLength + right.addLength;
-    expect(node.subtreeLength, `${context}: subtreeLength`).toBe(length);
-    expect(node.subtreeAddLength, `${context}: subtreeAddLength`).toBe(addLength);
+    expect(node.subtreeLength, `${where}: subtreeLength`).toBe(length);
+    expect(node.subtreeAddLength, `${where}: subtreeAddLength`).toBe(addLength);
     if (node.bufferType === "chunk") {
-      expect(state.chunkMap.has(node.chunkIndex), `${context}: missing chunk buffer`).toBe(true);
+      expect(state.chunkMap.has(node.chunkIndex), `${where}: missing chunk buffer`).toBe(true);
     }
     return {
       blackHeight: left.blackHeight + (node.color === "black" ? 1 : 0),
@@ -55,10 +92,18 @@ export function assertPieceTableInvariants(
   }
 
   if (strictRedBlack && state.root !== null) {
-    expect(state.root.color, `: root color`).toBe("black");
+    expect(state.root.color, `${where}: root colour`).toBe("black");
   }
   const totals = visit(state.root);
-  expect(totals.length, `${context}: totalLength`).toBe(state.totalLength);
+  expect(totals.length, `${where}: totalLength`).toBe(state.totalLength);
+
+  if (shape !== null) {
+    const bound = redBlackHeightBound(shape.count);
+    expect(
+      shape.height,
+      `${where}: height exceeds the red-black bound 2*log2(n+1)=${bound}`,
+    ).toBeLessThanOrEqual(bound);
+  }
 }
 
 /** Assert line-tree aggregates and, for eager trees, exact document offsets. */
@@ -105,17 +150,24 @@ export function assertLineIndexRedBlackProperties(
   visit(root);
 }
 
-/** Compare an eager document snapshot with a plain-string reference model. */
+/**
+ * Compare an eager document snapshot with a plain-string reference model.
+ *
+ * `strictRedBlack` propagates to the piece-tree assertion. Text and aggregates
+ * can stay correct while the tree's colour and height invariants are broken, so
+ * a model comparison alone does not establish that the document is well formed.
+ */
 export function assertDocumentMatchesModel(
   state: DocumentState<"eager">,
   expected: string,
   context = "document",
+  strictRedBlack = false,
 ): void {
   expect(
     getText(state.pieceTable, byteOffset(0), byteOffset(state.pieceTable.totalLength)),
     `${context}: text`,
   ).toBe(expected);
-  assertPieceTableInvariants(state.pieceTable, context);
+  assertPieceTableInvariants(state.pieceTable, context, strictRedBlack);
   const totals = assertLineIndexInvariants(state.lineIndex.root, context);
   expect(totals.lines, `${context}: lineCount aggregate`).toBe(state.lineIndex.lineCount);
   const rebuilt = rebuildLineIndex(expected);

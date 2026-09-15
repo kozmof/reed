@@ -77,10 +77,17 @@ describe("model-based document transitions", () => {
         }
 
         if (step % 25 === 0) {
-          assertDocumentMatchesModel(store.reconcileNow(), model, `seed=${seed} step=${step}`);
+          // Strict: this loop mixes insert, delete and replace on a live tree,
+          // which is exactly the workload whose red-black contract must hold.
+          assertDocumentMatchesModel(
+            store.reconcileNow(),
+            model,
+            `seed=${seed} step=${step} op=${operation}`,
+            true,
+          );
         }
       }
-      assertDocumentMatchesModel(store.reconcileNow(), model, `seed=${seed} final`);
+      assertDocumentMatchesModel(store.reconcileNow(), model, `seed=${seed} final`, true);
       store.dispose();
     }
   });
@@ -108,9 +115,9 @@ describe("model-based document transitions", () => {
       expect(getTextForAttention(snapshot.pieceTable, snapshot.attention, id), `step=${step}`).toBe(
         "TARGET",
       );
-      assertPieceTableInvariants(snapshot.pieceTable, `attention step=${step}`);
+      assertPieceTableInvariants(snapshot.pieceTable, `attention step=${step}`, true);
     }
-    assertDocumentMatchesModel(store.reconcileNow(), model, "attention final");
+    assertDocumentMatchesModel(store.reconcileNow(), model, "attention final", true);
   });
 
   it("matches UTF-8 semantics across generated Unicode and malformed UTF-16 edits", () => {
@@ -163,11 +170,12 @@ describe("model-based document transitions", () => {
             store.reconcileNow(),
             model,
             `unicode seed=${seed} step=${step}`,
+            true,
           );
         }
       }
 
-      assertDocumentMatchesModel(store.reconcileNow(), model, `unicode seed=${seed} final`);
+      assertDocumentMatchesModel(store.reconcileNow(), model, `unicode seed=${seed} final`, true);
       store.dispose();
     }
   });
@@ -229,7 +237,12 @@ describe("checkpoint round-trip model", () => {
         }
       }
 
-      assertDocumentMatchesModel(store.reconcileNow(), model, `checkpoint seed=${seed} final`);
+      assertDocumentMatchesModel(
+        store.reconcileNow(),
+        model,
+        `checkpoint seed=${seed} final`,
+        true,
+      );
       store.dispose();
     }
   });
@@ -269,7 +282,12 @@ describe("chunk boundary model", () => {
           [...resident].sort((a, b) => a - b).flatMap((chunk) => [...chunks[chunk]!]),
         );
         const expected = new TextDecoder().decode(expectedBytes);
-        assertDocumentMatchesModel(store.reconcileNow(), expected, `seed=${seed} step=${step}`);
+        assertDocumentMatchesModel(
+          store.reconcileNow(),
+          expected,
+          `seed=${seed} step=${step}`,
+          true,
+        );
       }
       store.dispose();
     }
