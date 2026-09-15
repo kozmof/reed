@@ -40,12 +40,12 @@ Standard RB-tree invariants hold after every structural operation:
 
 Each structural operation has its own repair path:
 
-| Operation | Repair |
-| --- | --- |
-| Insertion | `fixInsertWithPath` — rotations plus the red-uncle colour flip, propagating up the insertion path |
-| Right-spine graft (chunk loading) | `fixRedViolations` — rotation only; valid because the uncle is known black |
-| Deletion | `removeMinimum` / `repairLeftBlackDeficit` / `repairRightBlackDeficit` |
-| Split and concatenation | `joinBalanced` / `joinTrees` |
+| Operation                         | Repair                                                                                            |
+| --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Insertion                         | `fixInsertWithPath` — rotations plus the red-uncle colour flip, propagating up the insertion path |
+| Right-spine graft (chunk loading) | `fixRedViolations` — rotation only; valid because the uncle is known black                        |
+| Deletion                          | `removeMinimum` / `repairLeftBlackDeficit` / `repairRightBlackDeficit`                            |
+| Split and concatenation           | `joinBalanced` / `joinTrees`                                                                      |
 
 Deletion reports a black deficit explicitly, as
 `{ node, blackHeightDecreased }`, and each level either absorbs it or passes it

@@ -16,15 +16,15 @@ upgrade path has to be designed under release pressure.
 Separately, chunked documents cannot use `normalized` capture — flattening a
 partially loaded file would discard its unloaded ranges — so they always take
 the `exact` path, which base64-inlines every resident chunk. Payload size
-therefore tracks *everything the user has looked at*, not what they have
+therefore tracks _everything the user has looked at_, not what they have
 changed. Measured on 4 KiB chunks with no edits at all:
 
 | Chunks resident | Bytes viewed | Checkpoint chars | Ratio |
-| ---: | ---: | ---: | ---: |
-| 1 | 4,096 | 6,126 | 1.50 |
-| 8 | 32,768 | 44,662 | 1.36 |
-| 32 | 131,072 | 176,874 | 1.35 |
-| 64 | 262,144 | 353,162 | 1.35 |
+| --------------: | -----------: | ---------------: | ----: |
+|               1 |        4,096 |            6,126 |  1.50 |
+|               8 |       32,768 |           44,662 |  1.36 |
+|              32 |      131,072 |          176,874 |  1.35 |
+|              64 |      262,144 |          353,162 |  1.35 |
 
 Growth is linear in chunks viewed. A long read-only browse of a large file
 produces a large checkpoint describing a document the user never edited.
@@ -42,7 +42,7 @@ preceding it, and is exercised by every later upgrade. A direct `v1 -> v3` step
 would have to be rewritten each time the format moves again.
 
 **Migrations operate on raw wire data, before validation.** The validators
-encode the shape of the *current* version, so an older payload cannot be
+encode the shape of the _current_ version, so an older payload cannot be
 validated until it has been brought forward. Resource limits still apply: they
 are enforced when fields are read, which happens after migration, so a migration
 cannot be used to smuggle an oversized payload past the budget.
@@ -62,8 +62,8 @@ code callers already branch on, with a message naming the supported window.
 
 ## Decision 2 — Skeleton checkpoint (proposed, not implemented)
 
-The intent is to separate *document structure and user edits* from *externally
-reloadable chunk bytes*, so checkpoint size tracks edits rather than browsing.
+The intent is to separate _document structure and user edits_ from _externally
+reloadable chunk bytes_, so checkpoint size tracks edits rather than browsing.
 
 Sketch:
 
