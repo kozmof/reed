@@ -342,3 +342,39 @@ History selections are checked for shape but not against the current document le
 entry describes an older revision, so its offsets may legitimately sit past the end of the
 document as it stands now.
 
+---
+
+## 7. Add-Buffer Writable-Tail Ownership
+
+`GrowableBuffer` avoids copying the valid prefix on every keystroke by letting
+sequential appends write into spare capacity of a shared backing array. Safety
+rests on one rule:
+
+> At most one `GrowableBuffer` owns the writable tail of a given backing array,
+> and only that owner may write in place. Every other version copies first.
+
+Ownership is recorded in a module-level `WeakMap` keyed by the backing
+`Uint8Array` (`writableTailOwner` in `growable-buffer.ts`). Consequences that
+are easy to miss:
+
+- **Ownership is not part of `DocumentState`.** It depends on in-process object
+  identity. It is therefore invisible to serialization and cannot be asserted
+  from a snapshot alone.
+- **Crossing a boundary drops ownership, safely.** A buffer rebuilt from bytes —
+  checkpoint restore, a `postMessage` clone, any structured clone — shares no
+  identity with the original, owns nothing, and copies on its first append. The
+  fallback is correctness-preserving, so no boundary needs special handling.
+- **Growth transfers ownership.** Reallocating for capacity produces a new
+  backing array whose owner is the new version, so older versions branching from
+  the same prefix still copy.
+- **Branching after rollback is the case this exists for.** Appending from a
+  stale version must never overwrite bytes a newer snapshot can still see.
+- **Exposed views are fixed-length.** `buffer.bytes` is a
+  `subarray(0, length)` snapshot, so a later append cannot extend what an older
+  version exposes.
+
+`src/store/core/growable-buffer.test.ts` covers sequential reuse, branch
+isolation, ownership transfer on growth, the serialization-boundary fallback,
+and view stability. Change the ownership design only with a concrete
+cross-realm requirement or a measurement that justifies it; the current scheme
+trades a `WeakMap` lookup for avoiding an O(n) copy per keystroke.
