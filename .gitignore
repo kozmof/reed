@@ -32,3 +32,5 @@ tmp/
 .codex
 
 coverage
+# Generated verification evidence (uploaded as a CI artifact)
+report/

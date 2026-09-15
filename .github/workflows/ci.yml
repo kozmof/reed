@@ -20,9 +20,24 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm fmt:check
       - run: pnpm lint
+      - name: Self-test the public-declaration guard
+        run: bash scripts/check-public-types.sh --self-test
       - run: pnpm build
       - run: pnpm coverage
-      - run: pnpm test:perf
+      - run: pnpm test:perf 2>&1 | tee perf-output.txt
+      - name: Generate verification summary
+        if: always()
+        run: bash scripts/verification-summary.sh
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-evidence
+          path: |
+            report/verification-summary.md
+            coverage/
+            perf-output.txt
+          if-no-files-found: warn
 
   test:
     runs-on: ubuntu-latest
@@ -76,6 +91,13 @@ jobs:
             }
             console.log('Package consumption OK — export count:', Object.keys(reed).length);
           "
+      - name: Record packed file list
+        run: tar -tzf "$(ls "$RUNNER_TEMP"/kozmof-reed-*.tgz | head -1)" | sort | tee packed-files.txt
+      - name: Upload packed file list
+        uses: actions/upload-artifact@v4
+        with:
+          name: packed-file-list
+          path: packed-files.txt
       - name: Type-check a packed-package consumer
         run: |
           consume="$RUNNER_TEMP/consume"

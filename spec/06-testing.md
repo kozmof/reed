@@ -2,11 +2,19 @@
 
 ## 1. Latest Verified Run
 
-- Date: 2026-08-24
-- Functional command: `pnpm test`
-- Functional result: `28` test files, `1154` tests passed
-- Perf command: `pnpm test:perf`
-- Perf result: `1` test file, `34` tests passed
+Counts are **generated, not transcribed**. Run:
+
+```sh
+bash scripts/verification-summary.sh
+```
+
+It writes `report/verification-summary.md` with the commit SHA, Node version,
+platform, and the test counts read from vitest's JSON reporter. CI uploads the
+same file as a build artifact.
+
+This section previously carried hand-copied totals and drifted: it claimed
+`1154` functional tests while the suite ran `1163`. Quote the generated
+summary or the CI run, and do not restate counts here.
 
 ## 2. Current Test Suites
 
@@ -37,6 +45,8 @@ Functional suites (`pnpm test`):
 - `src/store/features/chunk-stress.test.ts`: seeded randomized high-scale streaming stress (load/evict/reload consistency)
 - `src/store/features/checkpoint.test.ts`: checkpoint capture/restore round trips, store entry points, and the payload rejection matrix
 - `src/store/features/model-based.test.ts`: seeded edit sequences checked against a string model, including mid-sequence checkpoint restore
+- `src/store/core/piece-table-rb.test.ts`: red-black contract of the persistent piece tree — minimal deletion reproducers, deletion shapes, and the height bound
+- `src/store/features/complexity.test.ts`: deterministic complexity gates asserting piece-tree and line-index height against `2*log2(n+1)`
 - `src/index.test.ts`: public entry point namespace wiring
 
 Performance suite (`pnpm test:perf`):
@@ -90,6 +100,19 @@ The randomized streaming stress suite asserts ordering, subtree aggregates, and
 strict red-black balance after every reconciled step. Dedicated deletion tests
 cover both persistent deletion and the large-range rebuild path. Line-index
 lookups remain O(log n).
+
+Strict red-black validation now also runs on **live** edit sequences, not only
+on checkpoint-restored trees. Until v3.2.0 the model-based suite checked tree
+shape strictly only at `model-based.test.ts:222`, against a bulk-built restored
+tree, so a piece tree that lost its balance guarantee through ordinary deletes
+passed the entire suite — text and aggregates stayed correct. Every live model
+loop now passes `strictRedBlack = true`, and `assertPieceTableInvariants`
+additionally checks `height <= 2*log2(n + 1)`.
+
+Timing and complexity are gated separately. `perf.test.ts` holds
+catastrophic-failure ceilings with roughly an order of magnitude of headroom;
+`complexity.test.ts` holds deterministic structural bounds and runs in the
+ordinary functional suite.
 
 ## 5. Guidance for Spec-Driven Testing
 
