@@ -38,9 +38,10 @@ import {
 } from "./state.js";
 import { unwrapReadonlyUint8Array } from "./runtime-readonly.js";
 import {
+  ensureBlackRoot,
   fixInsertWithPath,
-  fixRedViolations,
-  isRed,
+  joinBalanced,
+  joinTrees,
   type WithNodeFn,
   type InsertionPathEntry,
   type RootToLeafInsertPath,
@@ -808,7 +809,7 @@ function replacePieceInTree(
 
 /**
  * Create a child-less copy of `node` with new `start` and `length`.
- * Color is a placeholder ("black") — joinByBlackHeight always overrides it.
+ * Color is a placeholder ("black") — joinBalanced always overrides it.
  *
  * `id` defaults to a fresh ID. Pass `node.id` when the fragment represents a
  * surviving portion of the original piece (so AttentionPoints keep tracking it).
@@ -830,11 +831,15 @@ function makePiece(
  * `[offset, subtreeLength)` in document order.
  *
  * When `offset` falls in the middle of a piece that piece is cut into two
- * child-less pieces; each half is then assembled via `joinByBlackHeight` which
- * restores the RB black-height invariant for the resulting subtrees.
+ * child-less pieces; each half is then reassembled with `joinBalanced`, which
+ * grafts at a node of matching black height and repairs on the way back up.
+ *
+ * Nodes reconstructed unchanged keep their original piece ID so AttentionPoints
+ * continue to resolve; only a piece genuinely cut in half mints a new ID, for
+ * its right fragment.
  *
  * Complexity: O(log n) per call (each level of the recursion makes one
- * joinByBlackHeight call whose cost is proportional to the height difference,
+ * joinBalanced call whose cost is proportional to the height difference,
  * and those differences telescope to O(log n) total across the root-to-leaf path).
  */
 function splitAt(
@@ -855,7 +860,7 @@ function splitAt(
     // This node is reconstructed unchanged — preserve its ID so AttentionPoints survive.
     const [ll, lr] = splitAt(node.left, offset, allocatePieceID);
     const key = makePiece(node, node.start, byteLength(node.length), node.id);
-    return [ll, joinByBlackHeight(lr, key, node.right)];
+    return [ll, joinBalanced(lr, key, node.right, withPiece)];
   }
 
   if (offset >= pieceEnd) {
@@ -863,7 +868,7 @@ function splitAt(
     // This node is reconstructed unchanged — preserve its ID so AttentionPoints survive.
     const [rl, rr] = splitAt(node.right, offset - pieceEnd, allocatePieceID);
     const key = makePiece(node, node.start, byteLength(node.length), node.id);
-    return [joinByBlackHeight(node.left, key, rl), rr];
+    return [joinBalanced(node.left, key, rl, withPiece), rr];
   }
 
   // Split falls within this piece — cut it into two child-less halves.
@@ -877,22 +882,31 @@ function splitAt(
     byteLength(node.length - off),
     allocatePieceID(),
   );
-  return [joinByBlackHeight(node.left, lKey, null), joinByBlackHeight(null, rKey, node.right)];
+  return [
+    joinBalanced(node.left, lKey, null, withPiece),
+    joinBalanced(null, rKey, node.right, withPiece),
+  ];
 }
 
 /**
  * Delete text from the piece table in the range [start, end).
  * Returns a new PieceTableState.
  *
- * Uses a split–join strategy:
- *   1. splitAt(root, clampedStart)          → [left, rest]
+ * Uses a split-join strategy:
+ *   1. splitAt(root, clampedStart)              → [left, rest]
  *   2. splitAt(rest, clampedEnd - clampedStart) → [_, right]
- *   3. mergeTrees(left, right)              → new root
+ *   3. joinTrees(left, right)                   → new root
  *
- * Each split is O(log n) via joinByBlackHeight, making the overall delete
- * O(log n) regardless of how many pieces the deleted range spans.
- * The joinByBlackHeight calls also maintain the RB black-height invariant,
- * fixing the double-black propagation gap in the previous deleteRange approach.
+ * Each split is O(log n) via joinBalanced, making the overall delete O(log n)
+ * regardless of how many pieces the deleted range spans.
+ *
+ * Every structural step preserves the full red-black contract. joinTrees takes
+ * the minimum of the right tree as its join key and discharges the black
+ * deficit that removing it creates before either rank is read; joinBalanced
+ * grafts by black height. Earlier revisions repaired only red-red violations
+ * here and recoloured the root to finish, which left black-height deficits in
+ * the tree — text and aggregates stayed correct, so only tree-shape assertions
+ * caught it (see piece-table-rb.test.ts).
  */
 export function pieceTableDelete(
   state: PieceTableState,
@@ -913,10 +927,10 @@ export function pieceTableDelete(
   const [left, rest] = splitAt(state.root, clampedStart, allocatePieceID);
   const [, right] = splitAt(rest, clampedEnd - clampedStart, allocatePieceID);
 
-  let newRoot = mergeTrees(left, right);
-  if (newRoot !== null && isRed(newRoot)) {
-    newRoot = withPieceNode(newRoot, { color: "black" });
-  }
+  // joinTrees discharges the black deficit that removing the join key creates,
+  // so the only normalisation left is the root colour.
+  const merged = joinTrees(left, right, withPiece);
+  const newRoot = merged === null ? null : ensureBlackRoot(merged, withPiece);
 
   return $proveCtx(
     $beginCost("O(log n)"),
@@ -927,206 +941,6 @@ export function pieceTableDelete(
       nextPieceID,
     }),
   );
-}
-
-/**
- * Compute the black-height of a tree (number of black nodes on any root-to-leaf path).
- */
-function blackHeight(node: PieceNode | null): number {
-  let h = 0;
-  let n = node;
-  while (n !== null) {
-    if (n.color === "black") h++;
-    n = n.left;
-  }
-  return h;
-}
-
-/**
- * Extract the minimum node from a tree, returning the node and the remaining tree.
- */
-function extractMin(node: PieceNode): {
-  min: PieceNode;
-  rest: PieceNode | null;
-} {
-  const path: PieceNode[] = [];
-  let current = node;
-  while (current.left !== null) {
-    path.push(current);
-    current = current.left;
-  }
-
-  // `current` is the minimum; replace it with its right child
-  let rest: PieceNode | null = current.right;
-  for (let i = path.length - 1; i >= 0; i--) {
-    rest = withPieceNode(path[i]!, { left: rest });
-    rest = fixRedViolations(rest, withPiece);
-  }
-  if (rest !== null && isRed(rest)) {
-    rest = withPieceNode(rest, { color: "black" });
-  }
-
-  return { min: current, rest };
-}
-
-/**
- * Merge two trees into one (used when a node is deleted).
- * Uses the "join by black-height rank" algorithm to maintain the
- * black-height invariant across all root-to-leaf paths.
- *
- * All keys in `left` must be less than all keys in `right` (by inorder position).
- */
-function mergeTrees(left: PieceNode | null, right: PieceNode | null): PieceNode | null {
-  if (left === null) return right;
-  if (right === null) return left;
-
-  // Extract the minimum of the right tree as the join key
-  const { min: joinKey, rest: rightRest } = extractMin(right);
-
-  return joinByBlackHeight(left, joinKey, rightRest);
-}
-
-/**
- * Join left tree + key node + right tree, respecting black-height.
- * The key's children and color are overwritten; only its data fields are used.
- */
-function joinByBlackHeight(
-  left: PieceNode | null,
-  key: PieceNode,
-  right: PieceNode | null,
-): PieceNode {
-  const lh = blackHeight(left);
-  const rh = blackHeight(right);
-
-  if (lh === rh) {
-    // Equal black-heights: make key the root (black) with both as children
-    return withPieceNode(key, { left, right, color: "black" });
-  }
-
-  let result: PieceNode;
-  if (lh > rh) {
-    result = joinRight(left!, key, right, lh, rh);
-  } else {
-    result = joinLeft(left, key, right!, lh, rh);
-  }
-
-  // Ensure root is black
-  if (isRed(result)) {
-    result = withPieceNode(result, { color: "black" });
-  }
-  return result;
-}
-
-/**
- * Join when left tree is taller. Walk down the right spine of the left tree
- * to find a black node at matching black-height, then insert the join key there.
- */
-function joinRight(
-  left: PieceNode,
-  key: PieceNode,
-  right: PieceNode | null,
-  lh: number,
-  rh: number,
-): PieceNode {
-  // Walk down right spine of left tree to matching black-height
-  const path: PieceNode[] = [];
-  let node: PieceNode = left;
-  let bh = lh;
-
-  // Descend until we reach a subtree with black-height equal to rh.
-  // Decrement bh based on the CURRENT (parent) node's color before moving,
-  // because blackHeight(n.right) = blackHeight(n) - (n.color==="black" ? 1 : 0).
-  while (bh > rh && node.right !== null) {
-    path.push(node);
-    if (node.color === "black") bh--;
-    node = node.right;
-  }
-
-  // If we haven't reached the target bh, descend one more level
-  if (bh > rh) {
-    path.push(node);
-    // Create join node with node's right (null) and the right tree
-    let joined: PieceNode = withPieceNode(key, {
-      left: null,
-      right,
-      color: "red",
-    });
-    // Rebuild path
-    for (let i = path.length - 1; i >= 0; i--) {
-      joined = withPieceNode(path[i]!, { right: joined });
-      joined = fixRedViolations(joined, withPiece);
-    }
-    return joined;
-  }
-
-  // Insert join key as red node: left = current subtree, right = right tree
-  let joined: PieceNode = withPieceNode(key, {
-    left: node,
-    right,
-    color: "red",
-  });
-
-  // Rebuild path back to root, fixing violations
-  for (let i = path.length - 1; i >= 0; i--) {
-    joined = withPieceNode(path[i]!, { right: joined });
-    joined = fixRedViolations(joined, withPiece);
-  }
-
-  return joined;
-}
-
-/**
- * Join when right tree is taller. Walk down the left spine of the right tree
- * to find a black node at matching black-height, then insert the join key there.
- */
-function joinLeft(
-  left: PieceNode | null,
-  key: PieceNode,
-  right: PieceNode,
-  lh: number,
-  rh: number,
-): PieceNode {
-  // Walk down left spine of right tree to matching black-height
-  const path: PieceNode[] = [];
-  let node: PieceNode = right;
-  let bh = rh;
-
-  // Decrement bh based on the CURRENT (parent) node's color before moving,
-  // because blackHeight(n.left) = blackHeight(n) - (n.color==="black" ? 1 : 0).
-  while (bh > lh && node.left !== null) {
-    path.push(node);
-    if (node.color === "black") bh--;
-    node = node.left;
-  }
-
-  if (bh > lh) {
-    path.push(node);
-    let joined: PieceNode = withPieceNode(key, {
-      left,
-      right: null,
-      color: "red",
-    });
-    for (let i = path.length - 1; i >= 0; i--) {
-      joined = withPieceNode(path[i]!, { left: joined });
-      joined = fixRedViolations(joined, withPiece);
-    }
-    return joined;
-  }
-
-  // Insert join key as red node: left = left tree, right = current subtree
-  let joined: PieceNode = withPieceNode(key, {
-    left,
-    right: node,
-    color: "red",
-  });
-
-  // Rebuild path back to root, fixing violations
-  for (let i = path.length - 1; i >= 0; i--) {
-    joined = withPieceNode(path[i]!, { left: joined });
-    joined = fixRedViolations(joined, withPiece);
-  }
-
-  return joined;
 }
 
 // =============================================================================

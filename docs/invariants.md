@@ -38,9 +38,31 @@ Standard RB-tree invariants hold after every structural operation:
 - Every path from root to null has the same number of black nodes
   (the black-height invariant).
 
-`fixInsertWithPath` restores invariants after insertion.  
-`fixRedViolations` restores the red-property after a right-spine graft (chunk
-loading).
+Each structural operation has its own repair path:
+
+| Operation | Repair |
+| --- | --- |
+| Insertion | `fixInsertWithPath` — rotations plus the red-uncle colour flip, propagating up the insertion path |
+| Right-spine graft (chunk loading) | `fixRedViolations` — rotation only; valid because the uncle is known black |
+| Deletion | `removeMinimum` / `repairLeftBlackDeficit` / `repairRightBlackDeficit` |
+| Split and concatenation | `joinBalanced` / `joinTrees` |
+
+Deletion reports a black deficit explicitly, as
+`{ node, blackHeightDecreased }`, and each level either absorbs it or passes it
+upward. `joinTrees` discharges the deficit from removing its join key before
+either subtree's rank is read, and `joinBalanced` grafts at a node of matching
+black height. Only the final root is normalised to black.
+
+`fixRedViolations` is **not** a general repair: it handles neither a black
+deficit nor a red uncle. Before v3.2.0 the deletion path used it alone and
+recoloured the root to finish, which left the tree with red-red edges and
+uneven black height after ordinary interior, prefix and suffix deletes. Document
+text and the `subtreeLength` / `subtreeAddLength` aggregates stayed correct
+throughout, so only tree-shape assertions detected it; measured height reached
+roughly twice the red-black bound under delete-heavy fragmentation.
+`src/store/core/piece-table-rb.test.ts` pins the contract, and
+`assertPieceTableInvariants(..., strictRedBlack = true)` additionally checks
+`height <= 2*log2(n + 1)`.
 
 ### 1.3 Immutability
 
@@ -319,3 +341,4 @@ them, so invariant 4 cannot be violated by an edited payload.
 History selections are checked for shape but not against the current document length. An undo
 entry describes an older revision, so its offsets may legitimately sit past the end of the
 document as it stands now.
+
