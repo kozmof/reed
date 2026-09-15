@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { NodeColor, RBNode } from "../../types/state.js";
 import {
+  blackHeight,
   ensureBlackRoot,
   fixInsertWithPath,
   fixRedViolations,
   isBlack,
   isRed,
+  joinBalanced,
+  joinTrees,
+  removeMinimum,
+  removeNodeWithAtMostOneChild,
+  repairLeftBlackDeficit,
+  repairRightBlackDeficit,
   rotateLeft,
   rotateRight,
   type InsertionPathEntry,
@@ -411,5 +418,337 @@ describe("RB Tree Utilities", () => {
         expect(inOrderKeys(root)).toEqual([...keys].sort((a, b) => a - b));
       }
     });
+  });
+});
+
+// =============================================================================
+// Persistent deletion and rank-based join
+// =============================================================================
+
+/**
+ * Assert every structural property a subtree must satisfy. `rootMustBeBlack` is
+ * false for join intermediates, which are allowed to hand back a red root.
+ */
+function assertWellFormed(root: TestNode | null, context: string, rootMustBeBlack = true): void {
+  if (root === null) return;
+  if (rootMustBeBlack) expect(root.color, `${context}: root colour`).toBe("black");
+  assertBSTOrder(root, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY);
+  assertNoRedRed(root);
+  assertBlackHeight(root);
+  assertSizes(root);
+  assertFrozen(root, context);
+}
+
+function assertFrozen(node: TestNode | null, context: string): void {
+  if (node === null) return;
+  expect(Object.isFrozen(node), `${context}: node ${node.key} frozen`).toBe(true);
+  assertFrozen(node.left, context);
+  assertFrozen(node.right, context);
+}
+
+function buildTree(keys: readonly number[]): TestNode | null {
+  let root: TestNode | null = null;
+  for (const key of keys) root = insertWithPath(root, key);
+  return root;
+}
+
+/** Every permutation of `keys`, so trees of every reachable shape are covered. */
+function permutations(keys: readonly number[]): number[][] {
+  if (keys.length <= 1) return [[...keys]];
+  const result: number[][] = [];
+  keys.forEach((key, index) => {
+    const rest = [...keys.slice(0, index), ...keys.slice(index + 1)];
+    for (const tail of permutations(rest)) result.push([key, ...tail]);
+  });
+  return result;
+}
+
+describe("blackHeight", () => {
+  it("counts the null terminator as one black level", () => {
+    expect(blackHeight<TestNode>(null)).toBe(1);
+    expect(blackHeight(createNode(1, "black"))).toBe(2);
+    expect(blackHeight(createNode(1, "red"))).toBe(1);
+  });
+
+  it("agrees with the height measured down every spine of a built tree", () => {
+    for (const size of [1, 2, 3, 7, 15, 31]) {
+      const root = buildTree(Array.from({ length: size }, (_, i) => i + 1))!;
+      // assertBlackHeight walks every path and fails unless they all agree.
+      expect(assertBlackHeight(root)).toBe(blackHeight(root));
+    }
+  });
+});
+
+describe("black-deficit repair", () => {
+  // Each fixture builds a parent whose LEFT subtree is one black level short of
+  // its right, which is exactly the state a black removal leaves behind.
+  it("rotates a red sibling and repairs beneath it", () => {
+    const sibling = createNode(5, "red", createNode(4, "black"), createNode(6, "black"));
+    const parent = createNode(3, "black", null, sibling);
+
+    const repaired = repairLeftBlackDeficit(parent, withTestNode);
+
+    expect(inOrderKeys(repaired.node)).toEqual([3, 4, 5, 6]);
+    assertWellFormed(repaired.node, "red sibling", false);
+  });
+
+  it("absorbs the deficit into a red parent", () => {
+    const parent = createNode(3, "red", null, createNode(5, "black"));
+
+    const repaired = repairLeftBlackDeficit(parent, withTestNode);
+
+    expect(repaired.blackHeightDecreased, "red parent absorbs the deficit").toBe(false);
+    expect(inOrderKeys(repaired.node)).toEqual([3, 5]);
+    assertWellFormed(repaired.node, "red parent", false);
+  });
+
+  it("propagates the deficit past a black parent with a black sibling", () => {
+    const parent = createNode(3, "black", null, createNode(5, "black"));
+
+    const repaired = repairLeftBlackDeficit(parent, withTestNode);
+
+    expect(repaired.blackHeightDecreased, "deficit must propagate upward").toBe(true);
+    expect(inOrderKeys(repaired.node)).toEqual([3, 5]);
+    assertNoRedRed(repaired.node);
+  });
+
+  it("normalises a near-red nephew into the far-red case", () => {
+    const sibling = createNode(6, "black", createNode(5, "red"), null);
+    const parent = createNode(3, "black", null, sibling);
+
+    const repaired = repairLeftBlackDeficit(parent, withTestNode);
+
+    expect(repaired.blackHeightDecreased, "near-red nephew terminates the repair").toBe(false);
+    expect(inOrderKeys(repaired.node)).toEqual([3, 5, 6]);
+    assertWellFormed(repaired.node, "near-red nephew", false);
+  });
+
+  it("terminates on a far-red nephew with a single rotation", () => {
+    const sibling = createNode(5, "black", null, createNode(6, "red"));
+    const parent = createNode(3, "black", null, sibling);
+
+    const repaired = repairLeftBlackDeficit(parent, withTestNode);
+
+    expect(repaired.blackHeightDecreased, "far-red nephew terminates the repair").toBe(false);
+    expect(inOrderKeys(repaired.node)).toEqual([3, 5, 6]);
+    assertWellFormed(repaired.node, "far-red nephew", false);
+  });
+
+  it("mirrors every case for a right-side deficit", () => {
+    const cases: Array<[string, TestNode, boolean]> = [
+      [
+        "red sibling",
+        createNode(
+          7,
+          "black",
+          createNode(5, "red", createNode(4, "black"), createNode(6, "black")),
+          null,
+        ),
+        false,
+      ],
+      ["red parent", createNode(7, "red", createNode(5, "black"), null), false],
+      ["black parent", createNode(7, "black", createNode(5, "black"), null), true],
+      [
+        "near-red nephew",
+        createNode(7, "black", createNode(5, "black", null, createNode(6, "red")), null),
+        false,
+      ],
+      [
+        "far-red nephew",
+        createNode(7, "black", createNode(6, "black", createNode(5, "red"), null), null),
+        false,
+      ],
+    ];
+
+    for (const [name, parent, expectPropagation] of cases) {
+      const repaired = repairRightBlackDeficit(parent, withTestNode);
+      const keys = inOrderKeys(repaired.node);
+      expect(keys, `${name}: order`).toEqual([...keys].sort((a, b) => a - b));
+      expect(repaired.blackHeightDecreased, `${name}: propagation`).toBe(expectPropagation);
+      assertNoRedRed(repaired.node);
+      if (!expectPropagation) assertWellFormed(repaired.node, name, false);
+    }
+  });
+});
+
+describe("removeNodeWithAtMostOneChild", () => {
+  it("removes a red leaf without a deficit", () => {
+    const result = removeNodeWithAtMostOneChild(createNode(1, "red"), withTestNode);
+    expect(result).toEqual({ node: null, blackHeightDecreased: false });
+  });
+
+  it("repaints a red child black in place of a black parent", () => {
+    const node = createNode(2, "black", createNode(1, "red"), null);
+    const result = removeNodeWithAtMostOneChild(node, withTestNode);
+    expect(result.blackHeightDecreased, "red child covers the black level").toBe(false);
+    expect(result.node?.key).toBe(1);
+    expect(result.node?.color).toBe("black");
+  });
+
+  it("reports a deficit when a black leaf is removed", () => {
+    const result = removeNodeWithAtMostOneChild(createNode(1, "black"), withTestNode);
+    expect(result).toEqual({ node: null, blackHeightDecreased: true });
+  });
+});
+
+describe("removeMinimum", () => {
+  it("drains every tree shape from the left while staying well formed", () => {
+    for (const permutation of permutations([1, 2, 3, 4, 5])) {
+      let root = buildTree(permutation);
+      const drained: number[] = [];
+
+      while (root !== null) {
+        const context = `keys=${permutation.join(",")} remaining=${inOrderKeys(root).join(",")}`;
+        const extracted = removeMinimum(root, withTestNode);
+        drained.push(extracted.minimum.key);
+
+        root = extracted.node === null ? null : ensureBlackRoot(extracted.node, withTestNode);
+        assertWellFormed(root, context);
+      }
+
+      expect(drained, `keys=${permutation.join(",")}`).toEqual([1, 2, 3, 4, 5]);
+    }
+  });
+
+  it("keeps larger trees balanced as they drain", () => {
+    let root = buildTree(Array.from({ length: 200 }, (_, i) => i + 1));
+    for (let expected = 1; expected <= 200; expected++) {
+      const extracted = removeMinimum(root!, withTestNode);
+      expect(extracted.minimum.key).toBe(expected);
+      root = extracted.node === null ? null : ensureBlackRoot(extracted.node, withTestNode);
+      assertWellFormed(root, `drain at ${expected}`);
+    }
+    expect(root).toBeNull();
+  });
+});
+
+describe("joinBalanced", () => {
+  // Cover every black-height relation: taller left, taller right, and equal.
+  it("joins trees of every size combination", () => {
+    for (let leftSize = 0; leftSize <= 20; leftSize++) {
+      for (let rightSize = 0; rightSize <= 20; rightSize++) {
+        const left = buildTree(Array.from({ length: leftSize }, (_, i) => i + 1));
+        const key = createNode(leftSize + 1, "black");
+        const right = buildTree(Array.from({ length: rightSize }, (_, i) => leftSize + 2 + i));
+
+        const context = `join ${leftSize}+1+${rightSize}`;
+        const joined = ensureBlackRoot(joinBalanced(left, key, right, withTestNode), withTestNode);
+
+        assertWellFormed(joined, context);
+        expect(inOrderKeys(joined), context).toEqual(
+          Array.from({ length: leftSize + 1 + rightSize }, (_, i) => i + 1),
+        );
+      }
+    }
+  });
+
+  it("does not inflate height when joining a tall tree to a short one", () => {
+    const left = buildTree(Array.from({ length: 1000 }, (_, i) => i + 1))!;
+    const key = createNode(1001, "black");
+    const right = buildTree([1002, 1003]);
+
+    const joined = ensureBlackRoot(joinBalanced(left, key, right, withTestNode), withTestNode);
+
+    assertWellFormed(joined, "tall + short");
+    expect(joined.size).toBe(1003);
+    // A red-black tree of 1003 nodes is at most 2*log2(1004) deep.
+    const height = (function measure(node: TestNode | null): number {
+      return node === null ? 0 : 1 + Math.max(measure(node.left), measure(node.right));
+    })(joined);
+    expect(height).toBeLessThanOrEqual(Math.floor(2 * Math.log2(1004)));
+  });
+});
+
+describe("joinTrees", () => {
+  it("concatenates every size combination without a middle key", () => {
+    for (let leftSize = 0; leftSize <= 16; leftSize++) {
+      for (let rightSize = 0; rightSize <= 16; rightSize++) {
+        const left = buildTree(Array.from({ length: leftSize }, (_, i) => i + 1));
+        const right = buildTree(Array.from({ length: rightSize }, (_, i) => leftSize + 1 + i));
+
+        const context = `concat ${leftSize}+${rightSize}`;
+        const raw = joinTrees(left, right, withTestNode);
+        const joined = raw === null ? null : ensureBlackRoot(raw, withTestNode);
+
+        assertWellFormed(joined, context);
+        expect(inOrderKeys(joined), context).toEqual(
+          Array.from({ length: leftSize + rightSize }, (_, i) => i + 1),
+        );
+      }
+    }
+  });
+
+  it("survives repeated split-free concatenation", () => {
+    // Repeatedly peel the minimum off and re-attach it, which exercises
+    // removeMinimum and joinBalanced against each other many times over.
+    let root = buildTree(Array.from({ length: 120 }, (_, i) => i + 1));
+    for (let round = 0; round < 120; round++) {
+      const extracted = removeMinimum(root!, withTestNode);
+      const rest = extracted.node;
+      const rebuilt = joinBalanced(null, extracted.minimum, rest, withTestNode);
+      root = ensureBlackRoot(rebuilt, withTestNode);
+      assertWellFormed(root, `round ${round}`);
+      expect(inOrderKeys(root).length).toBe(120);
+    }
+  });
+});
+
+describe("structural sharing", () => {
+  /** Count nodes reachable from `root` that are not present in `original`. */
+  function countFreshNodes(root: TestNode | null, original: TestNode | null): number {
+    const seen = new Set<TestNode>();
+    (function collect(node: TestNode | null): void {
+      if (node === null) return;
+      seen.add(node);
+      collect(node.left);
+      collect(node.right);
+    })(original);
+
+    let fresh = 0;
+    (function walk(node: TestNode | null): void {
+      if (node === null) return;
+      if (!seen.has(node)) fresh++;
+      walk(node.left);
+      walk(node.right);
+    })(root);
+    return fresh;
+  }
+
+  it("copies only the path a join touches", () => {
+    const left = buildTree(Array.from({ length: 1000 }, (_, i) => i + 1))!;
+    const key = createNode(1001, "black");
+    const right = buildTree([1002]);
+
+    const joined = ensureBlackRoot(joinBalanced(left, key, right, withTestNode), withTestNode);
+
+    // A join that rebuilt the tree would create ~1000 nodes; a path copy creates
+    // a number bounded by the tree's height.
+    const fresh = countFreshNodes(joined, left);
+    expect(fresh, `join copied ${fresh} nodes from a 1000-node tree`).toBeLessThanOrEqual(
+      2 * Math.floor(2 * Math.log2(1001)),
+    );
+  });
+
+  it("copies only the left spine when removing the minimum", () => {
+    const root = buildTree(Array.from({ length: 1000 }, (_, i) => i + 1))!;
+
+    const extracted = removeMinimum(root, withTestNode);
+    const rest = ensureBlackRoot(extracted.node!, withTestNode);
+
+    const fresh = countFreshNodes(rest, root);
+    expect(fresh, `removeMinimum copied ${fresh} nodes from a 1000-node tree`).toBeLessThanOrEqual(
+      2 * Math.floor(2 * Math.log2(1001)),
+    );
+  });
+
+  it("leaves the original tree untouched", () => {
+    const original = buildTree(Array.from({ length: 63 }, (_, i) => i + 1))!;
+    const before = inOrderKeys(original);
+
+    removeMinimum(original, withTestNode);
+    joinBalanced(original, createNode(64, "black"), null, withTestNode);
+
+    expect(inOrderKeys(original), "snapshot is immutable").toEqual(before);
+    assertWellFormed(original, "original after derived operations");
   });
 });
