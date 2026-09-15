@@ -1,9 +1,18 @@
 /**
  * Large-file performance tests for the Reed document store.
  *
- * Each test measures wall-clock time and asserts it stays within a generous
- * threshold that will catch catastrophic regressions (≥ 10×) without being
- * brittle on slower CI hardware.
+ * The thresholds here are **catastrophic-failure ceilings**, not regression
+ * budgets. They sit roughly an order of magnitude above observed timings so
+ * they do not flap on slower CI hardware, which also means they cannot detect
+ * an ordinary regression: the persistent-deletion defect fixed in v3.2.0 ran
+ * the piece tree at twice its admissible height while `random delete × 1000`
+ * still finished in 33 ms against a 500 ms ceiling.
+ *
+ * Structural regressions are therefore gated separately and deterministically
+ * in `complexity.test.ts`, which asserts tree height against the red-black
+ * bound and runs in the ordinary functional suite. Treat a failure here as
+ * "something is catastrophically slow", and a failure there as "an algorithm
+ * lost its complexity guarantee".
  *
  * Run in isolation to get the cleanest numbers:
  *   npm run test:perf
@@ -389,6 +398,34 @@ describe("Edits via store.dispatch", () => {
     }, ITERS);
     assertPerf(`random delete × ${ITERS}`, ms, 500, ITERS);
     expect(store.getSnapshot().pieceTable.totalLength).toBe(content_lg.length - ITERS);
+  });
+
+  // Fragmentation is the workload the repaired deletion path exercises hardest:
+  // scattered inserts maximise piece count, and interior deletes then drive the
+  // split/join machinery over a deep tree.
+  it("2 000 interior deletes over a heavily fragmented tree", () => {
+    const INSERTS = 4_000;
+    const DELETES = 2_000;
+    const store = createDocumentStore({ content: content_sm, reconcileMode: "none" });
+    const rng = makeDeterministicRng(401);
+
+    for (let i = 0; i < INSERTS; i++) {
+      const length = store.getSnapshot().pieceTable.totalLength;
+      store.dispatch(DocumentActions.insert(byteOffset(Math.floor(rng() * length)), "xy"));
+    }
+
+    const ms = bench(() => {
+      const length = store.getSnapshot().pieceTable.totalLength;
+      if (length < 2) return;
+      const start = Math.floor(rng() * (length - 1));
+      store.dispatch(DocumentActions.delete(byteOffset(start), byteOffset(start + 1)));
+    }, DELETES);
+
+    assertPerf(`fragmented delete × ${DELETES}`, ms, 2_000, DELETES);
+    expect(store.getSnapshot().pieceTable.totalLength).toBe(
+      content_sm.length + INSERTS * 2 - DELETES,
+    );
+    store.dispose();
   });
 });
 
