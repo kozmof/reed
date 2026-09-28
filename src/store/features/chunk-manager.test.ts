@@ -40,6 +40,24 @@ describe("ChunkManager.ensureLoaded", () => {
     manager.dispose();
   });
 
+  it("loads many chunks in one store transition", async () => {
+    const store = makeStore();
+    const loader = makeLoader({ 0: "aaaabbbb", 1: "ccccdddd" });
+    const manager = createChunkManager(store, loader, { maxLoadedChunks: 1 });
+    let notifications = 0;
+    const unsubscribe = store.subscribe(() => {
+      notifications++;
+    });
+
+    await manager.ensureLoadedMany([0, 1]);
+
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(2);
+    expect(store.getSnapshot().revision).toBe(2);
+    expect(notifications).toBe(1);
+    unsubscribe();
+    manager.dispose();
+  });
+
   it("resolves immediately if chunk is already in memory", async () => {
     const store = makeStore();
     const loader = makeLoader({ 0: "aaaabbbb" });

@@ -19,6 +19,7 @@ const BASE64_DECODE_TABLE = (() => {
 
 /** Encode bytes as a standard, padded base64 string. */
 export function encodeBase64(bytes: Uint8Array): string {
+  const chunks: string[] = [];
   let output = "";
   let i = 0;
 
@@ -29,6 +30,10 @@ export function encodeBase64(bytes: Uint8Array): string {
       BASE64_ALPHABET[(triplet >> 12) & 0x3f]! +
       BASE64_ALPHABET[(triplet >> 6) & 0x3f]! +
       BASE64_ALPHABET[triplet & 0x3f]!;
+    if (output.length >= 8192) {
+      chunks.push(output);
+      output = "";
+    }
   }
 
   const remaining = bytes.length - i;
@@ -45,7 +50,8 @@ export function encodeBase64(bytes: Uint8Array): string {
       "=";
   }
 
-  return output;
+  chunks.push(output);
+  return chunks.join("");
 }
 
 function decodeBase64Char(base64: string, index: number): number {

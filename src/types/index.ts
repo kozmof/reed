@@ -96,6 +96,8 @@ export type {
   CreateAttentionAction,
   DeleteAttentionAction,
   LoadChunkAction,
+  LoadChunksAction,
+  ChunkLoad,
   EvictChunkAction,
   DeclareChunkMetadataAction,
   DocumentAction,

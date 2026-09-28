@@ -1248,8 +1248,9 @@ export function compactAddBuffer(
       $pipe(
         $from(getBufferStats(state)),
         $andThen((stats) => {
-          // Don't compact if waste is below threshold
-          if (stats.wasteRatio < threshold) {
+          // Avoid rebuilding the tree and copying bytes when every add-buffer
+          // byte is still live (notably exact checkpoint capture at threshold 0).
+          if (stats.addBufferWaste === 0 || stats.wasteRatio < threshold) {
             return $lift("O(n)", state);
           }
 

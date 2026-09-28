@@ -12,13 +12,14 @@ import type {
   DeclareChunkMetadataAction,
   EvictChunkAction,
   LoadChunkAction,
+  LoadChunksAction,
 } from "../../types/actions.js";
 import { isValidChunkMetadata } from "../../types/actions.js";
 import type { ByteOffset, PieceID } from "../../types/branded.js";
 import { byteLength, byteOffset, pieceID } from "../../types/branded.js";
 import {
   createChunkPieceNode,
-  withLineIndexState,
+  withUnloadedLineCounts,
   withPieceNode,
   withState,
 } from "../core/state.js";
@@ -269,72 +270,104 @@ export function declareChunkMetadata(
 
   return withState(state, {
     pieceTable: Object.freeze({ ...state.pieceTable, chunkMetadata: metadata }),
-    lineIndex: withLineIndexState(state.lineIndex, {
-      unloadedLineCountsByChunk: unloadedCounts,
-    }),
+    lineIndex: withUnloadedLineCounts(
+      state.lineIndex,
+      unloadedCounts,
+      state.lineIndex.unloadedLineCount +
+        [...entriesByIndex.values()].reduce(
+          (sum, entry) =>
+            sum +
+            (!state.pieceTable.loadedChunks.has(entry.chunkIndex) &&
+            !state.pieceTable.chunkMetadata.has(entry.chunkIndex)
+              ? entry.lineCount
+              : 0),
+          0,
+        ),
+    ),
   });
 }
 
 export function loadChunk(state: DocumentState, action: LoadChunkAction): DocumentState {
-  const { chunkIndex, data } = action;
-  const { chunkSize, nextExpectedChunk, chunkMap, loadedChunks, totalLength } = state.pieceTable;
-  if (chunkSize === 0 || chunkMap.has(chunkIndex)) return state;
+  return loadChunks(state, {
+    type: "LOAD_CHUNKS",
+    chunks: [action],
+  });
+}
 
-  const chunkBytes = new Uint8Array(data);
-  if (
-    chunkBytes.length === 0 ||
-    !isChunkByteLengthValid(state.pieceTable, chunkIndex, chunkBytes.length)
-  ) {
-    return state;
+export function loadChunks(state: DocumentState, action: LoadChunksAction): DocumentState {
+  if (state.pieceTable.chunkSize === 0 || action.chunks.length === 0) return state;
+
+  const prepared: Array<{ chunkIndex: number; data: Uint8Array }> = [];
+  const seen = new Set<number>();
+  for (const chunk of action.chunks) {
+    if (seen.has(chunk.chunkIndex) || state.pieceTable.chunkMap.has(chunk.chunkIndex)) continue;
+    seen.add(chunk.chunkIndex);
+    const data = new Uint8Array(chunk.data);
+    if (
+      data.length === 0 ||
+      !isChunkByteLengthValid(state.pieceTable, chunk.chunkIndex, data.length)
+    ) {
+      return state;
+    }
+    prepared.push({ chunkIndex: chunk.chunkIndex, data });
+  }
+  if (prepared.length === 0) return state;
+  prepared.sort((a, b) => a.chunkIndex - b.chunkIndex);
+
+  let root = state.pieceTable.root;
+  let totalLength = state.pieceTable.totalLength;
+  let nextPieceID = state.pieceTable.nextPieceID;
+  let nextExpectedChunk = state.pieceTable.nextExpectedChunk;
+  const chunkMap = new Map(state.pieceTable.chunkMap);
+  const loadedChunks = new Set(state.pieceTable.loadedChunks);
+  const unloadedCounts = new Map(state.lineIndex.unloadedLineCountsByChunk);
+  let unloadedLineCount = state.lineIndex.unloadedLineCount;
+
+  for (const chunk of prepared) {
+    const isFirstLoad = !loadedChunks.has(chunk.chunkIndex);
+    const isSequentialFirst = isFirstLoad && chunk.chunkIndex === nextExpectedChunk;
+    const insertionPos = isSequentialFirst
+      ? byteOffset(totalLength)
+      : byteOffset(findReloadInsertionPos(root, chunk.chunkIndex));
+    const id = pieceID(`p${nextPieceID++}`);
+    root = isSequentialFirst
+      ? appendChunkPiece(root, chunk.chunkIndex, chunk.data.length, id)
+      : insertChunkPieceAt(root, insertionPos, chunk.chunkIndex, chunk.data.length, id);
+    chunkMap.set(chunk.chunkIndex, chunk.data);
+    loadedChunks.add(chunk.chunkIndex);
+    totalLength += chunk.data.length;
+    nextExpectedChunk = Math.max(nextExpectedChunk, chunk.chunkIndex + 1);
+
+    const declaredLineCount = unloadedCounts.get(chunk.chunkIndex);
+    if (declaredLineCount !== undefined) {
+      unloadedCounts.delete(chunk.chunkIndex);
+      unloadedLineCount -= declaredLineCount;
+    }
   }
 
-  const isFirstLoad = !loadedChunks.has(chunkIndex);
-  const isSequentialFirst = isFirstLoad && chunkIndex === nextExpectedChunk;
-  const insertionPos = isSequentialFirst
-    ? byteOffset(totalLength)
-    : byteOffset(findReloadInsertionPos(state.pieceTable.root, chunkIndex));
-  const nextChunkMap = new Map(chunkMap);
-  nextChunkMap.set(chunkIndex, chunkBytes);
-  const newPieceID = pieceID(`p${state.pieceTable.nextPieceID}`);
-  const insertedRoot = isSequentialFirst
-    ? appendChunkPiece(state.pieceTable.root, chunkIndex, chunkBytes.length, newPieceID)
-    : insertChunkPieceAt(
-        state.pieceTable.root,
-        insertionPos,
-        chunkIndex,
-        chunkBytes.length,
-        newPieceID,
-      );
-  const nextPieceTable = Object.freeze({
+  const pieceTable = Object.freeze({
     ...state.pieceTable,
-    root: rebalancePieceTree(insertedRoot),
-    chunkMap: nextChunkMap,
-    totalLength: totalLength + chunkBytes.length,
-    nextPieceID: state.pieceTable.nextPieceID + 1,
-    nextExpectedChunk: Math.max(nextExpectedChunk, chunkIndex + 1),
-    loadedChunks: isFirstLoad ? new Set([...loadedChunks, chunkIndex]) : loadedChunks,
+    root: rebalancePieceTree(root),
+    chunkMap,
+    totalLength,
+    nextPieceID,
+    nextExpectedChunk,
+    loadedChunks,
   });
+  let lineIndex = withUnloadedLineCounts(state.lineIndex, unloadedCounts, unloadedLineCount);
 
-  const nextRevision = state.revision + 1;
-  let lineIndex = state.lineIndex;
-  if (lineIndex.unloadedLineCountsByChunk.has(chunkIndex)) {
-    const counts = new Map(lineIndex.unloadedLineCountsByChunk);
-    counts.delete(chunkIndex);
-    lineIndex = withLineIndexState(lineIndex, { unloadedLineCountsByChunk: counts });
-  }
-
-  // Chunk insertion can join arbitrary byte seams. Rebuild from the assembled
-  // bytes so UTF-8 decoder state and CRLF pairing are always authoritative.
-  const rebuilt = rebuildLineIndexFromPieceTableState(
-    withState(state, { pieceTable: nextPieceTable, lineIndex }),
+  // Chunk seams can split UTF-8 sequences or CRLF pairs, so rebuild once after
+  // the entire batch has been assembled.
+  const rebuilt = rebuildLineIndexFromPieceTableState(withState(state, { pieceTable, lineIndex }));
+  lineIndex = withUnloadedLineCounts(
+    rebuilt.lineIndex,
+    lineIndex.unloadedLineCountsByChunk,
+    lineIndex.unloadedLineCount,
   );
-  lineIndex = withLineIndexState(rebuilt.lineIndex, {
-    unloadedLineCountsByChunk: lineIndex.unloadedLineCountsByChunk,
-  });
 
   return withState(state, {
-    revision: nextRevision,
-    pieceTable: nextPieceTable,
+    revision: state.revision + prepared.length,
+    pieceTable,
     lineIndex,
   });
 }
@@ -365,15 +398,21 @@ export function evictChunk(state: DocumentState, action: EvictChunkAction): Docu
   const rebuilt = rebuildLineIndexFromPieceTableState(
     withState(state, { pieceTable: nextPieceTable }),
   );
-  let lineIndex: LineIndexState = withLineIndexState(rebuilt.lineIndex, {
-    unloadedLineCountsByChunk: state.lineIndex.unloadedLineCountsByChunk,
-  });
+  let lineIndex: LineIndexState = withUnloadedLineCounts(
+    rebuilt.lineIndex,
+    state.lineIndex.unloadedLineCountsByChunk,
+    state.lineIndex.unloadedLineCount,
+  );
 
   const metadata = state.pieceTable.chunkMetadata.get(chunkIndex);
   if (metadata !== undefined) {
     const counts = new Map(lineIndex.unloadedLineCountsByChunk);
     counts.set(chunkIndex, metadata.lineCount);
-    lineIndex = withLineIndexState(lineIndex, { unloadedLineCountsByChunk: counts });
+    lineIndex = withUnloadedLineCounts(
+      lineIndex,
+      counts,
+      lineIndex.unloadedLineCount + metadata.lineCount,
+    );
   }
 
   return withState(state, {

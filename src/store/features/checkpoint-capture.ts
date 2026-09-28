@@ -12,8 +12,8 @@ import type {
   ChunkMetadata,
 } from "../../types/state.js";
 import { pstackToArray } from "../../types/state.js";
-import type { AttentionLayerState, Attention } from "../../types/attention.js";
-import type { AttentionID, ReadonlyUint8Array } from "../../types/branded.js";
+import type { AttentionLayerState } from "../../types/attention.js";
+import type { ReadonlyUint8Array } from "../../types/branded.js";
 import type {
   DocumentCheckpoint,
   CheckpointOptions,
@@ -34,12 +34,16 @@ import type {
   CheckpointErrorCode,
 } from "../../types/checkpoint.js";
 import { CHECKPOINT_FORMAT, CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
-import { createPieceTableState, createLineIndexState } from "../core/state.js";
 import { collectPieces, compactAddBuffer, getValue } from "../core/piece-table.js";
 import { collectLines } from "../core/line-index.js";
-import { createPoint, resolveAllAttentions } from "../core/attention.js";
+import { resolveAllAttentions } from "../core/attention.js";
 import { encodeBase64 } from "../core/base64.js";
-import { asReadonlyMap, unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
+import { unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
+import { textEncoder } from "../core/encoding.js";
+import {
+  findNewlineBytePositions,
+  findNewlineCharPositions,
+} from "../core/line-index-text-scan.js";
 
 function fail(code: CheckpointErrorCode, message: string): never {
   throw new CheckpointError(code, message);
@@ -165,15 +169,11 @@ function captureAttention(attention: AttentionLayerState): CheckpointAttentionLa
 }
 
 /**
- * Flatten a state to a single original-buffer piece.
- *
- * Piece identities do not survive — the whole document becomes one fresh piece —
- * so every attention is re-anchored by resolving it against the old tree and
- * re-creating its points against the new one. Attentions that no longer resolve
- * (their text was deleted) are dropped, matching the fail-closed resolution
- * contract: they already read as `null`.
+ * Capture normalized wire data directly instead of first constructing a second
+ * piece tree and line tree. This keeps peak memory close to the content bytes
+ * plus the final checkpoint payload.
  */
-function normalizeState(state: DocumentState<"eager">): DocumentState<"eager"> {
+function captureNormalizedCheckpoint(state: DocumentState<"eager">): DocumentCheckpoint {
   if (state.pieceTable.chunkSize > 0) {
     fail(
       "CHUNKED_NORMALIZE",
@@ -182,39 +182,60 @@ function normalizeState(state: DocumentState<"eager">): DocumentState<"eager"> {
   }
 
   const content = getValue(state.pieceTable);
-  const pieceTable = createPieceTableState(content);
-  const lineIndex = createLineIndexState(
-    content,
-    state.lineIndex.maxDirtyRanges,
-  ) as LineIndexState<"eager">;
+  const bytes = textEncoder.encode(content);
+  const { positions: breakBytes } = findNewlineBytePositions(content);
+  const breakChars = findNewlineCharPositions(content);
+  const lines: CheckpointLine[] = [];
+  let previousByte = 0;
+  let previousChar = 0;
+  for (let i = 0; i < breakBytes.length; i++) {
+    const endByte = breakBytes[i]! + 1;
+    const endChar = breakChars[i]! + 1;
+    lines.push([endByte - previousByte, endChar - previousChar]);
+    previousByte = endByte;
+    previousChar = endChar;
+  }
+  lines.push([bytes.length - previousByte, content.length - previousChar]);
 
-  const attentions = new Map<AttentionID, Attention>();
-  const resolvedAttentions = resolveAllAttentions(state.pieceTable.root, state.attention);
-  for (const entry of state.attention.attentions.values()) {
-    const range = resolvedAttentions.get(entry.id);
-    if (range === undefined) continue;
-    const start = createPoint(pieceTable.root, range.startOffset);
-    const end = createPoint(pieceTable.root, range.endOffset);
-    if (start === null || end === null) continue;
-    attentions.set(
-      entry.id,
-      Object.freeze({
-        id: entry.id,
-        start: Object.freeze({ pieceID: start.pieceID, boundary: start.boundary }),
-        end: Object.freeze({ pieceID: end.pieceID, boundary: end.boundary }),
-      }),
-    );
+  const attentions: CheckpointAttention[] = [];
+  if (bytes.length > 0) {
+    const resolved = resolveAllAttentions(state.pieceTable.root, state.attention);
+    for (const entry of state.attention.attentions.values()) {
+      const range = resolved.get(entry.id);
+      if (range === undefined) continue;
+      attentions.push([entry.id, "p0", range.startOffset, "p0", range.endOffset]);
+    }
   }
 
-  return Object.freeze({
-    ...state,
-    pieceTable,
-    lineIndex,
-    attention: Object.freeze({
-      attentions: asReadonlyMap(attentions),
-      nextID: state.attention.nextID,
-    }),
-  });
+  return {
+    format: CHECKPOINT_FORMAT,
+    version: CHECKPOINT_VERSION,
+    mode: "normalized",
+    revision: state.revision,
+    selectionRevision: state.selectionRevision,
+    pieceTable: {
+      nextPieceID: bytes.length === 0 ? 0 : 1,
+      totalLength: bytes.length,
+      originalBuffer: encodeBase64(bytes),
+      addBuffer: "",
+      chunkSize: 0,
+      nextExpectedChunk: 0,
+      totalFileSize: 0,
+      loadedChunks: [],
+      chunks: [],
+      chunkMetadata: [],
+      pieces: bytes.length === 0 ? [] : [["p0", "o", 0, bytes.length]],
+    },
+    lineIndex: {
+      maxDirtyRanges: state.lineIndex.maxDirtyRanges,
+      unloadedLineCounts: [],
+      lines,
+    },
+    selection: captureSelection(state.selection),
+    history: captureHistory(state.history),
+    metadata: captureMetadata(state.metadata),
+    attention: { nextID: state.attention.nextID, attentions },
+  };
 }
 
 /**
@@ -237,10 +258,12 @@ export function createCheckpoint(
   const mode: CheckpointMode = options.mode ?? "exact";
   const compact = options.compact ?? true;
 
-  let source = state;
   if (mode === "normalized") {
-    source = normalizeState(state);
-  } else if (compact) {
+    return captureNormalizedCheckpoint(state);
+  }
+
+  let source = state;
+  if (compact) {
     // threshold 0 forces compaction regardless of how little waste there is;
     // the store's own auto-compaction only fires past AUTO_COMPACT_WASTE_RATIO.
     const compacted = compactAddBuffer(source.pieceTable, 0);

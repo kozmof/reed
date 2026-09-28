@@ -191,6 +191,18 @@ export interface LoadChunkAction {
   readonly data: ReadonlyUint8Array;
 }
 
+/** One entry in a batched chunk load. */
+export interface ChunkLoad {
+  readonly chunkIndex: number;
+  readonly data: ReadonlyUint8Array;
+}
+
+/** Load multiple chunks in one reducer transition. */
+export interface LoadChunksAction {
+  readonly type: "LOAD_CHUNKS";
+  readonly chunks: readonly ChunkLoad[];
+}
+
 /**
  * Evict a chunk from the in-memory document, freeing its pieces and backing bytes.
  *
@@ -250,6 +262,7 @@ export type DocumentAction =
   | CreateAttentionAction
   | DeleteAttentionAction
   | LoadChunkAction
+  | LoadChunksAction
   | EvictChunkAction
   | DeclareChunkMetadataAction;
 
@@ -274,6 +287,7 @@ export const DocumentActionTypes = strEnum([
   "CREATE_ATTENTION",
   "DELETE_ATTENTION",
   "LOAD_CHUNK",
+  "LOAD_CHUNKS",
   "EVICT_CHUNK",
   "DECLARE_CHUNK_METADATA",
 ]);
@@ -574,6 +588,28 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
       }
       if (!(loadAction.data instanceof Uint8Array)) {
         errors.push('LOAD_CHUNK action requires a Uint8Array "data" property');
+      }
+      break;
+    }
+
+    case "LOAD_CHUNKS": {
+      const loadAction = action as Partial<LoadChunksAction>;
+      if (!Array.isArray(loadAction.chunks)) {
+        errors.push('LOAD_CHUNKS action requires an array "chunks" property');
+      } else {
+        for (let i = 0; i < loadAction.chunks.length; i++) {
+          const chunk = loadAction.chunks[i] as Partial<ChunkLoad> | null;
+          if (typeof chunk !== "object" || chunk === null) {
+            errors.push("LOAD_CHUNKS chunks[" + i + "] must be an object");
+            continue;
+          }
+          if (!isNonNegativeInteger(chunk.chunkIndex)) {
+            errors.push("LOAD_CHUNKS chunks[" + i + "].chunkIndex must be a non-negative integer");
+          }
+          if (!(chunk.data instanceof Uint8Array)) {
+            errors.push("LOAD_CHUNKS chunks[" + i + "].data must be a Uint8Array");
+          }
+        }
       }
       break;
     }

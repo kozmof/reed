@@ -56,6 +56,22 @@ describe("serializeAction / deserializeAction", () => {
       }
     });
 
+    it("LOAD_CHUNKS preserves every buffer through base64 encoding", () => {
+      const action = DocumentActions.loadChunks([
+        { chunkIndex: 2, data: new Uint8Array([1, 2, 3]) },
+        { chunkIndex: 5, data: new Uint8Array([254, 255]) },
+      ]);
+      const restored = deserializeAction(serializeAction(action));
+
+      expect(restored.type).toBe("LOAD_CHUNKS");
+      if (restored.type === "LOAD_CHUNKS") {
+        expect(restored.chunks.map((chunk) => chunk.chunkIndex)).toEqual([2, 5]);
+        expect(Array.from(restored.chunks[0]!.data)).toEqual([1, 2, 3]);
+        expect(Array.from(restored.chunks[1]!.data)).toEqual([254, 255]);
+        expect(() => ((restored.chunks[0]!.data as Uint8Array)[0] = 9)).toThrow(TypeError);
+      }
+    });
+
     it("LOAD_CHUNK with empty Uint8Array round-trips correctly", () => {
       const action = DocumentActions.loadChunk(1, new Uint8Array(0));
       const deserialized = deserializeAction(serializeAction(action));

@@ -80,6 +80,12 @@ export interface ChunkManager {
   ensureLoaded(chunkIndex: number): Promise<void>;
 
   /**
+   * Ensure several chunks are loaded, committing newly fetched bytes in one
+   * reducer transition so derived indexes are rebuilt once.
+   */
+  ensureLoadedMany(chunkIndices: readonly number[]): Promise<void>;
+
+  /**
    * Fire a background load for `chunkIndex` without blocking.
    * Silently no-ops if the chunk is already in memory or already in-flight.
    */
@@ -222,7 +228,7 @@ export function createChunkManager(
 
   // ── Eviction ──────────────────────────────────────────────────────────────
 
-  function evictIfOverLimit(protectedChunkIndex?: number): void {
+  function evictIfOverLimit(protectedChunkIndices?: number | ReadonlySet<number>): void {
     if (disposed) return;
     const snapshot = store.getSnapshot();
     let loadedCount = snapshot.pieceTable.chunkMap.size;
@@ -232,7 +238,13 @@ export function createChunkManager(
       // Skip pinned chunks.
       if (activeChunks.has(candidate)) continue;
       // Keep the just-loaded chunk resident for the ensureLoaded()/prefetch caller.
-      if (candidate === protectedChunkIndex) continue;
+      if (
+        typeof protectedChunkIndices === "number"
+          ? candidate === protectedChunkIndices
+          : protectedChunkIndices?.has(candidate)
+      ) {
+        continue;
+      }
       // Skip chunks no longer in memory (evicted by another path).
       if (!snapshot.pieceTable.chunkMap.has(candidate)) {
         lruRemove(candidate);
@@ -354,6 +366,125 @@ export function createChunkManager(
     return promise;
   }
 
+  function ensureLoadedMany(chunkIndices: readonly number[]): Promise<void> {
+    if (disposed || chunkIndices.length === 0) return Promise.resolve();
+
+    const chunkedModeError = getChunkedModeError();
+    if (chunkedModeError !== null) return Promise.reject(new Error(chunkedModeError));
+
+    const unique = [...new Set(chunkIndices)];
+    for (const chunkIndex of unique) {
+      const error = getChunkIndexError(chunkIndex);
+      if (error !== null) return Promise.reject(new RangeError(error));
+    }
+
+    const pending: Promise<void>[] = [];
+    const fresh: number[] = [];
+    const snapshot = store.getSnapshot();
+    for (const chunkIndex of unique) {
+      if (snapshot.pieceTable.chunkMap.has(chunkIndex)) {
+        lruTouch(chunkIndex);
+        continue;
+      }
+      const existing = inFlight.get(chunkIndex);
+      if (existing !== undefined) pending.push(existing);
+      else fresh.push(chunkIndex);
+    }
+    if (fresh.length === 0) return Promise.all(pending).then(() => {});
+
+    const controllers = new Map<number, AbortController>();
+    for (const chunkIndex of fresh) {
+      const controller = new AbortController();
+      controllers.set(chunkIndex, controller);
+      abortControllers.set(chunkIndex, controller);
+    }
+
+    const fetchOne = (
+      chunkIndex: number,
+      controller: AbortController,
+    ): Promise<Uint8Array | null> => {
+      const fetch = async (): Promise<Uint8Array | null> => {
+        if (disposed || controller.signal.aborted) return null;
+        try {
+          const data = await loader.loadChunk(chunkIndex, controller.signal);
+          if (disposed || controller.signal.aborted) return null;
+          if (data.length === 0) {
+            throw new Error(`ChunkLoader returned empty data for chunk ${chunkIndex}`);
+          }
+          const { pieceTable } = store.getSnapshot();
+          if (!isChunkByteLengthValid(pieceTable, chunkIndex, data.length)) {
+            const declared = pieceTable.chunkMetadata.get(chunkIndex);
+            throw new Error(
+              `ChunkLoader returned ${data.length} bytes for chunk ${chunkIndex}, which ` +
+                `violates the declared file geometry (chunkSize=${pieceTable.chunkSize}` +
+                (declared !== undefined ? `, declared byteLength=${declared.byteLength}` : "") +
+                (pieceTable.totalFileSize > 0
+                  ? `, totalFileSize=${pieceTable.totalFileSize}`
+                  : "") +
+                ")",
+            );
+          }
+          return data;
+        } catch (error) {
+          if (controller.signal.aborted) return null;
+          throw error;
+        }
+      };
+
+      if (fetchStrategy === "parallel") return fetch();
+      const promise = fetchQueue.then(fetch, fetch);
+      fetchQueue = promise.then(
+        () => {},
+        () => {},
+      );
+      return promise;
+    };
+
+    let batchPromise!: Promise<void>;
+    batchPromise = (async () => {
+      const results = await Promise.allSettled(
+        fresh.map((chunkIndex) => fetchOne(chunkIndex, controllers.get(chunkIndex)!)),
+      );
+      const failure = results.find(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      if (failure !== undefined) throw failure.reason;
+      if (disposed) return;
+      const fetched = results.map((result) =>
+        result.status === "fulfilled" ? result.value : null,
+      );
+      const chunks = fresh.flatMap((chunkIndex, index) => {
+        const data = fetched[index];
+        return data === null || data === undefined ? [] : [{ chunkIndex, data }];
+      });
+      if (chunks.length === 0) return;
+
+      store.dispatch(DocumentActions.loadChunks(chunks));
+      const after = store.getSnapshot();
+      for (const { chunkIndex } of chunks) {
+        if (!after.pieceTable.chunkMap.has(chunkIndex)) {
+          throw new Error(
+            `Chunk ${chunkIndex} was fetched but the store did not retain it after LOAD_CHUNKS dispatch`,
+          );
+        }
+        lruTouch(chunkIndex);
+      }
+      evictIfOverLimit(new Set(chunks.map((chunk) => chunk.chunkIndex)));
+    })().finally(() => {
+      for (const chunkIndex of fresh) {
+        if (inFlight.get(chunkIndex) === batchPromise) inFlight.delete(chunkIndex);
+        const controller = controllers.get(chunkIndex)!;
+        if (abortControllers.get(chunkIndex) === controller) {
+          abortControllers.delete(chunkIndex);
+        }
+      }
+    });
+
+    for (const chunkIndex of fresh) inFlight.set(chunkIndex, batchPromise);
+    pending.push(batchPromise);
+    return Promise.all(pending).then(() => {});
+  }
+
   function prefetch(chunkIndex: number): void {
     if (disposed) return;
     if (getChunkedModeError() !== null) return;
@@ -389,5 +520,12 @@ export function createChunkManager(
     activeChunks.clear();
   }
 
-  return { ensureLoaded, prefetch, setActiveChunks, cancelPendingOutside, dispose };
+  return {
+    ensureLoaded,
+    ensureLoadedMany,
+    prefetch,
+    setActiveChunks,
+    cancelPendingOutside,
+    dispose,
+  };
 }

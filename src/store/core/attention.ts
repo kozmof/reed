@@ -239,6 +239,32 @@ interface PieceOffsetEntry {
 /** Maps each live piece ID to its current document position and length. */
 type PieceOffsetIndex = ReadonlyMap<PieceID, PieceOffsetEntry>;
 
+const pieceOffsetIndexCache = new WeakMap<PieceNode, PieceOffsetIndex>();
+const emptyPieceOffsetIndex: PieceOffsetIndex = new Map();
+
+type AttentionIDsByPiece = ReadonlyMap<PieceID, ReadonlySet<AttentionID>>;
+const attentionIDsByPieceCache = new WeakMap<AttentionLayerState, AttentionIDsByPiece>();
+
+function buildAttentionIDsByPiece(state: AttentionLayerState): AttentionIDsByPiece {
+  const cached = attentionIDsByPieceCache.get(state);
+  if (cached !== undefined) return cached;
+
+  const mutable = new Map<PieceID, Set<AttentionID>>();
+  for (const [id, attention] of state.attentions) {
+    for (const point of [attention.start, attention.end]) {
+      let ids = mutable.get(point.pieceID);
+      if (ids === undefined) {
+        ids = new Set();
+        mutable.set(point.pieceID, ids);
+      }
+      ids.add(id);
+    }
+  }
+  const index = mutable as AttentionIDsByPiece;
+  attentionIDsByPieceCache.set(state, index);
+  return index;
+}
+
 /**
  * Build a piece-ID → {offset, length} index in a single in-order pass.
  *
@@ -249,11 +275,15 @@ type PieceOffsetIndex = ReadonlyMap<PieceID, PieceOffsetEntry>;
  * O(n).
  */
 function buildPieceOffsetIndex(root: PieceNode | null): PieceOffsetIndex {
+  if (root === null) return emptyPieceOffsetIndex;
+  const cached = pieceOffsetIndexCache.get(root);
+  if (cached !== undefined) return cached;
+
   const index = new Map<PieceID, PieceOffsetEntry>();
-  if (root === null) return index;
   for (const { piece, docOffset } of inOrderPieces(root)) {
     index.set(piece.id, { offset: docOffset, length: piece.length });
   }
+  pieceOffsetIndexCache.set(root, index);
   return index;
 }
 
@@ -421,8 +451,8 @@ export function findAttentionsOverlapping(
  *
  * Call this after every `pieceTableInsert` that returns a non-empty `splits`.
  *
- * O(A · S) where A is the number of AttentionPoints (2× attentions) and
- * S is the number of splits (almost always 0 or 1).
+ * O(A) the first time an attention snapshot is indexed, then O(S + affected)
+ * for later edits against that immutable snapshot.
  */
 export function migrateSplits(
   state: AttentionLayerState,
@@ -444,11 +474,18 @@ export function migrateSplits(
     lookup = (pieceID) => splitMap.get(pieceID);
   }
 
-  // Copy-on-write: only clone the map once a point actually migrates. The common
-  // case (no attention references a split piece) returns the input untouched.
-  let next: Map<AttentionID, Attention> | null = null;
+  const idsByPiece = buildAttentionIDsByPiece(state);
+  const candidates = new Set<AttentionID>();
+  for (const split of splits) {
+    const ids = idsByPiece.get(split.originalID);
+    if (ids !== undefined) for (const id of ids) candidates.add(id);
+  }
+  if (candidates.size === 0) return $proveCtx($beginCost("O(n)"), state);
 
-  for (const [id, attention] of state.attentions) {
+  // Copy-on-write: only clone the map once a point actually migrates.
+  let next: Map<AttentionID, Attention> | null = null;
+  for (const id of candidates) {
+    const attention = state.attentions.get(id)!;
     const migratedStart = migratePoint(attention.start, lookup);
     const migratedEnd = migratePoint(attention.end, lookup);
 
@@ -588,11 +625,22 @@ export function migrateDelete(
   if (state.attentions.size === 0) return $proveCtx($beginCost("O(n log n)"), state);
 
   const oldIndex = buildPieceOffsetIndex(oldRoot);
-  const deletedLength = end - start;
+  const newIndex = buildPieceOffsetIndex(newRoot);
+  const idsByPiece = buildAttentionIDsByPiece(state);
+  const candidates = new Set<AttentionID>();
+  for (const [pieceID, oldEntry] of oldIndex) {
+    const newEntry = newIndex.get(pieceID);
+    if (newEntry !== undefined && newEntry.length === oldEntry.length) continue;
+    const ids = idsByPiece.get(pieceID);
+    if (ids !== undefined) for (const id of ids) candidates.add(id);
+  }
+  if (candidates.size === 0) return $proveCtx($beginCost("O(n log n)"), state);
 
+  const deletedLength = end - start;
   // Copy-on-write: only clone the map once a point actually re-anchors.
   let next: Map<AttentionID, Attention> | null = null;
-  for (const [id, attention] of state.attentions) {
+  for (const id of candidates) {
+    const attention = state.attentions.get(id)!;
     const migratedStart = migratePointForDelete(
       attention.start,
       oldIndex,

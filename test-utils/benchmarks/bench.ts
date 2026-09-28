@@ -18,7 +18,7 @@
  *   2. Sequential inserts — 10 000 single-char inserts into a 1 MB document
  *   3. Mixed line-ending inserts (CRLF into LF document and vice-versa)
  *   4. Rapid undo sequences — 500 consecutive undos
- *   5. Reconciliation threshold — full reconcile after 1 000 lazy inserts
+ *   5. Reconciliation threshold — full reconcile after 200 lazy inserts
  *   6. Line-number lookup — O(log n) getLineStartOffset on a 50 000-line doc
  */
 
@@ -55,6 +55,32 @@ function bench(fn: () => void, iterations = 1, runs = 3): number {
     const t0 = performance.now();
     for (let i = 0; i < iterations; i++) fn();
     samples.push(performance.now() - t0);
+  }
+  samples.sort((a, b) => a - b);
+  return samples[Math.floor(samples.length / 2)]!;
+}
+
+/**
+ * Measure an operation that consumes mutable prepared state. Fixture creation
+ * happens outside the timed interval so every sample measures real work.
+ */
+function benchPrepared<T>(
+  prepare: () => T,
+  fn: (fixture: T) => void,
+  cleanup: (fixture: T) => void,
+  runs = 3,
+): number {
+  const warmup = prepare();
+  fn(warmup);
+  cleanup(warmup);
+
+  const samples: number[] = [];
+  for (let r = 0; r < runs; r++) {
+    const fixture = prepare();
+    const t0 = performance.now();
+    fn(fixture);
+    samples.push(performance.now() - t0);
+    cleanup(fixture);
   }
   samples.sort((a, b) => a - b);
   return samples[Math.floor(samples.length / 2)]!;
@@ -162,17 +188,19 @@ console.log("\n4. Rapid undo sequences");
 console.log("\n5. Reconciliation after lazy inserts");
 {
   const content = generateLargeContent({ lineCount: 2_000, pattern: "prose", seed: 5 });
-  const store = createDocumentStoreWithEvents({ content });
-  // Perform 200 lazy inserts (all go through lazy path)
-  for (let i = 0; i < 200; i++) {
-    store.dispatch(DocumentActions.insert(byteOffset(0), "x\n"));
-  }
-  const ms = bench(
-    () => {
+  const prepare = () => {
+    const store = createDocumentStoreWithEvents({ content });
+    for (let i = 0; i < 200; i++) {
+      store.dispatch(DocumentActions.insert(byteOffset(0), "x\n"));
+    }
+    return store;
+  };
+  const ms = benchPrepared(
+    prepare,
+    (store) => {
       store.reconcileNow();
     },
-    1,
-    3,
+    (store) => store.dispose(),
   );
   record("reconcileNow after 200 lazy inserts (2k-line doc)", ms, 500);
 }

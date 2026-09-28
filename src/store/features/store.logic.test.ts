@@ -9,6 +9,8 @@ import {
   pstackPeek,
   pstackEmpty,
   pstackPush,
+  pstackPop,
+  pstackTrimToSize,
   pstackToArray,
 } from "../../types/state.js";
 import type { DocumentStoreConfig } from "../../types/state.js";
@@ -243,6 +245,21 @@ describe("State Factories", () => {
     it("round-trips through pstackToArray for a single-element stack", () => {
       const s = pstackPush(pstackEmpty<string>(), "hello");
       expect(pstackToArray(s)).toEqual(["hello"]);
+    });
+
+    it("keeps a large bounded stack balanced and preserves newest entries", () => {
+      let stack = pstackEmpty<number>();
+      for (let i = 0; i < 10_000; i++) stack = pstackPush(stack, i);
+
+      const trimmed = pstackTrimToSize(stack, 1_000);
+      expect(trimmed?.height).toBeLessThanOrEqual(2 * Math.ceil(Math.log2(1_001)));
+      expect(pstackToArray(trimmed)).toEqual(
+        Array.from({ length: 1_000 }, (_, index) => 9_000 + index),
+      );
+
+      const [newest, rest] = pstackPop(trimmed!);
+      expect(newest).toBe(9_999);
+      expect(pstackSize(rest)).toBe(999);
     });
   });
 
@@ -1639,6 +1656,33 @@ describe("LOAD_CHUNK", () => {
       DocumentActions.loadChunk(0, textEncoder.encode("chunk0")),
     );
     expect(state1.pieceTable.nextExpectedChunk).toBe(1);
+  });
+
+  it("loads a batch atomically and advances revision by the number loaded", () => {
+    const state0 = createInitialState({ chunkSize: 8 });
+    const state1 = documentReducer(
+      state0,
+      DocumentActions.loadChunks([
+        { chunkIndex: 0, data: textEncoder.encode("aaaaaaaa") },
+        { chunkIndex: 1, data: textEncoder.encode("bbbbbbbb") },
+      ]),
+    );
+
+    expect(state1.revision).toBe(state0.revision + 2);
+    expect(state1.pieceTable.chunkMap.size).toBe(2);
+    expect(getText(state1.pieceTable, byteOffset(0), byteOffset(16))).toBe("aaaaaaaabbbbbbbb");
+  });
+
+  it("rejects an entire batch when one chunk violates geometry", () => {
+    const state = createInitialState({ chunkSize: 8, totalFileSize: 16 });
+    const next = documentReducer(
+      state,
+      DocumentActions.loadChunks([
+        { chunkIndex: 0, data: textEncoder.encode("aaaaaaaa") },
+        { chunkIndex: 1, data: textEncoder.encode("too-long!") },
+      ]),
+    );
+    expect(next).toBe(state);
   });
 
   it("loads two sequential chunks and concatenates their content", () => {

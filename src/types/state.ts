@@ -452,84 +452,172 @@ export interface HistoryEntry {
 // =============================================================================
 
 /**
- * Internal cons-cell for the persistent stack.
+ * Internal AVL node for the persistent stack.
  * Not exported — construction is module-internal only.
  * The `private declare _brand` field (zero runtime overhead) prevents plain
  * object literals from being structurally assignable to `PStack<T>`.
  */
-class PStackCons<T> {
+class PStackNode<T> {
   declare private readonly _brand: never;
-  readonly top: T;
-  readonly rest: PStack<T>;
+  readonly value: T;
+  readonly left: PStack<T>;
+  readonly right: PStack<T>;
   readonly size: number;
-  constructor(top: T, rest: PStack<T>, size: number) {
-    this.top = top;
-    this.rest = rest;
-    this.size = size;
+  readonly height: number;
+  readonly last: T;
+  /** Newest stack value; retained for compatibility with earlier snapshots. */
+  readonly top: T;
+
+  constructor(value: T, left: PStack<T>, right: PStack<T>) {
+    this.value = value;
+    this.left = left;
+    this.right = right;
+    this.size = 1 + (left?.size ?? 0) + (right?.size ?? 0);
+    this.height = 1 + Math.max(left?.height ?? 0, right?.height ?? 0);
+    this.last = right?.last ?? value;
+    this.top = this.last;
+  }
+
+  /** Stack without its newest value; retained for compatibility. */
+  get rest(): PStack<T> {
+    return pstackPopNewest(this as unknown as NonNullable<PStack<T>>)[1];
   }
 }
 
 declare const _pstackBrand: unique symbol;
 
 /**
- * Persistent singly-linked stack with O(1) push/pop/peek and automatic
+ * Persistent balanced stack with logarithmic push/pop/trimming and automatic
  * structural sharing across snapshots. Empty stack is `null`.
  *
  * The `[_pstackBrand]` symbol is unexported, so external code cannot construct
  * or structurally pattern-match against the non-null branch — only the exported
  * helper functions (`pstackPush`, `pstackPeek`, etc.) form the public API.
  */
-export type PStack<T> = null | (PStackCons<T> & { readonly [_pstackBrand]: never });
+export type PStack<T> = null | (PStackNode<T> & { readonly [_pstackBrand]: never });
+
+function pstackNode<T>(value: T, left: PStack<T>, right: PStack<T>): NonNullable<PStack<T>> {
+  return Object.freeze(new PStackNode(value, left, right)) as unknown as NonNullable<PStack<T>>;
+}
+
+function pstackRotateLeft<T>(node: NonNullable<PStack<T>>): NonNullable<PStack<T>> {
+  const pivot = node.right;
+  if (pivot === null) return node;
+  const moved = pstackNode(node.value, node.left, pivot.left);
+  return pstackNode(pivot.value, moved, pivot.right);
+}
+
+function pstackRotateRight<T>(node: NonNullable<PStack<T>>): NonNullable<PStack<T>> {
+  const pivot = node.left;
+  if (pivot === null) return node;
+  const moved = pstackNode(node.value, pivot.right, node.right);
+  return pstackNode(pivot.value, pivot.left, moved);
+}
+
+function pstackBalance<T>(value: T, left: PStack<T>, right: PStack<T>): NonNullable<PStack<T>> {
+  const leftHeight = left?.height ?? 0;
+  const rightHeight = right?.height ?? 0;
+
+  if (leftHeight > rightHeight + 1) {
+    const balancedLeft =
+      (left!.left?.height ?? 0) < (left!.right?.height ?? 0) ? pstackRotateLeft(left!) : left!;
+    return pstackRotateRight(pstackNode(value, balancedLeft, right));
+  }
+
+  if (rightHeight > leftHeight + 1) {
+    const balancedRight =
+      (right!.right?.height ?? 0) < (right!.left?.height ?? 0) ? pstackRotateRight(right!) : right!;
+    return pstackRotateLeft(pstackNode(value, left, balancedRight));
+  }
+
+  return pstackNode(value, left, right);
+}
+
+/**
+ * Join two balanced sequences around `value`, preserving in-order sequence.
+ */
+function pstackJoin<T>(left: PStack<T>, value: T, right: PStack<T>): NonNullable<PStack<T>> {
+  const leftHeight = left?.height ?? 0;
+  const rightHeight = right?.height ?? 0;
+
+  if (leftHeight > rightHeight + 1) {
+    return pstackBalance(left!.value, left!.left, pstackJoin(left!.right, value, right));
+  }
+  if (rightHeight > leftHeight + 1) {
+    return pstackBalance(right!.value, pstackJoin(left, value, right!.left), right!.right);
+  }
+  return pstackNode(value, left, right);
+}
+
+/**
+ * Split before `index`, returning the oldest prefix and newest suffix.
+ */
+function pstackSplit<T>(stack: PStack<T>, index: number): [PStack<T>, PStack<T>] {
+  if (stack === null) return [null, null];
+  if (index <= 0) return [null, stack];
+  if (index >= stack.size) return [stack, null];
+
+  const leftSize = stack.left?.size ?? 0;
+  if (index <= leftSize) {
+    const [prefix, suffixLeft] = pstackSplit(stack.left, index);
+    return [prefix, pstackJoin(suffixLeft, stack.value, stack.right)];
+  }
+
+  const [prefixRight, suffix] = pstackSplit(stack.right, index - leftSize - 1);
+  return [pstackJoin(stack.left, stack.value, prefixRight), suffix];
+}
+
+function pstackPopNewest<T>(stack: NonNullable<PStack<T>>): [T, PStack<T>] {
+  if (stack.right === null) return [stack.value, stack.left];
+  const [value, nextRight] = pstackPopNewest(stack.right);
+  return [value, pstackBalance(stack.value, stack.left, nextRight)];
+}
 
 export const pstackEmpty = <T>(): PStack<T> => null;
-export const pstackPush = <T>(s: PStack<T>, v: T): PStack<T> =>
-  Object.freeze(new PStackCons(v, s, (s?.size ?? 0) + 1)) as unknown as NonNullable<PStack<T>>;
-export const pstackPeek = <T>(s: PStack<T>): T | undefined => s?.top;
-export const pstackPop = <T>(s: NonNullable<PStack<T>>): [T, PStack<T>] => [s.top, s.rest];
+export const pstackPush = <T>(s: PStack<T>, v: T): PStack<T> => pstackJoin(s, v, null);
+export const pstackPeek = <T>(s: PStack<T>): T | undefined => s?.last;
+export const pstackPop = <T>(s: NonNullable<PStack<T>>): [T, PStack<T>] => pstackPopNewest(s);
 export const pstackSize = <T>(s: PStack<T>): number => s?.size ?? 0;
 export const pstackToArray = <T>(s: PStack<T>): T[] => {
   const arr = Array.from<T>({ length: s?.size ?? 0 });
-  let i = arr.length - 1;
-  let cur = s;
-  while (cur !== null) {
-    arr[i--] = cur.top;
-    cur = cur.rest;
+  const stack: NonNullable<PStack<T>>[] = [];
+  let current = s;
+  let index = 0;
+  while (current !== null || stack.length > 0) {
+    while (current !== null) {
+      stack.push(current);
+      current = current.left;
+    }
+    const node = stack.pop()!;
+    arr[index++] = node.value;
+    current = node.right;
   }
   return arr;
 };
-export const pstackFromArray = <T>(arr: readonly T[]): PStack<T> =>
-  arr.reduce<PStack<T>>((acc, v) => pstackPush(acc, v), null);
+
+export const pstackFromArray = <T>(arr: readonly T[]): PStack<T> => {
+  function build(start: number, end: number): PStack<T> {
+    if (start >= end) return null;
+    const middle = Math.floor((start + end) / 2);
+    return pstackNode(arr[middle]!, build(start, middle), build(middle + 1, end));
+  }
+  return build(0, arr.length);
+};
 
 /**
  * Trim a PStack to at most `maxSize` entries, keeping the `maxSize` most-recently
  * pushed (newest) entries and discarding the rest.
  *
- * Cost: O(maxSize) — traverses only the top `maxSize` nodes, never the full stack.
- * This is strictly better than the O(H) pstackToArray + slice + pstackFromArray
- * round-trip when maxSize << H (e.g. history limit << total history depth).
- * Amortized O(1) per push: trim only fires when size exceeds maxSize, which
- * happens at most once every maxSize pushes.
+ * Cost: O(log n) via a persistent AVL split. The retained suffix shares
+ * untouched subtrees with the input stack, so saturated history does not rebuild
+ * or allocate `maxSize` nodes after every edit.
  *
  * Returns the original stack unchanged (O(1)) when stack.size ≤ maxSize.
  */
 export const pstackTrimToSize = <T>(stack: PStack<T>, maxSize: number): PStack<T> => {
   if (stack === null || stack.size <= maxSize) return stack;
   if (maxSize <= 0) return null;
-  // Collect the top `maxSize` items (newest first)
-  const items: T[] = Array.from({ length: maxSize });
-  let cur: PStack<T> | null = stack;
-  for (let i = 0; i < maxSize && cur !== null; i++) {
-    items[i] = cur.top;
-    cur = cur.rest;
-  }
-  // Rebuild cons-list from oldest→newest so top is the newest item
-  let result: PStack<T> = null;
-  for (let i = maxSize - 1; i >= 0; i--) {
-    result = Object.freeze(new PStackCons(items[i], result, maxSize - i)) as unknown as NonNullable<
-      PStack<T>
-    >;
-  }
-  return result;
+  return pstackSplit(stack, stack.size - maxSize)[1];
 };
 
 // =============================================================================

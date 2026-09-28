@@ -317,16 +317,32 @@ function canCoalesce(
  */
 function coalesceChanges(existing: HistoryChange, incoming: HistoryChange): HistoryChange {
   switch (incoming.type) {
-    case "insert":
+    case "insert": {
       // Append: concatenate text, keep earlier position
-      return makeInsertChange(existing.position, existing.text + incoming.text);
+      return Object.freeze({
+        type: "insert" as const,
+        position: existing.position,
+        text: existing.text + incoming.text,
+        byteLength: byteLength(existing.byteLength + incoming.byteLength),
+      });
+    }
     case "delete": {
       if (incoming.position + incoming.byteLength === existing.position) {
         // Backspace: prepend text, use earlier position
-        return makeDeleteChange(incoming.position, incoming.text + existing.text);
+        return Object.freeze({
+          type: "delete" as const,
+          position: incoming.position,
+          text: incoming.text + existing.text,
+          byteLength: byteLength(existing.byteLength + incoming.byteLength),
+        });
       }
       // Forward delete: append text, keep position
-      return makeDeleteChange(existing.position, existing.text + incoming.text);
+      return Object.freeze({
+        type: "delete" as const,
+        position: existing.position,
+        text: existing.text + incoming.text,
+        byteLength: byteLength(existing.byteLength + incoming.byteLength),
+      });
     }
     default:
       // canCoalesce() only returns true for 'insert' and 'delete' changes, so
@@ -423,8 +439,7 @@ export function historyPush(
   });
 
   // Trim undo stack if it exceeds limit.
-  // pstackTrimToSize is O(limit) per call but amortized O(1) per push: trim only fires
-  // when stack.size > limit, which happens at most once every `limit` pushes.
+  // The persistent AVL split keeps this O(log limit) after the stack saturates.
   const undoStack = pstackTrimToSize(pstackPush(history.undoStack, entry), history.limit);
 
   return withState(state, {

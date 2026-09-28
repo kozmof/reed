@@ -723,6 +723,22 @@ export function withLineIndexState<M extends EvaluationMode = EvaluationMode>(
 }
 
 /**
+ * Replace unloaded-chunk line counts when the caller already knows their sum.
+ * This avoids an O(chunk count) recount on each chunk load or eviction.
+ */
+export function withUnloadedLineCounts<M extends EvaluationMode = EvaluationMode>(
+  state: LineIndexState<M>,
+  unloadedLineCountsByChunk: ReadonlyMap<number, number>,
+  unloadedLineCount: number,
+): LineIndexState<M> {
+  return freezeLineIndexState({
+    ...state,
+    unloadedLineCountsByChunk,
+    unloadedLineCount,
+  });
+}
+
+/**
  * Narrow a LineIndexState to eager mode with runtime validation.
  * Throws if the state has dirty ranges or a pending rebuild.
  * Use at mode boundaries (e.g., undo/redo) where eager state is required.

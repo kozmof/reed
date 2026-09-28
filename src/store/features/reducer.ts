@@ -22,7 +22,7 @@ import {
 } from "./edit.js";
 import { historyUndo, historyRedo } from "./history.js";
 import { createPoint, createAttention, deleteAttention } from "../core/attention.js";
-import { declareChunkMetadata, evictChunk, loadChunk } from "./chunk-actions.js";
+import { declareChunkMetadata, evictChunk, loadChunk, loadChunks } from "./chunk-actions.js";
 
 /**
  * Normalize line endings in `text` to match `lineEnding`.
@@ -265,6 +265,9 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
 
     case "LOAD_CHUNK":
       return loadChunk(state, action);
+
+    case "LOAD_CHUNKS":
+      return loadChunks(state, action);
 
     case "EVICT_CHUNK":
       return evictChunk(state, action);

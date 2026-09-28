@@ -21,6 +21,8 @@ import type {
   CreateAttentionAction,
   DeleteAttentionAction,
   LoadChunkAction,
+  LoadChunksAction,
+  ChunkLoad,
   EvictChunkAction,
   DeclareChunkMetadataAction,
 } from "../../types/actions.js";
@@ -94,6 +96,8 @@ function normalizeDeserializedAction(action: DocumentAction): DocumentAction {
       return DocumentActions.deleteAttention(action.id);
     case "LOAD_CHUNK":
       return DocumentActions.loadChunk(action.chunkIndex, action.data);
+    case "LOAD_CHUNKS":
+      return DocumentActions.loadChunks(action.chunks);
     case "EVICT_CHUNK":
       return DocumentActions.evictChunk(action.chunkIndex);
     case "DECLARE_CHUNK_METADATA":
@@ -294,6 +298,21 @@ export const DocumentActions = {
     });
   },
 
+  /** Create one atomic action for a group of fetched chunks. */
+  loadChunks(chunks: readonly ChunkLoad[]): LoadChunksAction {
+    return Object.freeze({
+      type: "LOAD_CHUNKS",
+      chunks: Object.freeze(
+        chunks.map(({ chunkIndex, data }) =>
+          Object.freeze({
+            chunkIndex,
+            data: asReadonlyUint8Array(new Uint8Array(data)),
+          }),
+        ),
+      ),
+    });
+  },
+
   /**
    * Create an evict-chunk action.
    *
@@ -331,6 +350,15 @@ export function serializeAction(action: DocumentAction): string {
     const base64 = encodeBase64(new Uint8Array(action.data));
     return JSON.stringify({ ...action, data: base64 });
   }
+  if (action.type === "LOAD_CHUNKS") {
+    return JSON.stringify({
+      ...action,
+      chunks: action.chunks.map((chunk) => ({
+        chunkIndex: chunk.chunkIndex,
+        data: encodeBase64(new Uint8Array(chunk.data)),
+      })),
+    });
+  }
   return JSON.stringify(action);
 }
 
@@ -341,13 +369,27 @@ export function serializeAction(action: DocumentAction): string {
  */
 export function deserializeAction(json: string): DocumentAction {
   const parsed = JSON.parse(json);
-  const decoded =
+  let decoded =
     parsed &&
     typeof parsed === "object" &&
     parsed.type === "LOAD_CHUNK" &&
     typeof parsed.data === "string"
       ? { ...parsed, data: decodeBase64(parsed.data) }
       : parsed;
+  if (decoded && typeof decoded === "object" && decoded.type === "LOAD_CHUNKS") {
+    decoded = {
+      ...decoded,
+      chunks: Array.isArray(decoded.chunks)
+        ? decoded.chunks.map((chunk: unknown) =>
+            chunk &&
+            typeof chunk === "object" &&
+            typeof (chunk as { data?: unknown }).data === "string"
+              ? { ...chunk, data: decodeBase64((chunk as { data: string }).data) }
+              : chunk,
+          )
+        : decoded.chunks,
+    };
+  }
   if (!isDocumentAction(decoded)) {
     throw new Error(`Invalid deserialized action: ${JSON.stringify(decoded)}`);
   }

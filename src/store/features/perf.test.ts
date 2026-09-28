@@ -310,8 +310,9 @@ describe("Piece table reads (getText)", () => {
 
 describe("Streaming viewport latency", () => {
   it("loads a 100-chunk viewport within the local-processing budget", async () => {
-    const chunkCount = 100;
-    const chunkSize = 32;
+    const chunkCount = 10_000;
+    const viewportChunkCount = 100;
+    const chunkSize = 4_096;
     const store = createDocumentStore({
       chunkSize,
       totalFileSize: chunkCount * chunkSize,
@@ -332,16 +333,16 @@ describe("Streaming viewport latency", () => {
       metadata,
       {
         prefetchWindowSize: 0,
-        chunkManagerConfig: { maxLoadedChunks: chunkCount },
+        chunkManagerConfig: { maxLoadedChunks: viewportChunkCount },
       },
     );
 
     const start = performance.now();
-    await loader.setViewport(0, chunkCount - 1);
+    await loader.setViewport(0, viewportChunkCount - 1);
     const elapsedMs = performance.now() - start;
 
     assertPerf("load 100-chunk viewport", elapsedMs, 100);
-    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(chunkCount);
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(viewportChunkCount);
     loader.dispose();
     store.dispose();
   });

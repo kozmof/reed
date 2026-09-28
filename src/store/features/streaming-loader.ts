@@ -227,9 +227,9 @@ export function createStreamingDocumentLoader(
     manager.cancelPendingOutside(windowChunks);
 
     // Load viewport chunks (awaited — caller needs them visible).
-    const viewportLoads: Promise<void>[] = [];
-    for (let i = start; i <= end; i++) viewportLoads.push(manager.ensureLoaded(i));
-    await Promise.all(viewportLoads);
+    const viewportChunks: number[] = [];
+    for (let i = start; i <= end; i++) viewportChunks.push(i);
+    await manager.ensureLoadedMany(viewportChunks);
     if (disposed) return;
     if (requestId !== latestViewportRequestId) {
       // Each completed fetch temporarily protects its own chunk from eviction so
