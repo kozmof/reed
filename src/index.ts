@@ -92,6 +92,7 @@ export type {
   UndoAction,
   RedoAction,
   HistoryClearAction,
+  MarkSavedAction,
   RemoteChange,
   ApplyRemoteAction,
   CreateAttentionAction,
@@ -187,7 +188,16 @@ export type {
 } from "./store/index.js";
 
 // Public namespace contracts
-export type { QueryApi, QueryLineIndexApi, LineCountInfo } from "./api/index.js";
+export type {
+  QueryApi,
+  QueryLineIndexApi,
+  LineCountInfo,
+  ScanApi,
+  RenderingApi,
+  HistoryApi,
+  AttentionApi,
+  CheckpointApi,
+} from "./api/index.js";
 
 // =============================================================================
 // Namespaced runtime exports

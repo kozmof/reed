@@ -21,7 +21,9 @@ export type {
   QueryLineIndexApi,
   LineCountInfo,
   ScanApi,
+  RenderingApi,
   HistoryApi,
+  AttentionApi,
   CheckpointApi,
 } from "./interfaces.js";
 export { store } from "./store.js";

@@ -32,14 +32,29 @@ describe("MARK_SAVED reducer", () => {
     expect(saved.revision).toBe(state.revision + 1);
   });
 
-  it("defaults the timestamp to dispatch time", () => {
+  it("captures the default timestamp when the action is created", () => {
     const before = Date.now();
+    const action = DocumentActions.markSaved();
+    const after = Date.now();
     let state = createInitialState({ content: "reed" });
     state = documentReducer(state, DocumentActions.insert(byteOffset(0), "x"));
-    const saved = documentReducer(state, DocumentActions.markSaved());
+    const saved = documentReducer(state, action);
 
-    expect(saved.metadata.lastSaved).toBeGreaterThanOrEqual(before);
-    expect(saved.metadata.lastSaved).toBeLessThanOrEqual(Date.now());
+    expect(action.timestamp).toBeGreaterThanOrEqual(before);
+    expect(action.timestamp).toBeLessThanOrEqual(after);
+    expect(saved.metadata.lastSaved).toBe(action.timestamp);
+  });
+
+  it("replays the same action deterministically", () => {
+    let state = createInitialState({ content: "reed" });
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "x"));
+    const action = DocumentActions.markSaved(1234);
+
+    const first = documentReducer(state, action);
+    const replayed = documentReducer(state, action);
+
+    expect(replayed).toEqual(first);
+    expect(replayed.metadata.lastSaved).toBe(1234);
   });
 
   it("is a no-op when the document is already clean at the same timestamp", () => {
@@ -74,8 +89,8 @@ describe("MARK_SAVED reducer", () => {
 });
 
 describe("MARK_SAVED validation", () => {
-  it("accepts an absent or valid timestamp", () => {
-    expect(validateAction({ type: "MARK_SAVED" }).valid).toBe(true);
+  it("requires a valid timestamp", () => {
+    expect(validateAction({ type: "MARK_SAVED" }).valid).toBe(false);
     expect(validateAction({ type: "MARK_SAVED", timestamp: 0 }).valid).toBe(true);
   });
 

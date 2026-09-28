@@ -166,19 +166,20 @@ await writeFile(path, query.getText(state.pieceTable, ...));
 store.dispatch(DocumentActions.markSaved());
 ```
 
-`MARK_SAVED` clears `metadata.isDirty` and stamps `metadata.lastSaved`
-(defaulting to dispatch time). An event store then emits `save`, followed by
-`dirty-change` when the document had been dirty — in that order, so a
-`dirty-change` listener already sees the save that caused it.
+`MARK_SAVED` clears `metadata.isDirty` and stamps `metadata.lastSaved`.
+`DocumentActions.markSaved()` captures the current time when it creates the
+action.
+An event store then emits `save`, followed by `dirty-change` when the document had
+been dirty. It emits `save` first, so a `dirty-change` listener sees the save.
 
 Semantics:
 
-- `save` is emitted **only** for an explicit `MARK_SAVED`. It is never inferred
-  from the document becoming clean by other means, and it asserts only that the
-  caller reported success — never that bytes reached durable storage.
-- Saving an already-clean document still emits `save`; there is simply no dirty
-  transition to report. Re-saving at the same timestamp is a no-op that does not
-  advance the revision.
+- `save` is emitted only for an explicit `MARK_SAVED`. It is never inferred
+  from the document becoming clean by other means. It reports caller success but
+  does not confirm that bytes reached durable storage.
+- Saving an already-clean document still emits `save`. There is no dirty
+  transition to report. Re-saving at the same timestamp is a no-op that does
+  not advance the revision.
 - Inside a transaction the event is buffered until commit. A rollback discards
   both the event and the clean state, so a failed write leaves the document
   dirty.

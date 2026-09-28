@@ -30,6 +30,9 @@ export interface ReconciliationSchedulerOptions {
   performWork(): void;
 }
 
+/** Maximum synchronous passes before a re-entrant drain yields to the event loop. */
+export const MAX_SYNC_RECONCILIATION_STEPS = 100;
+
 /**
  * Factory for a custom reconciliation scheduler.
  *
@@ -56,7 +59,7 @@ export interface ReconciliationScheduler {
   schedule(): void;
 
   /**
-   * Cancel any pending idle callback.
+   * Cancel any pending idle callback or bounded-drain continuation.
    * Safe to call when nothing is scheduled.
    */
   cancel(): void;
@@ -134,26 +137,55 @@ export function createReconciliationScheduler(
   if (mode === "sync") {
     // Set when schedule() is called re-entrantly while a drain is in progress.
     let pendingReschedule = false;
-    return {
-      schedule() {
-        // A re-entrant call (a listener dispatched during performWork) must not
-        // recurse — record the request and let the active drain loop pick it up.
-        if (running) {
-          pendingReschedule = true;
+    let continuationTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function cancelSync(): void {
+      if (continuationTimer !== null) {
+        clearTimeout(continuationTimer);
+        continuationTimer = null;
+      }
+      pendingReschedule = false;
+    }
+
+    function scheduleSync(): void {
+      // A re-entrant call (a listener dispatched during performWork) must not
+      // recurse. Record the request and let the active drain loop pick it up.
+      if (running) {
+        pendingReschedule = true;
+        return;
+      }
+
+      if (continuationTimer !== null) {
+        clearTimeout(continuationTimer);
+        continuationTimer = null;
+      }
+
+      // Drain ordinary follow-up work before returning. A pathological listener
+      // can create work forever, so yield after a bounded number of passes.
+      let steps = 0;
+      do {
+        pendingReschedule = false;
+        if (!hasPendingWork() || shouldDefer()) return;
+        runWork();
+        steps++;
+
+        if (pendingReschedule && steps >= MAX_SYNC_RECONCILIATION_STEPS) {
+          continuationTimer = setTimeout(() => {
+            continuationTimer = null;
+            scheduleSync();
+          }, 0);
           return;
         }
-        // Drain rather than run once. performWork() notifies listeners, and a
-        // listener may dispatch another edit that flips rebuildPending back on.
-        // That edit's schedule() sets pendingReschedule above; loop until no
-        // re-entrant work remains so the follow-up is reconciled before we return.
-        do {
-          pendingReschedule = false;
-          if (!hasPendingWork() || shouldDefer()) return;
-          runWork();
-        } while (pendingReschedule);
+      } while (pendingReschedule);
+    }
+
+    return {
+      schedule: scheduleSync,
+      cancel: cancelSync,
+      runNow() {
+        cancelSync();
+        scheduleSync();
       },
-      cancel() {},
-      runNow,
       get isRunning() {
         return running;
       },

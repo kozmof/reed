@@ -120,8 +120,8 @@ export interface HistoryClearAction {
  */
 export interface MarkSavedAction {
   readonly type: "MARK_SAVED";
-  /** Save time in epoch milliseconds. Defaults to dispatch time. */
-  readonly timestamp?: number | undefined;
+  /** Save time in epoch milliseconds, captured when the action is created. */
+  readonly timestamp: number;
 }
 
 // =============================================================================
@@ -509,12 +509,10 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
 
     case "MARK_SAVED": {
       const savedAction = action as Partial<MarkSavedAction>;
-      if (savedAction.timestamp !== undefined) {
-        if (typeof savedAction.timestamp !== "number" || !Number.isFinite(savedAction.timestamp)) {
-          errors.push('MARK_SAVED action "timestamp" must be a finite number when present');
-        } else if (savedAction.timestamp < 0) {
-          errors.push('MARK_SAVED action "timestamp" must not be negative');
-        }
+      if (typeof savedAction.timestamp !== "number" || !Number.isFinite(savedAction.timestamp)) {
+        errors.push('MARK_SAVED action requires a finite number "timestamp" property');
+      } else if (savedAction.timestamp < 0) {
+        errors.push('MARK_SAVED action "timestamp" must not be negative');
       }
       break;
     }

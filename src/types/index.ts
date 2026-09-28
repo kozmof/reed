@@ -90,6 +90,7 @@ export type {
   UndoAction,
   RedoAction,
   HistoryClearAction,
+  MarkSavedAction,
   RemoteChange,
   ApplyRemoteAction,
   CreateAttentionAction,

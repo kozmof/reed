@@ -57,7 +57,8 @@ The following error domains are not implemented:
 
 ## 3. Current Caveats
 
-- `save` event type exists, but there is no built-in save action/path that auto-emits it.
+- `MARK_SAVED` reports that the caller completed a save. Reed performs no I/O
+  and cannot confirm that bytes reached durable storage.
 
 ## 4. Recommendation for Next Iteration
 

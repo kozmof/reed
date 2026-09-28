@@ -10,6 +10,13 @@ import {
   rendering,
   scan,
   store,
+  type AttentionApi,
+  type CheckpointApi,
+  type HistoryApi,
+  type MarkSavedAction,
+  type QueryApi,
+  type RenderingApi,
+  type ScanApi,
 } from "./index.js";
 
 describe("public package entry point", () => {
@@ -23,6 +30,21 @@ describe("public package entry point", () => {
     expect(rendering.getVisibleLines).toBeTypeOf("function");
     expect(scan.getValue).toBeTypeOf("function");
     expect(store.createDocumentStore).toBeTypeOf("function");
+  });
+
+  it("exports contracts for every typed namespace and save action", () => {
+    const contracts: [AttentionApi, CheckpointApi, HistoryApi, QueryApi, RenderingApi, ScanApi] = [
+      attention,
+      checkpoint,
+      history,
+      query,
+      rendering,
+      scan,
+    ];
+    expect(contracts).toHaveLength(6);
+
+    const savedAction: MarkSavedAction = store.DocumentActions.markSaved(1);
+    expect(savedAction.timestamp).toBe(1);
   });
 
   it("round-trips a store through the checkpoint namespace", () => {

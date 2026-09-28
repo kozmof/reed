@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createReconciliationScheduler } from "./reconciliation-scheduler.js";
+import {
+  createReconciliationScheduler,
+  MAX_SYNC_RECONCILIATION_STEPS,
+} from "./reconciliation-scheduler.js";
 
 const g = globalThis as typeof globalThis & {
   requestIdleCallback?: (
@@ -16,6 +19,7 @@ describe("ReconciliationScheduler", () => {
   afterEach(() => {
     g.requestIdleCallback = originalRequestIdleCallback;
     g.cancelIdleCallback = originalCancelIdleCallback;
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -280,6 +284,29 @@ describe("ReconciliationScheduler", () => {
       // ...but the drain loop reconciled the follow-up work before returning.
       expect(workCount).toBe(2);
       expect(scheduler.isRunning).toBe(false);
+    });
+
+    it("mode 'sync' yields after a bounded number of re-entrant passes", () => {
+      vi.useFakeTimers();
+      let workCount = 0;
+      let scheduler: ReturnType<typeof createReconciliationScheduler>;
+      scheduler = createReconciliationScheduler("sync", {
+        hasPendingWork: () => true,
+        shouldDefer: () => false,
+        performWork: () => {
+          workCount++;
+          scheduler.schedule();
+        },
+      });
+
+      scheduler.schedule();
+
+      expect(workCount).toBe(MAX_SYNC_RECONCILIATION_STEPS);
+      expect(scheduler.isRunning).toBe(false);
+      expect(vi.getTimerCount()).toBe(1);
+
+      scheduler.cancel();
+      expect(vi.getTimerCount()).toBe(0);
     });
   });
 

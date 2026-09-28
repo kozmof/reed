@@ -212,14 +212,10 @@ export const DocumentActions = {
    * `metadata.lastSaved`, which makes an event store emit `save` and, when the
    * document was dirty, `dirty-change`.
    *
-   * @param timestamp Save time in epoch milliseconds. Defaults to dispatch time.
+   * @param timestamp Save time in epoch milliseconds. Defaults to action creation time.
    */
-  markSaved(timestamp?: number): MarkSavedAction {
-    return Object.freeze(
-      timestamp === undefined
-        ? { type: "MARK_SAVED" as const }
-        : { type: "MARK_SAVED" as const, timestamp },
-    );
+  markSaved(timestamp: number = Date.now()): MarkSavedAction {
+    return Object.freeze({ type: "MARK_SAVED" as const, timestamp });
   },
 
   /**
