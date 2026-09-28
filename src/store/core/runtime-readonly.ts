@@ -4,6 +4,20 @@ const READONLY_UINT8_ARRAY_ERROR = "Cannot mutate a read-only Uint8Array";
 
 const UINT8_ARRAY_MUTATORS = new Set(["copyWithin", "fill", "reverse", "set", "sort"]);
 
+const UINT8_ARRAY_CALLBACKS = new Set([
+  "forEach",
+  "map",
+  "filter",
+  "every",
+  "some",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "reduce",
+  "reduceRight",
+]);
+
 const rawBytesByReadonly = new WeakMap<ReadonlyUint8Array, Uint8Array>();
 const readonlyBytesByRaw = new WeakMap<Uint8Array, ReadonlyUint8Array>();
 
@@ -70,6 +84,21 @@ export function asReadonlyUint8Array(bytes: Uint8Array | ReadonlyUint8Array): Re
 
       if (typeof prop === "string" && UINT8_ARRAY_MUTATORS.has(prop)) {
         return throwReadonlyUint8ArrayMutation;
+      }
+
+      if (typeof prop === "string" && UINT8_ARRAY_CALLBACKS.has(prop)) {
+        const method: unknown = Reflect.get(target, prop, target);
+        if (typeof method !== "function") return method;
+        return (callback: unknown, ...rest: unknown[]) => {
+          if (typeof callback !== "function") throw new TypeError("Callback must be a function");
+          return Reflect.apply(method, target, [
+            function (this: unknown, ...args: unknown[]) {
+              args[args.length - 1] = proxy;
+              return Reflect.apply(callback, this, args);
+            },
+            ...rest,
+          ]);
+        };
       }
 
       const value = Reflect.get(target, prop, target);

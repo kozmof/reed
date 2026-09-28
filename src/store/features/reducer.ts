@@ -247,7 +247,8 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       if (!didApplyChange) {
         return state;
       }
-      // Remote changes don't push to history (they come from network)
+      // History uses absolute offsets. Remote edits invalidate both stacks
+      // because Reed does not rebase history against remote operations.
       const metadata = newState.metadata.isDirty
         ? newState.metadata
         : Object.freeze({
@@ -256,6 +257,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
           });
       return withState(newState, {
         revision: nextRevision,
+        history: Object.freeze({ ...newState.history, undoStack: null, redoStack: null }),
         metadata,
       });
     }

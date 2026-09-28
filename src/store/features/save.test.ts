@@ -66,7 +66,7 @@ describe("MARK_SAVED reducer", () => {
     expect(again, "repeated save must not churn the revision").toBe(saved);
   });
 
-  it("leaves the document clean after a save even if edits are undone", () => {
+  it("re-dirties on a local edit after a save", () => {
     let state = createInitialState({ content: "reed" });
     state = documentReducer(state, DocumentActions.insert(byteOffset(0), "x"));
     state = documentReducer(state, DocumentActions.markSaved(1));

@@ -1509,6 +1509,7 @@ describe("Immutability", () => {
     }).toThrow();
 
     expect(() => {
+      // @ts-expect-error Snapshot subarrays reject writes at compile time and runtime.
       state.pieceTable.originalBuffer.subarray(0, 1)[0] = 0x58;
     }).toThrow();
 

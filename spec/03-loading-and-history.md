@@ -72,7 +72,9 @@ Transaction behavior:
 - store-level transaction manager tracks depth/snapshots
 - `batch()` executes actions inside transaction and notifies listeners once
 - rollback restores snapshot
-- `withTransaction(store, fn)` wraps begin/commit/rollback with the same safety behavior
+- `withTransaction(store, fn)` wraps begin/commit/rollback for synchronous callbacks
+- async callbacks are rejected before invocation, and Promise or thenable results trigger rollback
+- complete asynchronous work before calling `withTransaction` because work already started by a callback cannot be cancelled
 - event-store transactions buffer events by nesting depth and flush on outermost commit
 
 Important current behavior:

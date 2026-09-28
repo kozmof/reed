@@ -121,6 +121,7 @@ export function historyUndo(state: DocumentState, revision: number): DocumentSta
   // Restore selection
   newState = withState(newState, {
     selection: entry.selectionBefore,
+    metadata: Object.freeze({ ...newState.metadata, isDirty: true }),
   });
 
   return newState;
@@ -163,6 +164,7 @@ export function historyRedo(state: DocumentState, revision: number): DocumentSta
   // Restore selection
   newState = withState(newState, {
     selection: entry.selectionAfter,
+    metadata: Object.freeze({ ...newState.metadata, isDirty: true }),
   });
 
   return newState;

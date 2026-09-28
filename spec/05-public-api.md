@@ -183,8 +183,9 @@ Semantics:
 - Inside a transaction the event is buffered until commit. A rollback discards
   both the event and the clean state, so a failed write leaves the document
   dirty.
-- Later edits and remote changes re-dirty the document but preserve
-  `lastSaved`.
+- Later edits, remote changes, and successful undo or redo re-dirty the document
+  but preserve `lastSaved`. Undo and redo use conservative dirty tracking, so
+  returning to saved content does not automatically mark the document clean.
 
 Before v3.2.0 the `save` event type and `createSaveEvent` factory existed with
 no transition that could emit them, and `isDirty` was only ever set to `true`.

@@ -611,6 +611,10 @@ export function createDocumentStoreWithEventsFromCheckpoint(
 /**
  * Execute a callback within a transaction boundary on the given store.
  *
+ * The callback must be synchronous. Promise and thenable results are rejected
+ * and synchronous changes are rolled back. Complete asynchronous work before
+ * entering the transaction. Already-started asynchronous work cannot be cancelled.
+ *
  * Provides the same error-handling resilience as `batch`: the callback runs
  * inside a beginTransaction / commitTransaction bracket. On any exception from
  * the callback a rollback is attempted, falling back to `emergencyReset` if
@@ -637,12 +641,26 @@ export function createDocumentStoreWithEventsFromCheckpoint(
  */
 export function withTransaction<T>(
   store: ReconcilableDocumentStore,
-  fn: (store: ReconcilableDocumentStore) => T,
+  fn: (
+    store: ReconcilableDocumentStore,
+  ) => T & (Extract<T, { then: (...args: never[]) => unknown }> extends never ? unknown : never),
 ): T {
+  if (Object.prototype.toString.call(fn) === "[object AsyncFunction]") {
+    throw new TypeError("withTransaction requires a synchronous callback");
+  }
   store.beginTransaction();
   let result: T;
   try {
     result = fn(store);
+    if (
+      result !== null &&
+      (typeof result === "object" || typeof result === "function") &&
+      typeof (result as { then?: unknown }).then === "function"
+    ) {
+      // Observe rejection while rejecting this unsupported callback and rolling back.
+      void Promise.resolve(result).catch(() => {});
+      throw new TypeError("withTransaction requires a synchronous callback");
+    }
   } catch (e) {
     try {
       store.rollbackTransaction();

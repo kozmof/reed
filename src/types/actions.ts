@@ -137,7 +137,8 @@ export type RemoteChange =
   | { readonly type: "delete"; readonly start: ByteOffset; readonly length: ByteLength };
 
 /**
- * Apply remote changes from collaboration.
+ * Apply remote changes from collaboration. Effective changes clear local undo
+ * and redo history because stored offsets are not rebased.
  */
 export interface ApplyRemoteAction {
   readonly type: "APPLY_REMOTE";

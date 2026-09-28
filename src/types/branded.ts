@@ -47,6 +47,8 @@ type Branded<T, B> = T & Brand<B>;
 // Readonly Typed Array
 // =============================================================================
 
+type ByteArrayCallback<R> = (value: number, index: number, array: ReadonlyUint8Array) => R;
+
 /**
  * Read-only view of a Uint8Array.
  * Named properties (set, fill, copyWithin, ...) and numeric index writes are
@@ -58,9 +60,54 @@ type Branded<T, B> = T & Brand<B>;
  * copy and normalize external buffers before storing them, when runtime
  * immutability matters.
  */
-export type ReadonlyUint8Array = Readonly<Uint8Array> & {
+export interface ReadonlyUint8Array extends Omit<
+  Readonly<Uint8Array>,
+  | "set"
+  | "fill"
+  | "copyWithin"
+  | "reverse"
+  | "sort"
+  | "forEach"
+  | "map"
+  | "filter"
+  | "every"
+  | "some"
+  | "find"
+  | "findIndex"
+  | "findLast"
+  | "findLastIndex"
+  | "reduce"
+  | "reduceRight"
+  | "slice"
+  | "subarray"
+  | "valueOf"
+> {
   readonly [index: number]: number;
-};
+  forEach(callback: ByteArrayCallback<void>, thisArg?: unknown): void;
+  map(callback: ByteArrayCallback<number>, thisArg?: unknown): Uint8Array;
+  filter(callback: ByteArrayCallback<unknown>, thisArg?: unknown): Uint8Array;
+  every(callback: ByteArrayCallback<unknown>, thisArg?: unknown): boolean;
+  some(callback: ByteArrayCallback<unknown>, thisArg?: unknown): boolean;
+  find(callback: ByteArrayCallback<unknown>, thisArg?: unknown): number | undefined;
+  findIndex(callback: ByteArrayCallback<unknown>, thisArg?: unknown): number;
+  reduce(
+    callback: (previous: number, value: number, index: number, array: ReadonlyUint8Array) => number,
+  ): number;
+  reduce<T>(
+    callback: (previous: T, value: number, index: number, array: ReadonlyUint8Array) => T,
+    initial: T,
+  ): T;
+  reduceRight(
+    callback: (previous: number, value: number, index: number, array: ReadonlyUint8Array) => number,
+  ): number;
+  reduceRight<T>(
+    callback: (previous: T, value: number, index: number, array: ReadonlyUint8Array) => T,
+    initial: T,
+  ): T;
+  slice(begin?: number, end?: number): ReadonlyUint8Array;
+  subarray(begin?: number, end?: number): ReadonlyUint8Array;
+  valueOf(): ReadonlyUint8Array;
+}
 
 // =============================================================================
 // Position Types
