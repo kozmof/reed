@@ -81,6 +81,7 @@ Important current behavior:
 
 - `batch()` is a notification boundary, not a history-collapsing boundary.
 - Each action still contributes history unless coalesced.
+- Undo and redo use the same lazy line-index updates as local edits. Aggregate-based public queries remain accurate immediately. Use `getEagerSnapshot()`, `reconcileNow()`, or `whenReconciled()` when exact cached node offsets are needed.
 
 ## 4. Related Events
 

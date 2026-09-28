@@ -45,6 +45,8 @@ import {
 } from "./state.js";
 import {
   fixInsertWithPath,
+  joinBalanced,
+  joinTrees,
   removeMinimum,
   removeNodeWithAtMostOneChild,
   repairLeftBlackDeficit,
@@ -98,19 +100,80 @@ const withLine: WithNodeFn<LineIndexNode> = withLineIndexNode;
 // hasCrossBoundaryCRLFMerge) live in ./line-index-text-scan.ts. They are
 // imported above and used throughout this module.
 
-function rebuildFromReadText(
+/** Split by line rank, retaining untouched subtrees. */
+function splitLines(
+  root: LineIndexNode | null,
+  rank: number,
+): [LineIndexNode | null, LineIndexNode | null] {
+  if (root === null) return [null, null];
+  if (rank <= 0) return [null, root];
+  if (rank >= root.subtreeLineCount) return [root, null];
+  const leftCount = root.left?.subtreeLineCount ?? 0;
+  const key = createLineIndexNode(
+    root.documentOffset,
+    root.lineLength,
+    "black",
+    null,
+    null,
+    root.charLength,
+  );
+  if (rank <= leftCount) {
+    const [left, middle] = splitLines(root.left, rank);
+    return [left, joinBalanced(middle, key, root.right, withLine)];
+  }
+  const [middle, right] = splitLines(root.right, rank - leftCount - 1);
+  return [joinBalanced(root.left, key, middle, withLine), right];
+}
+
+/** Repair only the lines touching an edit, including neighboring CRLF boundaries.
+ * readText addresses the post-edit document; state describes the pre-edit tree.
+ */
+export function repairLineIndexWindow(
   state: LineIndexState,
+  start: ByteOffset,
+  end: ByteOffset,
+  insertedLength: number,
   readText: ReadTextFn,
-  reconciledRevision: number,
+  _revision: number,
 ): LineIndexState {
-  const content = readText(byteOffset(0), byteOffset(END_OF_DOCUMENT));
-  const rebuilt = buildLineIndexFromText(content, 0);
+  const total = state.root?.subtreeByteLength ?? 0;
+  const first = findLineAtPosition(state.root, byteOffset(Math.max(0, start - 1)))?.lineNumber ?? 0;
+  const last =
+    findLineAtPosition(state.root, byteOffset(Math.min(total, end + 1)))?.lineNumber ??
+    state.lineCount - 1;
+  const windowStart = getLineStartOffset(state.root, first);
+  const windowEnd = last + 1 < state.lineCount ? getLineStartOffset(state.root, last + 1) : total;
+  const delta = insertedLength - (end - start);
+  const text = readText(windowStart, byteOffset(windowEnd + delta));
+  const local = buildLineIndexFromText(text, windowStart);
+  // A nonterminal window includes its last separator but not the next line.
+  const count = local.lineCount - (last + 1 < state.lineCount ? 1 : 0);
+  const [replacement] = splitLines(local.root, count);
+  const removed = last - first + 1;
+  const [left, rest] = splitLines(state.root, first);
+  const [, right] = splitLines(rest, removed);
+  const joined = joinTrees(joinTrees(left, replacement, withLine), right, withLine);
+  const root =
+    joined === null || joined.color === "black"
+      ? joined
+      : withLineIndexNode(joined, { color: "black" });
+  const remapped = remapDirtyRangesForInsert(
+    remapDirtyRangesForDelete(state.dirtyRanges, first, last),
+    first,
+    count,
+  );
+  const dirtyRanges =
+    remapped === "full-rebuild-needed"
+      ? remapped
+      : mergeDirtyRanges(
+          [...remapped, createDirtyRange(first, END_OF_DOCUMENT, delta)],
+          state.maxDirtyRanges,
+        );
   return withLineIndexState(state, {
-    root: rebuilt.root,
-    lineCount: rebuilt.lineCount,
-    dirtyRanges: Object.freeze([]),
-    lastReconciledRevision: reconciledRevision,
-    rebuildPending: false,
+    root,
+    lineCount: state.lineCount - removed + count,
+    dirtyRanges,
+    rebuildPending: true,
   });
 }
 
@@ -210,12 +273,20 @@ export function lineIndexInsert(
 
   // Boundary merge case (e.g. inserting '\r' before existing '\n').
   // Structural incremental logic assumes inserted line breaks are self-contained;
-  // cross-boundary CRLF composition violates that assumption. Rebuild for correctness.
+  // cross-boundary CRLF composition requires local boundary repair.
   if (readText && hasCrossBoundaryCRLFMerge(text, insertContext)) {
-    return $proveCtx(
-      $beginCost("O(n)"),
-      rebuildFromReadText(state, readText, state.lastReconciledRevision),
+    const repaired: LineIndexState = reconcileFull(
+      repairLineIndexWindow(
+        state,
+        position,
+        position,
+        byteLength,
+        readText,
+        state.lastReconciledRevision,
+      ),
+      state.lastReconciledRevision,
     );
+    return $proveCtx($beginCost("O(n)"), repaired);
   }
 
   // No newlines: update the affected line and every downstream cached offset.
@@ -1350,9 +1421,12 @@ export function lineIndexInsertLazy(
   const { positions: newlinePositions, byteLength } = findNewlineBytePositions(text);
   const insertContext = getInsertBoundaryContext(position, byteLength, readText);
 
-  // Same cross-boundary CRLF case as eager insert; rebuild to guarantee correctness.
+  // Repair neighboring lines when the inserted text changes CRLF composition.
   if (readText && hasCrossBoundaryCRLFMerge(text, insertContext)) {
-    return $proveCtx($beginCost("O(n)"), rebuildFromReadText(state, readText, currentRevision));
+    return $proveCtx(
+      $beginCost("O(n)"),
+      repairLineIndexWindow(state, position, position, byteLength, readText, currentRevision),
+    );
   }
 
   // No newlines: update the line's length and defer the offsets after it

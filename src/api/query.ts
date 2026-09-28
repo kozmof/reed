@@ -68,7 +68,7 @@ function getLineStartOffset(state: DocumentState, lineNumber: number) {
  * Guaranteed non-null at compile time; no runtime check overhead.
  *
  * Decision guide:
- *  - Caller has eager state (post-reconcile, undo/redo) → use `getLineRange`
+ *  - Caller has eager state (post-reconcile) → use `getLineRange`
  *  - Caller has unknown state and wants a throw on violation → use `getLineRangeChecked`
  *  - Caller needs best-effort from any state, tolerates null → use `getLineRangePrecise`
  *  - Caller needs to reconcile on demand → call `store.reconcileNow()` first

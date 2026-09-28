@@ -609,8 +609,8 @@ function migratePointForDelete(
  *
  * Copy-on-write: the input state is returned untouched when no point moves.
  *
- * O(n + A·log n) — pre-delete indexing is O(n); each affected point re-anchors
- * in O(log n).
+ * Visits O(log n + deleted pieces) tree nodes; affected points re-anchor in O(log n).
+ * The reverse attention index is cached per attention state.
  */
 export function migrateDelete(
   state: AttentionLayerState,
@@ -624,16 +624,23 @@ export function migrateDelete(
   // unnecessary full piece-tree index when there are no points to migrate.
   if (state.attentions.size === 0) return $proveCtx($beginCost("O(n log n)"), state);
 
-  const oldIndex = buildPieceOffsetIndex(oldRoot);
-  const newIndex = buildPieceOffsetIndex(newRoot);
+  // Only pieces intersecting the cut can lose their identity or length.
+  // Prune untouched subtrees instead of indexing both complete trees.
+  const oldIndex = new Map<PieceID, PieceOffsetEntry>();
   const idsByPiece = buildAttentionIDsByPiece(state);
   const candidates = new Set<AttentionID>();
-  for (const [pieceID, oldEntry] of oldIndex) {
-    const newEntry = newIndex.get(pieceID);
-    if (newEntry !== undefined && newEntry.length === oldEntry.length) continue;
-    const ids = idsByPiece.get(pieceID);
-    if (ids !== undefined) for (const id of ids) candidates.add(id);
+  function visit(node: PieceNode | null, base: number): void {
+    if (node === null || base >= end || base + node.subtreeLength <= start) return;
+    const offset = base + (node.left?.subtreeLength ?? 0);
+    visit(node.left, base);
+    if (offset < end && offset + node.length > start) {
+      oldIndex.set(node.id, { offset, length: node.length });
+      const ids = idsByPiece.get(node.id);
+      if (ids !== undefined) for (const id of ids) candidates.add(id);
+    }
+    visit(node.right, offset + node.length);
   }
+  visit(oldRoot, 0);
   if (candidates.size === 0) return $proveCtx($beginCost("O(n log n)"), state);
 
   const deletedLength = end - start;

@@ -4,10 +4,9 @@
  * historyUndo / historyRedo operations that apply stored changes.
  */
 
-import type { DocumentState, HistoryState, LineIndexState } from "../../types/state.js";
+import type { DocumentState, HistoryState } from "../../types/state.js";
 import { pstackSize, pstackPush, pstackPop } from "../../types/state.js";
 import { withState } from "../core/state.js";
-import { reconcileFull } from "../core/line-index.js";
 import { applyChange, applyInverseChange } from "./edit.js";
 
 /**
@@ -61,37 +60,18 @@ export function isHistoryEmpty(state: DocumentState | HistoryState): boolean {
 }
 
 // =============================================================================
-// Line-Index Reconciliation for History Operations
-// =============================================================================
-
-/**
- * Reconcile the line index to a fully eager state before replaying history changes.
- * `applyChange` / `applyInverseChange` both call `asEagerLineIndex`, which throws
- * unless every dirty range has been resolved. A partial `reconcileRange` is not
- * sufficient — it would leave dirty ranges outside the changed window, causing the
- * second undo/redo in a sequence to throw on the `asEagerLineIndex` assertion.
- */
-export function reconcileRangeForChanges(
-  lineIndex: LineIndexState,
-  revision: number,
-): LineIndexState<"eager"> {
-  if (!lineIndex.rebuildPending) return lineIndex as LineIndexState<"eager">;
-  return reconcileFull(lineIndex, revision);
-}
-
-// =============================================================================
 // Undo / Redo Operations
 // =============================================================================
 
 /**
  * Perform undo operation.
- * Uses eager line index strategy for immediate accuracy.
+ * Keeps aggregate-based queries accurate and defers cached offset repair.
  *
  * @param state - Current document state
  * @param revision - Next revision number (caller is responsible for incrementing)
  * @returns New state with undo applied, or the same state if no undo is available
  */
-export function historyUndo(state: DocumentState, revision: number): DocumentState {
+export function historyUndo(state: DocumentState, _revision: number): DocumentState {
   const history = state.history;
   if (history.undoStack === null) return state;
 
@@ -107,12 +87,7 @@ export function historyUndo(state: DocumentState, revision: number): DocumentSta
     }),
   });
 
-  const reconciledLI = reconcileRangeForChanges(newState.lineIndex, revision);
-  if (reconciledLI !== newState.lineIndex) {
-    newState = withState(newState, { lineIndex: reconciledLI });
-  }
-
-  // Apply inverse of each change (in reverse order) with eager line index updates
+  // Apply inverse of each change (in reverse order) with lazy line index updates
   for (let i = entry.changes.length - 1; i >= 0; i--) {
     const change = entry.changes[i]!;
     newState = applyInverseChange(newState, change);
@@ -129,13 +104,13 @@ export function historyUndo(state: DocumentState, revision: number): DocumentSta
 
 /**
  * Perform redo operation.
- * Uses eager line index strategy for immediate accuracy.
+ * Keeps aggregate-based queries accurate and defers cached offset repair.
  *
  * @param state - Current document state
  * @param revision - Next revision number (caller is responsible for incrementing)
  * @returns New state with redo applied, or the same state if no redo is available
  */
-export function historyRedo(state: DocumentState, revision: number): DocumentState {
+export function historyRedo(state: DocumentState, _revision: number): DocumentState {
   const history = state.history;
   if (history.redoStack === null) return state;
 
@@ -151,12 +126,7 @@ export function historyRedo(state: DocumentState, revision: number): DocumentSta
     }),
   });
 
-  const reconciledLI = reconcileRangeForChanges(newState.lineIndex, revision);
-  if (reconciledLI !== newState.lineIndex) {
-    newState = withState(newState, { lineIndex: reconciledLI });
-  }
-
-  // Apply each change with eager line index updates
+  // Apply each change with lazy line index updates
   for (const change of entry.changes) {
     newState = applyChange(newState, change);
   }

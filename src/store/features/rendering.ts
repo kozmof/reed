@@ -29,7 +29,9 @@ import {
   getLineCountFromIndex,
   getResidentLineCountFromIndex,
 } from "../core/line-index.js";
-import { getText, charToByteOffset, isUtf8Boundary } from "../core/piece-table.js";
+import { getText, getRawByte, isUtf8Boundary } from "../core/piece-table.js";
+
+import { lineCharToByte, lineByteToChar } from "../core/line-offsets.js";
 
 // =============================================================================
 // Types
@@ -49,6 +51,10 @@ export interface VisibleLine {
   readonly endOffset: ByteOffset;
   /** Whether this line ends with a newline */
   readonly hasNewline: boolean;
+  /** UTF-16 column where bounded content starts, when a horizontal window is requested. */
+  readonly contentStartColumn?: number;
+  /** Whether the returned content omits part of the line. */
+  readonly isTruncated?: boolean;
 }
 
 /**
@@ -61,6 +67,10 @@ export interface ViewportConfig {
   readonly visibleLineCount: number;
   /** Extra lines to render above/below viewport for smooth scrolling */
   readonly overscan?: number;
+  /** First UTF-16 column to render. Defaults to zero. Surrogate pairs snap forward. */
+  readonly startColumn?: number;
+  /** Window width in UTF-16 units before boundary snapping, excluding newlines. */
+  readonly maxColumns?: number;
 }
 
 /**
@@ -255,7 +265,53 @@ export function getVisibleLines(
   // Requested resident lines are contiguous. Read their bytes once, then split
   // the decoded string with the line index's UTF-16 char lengths. This avoids a
   // separate piece-tree traversal and allocation for every viewport line.
-  if (requested.length > 0) {
+  if (config.startColumn !== undefined || config.maxColumns !== undefined) {
+    const column = toNonNegativeInteger(config.startColumn ?? 0);
+    const width =
+      config.maxColumns === undefined ? Infinity : toNonNegativeInteger(config.maxColumns);
+    for (const line of requested) {
+      let contentEnd = line.endOffset as number;
+      const lastByte =
+        contentEnd > line.startOffset
+          ? getRawByte(state.pieceTable, byteOffset(contentEnd - 1))
+          : -1;
+      if (lastByte === 10) contentEnd--;
+      if (
+        contentEnd > line.startOffset &&
+        getRawByte(state.pieceTable, byteOffset(contentEnd - 1)) === 13
+      )
+        contentEnd--;
+      const start = lineCharToByte(state.pieceTable, line.startOffset, line.endOffset, column);
+      const clippedStart = Math.min(start, contentEnd);
+      const end =
+        width === Infinity
+          ? contentEnd
+          : Math.min(
+              contentEnd,
+              lineCharToByte(state.pieceTable, line.startOffset, line.endOffset, column + width),
+            );
+      lines.push(
+        Object.freeze({
+          lineNumber: line.lineNumber,
+          startOffset: line.startOffset,
+          endOffset: line.endOffset,
+          content: getText(
+            state.pieceTable,
+            byteOffset(clippedStart),
+            byteOffset(Math.max(clippedStart, end)),
+          ),
+          hasNewline: contentEnd < line.endOffset,
+          contentStartColumn: lineByteToChar(
+            state.pieceTable,
+            line.startOffset,
+            line.endOffset,
+            clippedStart,
+          ),
+          isTruncated: clippedStart > line.startOffset || end < contentEnd,
+        }),
+      );
+    }
+  } else if (requested.length > 0) {
     const first = requested[0]!;
     const last = requested[requested.length - 1]!;
     const viewportText = getText(state.pieceTable, first.startOffset, last.endOffset);
@@ -463,15 +519,16 @@ export function positionToLineColumn(
                 $andThen((resolvedRange) =>
                   $pipe(
                     $from(
-                      getText(
+                      lineByteToChar(
                         state.pieceTable,
                         resolvedRange.start,
-                        addByteOffset(resolvedRange.start, resolvedLineInfo.offsetInLine),
+                        resolvedRange.start + resolvedRange.length,
+                        resolvedRange.start + resolvedLineInfo.offsetInLine,
                       ),
                     ),
-                    $map((text: string) => ({
+                    $map((column: number) => ({
                       line: resolvedLineInfo.lineNumber,
-                      column: text.length,
+                      column,
                     })),
                   ),
                 ),
@@ -503,10 +560,17 @@ export function positionToLineColumn(
                   return $lift<"O(n)", { line: number; column: number } | null>("O(n)", null);
                 }
                 return $pipe(
-                  $from(getText(state.pieceTable, resolvedLastLineRange.start, endOffset)),
-                  $map((text: string) => ({
+                  $from(
+                    lineByteToChar(
+                      state.pieceTable,
+                      resolvedLastLineRange.start,
+                      endOffset,
+                      endOffset,
+                    ),
+                  ),
+                  $map((column: number) => ({
                     line: resolvedTotalLines - 1,
-                    column: text.length,
+                    column,
                   })),
                 );
               }),
@@ -535,38 +599,16 @@ export function lineColumnToPosition(
   line: number,
   column: number,
 ): LinearCost<ByteOffset | null> {
-  // Use getLineRangePrecise to handle dirty line indices correctly
   const range = getLineRangePrecise(state.lineIndex, line);
-  if (!range) {
-    return $proveCtx($beginCost("O(n)"), null);
-  }
-
-  return $prove(
-    "O(n)",
-    $checked(() =>
-      $pipe(
-        $from(range),
-        $andThen((resolvedRange) =>
-          $pipe(
-            $from(
-              getText(
-                state.pieceTable,
-                resolvedRange.start,
-                addByteOffset(resolvedRange.start, resolvedRange.length),
-              ),
-            ),
-            $map((lineContent: string) => ({ resolvedRange, lineContent })),
-          ),
-        ),
-        $andThen(({ resolvedRange, lineContent }) => {
-          const clampedColumn = Math.min(toNonNegativeInteger(column), lineContent.length);
-          // charToByteOffset snaps a column landing inside a surrogate pair forward to the end
-          // of that character, so the result is always a UTF-8 code-point boundary.
-          return $pipe(
-            $from(charToByteOffset(lineContent, charOffset(clampedColumn))),
-            $map((columnByteLen) => addByteOffset(resolvedRange.start, columnByteLen)),
-          );
-        }),
+  if (!range) return $proveCtx($beginCost("O(n)"), null);
+  return $proveCtx(
+    $beginCost("O(n)"),
+    byteOffset(
+      lineCharToByte(
+        state.pieceTable,
+        range.start,
+        range.start + range.length,
+        toNonNegativeInteger(column),
       ),
     ),
   );
@@ -624,13 +666,14 @@ function byteOffsetToCharOffset(state: DocumentState, position: ByteOffset): Lin
             $andThen((resolvedRange) =>
               $pipe(
                 $from(
-                  getText(
+                  lineByteToChar(
                     state.pieceTable,
                     resolvedRange.start,
-                    addByteOffset(resolvedRange.start, location.offsetInLine),
+                    resolvedRange.start + resolvedRange.length,
+                    resolvedRange.start + location.offsetInLine,
                   ),
                 ),
-                $map((text: string) => resolvedCharStart + text.length),
+                $map((column: number) => resolvedCharStart + column),
               ),
             ),
           ),
@@ -684,29 +727,14 @@ function charOffsetToByteOffset(state: DocumentState, charPos: number): LinearCo
     return $proveCtx($beginCost("O(n)"), byteOffset(state.pieceTable.totalLength));
   }
 
-  return $prove(
-    "O(n)",
-    $checked(() =>
-      $pipe(
-        $from(range),
-        $andThen((resolvedRange) =>
-          $pipe(
-            $from(
-              getText(
-                state.pieceTable,
-                resolvedRange.start,
-                addByteOffset(resolvedRange.start, resolvedRange.length),
-              ),
-            ),
-            $andThen((lineText: string) => {
-              const charInLine = Math.min(location.charOffsetInLine, lineText.length);
-              return $pipe(
-                $from(charToByteOffset(lineText, charOffset(charInLine))),
-                $map((offsetInLine) => addByteOffset(resolvedRange.start, offsetInLine)),
-              );
-            }),
-          ),
-        ),
+  return $proveCtx(
+    $beginCost("O(n)"),
+    byteOffset(
+      lineCharToByte(
+        state.pieceTable,
+        range.start,
+        range.start + range.length,
+        location.charOffsetInLine,
       ),
     ),
   );

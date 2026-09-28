@@ -187,6 +187,8 @@ for (const line of visible.lines) {
 }
 ```
 
+For long lines, pass `startColumn` and `maxColumns` to limit the returned text to a horizontal window. Columns use UTF-16 units and both window boundaries snap forward past a split surrogate pair. Each line retains its full byte range and newline metadata. `contentStartColumn` gives the actual start column, and `isTruncated` indicates omitted content. Omit these options to return complete lines.
+
 For a partially loaded document, `visible.lines`, `firstLine`, and `lastLine` use compact resident coordinates. Check `visible.coordinateSpace`, `visible.residentLineCount`, and `visible.isComplete`. Use `visible.totalLines` only for expected scroll sizing.
 
 ## Reacting to changes with events

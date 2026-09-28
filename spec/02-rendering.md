@@ -25,7 +25,9 @@ Implemented utilities:
 
 ### 2.2 Visible lines
 
-- `getVisibleLines` resolves resident line ranges, then reads the contiguous viewport text once.
+- By default, `getVisibleLines` resolves resident line ranges, then reads the contiguous viewport text once.
+- Optional `startColumn` and `maxColumns` select a horizontal window in UTF-16 units. Both boundaries snap forward past a split surrogate pair. Returned lines keep full-line offsets and newline metadata, with `contentStartColumn` and `isTruncated` describing the selected content.
+- Long-line conversions decode at most 4096 bytes per read and cache sparse byte/character checkpoints per immutable piece-table snapshot. A first lookup far into a line scans its prefix. Later nearby lookups reuse that work.
 - Returned lines include offsets and `hasNewline` metadata.
 - `totalLines` is the expected count including unloaded chunk metadata.
 - `residentLineCount`, `isComplete`, and `coordinateSpace: "resident"` distinguish renderable resident lines from the expected count.
