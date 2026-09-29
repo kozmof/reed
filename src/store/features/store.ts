@@ -3,6 +3,12 @@
  * Factory function that creates a DocumentStore with encapsulated state.
  */
 
+import {
+  advanceMaintenance,
+  reconcileIncrementally,
+  compactIncrementally,
+} from "../core/incremental-maintenance.js";
+
 import type {
   DocumentState,
   DocumentStoreConfig,
@@ -91,6 +97,8 @@ function createStoreOverState(
    */
   function setState(nextState: DocumentState): void {
     if (nextState !== state) {
+      if (lineJob && lineJob.source !== nextState.lineIndex) lineJob = null;
+      if (compactJob && compactJob.source !== nextState.pieceTable) compactJob = null;
       state = nextState;
     }
     resolveWhenReconciledIfReady();
@@ -130,10 +138,50 @@ function createStoreOverState(
     }
   }
 
+  let lineJob: {
+    source: DocumentState["lineIndex"];
+    work: ReturnType<typeof reconcileIncrementally>;
+  } | null = null;
+  let compactJob: {
+    source: DocumentState["pieceTable"];
+    work: ReturnType<typeof compactIncrementally>;
+  } | null = null;
+
   const schedulerOptions: ReconciliationSchedulerOptions = {
-    hasPendingWork: () => state.lineIndex.rebuildPending || needsCompaction(),
+    hasPendingWork: () => !disposed && (state.lineIndex.rebuildPending || needsCompaction()),
     shouldDefer: () => transaction.isActive,
-    performWork() {
+    performWork(shouldYield) {
+      if (shouldYield) {
+        if (state.lineIndex.rebuildPending) {
+          if (!lineJob || lineJob.source !== state.lineIndex) {
+            lineJob = {
+              source: state.lineIndex,
+              work: reconcileIncrementally(state.lineIndex, state.revision),
+            };
+          }
+          const job = lineJob;
+          const result = advanceMaintenance(job.work, shouldYield);
+          if (result.done && job.source === state.lineIndex) {
+            lineJob = null;
+            setState(withState(state, { lineIndex: result.value }));
+            notifyListeners();
+          }
+        } else if (needsCompaction()) {
+          if (!compactJob || compactJob.source !== state.pieceTable) {
+            compactJob = { source: state.pieceTable, work: compactIncrementally(state.pieceTable) };
+          }
+          const job = compactJob;
+          const result = advanceMaintenance(job.work, shouldYield);
+          if (result.done && job.source === state.pieceTable) {
+            compactJob = null;
+            setState(withState(state, { pieceTable: result.value }));
+            notifyListeners();
+          }
+        }
+        return schedulerOptions.hasPendingWork();
+      }
+      lineJob = null;
+      compactJob = null;
       if (state.lineIndex.rebuildPending) {
         const newLineIndex = reconcileFull(state.lineIndex, state.revision);
         if (newLineIndex !== state.lineIndex) {
@@ -361,6 +409,8 @@ function createStoreOverState(
     if (disposed) return;
     disposed = true;
     scheduler.cancel();
+    lineJob = null;
+    compactJob = null;
     listeners = [];
     rejectWhenReconciledWaiters(
       new Error("DocumentStore was disposed before reconciliation completed"),

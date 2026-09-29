@@ -6,6 +6,8 @@
  * for compute regions (see `src/types/cost-doc.ts`).
  */
 
+import { carryPieceIdentityIndex } from "./piece-identity-index.js";
+
 import type { PieceNode, PieceTableState, BufferReference } from "../../types/state.js";
 import {
   byteOffset,
@@ -28,6 +30,7 @@ import {
   type ConstCost,
   type LogCost,
   type LinearCost,
+  type NLogNCost,
 } from "../../types/cost-doc.js";
 import {
   createPieceNode,
@@ -602,7 +605,7 @@ export function pieceTableInsert(
     return $proveCtx($beginCost("O(n)"), {
       state: freezePieceTableState({
         ...state,
-        root: newRoot,
+        root: carryPieceIdentityIndex(state.root, newRoot),
         addBuffer,
         totalLength: textBytes.length,
         nextPieceID,
@@ -675,7 +678,7 @@ export function pieceTableInsert(
         $map((newRoot) => ({
           state: freezePieceTableState({
             ...state,
-            root: newRoot,
+            root: carryPieceIdentityIndex(state.root, newRoot),
             addBuffer,
             totalLength: state.totalLength + textBytes.length,
             nextPieceID,
@@ -897,8 +900,9 @@ function splitAt(
  *   2. splitAt(rest, clampedEnd - clampedStart) → [_, right]
  *   3. joinTrees(left, right)                   → new root
  *
- * Each split is O(log n) via joinBalanced, making the overall delete O(log n)
- * regardless of how many pieces the deleted range spans.
+ * Tree deletion is O(log P) via joinBalanced. If point resolution has created
+ * an identity index, updating its changed paths and removing D deleted entries
+ * costs O((log P + D) log P). Unindexed trees pay no index-maintenance cost.
  *
  * Every structural step preserves the full red-black contract. joinTrees takes
  * the minimum of the right tree as its join key and discharges the black
@@ -912,12 +916,12 @@ export function pieceTableDelete(
   state: PieceTableState,
   start: ByteOffset,
   end: ByteOffset,
-): LogCost<PieceTableState> {
-  if (start >= end) return $proveCtx($beginCost("O(log n)"), state);
-  if (state.root === null) return $proveCtx($beginCost("O(log n)"), state);
+): NLogNCost<PieceTableState> {
+  if (start >= end) return $proveCtx($beginCost("O(n log n)"), state);
+  if (state.root === null) return $proveCtx($beginCost("O(n log n)"), state);
 
   const deleteLength = Math.min(end, state.totalLength) - Math.max(start, 0);
-  if (deleteLength <= 0) return $proveCtx($beginCost("O(log n)"), state);
+  if (deleteLength <= 0) return $proveCtx($beginCost("O(n log n)"), state);
 
   const clampedStart = Math.max(start, 0);
   const clampedEnd = Math.min(end, state.totalLength);
@@ -933,10 +937,10 @@ export function pieceTableDelete(
   const newRoot = merged === null ? null : ensureBlackRoot(merged, withPiece);
 
   return $proveCtx(
-    $beginCost("O(log n)"),
+    $beginCost("O(n log n)"),
     freezePieceTableState({
       ...state,
-      root: newRoot,
+      root: carryPieceIdentityIndex(state.root, newRoot),
       totalLength: state.totalLength - deleteLength,
       nextPieceID,
     }),

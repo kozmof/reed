@@ -182,3 +182,43 @@ describe("bounded long-line rendering", () => {
     expect(lineColumnToPosition(original, 0, 3)).toBe(7);
   });
 });
+
+it("encodes initial content once while preserving mixed Unicode line metrics", () => {
+  const content = "a漢😀\r\nb\rc\n";
+  const encode = vi.spyOn(TextEncoder.prototype, "encode");
+  const state = createInitialState({ content });
+  expect(encode.mock.calls.filter(([text]) => text === content)).toHaveLength(1);
+  expect(pieces.getValue(state.pieceTable)).toBe(content);
+  expect(state.lineIndex.root?.subtreeCharLength).toBe(content.length);
+});
+
+it("migrates a local anchor repeatedly without enumerating unrelated annotations", async () => {
+  const { PersistentMap } = await import("../core/persistent-map.js");
+  const { insertWithAttention, deleteAttention } = await import("../core/attention.js");
+  let table = createPieceTableState("abcdefgh".repeat(100));
+  // Put unrelated annotations on a separate piece from the edited span.
+  table = pieces.pieceTableInsert(table, byteOffset(0), "other").state;
+  let layer = emptyAttentionLayerState;
+  const unrelated = createPoint(table.root, byteOffset(1))!;
+  for (let i = 0; i < 10000; i++) [layer] = createAttention(layer, unrelated, unrelated);
+  const point = createPoint(table.root, byteOffset(700))!;
+  let id;
+  [layer, id] = createAttention(layer, point, point);
+  const old = layer;
+  const oldTable = table;
+  const iteration = vi.spyOn(PersistentMap.prototype, Symbol.iterator);
+  const writes = vi.spyOn(PersistentMap.prototype, "with");
+  for (let i = 0; i < 20; i++) {
+    iteration.mockClear();
+    writes.mockClear();
+    const result = insertWithAttention(table, layer, byteOffset(600 + i * 2), "x");
+    table = result.pieceTableState;
+    layer = result.attentionState;
+    expect(iteration).not.toHaveBeenCalled();
+    expect(writes.mock.calls.length).toBeLessThan(30);
+    expect(resolveAttention(table.root, layer, id)?.startOffset).toBe(701 + i);
+  }
+  expect(resolveAttention(oldTable.root, old, id)?.startOffset).toBe(700);
+  expect(deleteAttention(layer, id).attentions.has(id)).toBe(false);
+  expect(old.attentions.has(id)).toBe(true);
+});

@@ -385,12 +385,13 @@ export function buildPieceTree(
  * Chunked mode is not applicable here — initial content is loaded eagerly.
  */
 export function createPieceTableState(content: string): PieceTableState {
-  if (content.length === 0) {
+  return createPieceTableFromBytes(textEncoder.encode(content));
+}
+
+function createPieceTableFromBytes(originalBuffer: Uint8Array): PieceTableState {
+  if (originalBuffer.length === 0) {
     return createEmptyPieceTableState();
   }
-
-  // Encode content to original buffer
-  const originalBuffer = textEncoder.encode(content);
 
   // Create single piece spanning entire original buffer
   const root = createPieceNode(
@@ -474,6 +475,14 @@ export function createLineIndexNode(
  * @param maxDirtyRanges - Sentinel collapse threshold for mergeDirtyRanges (default 32)
  */
 export function createLineIndexState(content: string, maxDirtyRanges: number = 32): LineIndexState {
+  return createLineIndexFromBytes(content, textEncoder.encode(content), maxDirtyRanges);
+}
+
+function createLineIndexFromBytes(
+  content: string,
+  bytes: Uint8Array,
+  maxDirtyRanges: number,
+): LineIndexState {
   if (content.length === 0) {
     return createEmptyLineIndexState(maxDirtyRanges);
   }
@@ -485,7 +494,6 @@ export function createLineIndexState(content: string, maxDirtyRanges: number = 3
   // char-position cursor, avoiding O(L) textDecoder.decode calls.
   // The cursor tracks UTF-16 code units consumed: BMP chars advance by 1,
   // surrogate pairs (code points > U+FFFF) advance by 2.
-  const bytes = textEncoder.encode(content);
   const lineStarts: { offset: number; length: number; charLength: number }[] = [];
   let lineStart = 0;
   let lineCharStart = 0; // UTF-16 code unit index of the current line's start in `content`
@@ -656,6 +664,7 @@ export function createInitialState(config: DocumentStoreConfig = {}): DocumentSt
   assertValidDocumentStoreConfig(config);
   const mergedConfig = { ...DEFAULT_CONFIG, ...config };
   const content = mergedConfig.content;
+  const bytes = textEncoder.encode(content);
 
   // Use chunked mode when content is empty and a chunkSize is explicitly provided.
   // Non-zero DEFAULT_CONFIG.chunkSize alone does not enable chunked mode — the
@@ -670,9 +679,9 @@ export function createInitialState(config: DocumentStoreConfig = {}): DocumentSt
     selectionRevision: 0,
     pieceTable:
       content.length > 0
-        ? createPieceTableState(content)
+        ? createPieceTableFromBytes(bytes)
         : createEmptyPieceTableState(chunkSize, totalFileSize),
-    lineIndex: createLineIndexState(content, mergedConfig.maxDirtyRanges),
+    lineIndex: createLineIndexFromBytes(content, bytes, mergedConfig.maxDirtyRanges),
     selection: createInitialSelectionState(),
     history: createInitialHistoryState(mergedConfig.historyLimit, mergedConfig.undoGroupTimeout),
     metadata: createInitialMetadata(config),

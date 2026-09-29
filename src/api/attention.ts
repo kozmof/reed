@@ -47,21 +47,21 @@ export const attention: AttentionApi = {
   // Points
   /** @complexity O(log n) — tree walk to find the piece containing the offset */
   createPoint: $uncostedFn(createPoint),
-  /** @complexity O(n) — builds the piece-offset index in one in-order pass */
+  /** @complexity O(P log P) on the first lookup, O(log² P) with a cached identity index */
   resolvePoint: $uncostedFn(resolvePoint),
 
   // Attentions
-  /** @complexity O(A) — copy the map of A attentions and mint an ID */
+  /** @complexity O(log A) for native layers. External maps need one O(A log A) indexing pass */
   createAttention: $uncostedFn(createAttention),
-  /** @complexity O(1) — map lookup */
+  /** @complexity O(log A) — persistent map lookup */
   getAttention: $uncostedFn(getAttention),
-  /** @complexity O(A) — copy the map of A attentions; O(1) for an unknown ID */
+  /** @complexity O(log A) for native layers. External maps need one O(A log A) indexing pass */
   deleteAttention: $uncostedFn(deleteAttention),
 
   // Resolution and text
-  /** @complexity O(n) — a single tree walk resolves both points */
+  /** @complexity O(P log P + log A) cold, O(log² P + log A) with a cached identity index */
   resolveAttention: $uncostedFn(resolveAttention),
-  /** @complexity O(n) — resolve the range, then read the covered text */
+  /** @complexity Identity lookup plus the bytes read. A cold index costs O(P log P) */
   getTextForAttention: $uncostedFn(getTextForAttention),
 
   // Queries
@@ -71,12 +71,12 @@ export const attention: AttentionApi = {
   findAttentionsOverlapping: $uncostedFn(findAttentionsOverlapping),
 
   // Edit support
-  /** @complexity O(n) — piece-table insert plus per-attention split migration */
+  /** @complexity Piece-table insert plus indexed annotation migration */
   insertWithAttention: $uncostedFn(insertWithAttention),
-  /** @complexity O(n + A·log n) — pre-delete index plus per-point re-anchor */
+  /** @complexity Tree deletion plus indexed annotation migration */
   deleteWithAttention: $uncostedFn(deleteWithAttention),
-  /** @complexity O(A·S) — A attention points across S splits (usually 0 or 1) */
+  /** @complexity O((S + C) log A) after indexing, for S splits and C candidate annotations */
   migrateSplits: $uncostedFn(migrateSplits),
-  /** @complexity O(n + A·log n) — pre-delete index plus per-point re-anchor */
+  /** @complexity Visits cut pieces and their candidate annotations, with logarithmic index updates */
   migrateDelete: $uncostedFn(migrateDelete),
 };

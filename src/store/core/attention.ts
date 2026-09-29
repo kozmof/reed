@@ -24,6 +24,9 @@
  * than to a corrupt offset.
  */
 
+import { PersistentMap } from "./persistent-map.js";
+import { resolvePieceIdentity } from "./piece-identity-index.js";
+
 import type { PieceNode, PieceTableState } from "../../types/state.js";
 import type { ByteOffset, PieceID, AttentionID } from "../../types/branded.js";
 import { byteOffset, attentionID } from "../../types/branded.js";
@@ -45,7 +48,6 @@ import {
 import {
   $beginCost,
   $proveCtx,
-  type ConstCost,
   type LogCost,
   type LinearCost,
   type NLogNCost,
@@ -89,10 +91,10 @@ function freezeAttentionPoint(point: AttentionPoint): AttentionPoint {
 }
 
 function freezeAttentionState(
-  attentions: Map<AttentionID, Attention>,
+  attentions: PersistentMap<AttentionID, Attention>,
   nextID: number,
 ): AttentionLayerState {
-  return Object.freeze({ attentions: asReadonlyMap(attentions), nextID });
+  return Object.freeze({ attentions, nextID });
 }
 
 // =============================================================================
@@ -146,18 +148,21 @@ export function createPoint(
  * or the boundary now exceeds the piece's length (e.g. the piece was cut by a
  * delete). Failing closed avoids returning a silently-wrong offset.
  *
- * O(n) — builds the piece-offset index in one in-order pass. Callers resolving
- * many points against the same tree should build the index once (via
- * `resolveAttention`) instead of calling this per point.
+ * O(P log P) on the first lookup and O(log² P) with a cached identity index.
+ * Insert/delete carry that index across structurally shared tree versions.
  */
 export function resolvePoint(
   root: PieceNode | null,
   point: AttentionPoint,
-): LinearCost<ByteOffset> | null {
+): NLogNCost<ByteOffset> | null {
   if (root === null) return null;
-  const offset = resolvePointWithIndex(buildPieceOffsetIndex(root), point);
+  const entry = resolvePieceIdentity(root, point.pieceID);
+  const offset =
+    entry && isValidAttentionBoundary(point.boundary) && point.boundary <= entry.length
+      ? byteOffset(entry.offset + point.boundary)
+      : null;
   if (offset === null) return null;
-  return $proveCtx($beginCost("O(n)"), offset);
+  return $proveCtx($beginCost("O(n log n)"), offset);
 }
 
 // =============================================================================
@@ -173,13 +178,13 @@ export function resolvePoint(
  * invariant. An inverted or zero-width span simply resolves to an empty range
  * (`getTextForAttention` returns "").
  *
- * O(n).
+ * O(log A) for native layers. External maps are indexed once in O(A log A).
  */
 export function createAttention(
   state: AttentionLayerState,
   start: AttentionPoint,
   end: AttentionPoint,
-): LinearCost<[AttentionLayerState, AttentionID]> {
+): NLogNCost<[AttentionLayerState, AttentionID]> {
   assertValidAttentionBoundary(start.boundary, "start");
   assertValidAttentionBoundary(end.boundary, "end");
   const id = attentionID(`a${state.nextID}`);
@@ -188,42 +193,40 @@ export function createAttention(
     start: freezeAttentionPoint(start),
     end: freezeAttentionPoint(end),
   });
-  const next = new Map(state.attentions);
-  next.set(id, attention);
+  const next = persistentAttentions(state).with(id, attention);
   const result: [AttentionLayerState, AttentionID] = [
-    freezeAttentionState(next, state.nextID + 1),
+    updateAttentionState(state, next, state.nextID + 1, [id]),
     id,
   ];
-  return $proveCtx($beginCost("O(n)"), result);
+  return $proveCtx($beginCost("O(n log n)"), result);
 }
 
 /**
  * Remove an Attention from the layer. No-op if the ID is unknown.
  *
- * O(n).
+ * O(log A) for native layers. External maps are indexed once in O(A log A).
  */
 export function deleteAttention(
   state: AttentionLayerState,
   id: AttentionID,
-): LinearCost<AttentionLayerState> {
-  if (!state.attentions.has(id)) return $proveCtx($beginCost("O(n)"), state);
-  const next = new Map(state.attentions);
-  next.delete(id);
-  return $proveCtx($beginCost("O(n)"), freezeAttentionState(next, state.nextID));
+): NLogNCost<AttentionLayerState> {
+  if (!state.attentions.has(id)) return $proveCtx($beginCost("O(n log n)"), state);
+  const next = persistentAttentions(state).without(id);
+  return $proveCtx($beginCost("O(n log n)"), updateAttentionState(state, next, state.nextID, [id]));
 }
 
 /**
  * Look up an Attention by ID.
  *
- * O(1).
+ * O(log A).
  */
 export function getAttention(
   state: AttentionLayerState,
   id: AttentionID,
-): ConstCost<Attention> | null {
+): LogCost<Attention> | null {
   const attention = state.attentions.get(id);
   if (attention === undefined) return null;
-  return $proveCtx($beginCost("O(1)"), attention);
+  return $proveCtx($beginCost("O(log n)"), attention);
 }
 
 // =============================================================================
@@ -242,27 +245,67 @@ type PieceOffsetIndex = ReadonlyMap<PieceID, PieceOffsetEntry>;
 const pieceOffsetIndexCache = new WeakMap<PieceNode, PieceOffsetIndex>();
 const emptyPieceOffsetIndex: PieceOffsetIndex = new Map();
 
-type AttentionIDsByPiece = ReadonlyMap<PieceID, ReadonlySet<AttentionID>>;
+type AttentionIDsByPiece = PersistentMap<PieceID, PersistentMap<AttentionID, true>>;
 const attentionIDsByPieceCache = new WeakMap<AttentionLayerState, AttentionIDsByPiece>();
 
 function buildAttentionIDsByPiece(state: AttentionLayerState): AttentionIDsByPiece {
   const cached = attentionIDsByPieceCache.get(state);
   if (cached !== undefined) return cached;
 
-  const mutable = new Map<PieceID, Set<AttentionID>>();
+  let index = PersistentMap.empty<PieceID, PersistentMap<AttentionID, true>>();
   for (const [id, attention] of state.attentions) {
-    for (const point of [attention.start, attention.end]) {
-      let ids = mutable.get(point.pieceID);
-      if (ids === undefined) {
-        ids = new Set();
-        mutable.set(point.pieceID, ids);
-      }
-      ids.add(id);
+    for (const piece of new Set([attention.start.pieceID, attention.end.pieceID])) {
+      index = index.with(
+        piece,
+        (index.get(piece) ?? PersistentMap.empty<AttentionID, true>()).with(id, true),
+      );
     }
   }
-  const index = mutable as AttentionIDsByPiece;
   attentionIDsByPieceCache.set(state, index);
   return index;
+}
+
+const persistentAttentionCache = new WeakMap<
+  AttentionLayerState,
+  PersistentMap<AttentionID, Attention>
+>();
+function persistentAttentions(state: AttentionLayerState): PersistentMap<AttentionID, Attention> {
+  let result = persistentAttentionCache.get(state);
+  if (!result) {
+    result = PersistentMap.from(state.attentions);
+    persistentAttentionCache.set(state, result);
+  }
+  return result;
+}
+
+function updateAttentionState(
+  state: AttentionLayerState,
+  next: PersistentMap<AttentionID, Attention>,
+  nextID: number,
+  changed: Iterable<AttentionID>,
+): AttentionLayerState {
+  let index = buildAttentionIDsByPiece(state);
+  for (const id of changed) {
+    const old = state.attentions.get(id);
+    const current = next.get(id);
+    const oldPieces = new Set(old ? [old.start.pieceID, old.end.pieceID] : []);
+    const newPieces = new Set(current ? [current.start.pieceID, current.end.pieceID] : []);
+    for (const piece of oldPieces) {
+      if (newPieces.has(piece)) continue;
+      const ids = index.get(piece)!.without(id);
+      index = ids.size ? index.with(piece, ids) : index.without(piece);
+    }
+    for (const piece of newPieces) {
+      if (oldPieces.has(piece)) continue;
+      index = index.with(
+        piece,
+        (index.get(piece) ?? PersistentMap.empty<AttentionID, true>()).with(id, true),
+      );
+    }
+  }
+  const result = freezeAttentionState(next, nextID);
+  attentionIDsByPieceCache.set(result, index);
+  return result;
 }
 
 /**
@@ -304,16 +347,12 @@ function resolvePointWithIndex(index: PieceOffsetIndex, point: AttentionPoint): 
 
 /**
  * Resolve an Attention against a prebuilt index.
- * Returns null when the Attention ID is unknown or a point is dangling.
+ * Returns null when a point is dangling.
  */
 function resolveAttentionWithIndex(
   index: PieceOffsetIndex,
-  state: AttentionLayerState,
-  id: AttentionID,
+  attention: Attention,
 ): ResolvedRange | null {
-  const attention = state.attentions.get(id);
-  if (attention === undefined) return null;
-
   const startOffset = resolvePointWithIndex(index, attention.start);
   if (startOffset === null) return null;
 
@@ -327,17 +366,20 @@ function resolveAttentionWithIndex(
  * Resolve an Attention to its current document byte offsets.
  * Returns null when the Attention ID is unknown or a point is dangling.
  *
- * O(n) — a single tree walk resolves both points.
+ * O(P log P + log A) cold and O(log² P + log A) with a cached identity index.
  */
 export function resolveAttention(
   root: PieceNode | null,
   state: AttentionLayerState,
   id: AttentionID,
-): LinearCost<ResolvedRange> | null {
-  if (state.attentions.get(id) === undefined) return null;
-  const range = resolveAttentionWithIndex(buildPieceOffsetIndex(root), state, id);
-  if (range === null) return null;
-  return $proveCtx($beginCost("O(n)"), range);
+): NLogNCost<ResolvedRange> | null {
+  const attention = state.attentions.get(id);
+  if (attention === undefined) return null;
+  const startOffset = resolvePoint(root, attention.start);
+  const endOffset = resolvePoint(root, attention.end);
+  if (startOffset === null || endOffset === null) return null;
+  const range = { startOffset, endOffset };
+  return $proveCtx($beginCost("O(n log n)"), range);
 }
 
 /**
@@ -345,8 +387,7 @@ export function resolveAttention(
  *
  * Dangling attentions are omitted, matching the fail-closed behavior of
  * `resolveAttention`. This is intended for bulk consumers such as normalized
- * checkpoint capture, where resolving each attention independently would
- * rebuild the same O(P) piece index A times.
+ * checkpoint capture, avoiding a separate tree-path lookup for each point.
  *
  * O(P + A), where P is the piece count and A is the attention count.
  */
@@ -356,8 +397,8 @@ export function resolveAllAttentions(
 ): LinearCost<ReadonlyMap<AttentionID, ResolvedRange>> {
   const index = buildPieceOffsetIndex(root);
   const resolved = new Map<AttentionID, ResolvedRange>();
-  for (const [id] of state.attentions) {
-    const range = resolveAttentionWithIndex(index, state, id);
+  for (const [id, attention] of state.attentions) {
+    const range = resolveAttentionWithIndex(index, attention);
     if (range !== null) resolved.set(id, range);
   }
   return $proveCtx($beginCost("O(n)"), asReadonlyMap(resolved));
@@ -371,17 +412,20 @@ export function resolveAllAttentions(
  * Extract the text covered by an Attention.
  * Returns null when the Attention ID is unknown or a point is dangling.
  *
- * O(n).
+ * Identity lookup plus the bytes read. A cold identity index costs O(P log P).
  */
 export function getTextForAttention(
   pieceTableState: PieceTableState,
   attentionState: AttentionLayerState,
   id: AttentionID,
-): LinearCost<string> | null {
+): NLogNCost<string> | null {
   const offsets = resolveAttention(pieceTableState.root, attentionState, id);
   if (offsets === null) return null;
-  if (offsets.startOffset >= offsets.endOffset) return $proveCtx($beginCost("O(n)"), "");
-  return getText(pieceTableState, offsets.startOffset, offsets.endOffset);
+  if (offsets.startOffset >= offsets.endOffset) return $proveCtx($beginCost("O(n log n)"), "");
+  return $proveCtx(
+    $beginCost("O(n log n)"),
+    getText(pieceTableState, offsets.startOffset, offsets.endOffset) as string,
+  );
 }
 
 // =============================================================================
@@ -401,8 +445,8 @@ export function findAttentionsAt(
 ): LinearCost<AttentionID[]> {
   const index = buildPieceOffsetIndex(root);
   const results: AttentionID[] = [];
-  for (const [id] of state.attentions) {
-    const offsets = resolveAttentionWithIndex(index, state, id);
+  for (const [id, attention] of state.attentions) {
+    const offsets = resolveAttentionWithIndex(index, attention);
     if (offsets === null) continue;
     if (offset >= offsets.startOffset && offset < offsets.endOffset) {
       results.push(id);
@@ -426,8 +470,8 @@ export function findAttentionsOverlapping(
 ): LinearCost<AttentionID[]> {
   const index = buildPieceOffsetIndex(root);
   const results: AttentionID[] = [];
-  for (const [id] of state.attentions) {
-    const offsets = resolveAttentionWithIndex(index, state, id);
+  for (const [id, attention] of state.attentions) {
+    const offsets = resolveAttentionWithIndex(index, attention);
     if (offsets === null) continue;
     // Overlap: not (attention ends before range OR attention starts after range)
     if (offsets.endOffset > start && offsets.startOffset < end) {
@@ -451,14 +495,15 @@ export function findAttentionsOverlapping(
  *
  * Call this after every `pieceTableInsert` that returns a non-empty `splits`.
  *
- * O(A) the first time an attention snapshot is indexed, then O(S + affected)
- * for later edits against that immutable snapshot.
+ * The reverse index is maintained across snapshots. Work depends on the split
+ * pieces and their candidate annotations, with logarithmic persistent-map updates.
+ * Externally constructed layers pay a one-time O(A log A) indexing cost.
  */
 export function migrateSplits(
   state: AttentionLayerState,
   splits: readonly SplitRecord[],
-): LinearCost<AttentionLayerState> {
-  if (splits.length === 0) return $proveCtx($beginCost("O(n)"), state);
+): NLogNCost<AttentionLayerState> {
+  if (splits.length === 0) return $proveCtx($beginCost("O(n log n)"), state);
 
   // originalID → SplitRecord lookup. The common case is a single split (one
   // insert splits at most one piece), so skip the Map allocation there.
@@ -478,25 +523,26 @@ export function migrateSplits(
   const candidates = new Set<AttentionID>();
   for (const split of splits) {
     const ids = idsByPiece.get(split.originalID);
-    if (ids !== undefined) for (const id of ids) candidates.add(id);
+    if (ids !== undefined) for (const id of ids.keys()) candidates.add(id);
   }
-  if (candidates.size === 0) return $proveCtx($beginCost("O(n)"), state);
+  if (candidates.size === 0) return $proveCtx($beginCost("O(n log n)"), state);
 
-  // Copy-on-write: only clone the map once a point actually migrates.
-  let next: Map<AttentionID, Attention> | null = null;
+  // Allocate persistent search paths only when a point actually migrates.
+  let next: PersistentMap<AttentionID, Attention> | null = null;
   for (const id of candidates) {
     const attention = state.attentions.get(id)!;
     const migratedStart = migratePoint(attention.start, lookup);
     const migratedEnd = migratePoint(attention.end, lookup);
 
     if (migratedStart !== attention.start || migratedEnd !== attention.end) {
-      if (next === null) next = new Map(state.attentions);
-      next.set(id, Object.freeze({ ...attention, start: migratedStart, end: migratedEnd }));
+      if (next === null) next = persistentAttentions(state);
+      next = next.with(id, Object.freeze({ ...attention, start: migratedStart, end: migratedEnd }));
     }
   }
 
-  const migrated = next === null ? state : freezeAttentionState(next, state.nextID);
-  return $proveCtx($beginCost("O(n)"), migrated);
+  const migrated =
+    next === null ? state : updateAttentionState(state, next, state.nextID, candidates);
+  return $proveCtx($beginCost("O(n log n)"), migrated);
 }
 
 function migratePoint(
@@ -534,16 +580,16 @@ export interface InsertWithAttentionResult {
  * desync the layers. The Attention Layer stays caller-owned — pass the current
  * `attentionState` in and store the returned one.
  *
- * O(n) — dominated by the piece-table insert and the per-attention migration.
+ * Piece-table insertion plus indexed annotation migration.
  */
 export function insertWithAttention(
   pieceTableState: PieceTableState,
   attentionState: AttentionLayerState,
   position: ByteOffset,
   text: string,
-): LinearCost<InsertWithAttentionResult> {
+): NLogNCost<InsertWithAttentionResult> {
   const result = pieceTableInsert(pieceTableState, position, text);
-  return $proveCtx($beginCost("O(n)"), {
+  return $proveCtx($beginCost("O(n log n)"), {
     pieceTableState: result.state,
     attentionState: migrateSplits(attentionState, result.splits),
     insertedByteLength: result.insertedByteLength,
@@ -636,7 +682,7 @@ export function migrateDelete(
     if (offset < end && offset + node.length > start) {
       oldIndex.set(node.id, { offset, length: node.length });
       const ids = idsByPiece.get(node.id);
-      if (ids !== undefined) for (const id of ids) candidates.add(id);
+      if (ids !== undefined) for (const id of ids.keys()) candidates.add(id);
     }
     visit(node.right, offset + node.length);
   }
@@ -644,8 +690,8 @@ export function migrateDelete(
   if (candidates.size === 0) return $proveCtx($beginCost("O(n log n)"), state);
 
   const deletedLength = end - start;
-  // Copy-on-write: only clone the map once a point actually re-anchors.
-  let next: Map<AttentionID, Attention> | null = null;
+  // Allocate persistent search paths only when a point actually re-anchors.
+  let next: PersistentMap<AttentionID, Attention> | null = null;
   for (const id of candidates) {
     const attention = state.attentions.get(id)!;
     const migratedStart = migratePointForDelete(
@@ -665,12 +711,13 @@ export function migrateDelete(
       deletedLength,
     );
     if (migratedStart !== attention.start || migratedEnd !== attention.end) {
-      if (next === null) next = new Map(state.attentions);
-      next.set(id, Object.freeze({ ...attention, start: migratedStart, end: migratedEnd }));
+      if (next === null) next = persistentAttentions(state);
+      next = next.with(id, Object.freeze({ ...attention, start: migratedStart, end: migratedEnd }));
     }
   }
 
-  const migrated = next === null ? state : freezeAttentionState(next, state.nextID);
+  const migrated =
+    next === null ? state : updateAttentionState(state, next, state.nextID, candidates);
   return $proveCtx($beginCost("O(n log n)"), migrated);
 }
 

@@ -40,25 +40,27 @@ Reed stores only the two boundary points. Higher-level structure (groups, trees,
 - `attentions: ReadonlyMap<AttentionID, Attention>`
 - `nextID: number` — monotonic counter for minting `AttentionID`s, scoped to the layer's history (not the process), so IDs stay deterministic across runs and stable for serialization. Carried forward by every state-returning op.
 
-`emptyAttentionLayerState` is the frozen initial value. Every state-returning function returns a new frozen state (copy-on-write, where the map is cloned only when something actually changes).
+`emptyAttentionLayerState` is the frozen initial value. Changed states use persistent ordered maps that copy only search paths and preserve insertion order. A piece-to-annotation index is maintained across snapshots. External maps, including restored checkpoints, need one `O(A log A)` indexing pass on their first update.
 
 ## 4. API Surface
 
 ### 4.1 Points
 
 - `createPoint(root, offset): AttentionPoint | null` — anchor a point to the piece containing `offset`. Clamps to document end and returns `null` for an empty tree or negative offset. `O(log n)`.
-- `resolvePoint(root, point): ByteOffset | null` — current document offset of a point, or `null` if dangling. `O(n)` (builds the piece-offset index once, so resolve many points via `resolveAttention` instead of calling this per point).
+- `resolvePoint(root, point): ByteOffset | null` — current document offset of a point, or `null` if dangling. `O(P log P)` on the first lookup and `O(log² P)` with a cached identity index, where `P` is the piece count.
 
 ### 4.2 Attentions
 
-- `createAttention(state, start, end): [state, id]` — store a new span and mint its ID. Boundaries must be non-negative safe integers. Invalid boundaries throw `RangeError`. The caller owns the `start <= end` invariant, and an inverted or zero-width span resolves to an empty range. `O(A)` time and space to copy the map of `A` attentions.
-- `getAttention(state, id): Attention | null` — `O(1)`.
-- `deleteAttention(state, id): state` — no-op for an unknown ID. `O(A)` time and space to copy the map, or `O(1)` for an unknown ID.
+- `createAttention(state, start, end): [state, id]` — store a new span and mint its ID. Boundaries must be non-negative safe integers. Invalid boundaries throw `RangeError`. The caller owns the `start <= end` invariant, and an inverted or zero-width span resolves to an empty range. `O(log A)` time and additional space for an already indexed layer of `A` attentions.
+- `getAttention(state, id): Attention | null` — `O(log A)`.
+- `deleteAttention(state, id): state` — no-op for an unknown ID. `O(log A)` time and additional space for an already indexed layer.
 
 ### 4.3 Resolution and text
 
-- `resolveAttention(root, state, id): ResolvedRange | null` — both points to a `{ startOffset, endOffset }` half-open range in one tree walk, returning `null` if the ID is unknown or a point dangles. `O(n)`.
-- `getTextForAttention(pieceTableState, attentionState, id): string | null` — the covered text, `""` for an empty/inverted span, `null` if unresolvable. `O(n)`.
+- `resolveAttention(root, state, id): ResolvedRange | null` — both points to a `{ startOffset, endOffset }` half-open range, returning `null` if the ID is unknown or a point dangles. `O(P log P + log A)` on the first lookup and `O(log² P + log A)` with a cached identity index.
+- `getTextForAttention(pieceTableState, attentionState, id): string | null` — the covered text, `""` for an empty/inverted span, `null` if unresolvable. Resolution cost plus the bytes read.
+
+Insert and delete operations carry an existing identity index across tree versions by updating changed paths. The first lookup after a tree replacement, chunk load, or compaction rebuilds it. Old snapshots keep their own index.
 
 ### 4.4 Queries
 
@@ -83,14 +85,14 @@ Edits change the piece tree, so points must be healed. Insert and delete need di
 
 When `pieceTableInsert` splits a piece, the left half keeps the original ID and the right half gets a fresh ID, recorded in a `SplitRecord { originalID, rightID, splitOffset }`.
 
-`migrateSplits` walks the attentions and, for any point on a split piece:
+`migrateSplits` uses the reverse index to visit annotations attached to split pieces. For each point on a split piece, it applies these rules.
 
 - `boundary <= splitOffset` → stays on the left half (ID already correct).
 - `boundary > splitOffset` → rewritten to `{ pieceID: rightID, boundary: boundary - splitOffset }`.
 
 `pieceTableInsert` followed by `migrateSplits` is a two-step protocol. A forgotten `migrateSplits` silently corrupts any point that fell on the right half. `insertWithAttention` couples the two so the layers cannot desync.
 
-Complexity: `O(A · S)`, where `S` (splits per insert) is almost always 0 or 1.
+After indexing, migration costs `O((S + C) log A)` for `S` splits and `C` candidate annotations. The cost depends on annotations attached to the split pieces, including points whose boundaries do not move.
 
 ### 5.2 Delete (re-anchoring)
 
@@ -102,7 +104,7 @@ The split–join delete strategy hands surviving fragments fresh piece IDs that 
 
 Collapsing the `start`-boundary case is deliberate. A point at boundary 0 of a fully-deleted interior piece would otherwise dangle, because the piece is dropped and no fragment inherits its ID. Re-anchoring to `start` keeps it live at the same document position.
 
-Complexity: `O(n + A · log n)`. The delete and pre-delete indexing are `O(n)`, and each affected point re-anchors in `O(log n)`.
+Migration visits only cut pieces and their attached annotations. Each affected point re-anchors in `O(log P)`, and annotation index updates cost `O(log A)` per candidate. Tree deletion costs `O(log P)` without an identity index. Maintaining an existing identity index adds `O((log P + D) log P)` work for `D` deleted pieces.
 
 ## 6. Fail-Closed Resolution
 

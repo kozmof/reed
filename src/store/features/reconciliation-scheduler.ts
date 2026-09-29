@@ -26,8 +26,8 @@ export interface ReconciliationSchedulerOptions {
    * active and state mutations should not be flushed yet).
    */
   shouldDefer(): boolean;
-  /** Execute all pending maintenance work synchronously. */
-  performWork(): void;
+  /** Run maintenance; a yield predicate requests bounded work. Return true to resume later. */
+  performWork(shouldYield?: () => boolean): boolean | void;
 }
 
 /** Maximum synchronous passes before a re-entrant drain yields to the event loop. */
@@ -98,10 +98,10 @@ export function createReconciliationScheduler(
   let idleCallbackId: number | null = null;
   let running = false;
 
-  function runWork(): void {
+  function runWork(shouldYield?: () => boolean): boolean | void {
     running = true;
     try {
-      performWork();
+      return performWork(shouldYield);
     } finally {
       running = false;
     }
@@ -195,7 +195,7 @@ export function createReconciliationScheduler(
   // mode === 'idle'
   // NOTE: `hasPendingWork` and `shouldDefer` are live closures that always
   // read the latest store state — not snapshots from when schedule() was called.
-  function scheduleIdle(): void {
+  function scheduleIdle(delay = 200): void {
     if (idleCallbackId !== null) return; // already scheduled
     if (!hasPendingWork()) return;
 
@@ -214,7 +214,13 @@ export function createReconciliationScheduler(
       }
 
       if (!hasPendingWork()) return;
-      runWork();
+      const stopAt = performance.now() + 5;
+      const remaining = runWork(
+        () =>
+          performance.now() >= stopAt ||
+          (!!deadline && !deadline.didTimeout && deadline.timeRemaining() <= 1),
+      );
+      if (remaining === true) scheduleIdle(0);
     };
 
     if (typeof requestIdleCallback !== "undefined") {
@@ -222,7 +228,7 @@ export function createReconciliationScheduler(
     } else {
       // Fallback for environments without requestIdleCallback (e.g. Node.js).
       // 200 ms avoids the 16 ms frame-rate storm in high-throughput scenarios.
-      idleCallbackId = setTimeout(callback, 200) as unknown as number;
+      idleCallbackId = setTimeout(callback, delay) as unknown as number;
     }
   }
 

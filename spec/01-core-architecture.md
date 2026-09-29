@@ -11,7 +11,7 @@ Reed is an immutable text engine built from state snapshots, a reducer, and a st
 - Background maintenance: reconciliation scheduler + add-buffer compaction (`src/store/features/reconciliation-scheduler.ts`)
 - Public runtime access: `store/query/scan/events/rendering/history/diff/position/attention` namespaces (`src/api/*`)
 
-The piece table and line index remain independent structures. Piece nodes do not store line metadata.
+The piece table and line index remain independent structures. Piece nodes do not store line metadata. Initial loading encodes the content once and shares those UTF-8 bytes while building both structures.
 
 The attention layer (`src/store/core/attention.ts`) provides piece-anchored boundary references that survive tree rebalancing. It is available through the public `attention` namespace. See [10-attention.md](10-attention.md).
 
@@ -94,6 +94,10 @@ Notes:
 Transaction control actions (`TRANSACTION_START/COMMIT/ROLLBACK`) are handled at store level, not reducer level.
 
 `store.createDocumentStoreWithEvents()` wraps the base store with typed event emission.
+
+Idle maintenance runs in resumable batches with a 5 ms cooperative budget and a cap of 1,024 work units per callback. Compaction copies at most 64 KiB per copy step. Native buffer allocation and garbage collection can exceed the time budget. Completed results are published only if their source state is still current. Transactions defer maintenance, and disposal releases unfinished jobs.
+
+Explicit synchronous reconciliation and custom schedulers that call `performWork()` without a yield predicate retain blocking behavior. Custom schedulers can pass a yield predicate and resume when `performWork` returns `true`.
 
 ## 5. Implemented
 
