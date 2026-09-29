@@ -4,6 +4,29 @@ import { createStreamingDocumentLoader } from "./streaming-loader.js";
 import { getValue } from "../core/piece-table.js";
 
 describe("StreamingDocumentLoader", () => {
+  it("loads the latest viewport after an immediate A-to-B-to-A change", async () => {
+    const store = createDocumentStore({ chunkSize: 1 });
+    const loadChunk = vi.fn(async (index: number) => new Uint8Array([65 + index]));
+    const loader = createStreamingDocumentLoader(
+      store,
+      { loadChunk },
+      [
+        { chunkIndex: 0, byteLength: 1, lineCount: 0 },
+        { chunkIndex: 1, byteLength: 1, lineCount: 0 },
+      ],
+      { prefetchWindowSize: 0 },
+    );
+    const first = loader.setViewport(0, 0);
+    const second = loader.setViewport(1, 1);
+    const latest = loader.setViewport(0, 0);
+    await Promise.all([first, second, latest]);
+    expect(loadChunk.mock.calls.map(([index]) => index)).toEqual([0, 1, 0]);
+    expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(true);
+    expect(store.getSnapshot().pieceTable.chunkMap.has(1)).toBe(false);
+    loader.dispose();
+    store.dispose();
+  });
+
   it("setViewport throws on invalid chunk range (start > end)", async () => {
     const store = createDocumentStore({ chunkSize: 1 });
     const metadata = [

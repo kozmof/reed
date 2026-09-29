@@ -311,6 +311,56 @@ describe("ChunkManager.prefetch", () => {
 });
 
 describe("ChunkManager.cancelPendingOutside", () => {
+  it("does not commit canceled bytes already fetched by a pending batch", async () => {
+    const store = makeStore();
+    let finishSecond!: (bytes: Uint8Array) => void;
+    const manager = createChunkManager(store, {
+      loadChunk: async (index) =>
+        index === 0
+          ? makeBytes("aaaabbbb")
+          : new Promise<Uint8Array>((resolve) => {
+              finishSecond = resolve;
+            }),
+    });
+    const pending = manager.ensureLoadedMany([0, 1]);
+    // Let chunk 0 finish while chunk 1 keeps the batch pending.
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    manager.cancelPendingOutside([1]);
+    finishSecond(makeBytes("ccccdddd"));
+    await pending;
+    expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
+    expect(store.getSnapshot().pieceTable.chunkMap.has(1)).toBe(true);
+    manager.dispose();
+    store.dispose();
+  });
+
+  it.each(["single", "batch"] as const)(
+    "retries canceled %s loads before settlement",
+    async (mode) => {
+      const store = makeStore();
+      const resolvers: Array<(bytes: Uint8Array) => void> = [];
+      const loadChunk = vi.fn(() => new Promise<Uint8Array>((resolve) => resolvers.push(resolve)));
+      const manager = createChunkManager(store, { loadChunk });
+      const load = () =>
+        mode === "single" ? manager.ensureLoaded(0) : manager.ensureLoadedMany([0]);
+      const stale = load();
+      manager.cancelPendingOutside([]);
+      const retry = load();
+      expect(loadChunk).toHaveBeenCalledTimes(2);
+      // A loader that ignores abort must not remove the replacement request.
+      resolvers[0]!(makeBytes("staledat"));
+      await stale;
+      expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
+      const duplicate = load();
+      expect(loadChunk).toHaveBeenCalledTimes(2);
+      resolvers[1]!(makeBytes("new data"));
+      await Promise.all([retry, duplicate]);
+      expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(true);
+      manager.dispose();
+      store.dispose();
+    },
+  );
+
   it("does not start canceled work that is waiting in the fetch queue", async () => {
     const store = makeStore();
     let resolveFirst!: (bytes: Uint8Array) => void;
@@ -332,7 +382,11 @@ describe("ChunkManager.cancelPendingOutside", () => {
     expect(loadChunk).toHaveBeenCalledTimes(1);
     expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(true);
     expect(store.getSnapshot().pieceTable.chunkMap.has(1)).toBe(false);
+    await manager.ensureLoaded(1);
+    expect(loadChunk).toHaveBeenCalledTimes(2);
+    expect(store.getSnapshot().pieceTable.chunkMap.has(1)).toBe(true);
     manager.dispose();
+    store.dispose();
   });
 });
 describe("ChunkManager.dispose", () => {

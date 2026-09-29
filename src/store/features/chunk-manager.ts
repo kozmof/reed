@@ -278,7 +278,7 @@ export function createChunkManager(
     const abortController = new AbortController();
     abortControllers.set(chunkIndex, abortController);
 
-    const fetch = (): Promise<void> =>
+    const fetch = async (): Promise<void> =>
       disposed || abortController.signal.aborted
         ? Promise.resolve()
         : loader
@@ -316,16 +316,18 @@ export function createChunkManager(
               // Manager-owned cancellation settles pending calls without loading.
               if (abortController.signal.aborted) return;
               throw error;
-            })
-            .finally(() => {
-              inFlight.delete(chunkIndex);
-              if (abortControllers.get(chunkIndex) === abortController) {
-                abortControllers.delete(chunkIndex);
-              }
             });
 
+    // Clean up even when cancellation prevents a queued fetch from starting.
+    const promise = (fetchStrategy === "queue" ? fetchQueue.then(fetch, fetch) : fetch()).finally(
+      () => {
+        if (inFlight.get(chunkIndex) === promise) inFlight.delete(chunkIndex);
+        if (abortControllers.get(chunkIndex) === abortController) {
+          abortControllers.delete(chunkIndex);
+        }
+      },
+    );
     if (fetchStrategy === "queue") {
-      const promise = fetchQueue.then(fetch, fetch);
       fetchQueue = promise.then(
         () => {},
         () => {},
@@ -333,7 +335,7 @@ export function createChunkManager(
       return promise;
     }
 
-    return fetch();
+    return promise;
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -455,7 +457,9 @@ export function createChunkManager(
       );
       const chunks = fresh.flatMap((chunkIndex, index) => {
         const data = fetched[index];
-        return data === null || data === undefined ? [] : [{ chunkIndex, data }];
+        return data === null || data === undefined || controllers.get(chunkIndex)!.signal.aborted
+          ? []
+          : [{ chunkIndex, data }];
       });
       if (chunks.length === 0) return;
 
@@ -503,9 +507,17 @@ export function createChunkManager(
   function cancelPendingOutside(chunkIndices: readonly number[]): void {
     if (disposed) return;
     const retained = new Set(chunkIndices);
+    const canceled: AbortController[] = [];
     for (const [chunkIndex, controller] of abortControllers) {
-      if (!retained.has(chunkIndex)) controller.abort();
+      if (!retained.has(chunkIndex)) {
+        // Detach before abort callbacks run so a retry gets a fresh request.
+        inFlight.delete(chunkIndex);
+        abortControllers.delete(chunkIndex);
+        canceled.push(controller);
+      }
     }
+    // Abort callbacks may start replacement loads; leave those requests intact.
+    for (const controller of canceled) controller.abort();
   }
 
   function dispose(): void {
