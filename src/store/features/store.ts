@@ -8,7 +8,7 @@ import type {
   DocumentStoreConfig,
   DocumentStoreRuntimeConfig,
 } from "../../types/state.js";
-import type { DocumentCheckpoint, CheckpointRestoreOptions } from "../../types/checkpoint.js";
+import type { CheckpointRestoreOptions } from "../../types/checkpoint.js";
 import type { DocumentAction } from "../../types/actions.js";
 import type {
   DocumentStore,
@@ -374,8 +374,10 @@ function createStoreOverState(
   function reconcileInPlace(): DocumentState<"eager"> {
     if (!state.lineIndex.rebuildPending) return state as DocumentState<"eager">;
     const newLineIndex = reconcileFull(state.lineIndex, state.revision);
+    // Capture before notifying: a subscriber may immediately make state lazy again.
+    const eagerSnapshot = withState(state, { lineIndex: newLineIndex }) as DocumentState<"eager">;
     if (newLineIndex !== state.lineIndex) {
-      setState(withState(state, { lineIndex: newLineIndex }));
+      setState(eagerSnapshot);
       // Reconciliation changes the snapshot reference even though document
       // content and revision stay unchanged. External-store consumers must be
       // notified whenever getSnapshot() can return a new reference.
@@ -384,7 +386,7 @@ function createStoreOverState(
       }
     }
     resolveWhenReconciledIfReady();
-    return state as DocumentState<"eager">;
+    return eagerSnapshot;
   }
 
   /**
@@ -575,7 +577,7 @@ function assertRuntimeOnlyConfig(config: DocumentStoreRuntimeConfig): void {
  * @throws Error when `config` carries a state-bearing option
  */
 export function createDocumentStoreFromCheckpoint(
-  checkpoint: DocumentCheckpoint,
+  checkpoint: unknown,
   config: DocumentStoreRuntimeConfig = {},
   restoreOptions: CheckpointRestoreOptions = {},
 ): ReconcilableDocumentStore {
@@ -598,7 +600,7 @@ export function createDocumentStoreFromCheckpoint(
  * @throws Error when `config` carries a state-bearing option
  */
 export function createDocumentStoreWithEventsFromCheckpoint(
-  checkpoint: DocumentCheckpoint,
+  checkpoint: unknown,
   config: DocumentStoreRuntimeConfig = {},
   restoreOptions: CheckpointRestoreOptions = {},
 ): DocumentStoreWithEvents {

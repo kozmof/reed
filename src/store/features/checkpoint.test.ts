@@ -7,7 +7,7 @@
  * it is refused rather than loaded.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, expectTypeOf } from "vitest";
 import {
   createCheckpoint,
   restoreCheckpoint,
@@ -23,7 +23,7 @@ import {
 import { DocumentActions } from "./actions.js";
 import { documentReducer } from "./reducer.js";
 import { CheckpointError } from "../../types/checkpoint.js";
-import type { DocumentCheckpoint } from "../../types/checkpoint.js";
+import type { DocumentCheckpoint, CheckpointEnvelope } from "../../types/checkpoint.js";
 import type { DocumentState } from "../../types/state.js";
 import { pstackSize } from "../../types/state.js";
 import { byteOffset } from "../../types/branded.js";
@@ -1187,5 +1187,87 @@ describe("restore rejects untrustworthy payloads", () => {
     const draft = clone(base);
     draft.pieceTable.totalLength = 1;
     expect(() => restoreCheckpoint(draft)).toThrow(/pieceTable\.totalLength/);
+  });
+});
+
+describe("checkpoint line content validation", () => {
+  it.each([
+    [
+      [1, 1],
+      [3, 3],
+    ],
+    [
+      [2, 99],
+      [2, 2],
+    ],
+    [[4, 4]],
+    [
+      [2, 2],
+      [2, 2],
+      [0, 0],
+    ],
+  ])("rejects inconsistent line descriptors %j", (...lines) => {
+    const state = createDocumentStore({ content: "a\nbc" }).getEagerSnapshot();
+    expectRejection(
+      createCheckpoint(state),
+      (draft) => {
+        draft.lineIndex.lines = lines.map((line) => [line[0]!, line[1]!] as [number, number]);
+      },
+      "LINE_INDEX_MISMATCH",
+    );
+  });
+
+  it.each(["", "a\r", "a\n", "a\r\nb\rc\n", "é🎉\r\n日本語", "\uFEFFa\n\uFEFFb"])(
+    "preserves valid line metrics for %j",
+    (content) => {
+      const state = createDocumentStore({ content }).getEagerSnapshot();
+      expectSameDocument(restoreCheckpoint(createCheckpoint(state)), state);
+    },
+  );
+
+  it("validates UTF-8 and CRLF across chunk pieces", () => {
+    const bytes = textEncoder.encode("é🎉\r\n日本語\r\nx");
+    const store = createDocumentStore({ chunkSize: 1, reconcileMode: "none" });
+    store.dispatch(
+      DocumentActions.loadChunks(
+        Array.from(bytes, (byte, chunkIndex) => ({
+          chunkIndex,
+          data: new Uint8Array([byte]),
+        })),
+      ),
+    );
+    const state = store.getEagerSnapshot();
+    expectSameDocument(restoreCheckpoint(createCheckpoint(state)), state);
+  });
+});
+
+describe("checkpoint envelope contract", () => {
+  it.each(["pieceTable", "lineIndex", "selection", "history", "metadata", "attention"])(
+    "rejects null, missing, and array %s sections",
+    (key) => {
+      const checkpoint = createCheckpoint(createDocumentStore().getEagerSnapshot());
+      for (const value of [null, undefined, [], 1, "invalid"]) {
+        expect(isCheckpoint({ ...checkpoint, [key]: value })).toBe(false);
+      }
+    },
+  );
+
+  it("narrows only the envelope and leaves contents to restore", () => {
+    const value: unknown = {
+      format: "reed-checkpoint",
+      version: 1,
+      pieceTable: {},
+      lineIndex: {},
+      selection: {},
+      history: {},
+      metadata: {},
+      attention: {},
+    };
+    expect(isCheckpoint(value)).toBe(true);
+    if (isCheckpoint(value)) {
+      expectTypeOf(value).toEqualTypeOf<CheckpointEnvelope>();
+      expectTypeOf(value).not.toMatchTypeOf<DocumentCheckpoint>();
+      expect(() => restoreCheckpoint(value)).toThrow(CheckpointError);
+    }
   });
 });

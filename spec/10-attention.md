@@ -51,9 +51,9 @@ Reed stores only the two boundary points. Higher-level structure (groups, trees,
 
 ### 4.2 Attentions
 
-- `createAttention(state, start, end): [state, id]` — store a new span and mint its ID. Boundaries must be non-negative safe integers. Invalid boundaries throw `RangeError`. The caller owns the `start <= end` invariant, and an inverted or zero-width span resolves to an empty range. `O(1)`.
+- `createAttention(state, start, end): [state, id]` — store a new span and mint its ID. Boundaries must be non-negative safe integers. Invalid boundaries throw `RangeError`. The caller owns the `start <= end` invariant, and an inverted or zero-width span resolves to an empty range. `O(A)` time and space to copy the map of `A` attentions.
 - `getAttention(state, id): Attention | null` — `O(1)`.
-- `deleteAttention(state, id): state` — no-op for an unknown ID. `O(1)`.
+- `deleteAttention(state, id): state` — no-op for an unknown ID. `O(A)` time and space to copy the map, or `O(1)` for an unknown ID.
 
 ### 4.3 Resolution and text
 

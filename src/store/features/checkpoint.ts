@@ -34,7 +34,7 @@ import type { AttentionLayerState, Attention } from "../../types/attention.js";
 import type { PieceID, AttentionID, ReadonlyUint8Array } from "../../types/branded.js";
 import { byteOffset, byteLength, pieceID, attentionID } from "../../types/branded.js";
 import type {
-  DocumentCheckpoint,
+  CheckpointEnvelope,
   CheckpointRestoreOptions,
   CheckpointErrorCode,
 } from "../../types/checkpoint.js";
@@ -48,9 +48,14 @@ import {
   freezeLineIndexState,
 } from "../core/state.js";
 import { decodeBase64 } from "../core/base64.js";
+import { inOrderPieces } from "../core/piece-table-stream.js";
 import { utf8ByteLength } from "../core/encoding.js";
 import { GrowableBuffer } from "../core/growable-buffer.js";
-import { asReadonlyMap, asReadonlyUint8Array } from "../core/runtime-readonly.js";
+import {
+  asReadonlyMap,
+  asReadonlyUint8Array,
+  unwrapReadonlyUint8Array,
+} from "../core/runtime-readonly.js";
 
 export { createCheckpoint, encodeCheckpoint } from "./checkpoint-capture.js";
 
@@ -479,13 +484,77 @@ function restorePieceTable(
   return { pieceTable, lengthByID };
 }
 
+/** Validate line metrics against resident bytes without flattening the document. */
+function validateLineContent(pieceTable: PieceTableState, lines: readonly LineDescriptor[]): void {
+  // Preserve U+FEFF as document content, including at the start of each line.
+  const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+  let lineIndex = 0;
+  let byteLength = 0;
+  let charLength = 0;
+  let pendingCR = false;
+
+  function consume(bytes: Uint8Array): void {
+    byteLength += bytes.length;
+    charLength += decoder.decode(bytes, { stream: true }).length;
+  }
+
+  function finishLine(): void {
+    charLength += decoder.decode().length;
+    const line = lines[lineIndex];
+    if (line === undefined || line.length !== byteLength || line.charLength !== charLength) {
+      fail("LINE_INDEX_MISMATCH", `lineIndex.lines[${lineIndex}] disagrees with document content`);
+    }
+    lineIndex++;
+    byteLength = 0;
+    charLength = 0;
+  }
+
+  for (const { piece } of inOrderPieces(pieceTable.root)) {
+    const buffer = unwrapReadonlyUint8Array(
+      piece.bufferType === "original"
+        ? pieceTable.originalBuffer
+        : piece.bufferType === "add"
+          ? pieceTable.addBuffer.bytes
+          : pieceTable.chunkMap.get(piece.chunkIndex)!,
+    );
+    const end = piece.start + piece.length;
+    let start: number = piece.start;
+    for (let i = start; i < end; i++) {
+      const byte = buffer[i];
+      if (pendingCR) {
+        pendingCR = false;
+        if (byte === 0x0a) {
+          consume(buffer.subarray(start, i + 1));
+          finishLine();
+          start = i + 1;
+          continue;
+        }
+        finishLine();
+      }
+      if (byte === 0x0d || byte === 0x0a) {
+        consume(buffer.subarray(start, i + 1));
+        start = i + 1;
+        if (byte === 0x0d) pendingCR = true;
+        else finishLine();
+      }
+    }
+    consume(buffer.subarray(start, end));
+  }
+  if (pendingCR) finishLine();
+  finishLine(); // Every document includes a final line, even after a newline.
+  if (lineIndex !== lines.length) {
+    fail("LINE_INDEX_MISMATCH", "lineIndex.lines contains extra lines");
+  }
+}
+
 function restoreLineIndex(
   raw: unknown,
-  totalLength: number,
+  pieceTable: PieceTableState,
   revision: number,
   budget: RestoreBudget,
 ): LineIndexState<"eager"> {
   const { limits } = budget;
+  const { totalLength } = pieceTable;
   const source = readObject(raw, "lineIndex");
   const rawLines = readArray(source.lines, "lineIndex.lines", budget);
   assertResourceLimit(rawLines.length, limits.maxLines, "lineIndex.lines");
@@ -513,6 +582,8 @@ function restoreLineIndex(
       `lineIndex.lines cover ${coveredLength} bytes but the document holds ${totalLength}`,
     );
   }
+
+  validateLineContent(pieceTable, lines);
 
   const unloadedLineCountsByChunk = new Map<number, number>();
   let unloadedLineCount = 0;
@@ -774,18 +845,16 @@ function restoreAttention(
  * section — not that the payload is internally consistent. Use it to route a
  * value before restoring; `restoreCheckpoint` does the full validation.
  */
-export function isCheckpoint(value: unknown): value is DocumentCheckpoint {
+export function isCheckpoint(value: unknown): value is CheckpointEnvelope {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const candidate = value as Record<string, unknown>;
   if (candidate.format !== CHECKPOINT_FORMAT) return false;
   if (candidate.version !== CHECKPOINT_VERSION) return false;
-  return (
-    typeof candidate.pieceTable === "object" &&
-    typeof candidate.lineIndex === "object" &&
-    typeof candidate.selection === "object" &&
-    typeof candidate.history === "object" &&
-    typeof candidate.metadata === "object" &&
-    typeof candidate.attention === "object"
+  return ["pieceTable", "lineIndex", "selection", "history", "metadata", "attention"].every(
+    (key) => {
+      const section = candidate[key];
+      return typeof section === "object" && section !== null && !Array.isArray(section);
+    },
   );
 }
 
@@ -833,7 +902,7 @@ function validateChunkLineIndex(
  * @throws CheckpointError when the payload is not a restorable checkpoint
  */
 export function restoreCheckpoint(
-  checkpoint: DocumentCheckpoint,
+  checkpoint: unknown,
   options: CheckpointRestoreOptions = {},
 ): DocumentState<"eager"> {
   const limits = normalizeRestoreOptions(options);
@@ -857,7 +926,7 @@ export function restoreCheckpoint(
 
   const revision = readCount(migrated.revision, "checkpoint.revision");
   const { pieceTable, lengthByID } = restorePieceTable(migrated.pieceTable, budget);
-  const lineIndex = restoreLineIndex(migrated.lineIndex, pieceTable.totalLength, revision, budget);
+  const lineIndex = restoreLineIndex(migrated.lineIndex, pieceTable, revision, budget);
   validateChunkLineIndex(pieceTable, lineIndex);
 
   return Object.freeze({
@@ -894,5 +963,5 @@ export function decodeCheckpoint(
   } catch (error) {
     fail("NOT_A_CHECKPOINT", `checkpoint is not valid JSON: ${(error as Error).message}`);
   }
-  return restoreCheckpoint(parsed as DocumentCheckpoint, options);
+  return restoreCheckpoint(parsed, options);
 }

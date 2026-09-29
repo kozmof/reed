@@ -127,6 +127,8 @@ export interface ReconcilableDocumentStore extends DocumentStore, TransactionCon
    * Force immediate synchronous reconciliation of the line index.
    * Returns the reconciled state with evaluation mode narrowed to 'eager',
    * guaranteeing no dirty ranges remain.
+   * A subscriber may edit during notification, so the returned eager snapshot
+   * may already be stale. Use isCurrentSnapshot() to check it.
    * Use sparingly - prefer scheduleReconciliation() for non-critical updates.
    */
   reconcileNow(): DocumentState<"eager">;
@@ -150,8 +152,9 @@ export interface ReconcilableDocumentStore extends DocumentStore, TransactionCon
   /**
    * Get the current state, reconciling dirty line-index ranges immediately if needed.
    * Returns DocumentState<'eager'> — all line offsets are guaranteed accurate.
-   * Unlike reconcileNow(), this does not increment the revision number, since resolving
-   * offsets does not change visible content.
+   * Like reconcileNow(), this preserves the revision number because resolving
+   * offsets does not change visible content. A subscriber may edit during notification,
+   * so the returned eager snapshot may already be stale.
    * Prefer this over getSnapshot() when APIs that require DocumentState<'eager'>
    * (e.g. query.getLineRange) are needed without an explicit reconciliation call.
    */

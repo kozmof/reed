@@ -42,6 +42,7 @@ import type {
 } from "../store/core/attention.js";
 import type {
   DocumentCheckpoint,
+  CheckpointEnvelope,
   CheckpointOptions,
   CheckpointRestoreOptions,
 } from "../types/checkpoint.js";
@@ -265,11 +266,8 @@ export interface AttentionApi {
  */
 export interface CheckpointApi {
   create(state: DocumentState<"eager">, options?: CheckpointOptions): DocumentCheckpoint;
-  restore(
-    checkpoint: DocumentCheckpoint,
-    options?: CheckpointRestoreOptions,
-  ): DocumentState<"eager">;
+  restore(checkpoint: unknown, options?: CheckpointRestoreOptions): DocumentState<"eager">;
   encode(state: DocumentState<"eager">, options?: CheckpointOptions): string;
   decode(json: string, options?: CheckpointRestoreOptions): DocumentState<"eager">;
-  isCheckpoint(value: unknown): value is DocumentCheckpoint;
+  isCheckpoint(value: unknown): value is CheckpointEnvelope;
 }

@@ -167,6 +167,18 @@ export interface CheckpointAttentionLayer {
   readonly attentions: readonly CheckpointAttention[];
 }
 
+/** Envelope accepted by isCheckpoint. Section contents have not been validated. */
+export interface CheckpointEnvelope {
+  readonly format: CheckpointFormat;
+  readonly version: number;
+  readonly pieceTable: object;
+  readonly lineIndex: object;
+  readonly selection: object;
+  readonly history: object;
+  readonly metadata: object;
+  readonly attention: object;
+}
+
 /**
  * A captured `DocumentState`, ready to be stringified.
  *

@@ -173,13 +173,13 @@ export function resolvePoint(
  * invariant. An inverted or zero-width span simply resolves to an empty range
  * (`getTextForAttention` returns "").
  *
- * O(1).
+ * O(n).
  */
 export function createAttention(
   state: AttentionLayerState,
   start: AttentionPoint,
   end: AttentionPoint,
-): ConstCost<[AttentionLayerState, AttentionID]> {
+): LinearCost<[AttentionLayerState, AttentionID]> {
   assertValidAttentionBoundary(start.boundary, "start");
   assertValidAttentionBoundary(end.boundary, "end");
   const id = attentionID(`a${state.nextID}`);
@@ -194,22 +194,22 @@ export function createAttention(
     freezeAttentionState(next, state.nextID + 1),
     id,
   ];
-  return $proveCtx($beginCost("O(1)"), result);
+  return $proveCtx($beginCost("O(n)"), result);
 }
 
 /**
  * Remove an Attention from the layer. No-op if the ID is unknown.
  *
- * O(1).
+ * O(n).
  */
 export function deleteAttention(
   state: AttentionLayerState,
   id: AttentionID,
-): ConstCost<AttentionLayerState> {
-  if (!state.attentions.has(id)) return $proveCtx($beginCost("O(1)"), state);
+): LinearCost<AttentionLayerState> {
+  if (!state.attentions.has(id)) return $proveCtx($beginCost("O(n)"), state);
   const next = new Map(state.attentions);
   next.delete(id);
-  return $proveCtx($beginCost("O(1)"), freezeAttentionState(next, state.nextID));
+  return $proveCtx($beginCost("O(n)"), freezeAttentionState(next, state.nextID));
 }
 
 /**

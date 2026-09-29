@@ -193,14 +193,19 @@ revision, so its offsets may legitimately point past the end of the current docu
 
 ```ts
 checkpoint.create(state, options?)   // DocumentState<'eager'> -> DocumentCheckpoint
-checkpoint.restore(checkpoint, restoreOptions?) // DocumentCheckpoint -> DocumentState<'eager'>
+checkpoint.restore(checkpoint, restoreOptions?) // unknown -> DocumentState<'eager'>
 checkpoint.encode(state, options?)   // DocumentState<'eager'> -> string
 checkpoint.decode(json, restoreOptions?)        // string -> DocumentState<'eager'>
-checkpoint.isCheckpoint(value)       // cheap envelope guard
+checkpoint.isCheckpoint(value)       // value is CheckpointEnvelope
 
 store.createDocumentStoreFromCheckpoint(checkpoint, config?, restoreOptions?)
 store.createDocumentStoreWithEventsFromCheckpoint(checkpoint, config?, restoreOptions?)
 ```
+
+`isCheckpoint` checks the format, version, and non-null object sections. It narrows to
+`CheckpointEnvelope`, whose section contents remain unvalidated. Pass the value to
+`restore` for full validation. Restore entry points accept `unknown` input and check
+line boundaries and UTF-16 lengths against the resident document bytes.
 
 The store entry points accept `DocumentStoreRuntimeConfig`, which is `logger` plus
 `reconcileMode` or `scheduler`. Content, history limit, line ending, chunk size, and the other

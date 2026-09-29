@@ -43,6 +43,7 @@ export type {
 // Checkpoint format types
 export type {
   DocumentCheckpoint,
+  CheckpointEnvelope,
   CheckpointOptions,
   CheckpointRestoreOptions,
   CheckpointMode,

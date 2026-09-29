@@ -51,11 +51,11 @@ export const attention: AttentionApi = {
   resolvePoint: $uncostedFn(resolvePoint),
 
   // Attentions
-  /** @complexity O(1) — mint an ID and copy-on-write the attention map */
+  /** @complexity O(A) — copy the map of A attentions and mint an ID */
   createAttention: $uncostedFn(createAttention),
   /** @complexity O(1) — map lookup */
   getAttention: $uncostedFn(getAttention),
-  /** @complexity O(1) — copy-on-write delete from the attention map */
+  /** @complexity O(A) — copy the map of A attentions; O(1) for an unknown ID */
   deleteAttention: $uncostedFn(deleteAttention),
 
   // Resolution and text

@@ -1883,3 +1883,31 @@ describe("EVICT_CHUNK", () => {
     }
   });
 });
+
+describe("reconciliation with editing subscribers", () => {
+  it.each(["getEagerSnapshot", "reconcileNow", "reconcileIfCurrent"] as const)(
+    "%s returns the reconciled snapshot even when a subscriber edits",
+    (method) => {
+      const store = createDocumentStore({ content: "a\nb\nc", reconcileMode: "none" });
+      store.dispatch(DocumentActions.insert(byteOffset(0), "x"));
+      expect(store.getSnapshot().lineIndex.rebuildPending).toBe(true);
+      const before = store.getSnapshot();
+      let edited = false;
+      store.subscribe(() => {
+        if (edited) return;
+        edited = true;
+        store.dispatch(DocumentActions.insert(byteOffset(0), "y"));
+      });
+      const eager = method === "reconcileIfCurrent" ? store[method](before) : store[method]();
+      expect(eager).not.toBeNull();
+      expect(eager!.lineIndex.rebuildPending).toBe(false);
+      expect(eager!.lineIndex.dirtyRanges).toEqual([]);
+      expect(eager!.revision).toBe(before.revision);
+      expect(() => assertEagerOffsets(eager!.lineIndex)).not.toThrow();
+      expect(store.getSnapshot().revision).toBe(before.revision + 1);
+      expect(store.getSnapshot().lineIndex.rebuildPending).toBe(true);
+      expect(store.isCurrentSnapshot(eager!)).toBe(false);
+      store.dispose();
+    },
+  );
+});
