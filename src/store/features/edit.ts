@@ -1,3 +1,5 @@
+import { carryLineOffsetIndexes } from "../core/line-offsets.js";
+import { countPieceTableChars } from "../core/piece-table-metrics.js";
 /**
  * Pure edit-pipeline functions for the Reed document editor.
  *
@@ -43,7 +45,7 @@ import {
   rebuildLineIndex,
   repairLineIndexWindow,
 } from "../core/line-index.js";
-import { textEncoder } from "../core/encoding.js";
+import { utf8ByteLength } from "../core/encoding.js";
 
 // =============================================================================
 // Position Validation
@@ -105,8 +107,16 @@ export function pieceTableInsert(
 ): { state: DocumentState; insertedByteLength: number; splits: readonly SplitRecord[] } {
   const result = ptInsert(state.pieceTable, position, text);
   const attention = migrateSplits(state.attention, result.splits);
+  const nextState = withState(state, { pieceTable: result.state, attention });
+  carryLineOffsetIndexes(
+    state.pieceTable,
+    nextState.pieceTable,
+    position,
+    position,
+    result.insertedByteLength,
+  );
   return {
-    state: withState(state, { pieceTable: result.state, attention }),
+    state: nextState,
     insertedByteLength: result.insertedByteLength,
     splits: result.splits,
   };
@@ -128,10 +138,9 @@ export function pieceTableDelete(
   const oldRoot = state.pieceTable.root;
   const newPieceTable = ptDelete(state.pieceTable, start, end);
   const attention = migrateDelete(state.attention, oldRoot, newPieceTable.root, start, end);
-  return withState(state, {
-    pieceTable: newPieceTable,
-    attention,
-  });
+  const nextState = withState(state, { pieceTable: newPieceTable, attention });
+  carryLineOffsetIndexes(state.pieceTable, nextState.pieceTable, start, end, 0);
+  return nextState;
 }
 
 /**
@@ -356,15 +365,15 @@ function coalesceChanges(existing: HistoryChange, incoming: HistoryChange): Hist
 // =============================================================================
 // Using factories rather than inline object literals enforces the invariant:
 //   byteLength === textEncoder.encode(text).byteLength
-// At every construction site the byte length is derived from the text rather
-// than passed as a separate parameter, making silent divergence impossible.
+// Standalone factories derive lengths from text without allocating UTF-8 arrays.
+// applyEdit can instead reuse lengths measured by its structural edit.
 
 export function makeInsertChange(position: ByteOffset, text: string): HistoryInsertChange {
   return Object.freeze({
     type: "insert" as const,
     position,
     text,
-    byteLength: byteLength(textEncoder.encode(text).byteLength),
+    byteLength: byteLength(utf8ByteLength(text)),
   });
 }
 
@@ -373,7 +382,7 @@ export function makeDeleteChange(position: ByteOffset, text: string): HistoryDel
     type: "delete" as const,
     position,
     text,
-    byteLength: byteLength(textEncoder.encode(text).byteLength),
+    byteLength: byteLength(utf8ByteLength(text)),
   });
 }
 
@@ -386,9 +395,9 @@ export function makeReplaceChange(
     type: "replace" as const,
     position,
     text,
-    byteLength: byteLength(textEncoder.encode(text).byteLength),
+    byteLength: byteLength(utf8ByteLength(text)),
     oldText,
-    oldByteLength: byteLength(textEncoder.encode(oldText).byteLength),
+    oldByteLength: byteLength(utf8ByteLength(oldText)),
   });
 }
 
@@ -564,6 +573,14 @@ export type EditOperation = StructuralEditOperation & {
   readonly selection?: NonEmptyReadonlyArray<SelectionRange> | undefined;
 };
 
+function editReader(state: DocumentState): ReadTextFn {
+  const read: ReadTextFn = (start, end) => getText(state.pieceTable, start, end);
+  if (state.pieceTable.chunkMap.size === 0) {
+    read.countChars = (start, end) => countPieceTableChars(state.pieceTable, start, end);
+  }
+  return read;
+}
+
 /**
  * Apply the structural portion of an edit without history, metadata, selection,
  * or revision bookkeeping.
@@ -609,8 +626,7 @@ export function applyUntrackedEdit(
     const result = pieceTableInsert(newState, op.position, op.insertText);
     newState = result.state;
     if (!needsRebuild) {
-      const readText = (start: ByteOffset, end: ByteOffset) =>
-        getText(newState.pieceTable, start, end);
+      const readText = editReader(newState);
       const insLineIndex = strategy.insert(
         newState.lineIndex,
         op.position,
@@ -630,7 +646,7 @@ export function applyUntrackedEdit(
         op.position,
         op.deleteEnd,
         insertedLength,
-        (start, end) => getText(newState.pieceTable, start, end),
+        editReader(newState),
         revision,
       ),
     });
@@ -689,20 +705,36 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
     });
   }
 
-  // Build and push history change — switch on kind for exhaustive narrowing.
-  // Factory functions enforce byteLength === utf8ByteLength(text) at construction.
-  let historyChange: HistoryChange;
-  switch (op.kind) {
-    case "replace":
-      historyChange = makeReplaceChange(op.position, op.insertText, op.deletedText);
-      break;
-    case "delete":
-      historyChange = makeDeleteChange(op.position, op.deletedText);
-      break;
-    case "insert":
-      historyChange = makeInsertChange(op.position, op.insertText);
-      break;
-  }
+  // Reuse measured insert lengths. Deleted text may have been normalized by
+  // decoding (malformed chunk bytes or a BOM), so measure it without encoding.
+  const deletedLength = op.kind === "insert" ? 0 : op.deleteEnd - op.position;
+  const insertedLength =
+    newState.pieceTable.totalLength - state.pieceTable.totalLength + deletedLength;
+  const historyDeletedLength = op.kind === "insert" ? 0 : utf8ByteLength(op.deletedText);
+  const historyChange: HistoryChange = Object.freeze(
+    op.kind === "replace"
+      ? {
+          type: "replace",
+          position: op.position,
+          text: op.insertText,
+          byteLength: byteLength(insertedLength),
+          oldText: op.deletedText,
+          oldByteLength: byteLength(historyDeletedLength),
+        }
+      : op.kind === "insert"
+        ? {
+            type: "insert",
+            position: op.position,
+            text: op.insertText,
+            byteLength: byteLength(insertedLength),
+          }
+        : {
+            type: "delete",
+            position: op.position,
+            text: op.deletedText,
+            byteLength: byteLength(historyDeletedLength),
+          },
+  );
   // Timestamp-less hand-written actions remain deterministic. Normal callers use
   // DocumentActions, which captures wall-clock time before reduction.
   newState = historyPush(newState, historyChange, op.timestamp ?? state.revision);

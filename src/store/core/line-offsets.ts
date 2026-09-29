@@ -1,3 +1,5 @@
+import { PersistentMap } from "./persistent-map.js";
+import { countPieceTableChars, pieceTableByteAtChar } from "./piece-table-metrics.js";
 import type { PieceTableState } from "../../types/state.js";
 import { byteOffset } from "../../types/branded.js";
 import { getText, isUtf8Boundary } from "./piece-table.js";
@@ -9,7 +11,42 @@ interface Checkpoint {
   byte: number;
   char: number;
 }
-const indexes = new WeakMap<PieceTableState, Map<number, Checkpoint[]>>();
+interface LineCheckpoints {
+  points: PersistentMap<string, Checkpoint>;
+  length: number;
+  end: number;
+}
+const indexes = new WeakMap<PieceTableState, Map<number, LineCheckpoints>>();
+const MAX_CACHED_LINES = 64;
+
+/** Retain safe decoder checkpoints without copying a long line's checkpoint array. */
+export function carryLineOffsetIndexes(
+  previous: PieceTableState,
+  next: PieceTableState,
+  start: number,
+  end: number,
+  insertedLength: number,
+): void {
+  const lines = indexes.get(previous);
+  if (!lines) return;
+  const carried = new Map<number, LineCheckpoints>();
+  const delta = insertedLength - (end - start);
+  for (const [lineStart, entry] of lines) {
+    if (entry.end <= start) carried.set(lineStart, entry);
+    else if (lineStart > end) carried.set(lineStart + delta, { ...entry, end: entry.end + delta });
+    else if (lineStart <= start) {
+      let lo = 0,
+        hi = entry.length - 1;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (entry.points.get(String(mid))!.byte <= start - lineStart) lo = mid;
+        else hi = mid - 1;
+      }
+      carried.set(lineStart, { ...entry, length: lo + 1, end: Math.max(start, entry.end + delta) });
+    }
+  }
+  indexes.set(next, carried);
+}
 const BLOCK_BYTES = 4096;
 
 /** Sparse per-snapshot indexes bound decoding allocations and reuse scanned prefixes. */
@@ -25,19 +62,25 @@ function locate(
     lines = new Map();
     indexes.set(state, lines);
   }
-  let points = lines.get(start);
-  if (!points) {
-    points = [{ byte: 0, char: 0 }];
-    lines.set(start, points);
+  let entry = lines.get(start);
+  if (!entry) {
+    if (lines.size >= MAX_CACHED_LINES) lines.delete(lines.keys().next().value!);
+    entry = {
+      points: PersistentMap.empty<string, Checkpoint>().with("0", { byte: 0, char: 0 }),
+      length: 1,
+      end,
+    };
+    lines.set(start, entry);
   }
+  let points = entry.points;
   let lo = 0,
-    hi = points.length - 1;
+    hi = entry.length - 1;
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2);
-    if (points[mid]![unit] <= target) lo = mid;
+    if (points.get(String(mid))![unit] <= target) lo = mid;
     else hi = mid - 1;
   }
-  let point = points[lo]!;
+  let point = points.get(String(lo))!;
   while (point[unit] < target && start + point.byte < end) {
     let blockEnd = Math.min(end, start + point.byte + BLOCK_BYTES);
     while (blockEnd > start + point.byte && !isUtf8Boundary(state, byteOffset(blockEnd)))
@@ -51,7 +94,11 @@ function locate(
       const prefix = getText(state, byteOffset(start + point.byte), byteOffset(start + target));
       return { byte: target, char: point.char + prefix.length };
     }
-    if (point === points[points.length - 1]) points.push(next);
+    if (point === points.get(String(entry.length - 1))) {
+      points = points.with(String(entry.length), next);
+      entry = { points, length: entry.length + 1, end };
+      lines.set(start, entry);
+    }
     point = next;
   }
   return point;
@@ -63,7 +110,11 @@ export function lineCharToByte(
   end: number,
   column: number,
 ): number {
-  return start + locate(state, start, end, column, "char").byte;
+  if (state.chunkMap.size > 0) return start + locate(state, start, end, column, "char").byte;
+  if (column <= 0) return start;
+  const length = countPieceTableChars(state, start, end);
+  if (column >= length) return end;
+  return pieceTableByteAtChar(state, countPieceTableChars(state, 0, start) + column);
 }
 
 export function lineByteToChar(
@@ -72,5 +123,10 @@ export function lineByteToChar(
   end: number,
   offset: number,
 ): LinearCost<number> {
-  return $proveCtx($beginCost("O(n)"), locate(state, start, end, offset - start, "byte").char);
+  return $proveCtx(
+    $beginCost("O(n)"),
+    state.chunkMap.size > 0
+      ? locate(state, start, end, offset - start, "byte").char
+      : countPieceTableChars(state, start, Math.min(end, Math.max(start, offset))),
+  );
 }

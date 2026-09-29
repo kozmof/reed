@@ -1,3 +1,4 @@
+import { prepareBufferMetrics } from "./utf8-metrics.js";
 /**
  * State factory functions for the Reed document editor.
  * Creates initial immutable state structures.
@@ -389,6 +390,7 @@ export function createPieceTableState(content: string): PieceTableState {
 }
 
 function createPieceTableFromBytes(originalBuffer: Uint8Array): PieceTableState {
+  prepareBufferMetrics(originalBuffer);
   if (originalBuffer.length === 0) {
     return createEmptyPieceTableState();
   }

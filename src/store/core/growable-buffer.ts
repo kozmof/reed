@@ -1,3 +1,4 @@
+import { carryBufferMetrics } from "./utf8-metrics.js";
 import type { ReadonlyUint8Array } from "../../types/branded.js";
 import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "./runtime-readonly.js";
 
@@ -65,6 +66,7 @@ export class GrowableBuffer {
         : Math.max(bytes.length, this.length + source.length);
       const newBytes = new Uint8Array(newSize);
       newBytes.set(bytes.subarray(0, this.length));
+      carryBufferMetrics(bytes, newBytes, this.length);
       bytes = newBytes;
     }
     bytes.set(source, this.length);

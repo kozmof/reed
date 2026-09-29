@@ -139,13 +139,20 @@ export function repairLineIndexWindow(
   const total = state.root?.subtreeByteLength ?? 0;
   const first = findLineAtPosition(state.root, byteOffset(Math.max(0, start - 1)))?.lineNumber ?? 0;
   const last =
-    findLineAtPosition(state.root, byteOffset(Math.min(total, end + 1)))?.lineNumber ??
-    state.lineCount - 1;
+    findLineAtPosition(state.root, byteOffset(Math.min(total, readText.countChars ? end : end + 1)))
+      ?.lineNumber ?? state.lineCount - 1;
   const windowStart = getLineStartOffset(state.root, first);
   const windowEnd = last + 1 < state.lineCount ? getLineStartOffset(state.root, last + 1) : total;
   const delta = insertedLength - (end - start);
-  const text = readText(windowStart, byteOffset(windowEnd + delta));
-  const local = buildLineIndexFromText(text, windowStart);
+  const local = readText.countChars
+    ? repairWindowWithMetrics(
+        windowStart,
+        byteOffset(windowEnd + delta),
+        start,
+        insertedLength,
+        readText,
+      )
+    : buildLineIndexFromText(readText(windowStart, byteOffset(windowEnd + delta)), windowStart);
   // A nonterminal window includes its last separator but not the next line.
   const count = local.lineCount - (last + 1 < state.lineCount ? 1 : 0);
   const [replacement] = splitLines(local.root, count);
@@ -175,6 +182,53 @@ export function repairLineIndexWindow(
     dirtyRanges,
     rebuildPending: true,
   });
+}
+
+/** Only separators next to the edit need text decoding; retain the outer line bodies by size. */
+function repairWindowWithMetrics(
+  windowStart: ByteOffset,
+  windowEnd: ByteOffset,
+  start: ByteOffset,
+  insertedLength: number,
+  readText: ReadTextFn,
+): { root: LineIndexNode | null; lineCount: number } {
+  const suffixStart = byteOffset(start + insertedLength);
+  const prefixTail =
+    readText(byteOffset(Math.max(windowStart, start - 2)), start).match(/(?:\r\n|\r|\n)$/)?.[0] ??
+    "";
+  const suffixTail =
+    readText(byteOffset(Math.max(suffixStart, windowEnd - 2)), windowEnd).match(
+      /(?:\r\n|\r|\n)$/,
+    )?.[0] ?? "";
+  const prefixEnd = byteOffset(start - prefixTail.length);
+  const suffixEnd = byteOffset(windowEnd - suffixTail.length);
+  const prefixBytes = prefixEnd - windowStart;
+  const suffixBytes = suffixEnd - suffixStart;
+  let insertedText = readText(start, suffixStart);
+  // A standalone decoder read strips a leading BOM; metrics preserve U+FEFF.
+  if (insertedText.length < readText.countChars!(start, suffixStart))
+    insertedText = "\uFEFF" + insertedText;
+  const text = prefixTail + insertedText + (suffixBytes === 0 ? suffixTail : "");
+  const local = buildLineIndexFromText(text, 0);
+  const lines = collectLines(local.root).map((n) => ({
+    offset: 0,
+    length: n.lineLength,
+    charLength: n.charLength,
+  }));
+  lines[0]!.length += prefixBytes;
+  lines[0]!.charLength += readText.countChars!(windowStart, prefixEnd);
+  if (suffixBytes > 0) {
+    const last = lines[lines.length - 1]!;
+    last.length += suffixBytes + suffixTail.length;
+    last.charLength += readText.countChars!(suffixStart, suffixEnd) + suffixTail.length;
+    if (suffixTail.length > 0) lines.push({ offset: 0, length: 0, charLength: 0 });
+  }
+  let offset = windowStart as number;
+  for (const line of lines) {
+    line.offset = offset;
+    offset += line.length;
+  }
+  return { root: buildBalancedTreeWithChars(lines, 0, lines.length - 1), lineCount: lines.length };
 }
 
 // =============================================================================
@@ -653,11 +707,10 @@ function insertLinesAtPosition(
   // Compute charsBefore using readText if available
   let charsBefore: number | undefined;
   if (readText && location.offsetInLine > 0) {
-    const prefixText = readText(
-      byteOffset(lineStart),
-      byteOffset(lineStart + location.offsetInLine),
-    );
-    charsBefore = prefixText.length;
+    const prefixEnd = byteOffset(lineStart + location.offsetInLine);
+    charsBefore = readText.countChars
+      ? readText.countChars(byteOffset(lineStart), prefixEnd)
+      : readText(byteOffset(lineStart), prefixEnd).length;
   } else if (location.offsetInLine === 0) {
     charsBefore = 0;
   }
@@ -1528,11 +1581,10 @@ function insertLinesAtPositionLazy(
   let charsBefore: number | undefined;
   if (readText && location.offsetInLine > 0) {
     const lineStart = getLineStartOffset(state.root, location.lineNumber);
-    const prefixText = readText(
-      byteOffset(lineStart),
-      byteOffset(lineStart + location.offsetInLine),
-    );
-    charsBefore = prefixText.length;
+    const prefixEnd = byteOffset(lineStart + location.offsetInLine);
+    charsBefore = readText.countChars
+      ? readText.countChars(byteOffset(lineStart), prefixEnd)
+      : readText(byteOffset(lineStart), prefixEnd).length;
   } else if (location.offsetInLine === 0) {
     charsBefore = 0;
   }

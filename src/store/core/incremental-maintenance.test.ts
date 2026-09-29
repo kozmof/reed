@@ -10,6 +10,8 @@ import {
   reconcileIncrementally,
   compactIncrementally,
   advanceMaintenance,
+  createCompactionWorkspace,
+  type ReconciliationCache,
 } from "./incremental-maintenance.js";
 import { assertLineIndexRedBlackProperties } from "../../../test-utils/invariants.js";
 
@@ -66,4 +68,63 @@ describe("incremental maintenance", () => {
     const withoutAdds = createPieceTableState("abc");
     expect(getValue(drain(compactIncrementally(withoutAdds)).value)).toBe("abc");
   });
+});
+
+it("reuses completed reconciliation subtrees after edits near the end", () => {
+  let state = createInitialState({ content: "abc\n".repeat(6000) });
+  state = documentReducer(state, DocumentActions.insert(byteOffset(0), "x"));
+  const cache: ReconciliationCache = new WeakMap();
+  const work = reconcileIncrementally(state.lineIndex, state.revision, cache);
+  for (let i = 0; i < 1800; i++) expect(work.next().done).toBe(false);
+  state = documentReducer(
+    state,
+    DocumentActions.insert(byteOffset(state.pieceTable.totalLength), "tail"),
+  );
+  function steps(job: ReturnType<typeof reconcileIncrementally>): number {
+    let count = 0;
+    while (!job.next().done) count++;
+    return count;
+  }
+  const cold = steps(reconcileIncrementally(state.lineIndex, state.revision));
+  const resumed = steps(reconcileIncrementally(state.lineIndex, state.revision, cache));
+  expect(resumed).toBeLessThan(cold - 1500);
+  expect(
+    collectLines(
+      drain(reconcileIncrementally(state.lineIndex, state.revision, cache)).value.root,
+    ).map((n) => n.documentOffset),
+  ).toEqual(
+    collectLines(reconcileFull(state.lineIndex, state.revision).root).map((n) => n.documentOffset),
+  );
+});
+
+it("reuses partially copied spans when an edit splits a large piece", () => {
+  let table = createPieceTableState("");
+  table = pieceTableInsert(table, byteOffset(0), "x".repeat(200000)).state;
+  table = pieceTableInsert(table, byteOffset(200000), "y").state; // spare capacity after growth
+  table = pieceTableDelete(table, byteOffset(0), byteOffset(100000));
+  const workspace = createCompactionWorkspace(table);
+  const job = compactIncrementally(table, workspace);
+  while (workspace.bytes[0] !== 120) expect(job.next().done).toBe(false);
+  const original = table;
+  table = pieceTableInsert(table, byteOffset(50000), "hello").state;
+  const result = drain(compactIncrementally(table, workspace)).value;
+  expect(getValue(result)).toBe(getValue(table));
+  expect(getValue(original)).toBe("x".repeat(100000) + "y");
+  expect(result.addBuffer.length).toBe(100006);
+});
+
+it("grows retained compaction storage in slices and never mutates a published result", () => {
+  let table = createPieceTableState("");
+  table = pieceTableInsert(table, byteOffset(0), "x".repeat(100_000)).state;
+  const workspace = createCompactionWorkspace(table);
+  const initialJob = compactIncrementally(table, workspace);
+  while (workspace.bytes[0] !== 120) initialJob.next();
+  table = pieceTableInsert(table, byteOffset(100_000), "y".repeat(300_000)).state;
+  const first = drain(compactIncrementally(table, workspace)).value;
+  const saved = new Uint8Array(first.addBuffer.bytes);
+  expect(getValue(first)).toBe("x".repeat(100_000) + "y".repeat(300_000));
+  const next = pieceTableInsert(first, byteOffset(0), "z").state;
+  const second = drain(compactIncrementally(next, workspace)).value;
+  expect(getValue(second)).toBe("z" + getValue(first));
+  expect(new Uint8Array(first.addBuffer.bytes)).toEqual(saved);
 });

@@ -7,6 +7,9 @@ import {
   advanceMaintenance,
   reconcileIncrementally,
   compactIncrementally,
+  createCompactionWorkspace,
+  type CompactionWorkspace,
+  type ReconciliationCache,
 } from "../core/incremental-maintenance.js";
 
 import type {
@@ -147,33 +150,60 @@ function createStoreOverState(
     work: ReturnType<typeof compactIncrementally>;
   } | null = null;
 
+  let lineCache: ReconciliationCache = new WeakMap();
+  let compactWorkspace: CompactionWorkspace | null = null;
+  let preferCompaction = false;
+
   const schedulerOptions: ReconciliationSchedulerOptions = {
     hasPendingWork: () => !disposed && (state.lineIndex.rebuildPending || needsCompaction()),
     shouldDefer: () => transaction.isActive,
     performWork(shouldYield) {
       if (shouldYield) {
-        if (state.lineIndex.rebuildPending) {
+        const compactPending = needsCompaction();
+        if (!compactPending) {
+          compactJob = null;
+          compactWorkspace = null;
+        }
+        const runCompaction =
+          compactPending && (preferCompaction || !state.lineIndex.rebuildPending);
+        preferCompaction = !runCompaction;
+        if (state.lineIndex.rebuildPending && !runCompaction) {
           if (!lineJob || lineJob.source !== state.lineIndex) {
             lineJob = {
               source: state.lineIndex,
-              work: reconcileIncrementally(state.lineIndex, state.revision),
+              work: reconcileIncrementally(state.lineIndex, state.revision, lineCache),
             };
           }
           const job = lineJob;
           const result = advanceMaintenance(job.work, shouldYield);
           if (result.done && job.source === state.lineIndex) {
             lineJob = null;
+            lineCache = new WeakMap();
             setState(withState(state, { lineIndex: result.value }));
             notifyListeners();
           }
-        } else if (needsCompaction()) {
+        } else if (runCompaction) {
           if (!compactJob || compactJob.source !== state.pieceTable) {
-            compactJob = { source: state.pieceTable, work: compactIncrementally(state.pieceTable) };
+            // Interrupted jobs can reserve spans later deleted by an edit.
+            // Bound retained scratch space before resuming on the new tree.
+            const used = state.pieceTable.root?.subtreeAddLength ?? 0;
+            if (
+              compactWorkspace &&
+              (compactWorkspace.length > Math.max(used * 2, 65536) ||
+                compactWorkspace.bytes.length > Math.max(used * 4, 65536))
+            )
+              compactWorkspace = null;
+            compactWorkspace ??= createCompactionWorkspace(state.pieceTable);
+            compactJob = {
+              source: state.pieceTable,
+              work: compactIncrementally(state.pieceTable, compactWorkspace),
+            };
           }
           const job = compactJob;
           const result = advanceMaintenance(job.work, shouldYield);
           if (result.done && job.source === state.pieceTable) {
             compactJob = null;
+            compactWorkspace = null;
             setState(withState(state, { pieceTable: result.value }));
             notifyListeners();
           }
@@ -182,6 +212,8 @@ function createStoreOverState(
       }
       lineJob = null;
       compactJob = null;
+      lineCache = new WeakMap();
+      compactWorkspace = null;
       if (state.lineIndex.rebuildPending) {
         const newLineIndex = reconcileFull(state.lineIndex, state.revision);
         if (newLineIndex !== state.lineIndex) {
@@ -411,6 +443,8 @@ function createStoreOverState(
     scheduler.cancel();
     lineJob = null;
     compactJob = null;
+    lineCache = new WeakMap();
+    compactWorkspace = null;
     listeners = [];
     rejectWhenReconciledWaiters(
       new Error("DocumentStore was disposed before reconciliation completed"),

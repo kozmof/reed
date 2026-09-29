@@ -222,3 +222,70 @@ it("migrates a local anchor repeatedly without enumerating unrelated annotations
   expect(deleteAttention(layer, id).attentions.has(id)).toBe(false);
   expect(old.attentions.has(id)).toBe(true);
 });
+
+it("reuses text metrics across edits, buffer growth, and snapshot branches", () => {
+  const content = "漢😀x".repeat(100_000) + "\nother";
+  const original = createInitialState({ content });
+  const reads = vi.spyOn(pieces, "getText");
+  const position = lineColumnToPosition(original, 0, 300_000)!;
+  let state = original;
+  for (let i = 0; i < 12; i++) {
+    state = documentReducer(
+      state,
+      DocumentActions.insert(byteOffset(state.pieceTable.totalLength), "tail"),
+    );
+    reads.mockClear();
+    expect(lineColumnToPosition(state, 0, 300_000)).toBe(position);
+    expect(positionToLineColumn(state, position)).toEqual({ line: 0, column: 300_000 });
+    expect(reads).not.toHaveBeenCalled();
+  }
+  const branch = documentReducer(original, DocumentActions.insert(byteOffset(0), "😀"));
+  expect(lineColumnToPosition(branch, 0, 300_002)).toBe(position + 4);
+  expect(lineColumnToPosition(original, 0, 300_000)).toBe(position);
+});
+
+it.each(["\n", "\r", "\r\n", "x"])(
+  "bounds existing-text reads for long-line boundary edits with %j",
+  (text) => {
+    const content = "漢😀".repeat(100_000) + "\r\n" + "abc".repeat(100_000) + "\r\n";
+    const original = createInitialState({ content });
+    const reads = vi.spyOn(pieces, "getText");
+    for (const action of [
+      DocumentActions.insert(byteOffset(700_000), text),
+      DocumentActions.insert(byteOffset(700_001), text),
+      DocumentActions.delete(byteOffset(700_000), byteOffset(700_002)),
+      DocumentActions.replace(byteOffset(700_000), byteOffset(700_001), text),
+    ]) {
+      reads.mockClear();
+      const state = documentReducer(original, action);
+      expect(
+        Math.max(0, ...reads.mock.calls.map(([, start, end]) => end - start)),
+      ).toBeLessThanOrEqual(4);
+      const expected = createInitialState({ content: pieces.getValue(state.pieceTable) });
+      const metrics = (value: typeof state) =>
+        collectLines(value.lineIndex.root).map((n) => [n.lineLength, n.charLength]);
+      expect(metrics(state)).toEqual(metrics(expected));
+    }
+  },
+);
+
+it("encodes a paste once and does not encode deleted text for history", () => {
+  let state = createInitialState({ content: "before😀after" });
+  const text = "漢😀\n".repeat(10_000);
+  const encode = vi.spyOn(TextEncoder.prototype, "encode");
+  state = documentReducer(state, DocumentActions.replace(byteOffset(6), byteOffset(10), text));
+  expect(encode.mock.calls.filter(([value]) => value === text)).toHaveLength(1);
+  expect(encode.mock.calls.filter(([value]) => value === "😀")).toHaveLength(0);
+  expect(pieces.getValue(documentReducer(state, DocumentActions.undo()).pieceTable)).toBe(
+    "before😀after",
+  );
+});
+
+it("preserves U+FEFF metrics when CRLF repair reads an inserted range", () => {
+  const original = createInitialState({ content: "abc\r\ndef" });
+  const state = documentReducer(original, DocumentActions.insert(byteOffset(4), "\uFEFF"));
+  const expected = createInitialState({ content: "abc\r\uFEFF\ndef" });
+  const metrics = (value: typeof state) =>
+    collectLines(value.lineIndex.root).map((n) => [n.lineLength, n.charLength]);
+  expect(metrics(state)).toEqual(metrics(expected));
+});

@@ -10,7 +10,10 @@ import type { ByteOffset } from "./branded.js";
  * Callback to read text from the piece table.
  * Used by line index operations to compute char lengths during line splits.
  */
-export type ReadTextFn = (start: ByteOffset, end: ByteOffset) => string;
+export type ReadTextFn = ((start: ByteOffset, end: ByteOffset) => string) & {
+  /** Optional allocation-free UTF-16 metrics for valid document ranges. */
+  countChars?: (start: ByteOffset, end: ByteOffset) => number;
+};
 
 /**
  * Optional context around a delete range for accurate mixed line-ending handling.

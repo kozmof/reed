@@ -85,3 +85,38 @@ describe("idle maintenance slices", () => {
     store.dispose();
   });
 });
+
+it("makes reconciliation and compaction progress while tail edits continue", () => {
+  const callbacks = idleQueue();
+  const store = createDocumentStore({ content: "abc\n".repeat(10_000) });
+  store.dispatch(DocumentActions.insert(byteOffset(0), "x".repeat(100_000)));
+  store.dispatch(DocumentActions.delete(byteOffset(0), byteOffset(60_000)));
+  let compacted = false;
+  let reconciled = false;
+  for (let tick = 0; tick < 80 && !(compacted && reconciled); tick++) {
+    const end = store.getSnapshot().pieceTable.totalLength;
+    store.dispatch(DocumentActions.insert(byteOffset(end), "z"));
+    callbacks.shift()!(deadline);
+    compacted ||= store.getSnapshot().pieceTable.addBuffer.length < 60_000;
+    reconciled ||= !store.getSnapshot().lineIndex.rebuildPending;
+  }
+  expect(compacted).toBe(true);
+  expect(reconciled).toBe(true);
+  const state = store.getSnapshot();
+  const expected = createInitialState({ content: getValue(state.pieceTable) });
+  flush(callbacks);
+  expect(
+    collectLines(store.getSnapshot().lineIndex.root).map((n) => [
+      n.documentOffset,
+      n.lineLength,
+      n.charLength,
+    ]),
+  ).toEqual(
+    collectLines(expected.lineIndex.root).map((n) => [
+      n.documentOffset,
+      n.lineLength,
+      n.charLength,
+    ]),
+  );
+  store.dispose();
+});
