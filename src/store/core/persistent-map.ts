@@ -135,6 +135,32 @@ export class PersistentMap<K extends Key, V> implements ReadonlyMap<K, V> {
       this.size - 1,
     );
   }
+  /** Return changed/added keys in next insertion order, then deleted keys.
+   * Skip shared AVL subtrees, including across rotations. Localized changes
+   * visit copied paths, with O(log n) searches for counterpart nodes.
+   */
+  changedKeys(previous: PersistentMap<K, V>): K[] {
+    const changed: K[] = [];
+    const visit = (
+      root: Node<number, readonly [K, V]> | null,
+      other: Node<number, readonly [K, V]> | null,
+      deleted: boolean,
+    ): void => {
+      if (!root) return;
+      let counterpart = other;
+      while (counterpart && counterpart.key !== root.key)
+        counterpart = root.key < counterpart.key ? counterpart.left : counterpart.right;
+      if (root === counterpart) return;
+      visit(root.left, other, deleted);
+      const [key, value] = root.value;
+      if (deleted ? !this.has(key) : !previous.has(key) || previous.get(key) !== value)
+        changed.push(key);
+      visit(root.right, other, deleted);
+    };
+    visit(this.#byOrder, previous.#byOrder, false);
+    visit(previous.#byOrder, this.#byOrder, true);
+    return changed;
+  }
   get(key: K): V | undefined {
     return find(this.#byKey, key)?.value;
   }

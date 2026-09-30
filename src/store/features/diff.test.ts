@@ -2,7 +2,7 @@
  * Tests for diff algorithm and setValue operations.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   diff,
   computeSetValueActions,
@@ -446,4 +446,20 @@ describe("Diff Algorithm", () => {
       expect(actions.length).toBeGreaterThan(0);
     });
   });
+});
+
+it("converts sparse edits in a large BMP document without a per-character array or encoding allocation", () => {
+  const content = "漢éa".repeat(200_000);
+  const target = content + "終";
+  const arrays = vi.spyOn(Array, "from");
+  const encode = vi.spyOn(TextEncoder.prototype, "encode");
+  try {
+    const actions = computeSetValueActions(content, target);
+    expect(actions).toMatchObject([{ type: "INSERT", start: 1_200_000, text: "終" }]);
+    expect(arrays).not.toHaveBeenCalled();
+    expect(encode).not.toHaveBeenCalled();
+  } finally {
+    arrays.mockRestore();
+    encode.mockRestore();
+  }
 });

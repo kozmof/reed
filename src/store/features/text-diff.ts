@@ -10,7 +10,7 @@
 import type { DocumentAction } from "../../types/actions.js";
 import { byteOffset } from "../../types/branded.js";
 import { DocumentActions } from "./actions.js";
-import { textEncoder } from "../core/encoding.js";
+import { utf8ByteLength } from "../core/encoding.js";
 import { charToByteOffset } from "../core/piece-table-offset-convert.js";
 import { $beginCost, $proveCtx, type LinearCost, type QuadCost } from "../../types/cost-doc.js";
 
@@ -502,25 +502,33 @@ export function computeSetValueActions(
     }
   }
 
-  // Build the char-to-byte offset map once (O(n)) to avoid repeated encode() allocations.
-  const charToByteMap = buildCharToByteMap(oldContent);
+  // Retain offsets only for edit boundaries, not every character in the document.
+  const positions = [...new Set(ops.map((op) => op.position))].sort((a, b) => a - b);
+  const charToByteMap = new Map<number, number>();
+  let previousPosition = 0;
+  let bytes = 0;
+  for (const position of positions) {
+    bytes += utf8ByteLength(oldContent.slice(previousPosition, position));
+    charToByteMap.set(position, bytes);
+    previousPosition = position;
+  }
 
   // Process operations, adjusting byte positions as earlier edits change the document.
   let byteOffsetDelta = 0;
 
   for (const op of ops) {
     // Convert string position to byte position using the pre-built map (O(1))
-    const bytePos = charToByteMap[op.position]! + byteOffsetDelta;
+    const bytePos = charToByteMap.get(op.position)! + byteOffsetDelta;
 
     if (op.type === "delete") {
-      const deleteByteLen = textEncoder.encode(op.text).length;
+      const deleteByteLen = utf8ByteLength(op.text);
       actions.push(
         DocumentActions.delete(byteOffset(bytePos), byteOffset(bytePos + deleteByteLen)),
       );
       byteOffsetDelta -= deleteByteLen;
     } else if (op.type === "insert") {
       actions.push(DocumentActions.insert(byteOffset(bytePos), op.text));
-      byteOffsetDelta += textEncoder.encode(op.text).length;
+      byteOffsetDelta += utf8ByteLength(op.text);
     }
   }
 
@@ -537,43 +545,6 @@ export function computeSetValueActions(
  */
 function stringIndexToByteIndex(str: string, index: number): number {
   return charToByteOffset(str, index);
-}
-
-/**
- * Build a cumulative char-to-byte offset map in a single O(n) pass.
- * map[i] equals the UTF-8 byte length of str.slice(0, i), matching what
- * repeated textEncoder.encode(str.slice(0, i)).length calls would return.
- *
- * Surrogate-pair handling:
- *   - str.slice(0, highIndex+1) contains a lone high surrogate → U+FFFD → 3 bytes
- *   - str.slice(0, highIndex+2) contains the full pair → 4 bytes total (+1 over lone high)
- */
-function buildCharToByteMap(str: string): number[] {
-  const map = Array.from<number>({ length: str.length + 1 });
-  map[0] = 0;
-  let bytes = 0;
-  for (let i = 0; i < str.length; i++) {
-    const c = str.charCodeAt(i);
-    if (c < 0x80) {
-      bytes += 1;
-    } else if (c < 0x800) {
-      bytes += 2;
-    } else if (c >= 0xd800 && c <= 0xdbff) {
-      // High surrogate: lone slice encodes as U+FFFD (3 bytes)
-      bytes += 3;
-      map[i + 1] = bytes;
-      const lo = i + 1 < str.length ? str.charCodeAt(i + 1) : 0;
-      if (lo >= 0xdc00 && lo <= 0xdfff) {
-        // Full pair adds 1 byte over the lone-high-surrogate count (3 + 1 = 4 total)
-        bytes += 1;
-        i++;
-      }
-    } else {
-      bytes += 3;
-    }
-    map[i + 1] = bytes;
-  }
-  return map;
 }
 
 /**

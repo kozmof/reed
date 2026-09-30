@@ -1,3 +1,5 @@
+import { PersistentMap } from "../core/persistent-map.js";
+import { transformRemoteRanges } from "./remote-ranges.js";
 /**
  * Event system for the Reed document editor.
  * Provides a pub/sub mechanism for document changes and editor events.
@@ -347,7 +349,8 @@ export function createHistoryChangeEvent(
  * Covers created (present only in next), deleted (present only in prev), and
  * migrated (same ID, different frozen `Attention` object) attentions. Copy-on-
  * write guarantees an unchanged attention keeps the same object reference, so a
- * reference comparison is sufficient. O(A).
+ * reference comparison is sufficient. Persistent maps skip shared subtrees;
+ * externally supplied maps use a full scan.
  */
 export function diffChangedAttentionIds(
   prevState: DocumentState,
@@ -356,6 +359,8 @@ export function diffChangedAttentionIds(
   const prev = prevState.attention.attentions;
   const next = nextState.attention.attentions;
   if (prev === next) return [];
+
+  if (prev instanceof PersistentMap && next instanceof PersistentMap) return next.changedKeys(prev);
 
   const changed: AttentionID[] = [];
   for (const [id, attention] of next) {
@@ -515,39 +520,9 @@ export function getAffectedRanges(
         return [[byteOffset(0), byteOffset(0)]];
       if (entries.length === 0) return [[byteOffset(0), byteOffset(0)]];
 
-      // Each entry is expressed in the intermediate coordinate space in which it
-      // was applied. Transform both boundaries through all subsequent edits. A
-      // scalar delta is insufficient here: a later deletion may overlap only part
-      // (or all) of an earlier range and must collapse the covered boundaries.
-      const ranges: [ByteOffset, ByteOffset][] = [];
-      for (let i = 0; i < entries.length; i++) {
-        const ei = entries[i]!;
-        let start = ei.start;
-        let end = ei.end;
-        for (let j = i + 1; j < entries.length; j++) {
-          const ej = entries[j]!;
-          if (ej.type === "insert") {
-            const length = ej.end - ej.start;
-            if (ej.start <= start) {
-              start += length;
-              end += length;
-            } else if (ej.start < end) {
-              end += length;
-            }
-          } else {
-            const length = ej.end - ej.start;
-            const transformBoundary = (boundary: number): number => {
-              if (boundary <= ej.start) return boundary;
-              if (boundary >= ej.end) return boundary - length;
-              return ej.start;
-            };
-            start = transformBoundary(start);
-            end = transformBoundary(end);
-          }
-        }
-        ranges.push([safeByteOffset(start), safeByteOffset(Math.max(start, end))]);
-      }
-      return ranges;
+      return transformRemoteRanges(entries).map(
+        ([start, end]) => [safeByteOffset(start), safeByteOffset(Math.max(start, end))] as const,
+      );
     }
     default:
       return [[byteOffset(0), byteOffset(0)]];

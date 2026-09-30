@@ -778,3 +778,52 @@ describe("Store event transaction guards", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 });
+
+it("derives localized annotation events without enumerating unrelated annotations", async () => {
+  const { PersistentMap } = await import("../core/persistent-map.js");
+  const store = createDocumentStoreWithEvents({ content: "abcdef", reconcileMode: "none" });
+  try {
+    for (let i = 0; i < 5000; i++)
+      store.dispatch(DocumentActions.createAttention(byteOffset(0), byteOffset(1)));
+    const handler = vi.fn();
+    store.addEventListener("attention-change", handler);
+    const iterate = vi.spyOn(PersistentMap.prototype, Symbol.iterator);
+    const get = vi.spyOn(PersistentMap.prototype, "get");
+    try {
+      store.dispatch(DocumentActions.createAttention(byteOffset(3), byteOffset(4)));
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler.mock.calls[0]![0].changedIds).toHaveLength(1);
+      expect(iterate).not.toHaveBeenCalled();
+      expect(get.mock.calls.length).toBeLessThan(100);
+    } finally {
+      iterate.mockRestore();
+      get.mockRestore();
+    }
+  } finally {
+    store.dispose();
+  }
+});
+
+it("delivers large remote batches through the event-enabled store", () => {
+  const store = createDocumentStoreWithEvents({ content: "x", reconcileMode: "none" });
+  try {
+    const handler = vi.fn();
+    store.addEventListener("content-change", handler);
+    store.dispatch(
+      DocumentActions.applyRemote(
+        Array.from({ length: 3000 }, () => ({
+          type: "insert" as const,
+          start: byteOffset(0),
+          text: "x",
+        })),
+      ),
+    );
+    expect(handler).toHaveBeenCalledTimes(1);
+    const ranges = handler.mock.calls[0]![0].affectedRanges;
+    expect(ranges).toHaveLength(3000);
+    expect(ranges[0]).toEqual([2999, 3000]);
+    expect(ranges.at(-1)).toEqual([0, 1]);
+  } finally {
+    store.dispose();
+  }
+});

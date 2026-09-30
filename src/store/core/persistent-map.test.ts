@@ -47,3 +47,23 @@ describe("persistent ordered map", () => {
     expect(() => (actual as unknown as Map<string, number>).set("x", 1)).toThrow();
   });
 });
+
+it("diffs shared maps through rotations, deletions, undefined values, and branches", () => {
+  let previous = PersistentMap.empty<string, number | undefined>();
+  let seed = 31;
+  for (let round = 0; round < 100; round++) {
+    let next = previous;
+    for (let i = 0; i < 30; i++) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      const key = String(seed % 200);
+      next = i % 3 === 0 ? next.without(key) : next.with(key, i % 5 === 0 ? undefined : round);
+    }
+    const expected = [...next]
+      .filter(([key, value]) => !previous.has(key) || previous.get(key) !== value)
+      .map(([key]) => key);
+    expected.push(...[...previous.keys()].filter((key) => !next.has(key)));
+    expect(next.changedKeys(previous)).toEqual(expected);
+    expect(previous.changedKeys(previous)).toEqual([]);
+    previous = round % 5 === 0 ? previous.with("branch", round) : next;
+  }
+});
