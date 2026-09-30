@@ -287,6 +287,7 @@ describe("chunk boundary model", () => {
           expected,
           `seed=${seed} step=${step}`,
           true,
+          expectedBytes,
         );
       }
       store.dispose();

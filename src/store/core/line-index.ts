@@ -135,6 +135,7 @@ export function repairLineIndexWindow(
   insertedLength: number,
   readText: ReadTextFn,
   _revision: number,
+  eagerTail = false,
 ): LineIndexState {
   const total = state.root?.subtreeByteLength ?? 0;
   const first = findLineAtPosition(state.root, byteOffset(Math.max(0, start - 1)))?.lineNumber ?? 0;
@@ -176,11 +177,13 @@ export function repairLineIndexWindow(
           [...remapped, createDirtyRange(first, END_OF_DOCUMENT, delta)],
           state.maxDirtyRanges,
         );
+  const staysEager = eagerTail && last + 1 === state.lineCount && !state.rebuildPending;
   return withLineIndexState(state, {
     root,
     lineCount: state.lineCount - removed + count,
-    dirtyRanges,
-    rebuildPending: true,
+    dirtyRanges: staysEager ? [] : dirtyRanges,
+    rebuildPending: !staysEager,
+    lastReconciledRevision: staysEager ? _revision : state.lastReconciledRevision,
   });
 }
 
@@ -204,17 +207,23 @@ function repairWindowWithMetrics(
   const suffixEnd = byteOffset(windowEnd - suffixTail.length);
   const prefixBytes = prefixEnd - windowStart;
   const suffixBytes = suffixEnd - suffixStart;
-  let insertedText = readText(start, suffixStart);
-  // A standalone decoder read strips a leading BOM; metrics preserve U+FEFF.
-  if (insertedText.length < readText.countChars!(start, suffixStart))
-    insertedText = "\uFEFF" + insertedText;
-  const text = prefixTail + insertedText + (suffixBytes === 0 ? suffixTail : "");
-  const local = buildLineIndexFromText(text, 0);
-  const lines = collectLines(local.root).map((n) => ({
-    offset: 0,
-    length: n.lineLength,
-    charLength: n.charLength,
-  }));
+  let lines: Array<{ offset: number; length: number; charLength: number }>;
+  if (readText.scanLines) {
+    lines = readText
+      .scanLines(prefixEnd, suffixBytes === 0 ? windowEnd : suffixStart)
+      .map((line) => ({ offset: 0, ...line }));
+  } else {
+    let insertedText = readText(start, suffixStart);
+    // Standalone TextDecoder reads strip a leading BOM.
+    if (insertedText.length < readText.countChars!(start, suffixStart))
+      insertedText = "\uFEFF" + insertedText;
+    const text = prefixTail + insertedText + (suffixBytes === 0 ? suffixTail : "");
+    lines = collectLines(buildLineIndexFromText(text, 0).root).map((n) => ({
+      offset: 0,
+      length: n.lineLength,
+      charLength: n.charLength,
+    }));
+  }
   lines[0]!.length += prefixBytes;
   lines[0]!.charLength += readText.countChars!(windowStart, prefixEnd);
   if (suffixBytes > 0) {

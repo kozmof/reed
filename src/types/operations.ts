@@ -13,6 +13,8 @@ import type { ByteOffset } from "./branded.js";
 export type ReadTextFn = ((start: ByteOffset, end: ByteOffset) => string) & {
   /** Optional allocation-free UTF-16 metrics for valid document ranges. */
   countChars?: (start: ByteOffset, end: ByteOffset) => number;
+  /** Line metrics over raw bytes, including malformed UTF-8 and the final line. */
+  scanLines?: (start: ByteOffset, end: ByteOffset) => Array<{ length: number; charLength: number }>;
 };
 
 /**

@@ -112,9 +112,7 @@ export function lineCharToByte(
 ): number {
   if (state.chunkMap.size > 0) return start + locate(state, start, end, column, "char").byte;
   if (column <= 0) return start;
-  const length = countPieceTableChars(state, start, end);
-  if (column >= length) return end;
-  return pieceTableByteAtChar(state, countPieceTableChars(state, 0, start) + column);
+  return pieceTableByteAtChar(state, column, start, end);
 }
 
 export function lineByteToChar(

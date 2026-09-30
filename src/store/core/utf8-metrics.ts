@@ -46,10 +46,10 @@ export function carryBufferMetrics(source: Uint8Array, target: Uint8Array, lengt
 
 /** Seek by UTF-16 count, scanning at most one sparse block plus a sequence tail. */
 export function bufferByteAtChar(bytes: Uint8Array, target: number): number {
-  prepareBufferMetrics(bytes);
+  bufferCharPrefix(bytes, Math.min(bytes.length, Math.max(0, target) * 4));
   const counts = indexFor(bytes);
   let lo = 0,
-    hi = counts.length - 1;
+    hi = Math.min(counts.length - 1, Math.floor(bytes.length / BLOCK));
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2);
     if (counts[mid]! <= target) lo = mid;
@@ -67,7 +67,26 @@ export function bufferByteAtChar(bytes: Uint8Array, target: number): number {
 
 /** Tiny pieces need only their own bytes, not two whole checkpoint tails. */
 export function bufferCharLength(bytes: Uint8Array, start: number, end: number): number {
-  return end - start < BLOCK
-    ? count(bytes, start, end)
-    : bufferCharPrefix(bytes, end) - bufferCharPrefix(bytes, start);
+  const counts = indexes.get(bytes.buffer)?.get(bytes.byteOffset);
+  if (end - start < BLOCK) return count(bytes, start, end);
+  if (counts && Math.floor(end / BLOCK) < counts.length)
+    return bufferCharPrefix(bytes, end) - bufferCharPrefix(bytes, start);
+  return bufferCharPrefix(bytes.subarray(start, end), end - start);
+}
+
+/** Seek relative to a piece without preparing unrelated earlier bytes. */
+export function bufferByteAtCharInRange(
+  bytes: Uint8Array,
+  start: number,
+  end: number,
+  target: number,
+): number {
+  if (target <= 0) return start;
+  const counts = indexes.get(bytes.buffer)?.get(bytes.byteOffset);
+  if (counts && Math.floor(end / BLOCK) < counts.length) {
+    const base = bufferCharPrefix(bytes, start);
+    // The existing prefix index is ready; avoid preparing beyond the range.
+    return Math.min(end, bufferByteAtChar(bytes.subarray(0, end), base + target));
+  }
+  return start + bufferByteAtChar(bytes.subarray(start, end), target);
 }

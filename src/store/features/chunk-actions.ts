@@ -16,38 +16,18 @@ import type {
 } from "../../types/actions.js";
 import { isValidChunkMetadata } from "../../types/actions.js";
 import type { ByteOffset, PieceID } from "../../types/branded.js";
-import { byteLength, byteOffset, pieceID } from "../../types/branded.js";
-import {
-  createChunkPieceNode,
-  withUnloadedLineCounts,
-  withPieceNode,
-  withState,
-} from "../core/state.js";
-import { appendToRightmost } from "../core/rb-tree.js";
+import { byteOffset, pieceID } from "../../types/branded.js";
+import { withUnloadedLineCounts, withState } from "../core/state.js";
 import {
   insertChunkPieceAt,
   isChunkByteLengthValid,
   pieceTableInOrder,
+  pieceTableDelete,
 } from "../core/piece-table.js";
-import { rebuildLineIndexFromPieceTableState } from "./edit.js";
-
-function appendChunkPiece(
-  root: PieceNode | null,
-  chunkIndex: number,
-  chunkByteLength: number,
-  id: PieceID,
-): PieceNode {
-  const leaf = createChunkPieceNode(
-    chunkIndex,
-    byteOffset(0),
-    byteLength(chunkByteLength),
-    "red",
-    null,
-    null,
-    id,
-  );
-  return appendToRightmost(root, leaf, withPieceNode);
-}
+import { repairChunkLines } from "../core/chunk-line-repair.js";
+import { summarizeBytes } from "../core/decoded-metrics.js";
+import { PersistentMap, PersistentSet } from "../core/persistent-map.js";
+import { asReadonlyMap, asReadonlySet, asReadonlyUint8Array } from "../core/runtime-readonly.js";
 
 function findReloadInsertionPos(root: PieceNode | null, targetChunkIndex: number): number {
   if (root === null) return 0;
@@ -156,65 +136,6 @@ function hasAttentionAnchoredToChunk(state: DocumentState, chunkIndex: number): 
   return found;
 }
 
-function buildBalancedPieceTree(
-  pieces: readonly PieceNode[],
-  lo: number,
-  hi: number,
-  depth = 0,
-  deepestDepth = Math.floor(Math.log2(pieces.length)),
-): PieceNode | null {
-  if (lo > hi) return null;
-  const count = hi - lo + 1;
-  const height = Math.floor(Math.log2(count));
-  const nodesAboveLast = 2 ** height - 1;
-  const lastLevelNodes = count - nodesAboveLast;
-  const leftCapacity = height === 0 ? 0 : 2 ** (height - 1);
-  const leftSize = (height === 0 ? 0 : leftCapacity - 1) + Math.min(lastLevelNodes, leftCapacity);
-  const mid = lo + leftSize;
-  const source = pieces[mid]!;
-  const left = buildBalancedPieceTree(pieces, lo, mid - 1, depth + 1, deepestDepth);
-  const right = buildBalancedPieceTree(pieces, mid + 1, hi, depth + 1, deepestDepth);
-  return Object.freeze({
-    ...source,
-    color: depth > 0 && depth === deepestDepth ? "red" : "black",
-    left,
-    right,
-    subtreeLength: source.length + (left?.subtreeLength ?? 0) + (right?.subtreeLength ?? 0),
-    subtreeAddLength:
-      (source.bufferType === "add" ? source.length : 0) +
-      (left?.subtreeAddLength ?? 0) +
-      (right?.subtreeAddLength ?? 0),
-  });
-}
-
-function removeChunkPiecesFromTree(
-  root: PieceNode | null,
-  targetChunk: number,
-): { newRoot: PieceNode | null; removedLength: number } {
-  const survivors: PieceNode[] = [];
-  let removedLength = 0;
-  pieceTableInOrder(root, (node) => {
-    if (node.bufferType === "chunk" && node.chunkIndex === targetChunk) {
-      removedLength += node.length;
-    } else {
-      survivors.push(node);
-    }
-  });
-  return {
-    newRoot:
-      survivors.length === 0 ? null : buildBalancedPieceTree(survivors, 0, survivors.length - 1),
-    removedLength,
-  };
-}
-
-function rebalancePieceTree(root: PieceNode | null): PieceNode | null {
-  const pieces: PieceNode[] = [];
-  pieceTableInOrder(root, (node) => {
-    pieces.push(node);
-  });
-  return pieces.length === 0 ? null : buildBalancedPieceTree(pieces, 0, pieces.length - 1);
-}
-
 export function declareChunkMetadata(
   state: DocumentState,
   action: DeclareChunkMetadataAction,
@@ -318,9 +239,11 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
   let totalLength = state.pieceTable.totalLength;
   let nextPieceID = state.pieceTable.nextPieceID;
   let nextExpectedChunk = state.pieceTable.nextExpectedChunk;
-  const chunkMap = new Map(state.pieceTable.chunkMap);
-  const loadedChunks = new Set(state.pieceTable.loadedChunks);
-  const unloadedCounts = new Map(state.lineIndex.unloadedLineCountsByChunk);
+  let chunkMap = PersistentMap.from(state.pieceTable.chunkMap);
+  let loadedChunks = PersistentSet.from(state.pieceTable.loadedChunks);
+  let unloadedCounts = PersistentMap.from(state.lineIndex.unloadedLineCountsByChunk);
+  let pieceTable = state.pieceTable;
+  let lineIndex = state.lineIndex;
   let unloadedLineCount = state.lineIndex.unloadedLineCount;
 
   for (const chunk of prepared) {
@@ -330,40 +253,39 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
       ? byteOffset(totalLength)
       : byteOffset(findReloadInsertionPos(root, chunk.chunkIndex));
     const id = pieceID(`p${nextPieceID++}`);
-    root = isSequentialFirst
-      ? appendChunkPiece(root, chunk.chunkIndex, chunk.data.length, id)
-      : insertChunkPieceAt(root, insertionPos, chunk.chunkIndex, chunk.data.length, id);
-    chunkMap.set(chunk.chunkIndex, chunk.data);
-    loadedChunks.add(chunk.chunkIndex);
+    root = insertChunkPieceAt(root, insertionPos, chunk.chunkIndex, chunk.data.length, id);
+    summarizeBytes(chunk.data); // Prepare reusable decoder summaries once during loading.
+    chunkMap = chunkMap.with(chunk.chunkIndex, asReadonlyUint8Array(chunk.data));
+    loadedChunks = loadedChunks.with(chunk.chunkIndex);
     totalLength += chunk.data.length;
     nextExpectedChunk = Math.max(nextExpectedChunk, chunk.chunkIndex + 1);
 
     const declaredLineCount = unloadedCounts.get(chunk.chunkIndex);
     if (declaredLineCount !== undefined) {
-      unloadedCounts.delete(chunk.chunkIndex);
+      unloadedCounts = unloadedCounts.without(chunk.chunkIndex);
       unloadedLineCount -= declaredLineCount;
     }
+    const next = Object.freeze({
+      ...pieceTable,
+      root,
+      chunkMap: asReadonlyMap(chunkMap),
+      loadedChunks: asReadonlySet(loadedChunks),
+      totalLength,
+      nextPieceID,
+      nextExpectedChunk,
+    });
+    lineIndex = repairChunkLines(
+      lineIndex,
+      pieceTable,
+      next,
+      insertionPos,
+      insertionPos,
+      chunk.data.length,
+      state.revision + prepared.length,
+    );
+    pieceTable = next;
   }
-
-  const pieceTable = Object.freeze({
-    ...state.pieceTable,
-    root: rebalancePieceTree(root),
-    chunkMap,
-    totalLength,
-    nextPieceID,
-    nextExpectedChunk,
-    loadedChunks,
-  });
-  let lineIndex = withUnloadedLineCounts(state.lineIndex, unloadedCounts, unloadedLineCount);
-
-  // Chunk seams can split UTF-8 sequences or CRLF pairs, so rebuild once after
-  // the entire batch has been assembled.
-  const rebuilt = rebuildLineIndexFromPieceTableState(withState(state, { pieceTable, lineIndex }));
-  lineIndex = withUnloadedLineCounts(
-    rebuilt.lineIndex,
-    lineIndex.unloadedLineCountsByChunk,
-    lineIndex.unloadedLineCount,
-  );
+  lineIndex = withUnloadedLineCounts(lineIndex, asReadonlyMap(unloadedCounts), unloadedLineCount);
 
   return withState(state, {
     revision: state.revision + prepared.length,
@@ -383,34 +305,29 @@ export function evictChunk(state: DocumentState, action: EvictChunkAction): Docu
     return state;
   }
 
-  const { newRoot, removedLength } = removeChunkPiecesFromTree(state.pieceTable.root, chunkIndex);
-  const nextChunkMap = new Map(state.pieceTable.chunkMap);
-  nextChunkMap.delete(chunkIndex);
-  const nextPieceTable = Object.freeze({
-    ...state.pieceTable,
-    root: newRoot,
-    chunkMap: nextChunkMap,
-    totalLength: state.pieceTable.totalLength - removedLength,
-  });
+  const deleted = pieceTableDelete(state.pieceTable, range.start, range.end);
+  const nextChunkMap = PersistentMap.from(state.pieceTable.chunkMap).without(chunkIndex);
+  const nextPieceTable = Object.freeze({ ...deleted, chunkMap: asReadonlyMap(nextChunkMap) });
   const nextRevision = state.revision + 1;
-  // Eviction can join bytes that were never adjacent while resident. Rebuild
-  // from the assembled bytes so CRLF and UTF-8 decoder state are authoritative.
-  const rebuilt = rebuildLineIndexFromPieceTableState(
-    withState(state, { pieceTable: nextPieceTable }),
-  );
-  let lineIndex: LineIndexState = withUnloadedLineCounts(
-    rebuilt.lineIndex,
-    state.lineIndex.unloadedLineCountsByChunk,
-    state.lineIndex.unloadedLineCount,
+  let lineIndex: LineIndexState = repairChunkLines(
+    state.lineIndex,
+    state.pieceTable,
+    nextPieceTable,
+    range.start,
+    range.end,
+    0,
+    nextRevision,
   );
 
   const metadata = state.pieceTable.chunkMetadata.get(chunkIndex);
   if (metadata !== undefined) {
-    const counts = new Map(lineIndex.unloadedLineCountsByChunk);
-    counts.set(chunkIndex, metadata.lineCount);
+    const counts = PersistentMap.from(lineIndex.unloadedLineCountsByChunk).with(
+      chunkIndex,
+      metadata.lineCount,
+    );
     lineIndex = withUnloadedLineCounts(
       lineIndex,
-      counts,
+      asReadonlyMap(counts),
       lineIndex.unloadedLineCount + metadata.lineCount,
     );
   }

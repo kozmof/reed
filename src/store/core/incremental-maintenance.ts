@@ -1,3 +1,4 @@
+import { SpanIndex } from "./span-index.js";
 /** Resumable maintenance. Intermediate trees stay private until the job finishes. */
 import type {
   LineIndexNode,
@@ -81,7 +82,7 @@ export interface CompactionWorkspace {
   bytes: Uint8Array;
   length: number;
   nodes: WeakMap<PieceNode, PieceNode>;
-  spans: WeakMap<ArrayBufferLike, Map<number, CopiedSpan[]>>;
+  spans: WeakMap<ArrayBufferLike, SpanIndex<CopiedSpan>>;
 }
 
 export function createCompactionWorkspace(state: PieceTableState): CompactionWorkspace {
@@ -103,7 +104,7 @@ export function* compactIncrementally(
   if (used === 0) return freezePieceTableState({ ...state, addBuffer: GrowableBuffer.empty(1024) });
   const source = unwrapReadonlyUint8Array(state.addBuffer.bytes);
   let spans = workspace.spans.get(source.buffer);
-  if (!spans) workspace.spans.set(source.buffer, (spans = new Map()));
+  if (!spans) workspace.spans.set(source.buffer, (spans = new SpanIndex()));
   function* visit(node: PieceNode | null): Generator<void, PieceNode | null> {
     if (!node) return null;
     yield;
@@ -113,14 +114,7 @@ export function* compactIncrementally(
     let start = node.start;
     if (node.bufferType === "add") {
       const sourceStart = source.byteOffset + node.start;
-      const bucket = Math.floor(sourceStart / 65536);
-      let span = spans!
-        .get(bucket)
-        ?.find(
-          (candidate) =>
-            candidate.sourceStart <= sourceStart &&
-            candidate.sourceStart + candidate.length >= sourceStart + node.length,
-        );
+      let span = spans!.containing(sourceStart, node.length);
       if (!span) {
         const required = workspace.length + node.length;
         if (required > workspace.bytes.length) {
@@ -136,16 +130,8 @@ export function* compactIncrementally(
         }
         span = { start: workspace.length, copied: 0, sourceStart, length: node.length };
         workspace.length = required;
-        for (
-          let block = bucket;
-          block <= Math.floor((sourceStart + node.length - 1) / 65536);
-          block++
-        ) {
-          const entries = spans!.get(block) ?? [];
-          entries.push(span);
-          spans!.set(block, entries);
-          yield;
-        }
+        spans!.add(span);
+        yield;
       }
       const relativeStart = sourceStart - span.sourceStart;
       start = byteOffset(span.start + relativeStart);

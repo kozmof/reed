@@ -1,5 +1,5 @@
 import { carryLineOffsetIndexes } from "../core/line-offsets.js";
-import { countPieceTableChars } from "../core/piece-table-metrics.js";
+import { pieceTableReader } from "../core/piece-table-reader.js";
 /**
  * Pure edit-pipeline functions for the Reed document editor.
  *
@@ -573,14 +573,6 @@ export type EditOperation = StructuralEditOperation & {
   readonly selection?: NonEmptyReadonlyArray<SelectionRange> | undefined;
 };
 
-function editReader(state: DocumentState): ReadTextFn {
-  const read: ReadTextFn = (start, end) => getText(state.pieceTable, start, end);
-  if (state.pieceTable.chunkMap.size === 0) {
-    read.countChars = (start, end) => countPieceTableChars(state.pieceTable, start, end);
-  }
-  return read;
-}
-
 /**
  * Apply the structural portion of an edit without history, metadata, selection,
  * or revision bookkeeping.
@@ -626,7 +618,7 @@ export function applyUntrackedEdit(
     const result = pieceTableInsert(newState, op.position, op.insertText);
     newState = result.state;
     if (!needsRebuild) {
-      const readText = editReader(newState);
+      const readText = pieceTableReader(newState.pieceTable);
       const insLineIndex = strategy.insert(
         newState.lineIndex,
         op.position,
@@ -646,7 +638,7 @@ export function applyUntrackedEdit(
         op.position,
         op.deleteEnd,
         insertedLength,
-        editReader(newState),
+        pieceTableReader(newState.pieceTable),
         revision,
       ),
     });

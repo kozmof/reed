@@ -251,3 +251,14 @@ export function asReadonlySet<T>(set: Set<T> | ReadonlySet<T>): ReadonlySet<T> {
 export function isReadonlySetView<T>(set: Set<T> | ReadonlySet<T>): boolean {
   return rawSetByReadonly.has(set as ReadonlySet<object>);
 }
+
+/** Internal access to immutable container implementations behind the public views. */
+export function unwrapReadonlyMap<K, V>(map: ReadonlyMap<K, V>): ReadonlyMap<K, V> {
+  return (
+    (rawMapByReadonly.get(map as ReadonlyMap<object, unknown>) as ReadonlyMap<K, V> | undefined) ??
+    map
+  );
+}
+export function unwrapReadonlySet<T>(set: ReadonlySet<T>): ReadonlySet<T> {
+  return (rawSetByReadonly.get(set as ReadonlySet<object>) as ReadonlySet<T> | undefined) ?? set;
+}

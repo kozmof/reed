@@ -162,6 +162,7 @@ export function assertDocumentMatchesModel(
   expected: string,
   context = "document",
   strictRedBlack = false,
+  rawBytes?: Uint8Array,
 ): void {
   expect(
     getText(state.pieceTable, byteOffset(0), byteOffset(state.pieceTable.totalLength)),
@@ -172,9 +173,19 @@ export function assertDocumentMatchesModel(
   expect(totals.lines, `${context}: lineCount aggregate`).toBe(state.lineIndex.lineCount);
   const rebuilt = rebuildLineIndex(expected);
   expect(state.lineIndex.lineCount, `${context}: lineCount`).toBe(rebuilt.lineCount);
+  const byteStarts = [0];
+  if (rawBytes) {
+    for (let i = 0; i < rawBytes.length; i++) {
+      if (rawBytes[i] === 13) {
+        if (rawBytes[i + 1] === 10) i++;
+        byteStarts.push(i + 1);
+      } else if (rawBytes[i] === 10) byteStarts.push(i + 1);
+    }
+    expect(totals.bytes, `${context}: raw byte total`).toBe(rawBytes.length);
+  }
   for (let line = 0; line < rebuilt.lineCount; line++) {
     expect(getLineStartOffset(state.lineIndex.root, line), `${context}: byte line ${line}`).toBe(
-      getLineStartOffset(rebuilt.root, line),
+      rawBytes ? byteStarts[line] : getLineStartOffset(rebuilt.root, line),
     );
     expect(getCharStartOffset(state.lineIndex.root, line), `${context}: char line ${line}`).toBe(
       getCharStartOffset(rebuilt.root, line),

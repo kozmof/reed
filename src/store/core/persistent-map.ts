@@ -1,3 +1,4 @@
+import { unwrapReadonlyMap, unwrapReadonlySet } from "./runtime-readonly.js";
 /** Immutable ordered map. Updates copy only AVL search paths. */
 type Key = string | number;
 interface Node<K extends Key, V> {
@@ -85,7 +86,7 @@ function* iterate<K extends Key, V>(root: Node<K, V> | null): Generator<V> {
   }
 }
 
-export class PersistentMap<K extends string, V> implements ReadonlyMap<K, V> {
+export class PersistentMap<K extends Key, V> implements ReadonlyMap<K, V> {
   readonly #byKey: Node<K, { readonly value: V; readonly order: number }> | null;
   readonly #byOrder: Node<number, readonly [K, V]> | null;
   readonly #nextOrder: number;
@@ -103,10 +104,11 @@ export class PersistentMap<K extends string, V> implements ReadonlyMap<K, V> {
     this.size = size;
     Object.freeze(this);
   }
-  static empty<K extends string, V>(): PersistentMap<K, V> {
+  static empty<K extends Key, V>(): PersistentMap<K, V> {
     return new PersistentMap<K, V>(null, null, 0, 0);
   }
-  static from<K extends string, V>(source: ReadonlyMap<K, V>): PersistentMap<K, V> {
+  static from<K extends Key, V>(source: ReadonlyMap<K, V>): PersistentMap<K, V> {
+    source = unwrapReadonlyMap(source);
     if (source instanceof PersistentMap) return source;
     let result = PersistentMap.empty<K, V>();
     for (const [key, value] of source) result = result.with(key, value);
@@ -156,5 +158,48 @@ export class PersistentMap<K extends string, V> implements ReadonlyMap<K, V> {
   }
   get [Symbol.toStringTag](): string {
     return "Map";
+  }
+}
+
+/** Immutable insertion-ordered set for the loaded-chunk history. */
+export class PersistentSet<T extends Key> implements ReadonlySet<T> {
+  readonly #map: PersistentMap<T, true>;
+  private constructor(map: PersistentMap<T, true>) {
+    this.#map = map;
+    Object.freeze(this);
+  }
+  static from<T extends Key>(source: ReadonlySet<T>): PersistentSet<T> {
+    source = unwrapReadonlySet(source);
+    if (source instanceof PersistentSet) return source;
+    let map = PersistentMap.empty<T, true>();
+    for (const value of source) map = map.with(value, true);
+    return new PersistentSet(map);
+  }
+  with(value: T): PersistentSet<T> {
+    return new PersistentSet(this.#map.with(value, true));
+  }
+  get size(): number {
+    return this.#map.size;
+  }
+  has(value: T): boolean {
+    return this.#map.has(value);
+  }
+  keys(): SetIterator<T> {
+    return this.#map.keys();
+  }
+  values(): SetIterator<T> {
+    return this.#map.keys();
+  }
+  *entries(): SetIterator<[T, T]> {
+    for (const key of this.#map.keys()) yield [key, key];
+  }
+  [Symbol.iterator](): SetIterator<T> {
+    return this.values();
+  }
+  forEach(callback: (value: T, value2: T, set: ReadonlySet<T>) => void, thisArg?: unknown): void {
+    for (const key of this.#map.keys()) callback.call(thisArg, key, key, this);
+  }
+  get [Symbol.toStringTag](): string {
+    return "Set";
   }
 }

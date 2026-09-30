@@ -1,6 +1,6 @@
 import type { PieceNode, PieceTableState } from "../../types/state.js";
 import { unwrapReadonlyUint8Array } from "./runtime-readonly.js";
-import { bufferCharPrefix, bufferByteAtChar, bufferCharLength } from "./utf8-metrics.js";
+import { bufferByteAtCharInRange, bufferCharLength } from "./utf8-metrics.js";
 
 const subtreeChars = new WeakMap<PieceNode, number>();
 const ownChars = new WeakMap<PieceNode, number>();
@@ -29,46 +29,76 @@ function totalChars(state: PieceTableState, node: PieceNode | null): number {
   return result;
 }
 
-function prefix(state: PieceTableState, node: PieceNode | null, end: number): number {
-  if (!node || end <= 0) return 0;
-  if (end >= node.subtreeLength) return totalChars(state, node);
-  const leftBytes = node.left?.subtreeLength ?? 0;
-  if (end <= leftBytes) return prefix(state, node.left, end);
-  const leftChars = totalChars(state, node.left);
-  if (end <= leftBytes + node.length) return leftChars + pieceChars(state, node, end - leftBytes);
-  return (
-    leftChars + pieceChars(state, node) + prefix(state, node.right, end - leftBytes - node.length)
-  );
-}
-
+/** Count only intersecting subtrees; an unrelated document prefix is never visited. */
 export function countPieceTableChars(state: PieceTableState, start: number, end: number): number {
-  return prefix(state, state.root, end) - prefix(state, state.root, start);
-}
-
-/** Locate an absolute UTF-16 offset using shared subtree counts. */
-export function pieceTableByteAtChar(state: PieceTableState, target: number): number {
-  let node = state.root;
-  let offset = 0;
-  while (node) {
-    const leftChars = totalChars(state, node.left);
-    if (target < leftChars) {
-      node = node.left;
-      continue;
-    }
-    target -= leftChars;
-    offset += node.left?.subtreeLength ?? 0;
-    const chars = pieceChars(state, node);
-    if (target <= chars) {
+  function visit(node: PieceNode | null, offset: number): number {
+    if (!node || offset >= end || offset + node.subtreeLength <= start) return 0;
+    if (start <= offset && offset + node.subtreeLength <= end) return totalChars(state, node);
+    const pieceStart = offset + (node.left?.subtreeLength ?? 0);
+    const pieceEnd = pieceStart + node.length;
+    let chars = visit(node.left, offset) + visit(node.right, pieceEnd);
+    const from = Math.max(start, pieceStart),
+      to = Math.min(end, pieceEnd);
+    if (from < to) {
       if (node.bufferType === "chunk") throw new Error("Chunk metrics require streaming decoding");
       const bytes = unwrapReadonlyUint8Array(
         node.bufferType === "original" ? state.originalBuffer : state.addBuffer.bytes,
       );
-      const base = bufferCharPrefix(bytes, node.start);
-      return offset + Math.min(node.length, bufferByteAtChar(bytes, base + target) - node.start);
+      chars += bufferCharLength(
+        bytes,
+        node.start + from - pieceStart,
+        node.start + to - pieceStart,
+      );
     }
-    target -= chars;
-    offset += node.length;
-    node = node.right;
+    return chars;
   }
-  return offset;
+  return visit(state.root, 0);
+}
+
+/** Seek from a range start, descending cold subtrees instead of counting their entire tails. */
+export function pieceTableByteAtChar(
+  state: PieceTableState,
+  target: number,
+  start = 0,
+  end = state.totalLength,
+): number {
+  let remaining = target;
+  let result = start;
+  function visit(node: PieceNode | null, offset: number): void {
+    if (!node || remaining <= 0 || offset >= end || offset + node.subtreeLength <= start) return;
+    if (
+      start <= offset &&
+      offset + node.subtreeLength <= end &&
+      (subtreeChars.has(node) || node.subtreeLength <= remaining * 4)
+    ) {
+      const chars = totalChars(state, node);
+      if (chars <= remaining) {
+        remaining -= chars;
+        result = offset + node.subtreeLength;
+        return;
+      }
+    }
+    const pieceStart = offset + (node.left?.subtreeLength ?? 0);
+    const pieceEnd = pieceStart + node.length;
+    visit(node.left, offset);
+    const from = Math.max(start, pieceStart),
+      to = Math.min(end, pieceEnd);
+    if (remaining > 0 && from < to) {
+      if (node.bufferType === "chunk") throw new Error("Chunk metrics require streaming decoding");
+      const bytes = unwrapReadonlyUint8Array(
+        node.bufferType === "original" ? state.originalBuffer : state.addBuffer.bytes,
+      );
+      const bufferStart = node.start + from - pieceStart;
+      const bufferEnd = node.start + to - pieceStart;
+      const found = bufferByteAtCharInRange(bytes, bufferStart, bufferEnd, remaining);
+      result = from + found - bufferStart;
+      remaining =
+        found < bufferEnd
+          ? 0
+          : Math.max(0, remaining - bufferCharLength(bytes, bufferStart, bufferEnd));
+    }
+    visit(node.right, pieceEnd);
+  }
+  visit(state.root, 0);
+  return result;
 }
