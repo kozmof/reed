@@ -63,7 +63,10 @@ function fragment(
   return { root: state.root, totalLength: state.totalLength };
 }
 
-describe("piece tree height", () => {
+// The 16k-insert cases take ~1s locally under coverage, but a shared CI runner
+// with coverage on and every worker busy can push them past vitest's 5s
+// default. These tests assert height, not speed, so wall-clock must not fail them.
+describe("piece tree height", { timeout: 30_000 }, () => {
   it.each([
     [1_000, 500],
     [4_000, 2_000],
