@@ -2,6 +2,8 @@ import { configDefaults, coverageConfigDefaults, defineConfig } from "vitest/con
 
 export default defineConfig({
   test: {
+    // Bound CPU contention so invariant-heavy tests stay within their timeout.
+    maxWorkers: 4,
     exclude: [...configDefaults.exclude, "**/perf.test.ts"],
     coverage: {
       provider: "v8",
