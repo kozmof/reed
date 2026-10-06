@@ -47,7 +47,7 @@ Reed stores only the two boundary points. Higher-level structure (groups, trees,
 ### 4.1 Points
 
 - `createPoint(root, offset): AttentionPoint | null` — anchor a point to the piece containing `offset`. Clamps to document end and returns `null` for an empty tree or negative offset. `O(log n)`.
-- `resolvePoint(root, point): ByteOffset | null` — current document offset of a point, or `null` if dangling. `O(P log P)` on the first lookup and `O(log² P)` with a cached identity index, where `P` is the piece count.
+- `resolvePoint(root, point): ByteOffset | null` — current document offset of a point, or `null` if dangling. Expected `O(P)` on the first lookup and `O(log P)` with a cached identity index, where `P` is the piece count.
 
 ### 4.2 Attentions
 
@@ -57,10 +57,12 @@ Reed stores only the two boundary points. Higher-level structure (groups, trees,
 
 ### 4.3 Resolution and text
 
-- `resolveAttention(root, state, id): ResolvedRange | null` — both points to a `{ startOffset, endOffset }` half-open range, returning `null` if the ID is unknown or a point dangles. `O(P log P + log A)` on the first lookup and `O(log² P + log A)` with a cached identity index.
+- `resolveAttention(root, state, id): ResolvedRange | null` — both points to a `{ startOffset, endOffset }` half-open range, returning `null` if the ID is unknown or a point dangles. Expected `O(P + log A)` on the first lookup and `O(log P + log A)` with a cached identity index.
 - `getTextForAttention(pieceTableState, attentionState, id): string | null` — the covered text, `""` for an empty/inverted span, `null` if unresolvable. Resolution cost plus the bytes read.
 
 Insert and delete operations carry an existing identity index across tree versions by updating changed paths. The first lookup after a tree replacement, chunk load, or compaction rebuilds it. Old snapshots keep their own index.
+
+The identity index uses a persistent hash trie. Expected bounds assume bounded-length IDs with well-distributed hashes. Hashing takes time proportional to the ID length. Equal hashes share an AVL bucket whose operations cost `O(log C)` for `C` colliding IDs.
 
 ### 4.4 Queries
 
@@ -104,7 +106,7 @@ The split–join delete strategy hands surviving fragments fresh piece IDs that 
 
 Collapsing the `start`-boundary case is deliberate. A point at boundary 0 of a fully-deleted interior piece would otherwise dangle, because the piece is dropped and no fragment inherits its ID. Re-anchoring to `start` keeps it live at the same document position.
 
-Migration visits only cut pieces and their attached annotations. Each affected point re-anchors in `O(log P)`, and annotation index updates cost `O(log A)` per candidate. Tree deletion costs `O(log P)` without an identity index. Maintaining an existing identity index adds `O((log P + D) log P)` work for `D` deleted pieces.
+Migration visits only cut pieces and their attached annotations. Each affected point re-anchors in `O(log P)`, and annotation index updates cost `O(log A)` per candidate. Tree deletion costs `O(log P)` without an identity index. Maintaining an existing identity index adds expected `O(log P + D)` work for `D` deleted pieces under the hash assumptions above.
 
 ## 6. Fail-Closed Resolution
 

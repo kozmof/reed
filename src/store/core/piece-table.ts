@@ -902,7 +902,8 @@ function splitAt(
  *
  * Tree deletion is O(log P) via joinBalanced. If point resolution has created
  * an identity index, updating its changed paths and removing D deleted entries
- * costs O((log P + D) log P). Unindexed trees pay no index-maintenance cost.
+ * costs expected O(log P + D) for bounded-length, well-distributed IDs.
+ * Unindexed trees pay no index-maintenance cost.
  *
  * Every structural step preserves the full red-black contract. joinTrees takes
  * the minimum of the right tree as its join key and discharges the black

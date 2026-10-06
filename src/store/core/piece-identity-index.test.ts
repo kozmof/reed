@@ -4,6 +4,7 @@ import { createPieceTableState } from "./state.js";
 import { inOrderPieces, pieceTableInsert, pieceTableDelete } from "./piece-table.js";
 import { resolvePieceIdentity } from "./piece-identity-index.js";
 import { PersistentMap } from "./persistent-map.js";
+import { PersistentHashMap } from "./persistent-hash-map.js";
 
 afterEach(() => vi.restoreAllMocks());
 describe("piece identity index", () => {
@@ -46,12 +47,34 @@ describe("piece identity index", () => {
       table = pieceTableInsert(table, byteOffset(i * 3 + 1), "x").state;
     const id = table.root!.id;
     resolvePieceIdentity(table.root!, id);
-    const writes = vi.spyOn(PersistentMap.prototype, "with");
+    const writes = vi.spyOn(PersistentHashMap.prototype, "with");
     for (let i = 0; i < 20; i++) {
       writes.mockClear();
       table = pieceTableInsert(table, byteOffset(100 + i), "y").state;
       resolvePieceIdentity(table.root!, id);
       expect(writes.mock.calls.length).toBeLessThan(100);
     }
+  });
+
+  it.each([1000, 8000])("keeps identity lookup buckets small with %i fragments", (count) => {
+    let table = createPieceTableState("ab".repeat(count));
+    for (let i = 0; i < count; i++)
+      table = pieceTableInsert(table, byteOffset(i * 3 + 1), "x").state;
+    let largestBucket = 0;
+    const get = PersistentMap.prototype.get;
+    const reads = vi
+      .spyOn(PersistentMap.prototype, "get")
+      .mockImplementation(function (this: PersistentMap<string | number, unknown>, key) {
+        largestBucket = Math.max(largestBucket, this.size);
+        return get.call(this, key);
+      });
+    const pieces = [...inOrderPieces(table.root)];
+    // Cold index construction, followed by a deep warm lookup.
+    resolvePieceIdentity(table.root!, table.root!.id);
+    reads.mockClear();
+    const last = pieces[pieces.length - 1]!;
+    expect(resolvePieceIdentity(table.root!, last.piece.id)?.offset).toBe(last.docOffset);
+    expect(largestBucket).toBeLessThan(8);
+    expect(reads.mock.calls.length).toBeLessThan(40);
   });
 });

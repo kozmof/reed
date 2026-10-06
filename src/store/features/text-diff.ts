@@ -49,10 +49,9 @@ export interface DiffResult {
 /**
  * Hard ceiling for the Myers frontier plus its backtracking snapshots.
  *
- * Myers is fast for nearby texts, but retaining every frontier is O((N + M)D)
- * memory and becomes unsafe for large, unrelated inputs. Once this budget is
- * exhausted we return a correct coarse replacement instead of risking process
- * termination. The fast setValue path is unaffected.
+ * Only active diagonals are retained, using O(D²) trace memory independent of
+ * input length. If a large edit distance exhausts the budget, return a correct
+ * coarse replacement. The fast setValue path is unaffected.
  */
 const MAX_MYERS_MEMORY_BYTES = 16 * 1024 * 1024;
 
@@ -178,49 +177,35 @@ function myersDiff(
     return simpleDiff(oldText, newText, oldOffset, newOffset);
   }
 
-  // Myers algorithm
-  const max = n + m;
-  const vSize = 2 * max + 1;
-  const frontierBytes = vSize * Int32Array.BYTES_PER_ELEMENT;
-  if (!Number.isSafeInteger(frontierBytes) || frontierBytes > MAX_MYERS_MEMORY_BYTES) {
-    return coarseReplacement(oldText, newText, oldOffset, newOffset);
-  }
-
-  const v = new Int32Array(vSize);
+  // At distance d only d + 1 diagonals are reachable: k = -d, -d+2, ..., d.
+  // Store completed frontiers so backtracking reads the preceding distance.
   const trace: Int32Array[] = [];
-  let allocatedBytes = frontierBytes;
-
-  // Forward phase - find the path
-  for (let d = 0; d <= max; d++) {
+  let allocatedBytes = 0;
+  for (let d = 0; d <= n + m; d++) {
+    const frontierBytes = (d + 1) * Int32Array.BYTES_PER_ELEMENT;
     if (allocatedBytes + frontierBytes > MAX_MYERS_MEMORY_BYTES) {
       return coarseReplacement(oldText, newText, oldOffset, newOffset);
     }
-    trace.push(v.slice());
+    const current = new Int32Array(d + 1);
+    const previous = trace[d - 1];
+    trace.push(current);
     allocatedBytes += frontierBytes;
-
-    for (let k = -d; k <= d; k += 2) {
-      const kIndex = k + max;
-
-      let x: number;
-      if (k === -d || (k !== d && v[kIndex - 1]! < v[kIndex + 1]!)) {
-        x = v[kIndex + 1]!; // Move down
-      } else {
-        x = v[kIndex - 1]! + 1; // Move right
-      }
-
+    for (let j = 0; j <= d; j++) {
+      const k = -d + 2 * j;
+      let x =
+        d === 0
+          ? 0
+          : j === 0 || (j !== d && previous![j - 1]! < previous![j]!)
+            ? previous![j]!
+            : previous![j - 1]! + 1;
       let y = x - k;
-
-      // Follow diagonal (matching characters)
       while (x < n && y < m && oldText[x] === newText[y]) {
         x++;
         y++;
       }
-
-      v[kIndex] = x;
-
-      // Check if we've reached the end
+      current[j] = x;
       if (x >= n && y >= m) {
-        return backtrack(trace, oldText, newText, oldOffset, newOffset, d, max);
+        return backtrack(trace, oldText, newText, oldOffset, newOffset, d);
       }
     }
   }
@@ -263,57 +248,39 @@ function backtrack(
   oldOffset: number,
   newOffset: number,
   d: number,
-  max: number,
 ): DiffEdit[] {
   const edits: DiffEdit[] = [];
   let x = oldText.length;
   let y = newText.length;
-
   for (let i = d; i > 0; i--) {
-    const vPrev = trace[i - 1]!;
+    const previous = trace[i - 1]!;
     const k = x - y;
-    const kIndex = k + max;
-
-    let prevK: number;
-    if (k === -i || (k !== i && vPrev[kIndex - 1]! < vPrev[kIndex + 1]!)) {
-      prevK = k + 1; // Came from above (insert)
-    } else {
-      prevK = k - 1; // Came from left (delete)
-    }
-
-    const prevX = vPrev[prevK + max]!;
+    const j = (k + i) / 2;
+    const inserted = j === 0 || (j !== i && previous[j - 1]! < previous[j]!);
+    const prevK = inserted ? k + 1 : k - 1;
+    const prevX = previous[inserted ? j : j - 1]!;
     const prevY = prevX - prevK;
-
-    // Add diagonal (equal) moves
-    while (x > prevX && y > prevY) {
-      x--;
-      y--;
+    const snakeX = prevX + (inserted ? 0 : 1);
+    const snakeY = prevY + (inserted ? 1 : 0);
+    if (x > snakeX) {
+      edits.push({
+        type: "equal",
+        text: oldText.slice(snakeX, x),
+        oldPos: oldOffset + snakeX,
+        newPos: newOffset + snakeY,
+      });
     }
-
-    if (i > 0) {
-      if (x === prevX) {
-        // Insert
-        edits.push({
-          type: "insert",
-          text: newText[y - 1]!,
-          oldPos: oldOffset + x,
-          newPos: newOffset + y - 1,
-        });
-        y--;
-      } else {
-        // Delete
-        edits.push({
-          type: "delete",
-          text: oldText[x - 1]!,
-          oldPos: oldOffset + x - 1,
-          newPos: newOffset + y,
-        });
-        x--;
-      }
-    }
+    edits.push({
+      type: inserted ? "insert" : "delete",
+      text: inserted ? newText[prevY]! : oldText[prevX]!,
+      oldPos: oldOffset + prevX,
+      newPos: newOffset + prevY,
+    });
+    x = prevX;
+    y = prevY;
   }
-
-  // Backtracking walks root→leaf, so edits are in reverse document order — reverse before consolidating.
+  if (x > 0)
+    edits.push({ type: "equal", text: oldText.slice(0, x), oldPos: oldOffset, newPos: newOffset });
   edits.reverse();
   return consolidateEdits(edits);
 }

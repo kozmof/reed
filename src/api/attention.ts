@@ -47,7 +47,7 @@ export const attention: AttentionApi = {
   // Points
   /** @complexity O(log n) — tree walk to find the piece containing the offset */
   createPoint: $uncostedFn(createPoint),
-  /** @complexity O(P log P) on the first lookup, O(log² P) with a cached identity index */
+  /** @complexity Expected O(P) cold, O(log P) cached, for bounded-length, well-distributed IDs */
   resolvePoint: $uncostedFn(resolvePoint),
 
   // Attentions
@@ -59,9 +59,9 @@ export const attention: AttentionApi = {
   deleteAttention: $uncostedFn(deleteAttention),
 
   // Resolution and text
-  /** @complexity O(P log P + log A) cold, O(log² P + log A) with a cached identity index */
+  /** @complexity Expected O(P + log A) cold, O(log P + log A) cached, for bounded-length, well-distributed IDs */
   resolveAttention: $uncostedFn(resolveAttention),
-  /** @complexity Identity lookup plus the bytes read. A cold index costs O(P log P) */
+  /** @complexity Identity lookup plus bytes read. Cold indexing is expected O(P) for bounded-length, well-distributed IDs */
   getTextForAttention: $uncostedFn(getTextForAttention),
 
   // Queries

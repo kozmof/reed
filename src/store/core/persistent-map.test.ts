@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { PersistentMap } from "./persistent-map.js";
 
 describe("persistent ordered map", () => {
@@ -46,6 +46,43 @@ describe("persistent ordered map", () => {
     expect(Object.prototype.toString.call(actual)).toBe("[object Map]");
     expect(() => (actual as unknown as Map<string, number>).set("x", 1)).toThrow();
   });
+});
+
+it("merges unrelated insertion orders without repeated AVL lookups", () => {
+  const original = new Map<string, number>(Array.from({ length: 4000 }, (_, i) => [`k${i}`, i]));
+  const reordered = new Map([...original].reverse());
+  reordered.delete("k1");
+  reordered.set("k2", -1);
+  reordered.set("new", 1);
+  const previous = PersistentMap.from(original);
+  const next = PersistentMap.from(reordered);
+  const get = vi.spyOn(PersistentMap.prototype, "get");
+  const has = vi.spyOn(PersistentMap.prototype, "has");
+  try {
+    expect(next.changedKeys(previous)).toEqual(["k2", "new", "k1"]);
+    expect(get).not.toHaveBeenCalled();
+    expect(has).not.toHaveBeenCalled();
+  } finally {
+    get.mockRestore();
+    has.mockRestore();
+  }
+});
+
+it("skips shared subtrees for a localized change in a large map", () => {
+  let previous = PersistentMap.empty<number, number>();
+  for (let i = 0; i < 16_000; i++) previous = previous.with(i, i);
+  const next = previous.with(8000, -1);
+  const pops = vi.spyOn(Array.prototype, "pop");
+  let changed: number[];
+  let work: number;
+  try {
+    changed = next.changedKeys(previous);
+    work = pops.mock.calls.length;
+  } finally {
+    pops.mockRestore();
+  }
+  expect(changed).toEqual([8000]);
+  expect(work).toBeLessThan(200);
 });
 
 it("diffs shared maps through rotations, deletions, undefined values, and branches", () => {

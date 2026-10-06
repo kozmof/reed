@@ -7,6 +7,7 @@ interface Node<K extends Key, V> {
   readonly left: Node<K, V> | null;
   readonly right: Node<K, V> | null;
   readonly height: number;
+  readonly minKey: K;
 }
 function node<K extends Key, V>(
   key: K,
@@ -14,7 +15,14 @@ function node<K extends Key, V>(
   left: Node<K, V> | null,
   right: Node<K, V> | null,
 ): Node<K, V> {
-  return { key, value, left, right, height: 1 + Math.max(left?.height ?? 0, right?.height ?? 0) };
+  return {
+    key,
+    value,
+    left,
+    right,
+    height: 1 + Math.max(left?.height ?? 0, right?.height ?? 0),
+    minKey: left?.minKey ?? key,
+  };
 }
 function balance<K extends Key, V>(
   key: K,
@@ -86,6 +94,59 @@ function* iterate<K extends Key, V>(root: Node<K, V> | null): Generator<V> {
   }
 }
 
+/** Merge ordered trees, skipping identical pending subtrees before expanding them. */
+function differentEntries<K extends Key, V>(
+  next: Node<number, readonly [K, V]> | null,
+  previous: Node<number, readonly [K, V]> | null,
+): [Array<readonly [K, V]>, Array<readonly [K, V]>] {
+  type Task = { node: Node<number, readonly [K, V]>; entry: boolean };
+  const a: Task[] = next ? [{ node: next, entry: false }] : [];
+  const b: Task[] = previous ? [{ node: previous, entry: false }] : [];
+  const added: Array<readonly [K, V]> = [];
+  const removed: Array<readonly [K, V]> = [];
+  const advance = (stack: Task[], result: Array<readonly [K, V]>): void => {
+    const { node, entry } = stack.pop()!;
+    if (entry) result.push(node.value);
+    else {
+      if (node.right) stack.push({ node: node.right, entry: false });
+      stack.push({ node, entry: true });
+      if (node.left) stack.push({ node: node.left, entry: false });
+    }
+  };
+  while (a.length || b.length) {
+    const x = a[a.length - 1];
+    const y = b[b.length - 1];
+    if (!x) {
+      advance(b, removed);
+      continue;
+    }
+    if (!y) {
+      advance(a, added);
+      continue;
+    }
+    if (x.node === y.node && x.entry === y.entry) {
+      a.pop();
+      b.pop();
+      continue;
+    }
+    const xKey = x.entry ? x.node.key : x.node.minKey;
+    const yKey = y.entry ? y.node.key : y.node.minKey;
+    if (xKey < yKey) advance(a, added);
+    else if (yKey < xKey) advance(b, removed);
+    else if (x.entry && y.entry) {
+      if (x.node.value[0] !== y.node.value[0] || x.node.value[1] !== y.node.value[1]) {
+        added.push(x.node.value);
+        removed.push(y.node.value);
+      }
+      a.pop();
+      b.pop();
+    } else if (!x.entry && (y.entry || x.node.height >= y.node.height)) {
+      advance(a, added);
+    } else advance(b, removed);
+  }
+  return [added, removed];
+}
+
 export class PersistentMap<K extends Key, V> implements ReadonlyMap<K, V> {
   readonly #byKey: Node<K, { readonly value: V; readonly order: number }> | null;
   readonly #byOrder: Node<number, readonly [K, V]> | null;
@@ -136,29 +197,18 @@ export class PersistentMap<K extends Key, V> implements ReadonlyMap<K, V> {
     );
   }
   /** Return changed/added keys in next insertion order, then deleted keys.
-   * Skip shared AVL subtrees, including across rotations. Localized changes
-   * visit copied paths, with O(log n) searches for counterpart nodes.
+   * Merge insertion-order trees and skip shared subtrees, including across
+   * rotations. Each expanded node is visited once, with no nested AVL searches.
+   * Temporary hash maps match keys that moved after deletion and reinsertion.
    */
   changedKeys(previous: PersistentMap<K, V>): K[] {
+    const [nextEntries, previousEntries] = differentEntries(this.#byOrder, previous.#byOrder);
+    const nextByKey = new Map(nextEntries);
+    const previousByKey = new Map(previousEntries);
     const changed: K[] = [];
-    const visit = (
-      root: Node<number, readonly [K, V]> | null,
-      other: Node<number, readonly [K, V]> | null,
-      deleted: boolean,
-    ): void => {
-      if (!root) return;
-      let counterpart = other;
-      while (counterpart && counterpart.key !== root.key)
-        counterpart = root.key < counterpart.key ? counterpart.left : counterpart.right;
-      if (root === counterpart) return;
-      visit(root.left, other, deleted);
-      const [key, value] = root.value;
-      if (deleted ? !this.has(key) : !previous.has(key) || previous.get(key) !== value)
-        changed.push(key);
-      visit(root.right, other, deleted);
-    };
-    visit(this.#byOrder, previous.#byOrder, false);
-    visit(previous.#byOrder, this.#byOrder, true);
+    for (const [key, value] of nextEntries)
+      if (!previousByKey.has(key) || previousByKey.get(key) !== value) changed.push(key);
+    for (const [key] of previousEntries) if (!nextByKey.has(key)) changed.push(key);
     return changed;
   }
   get(key: K): V | undefined {

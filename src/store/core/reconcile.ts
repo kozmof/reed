@@ -363,17 +363,14 @@ export interface ReconciliationConfig {
   thresholdFn?: (lineCount: number) => number;
 }
 
-// Incremental reconciliation total cost: O(K² + totalDirty) where K ≤ 32 (sentinel cap).
-// Full-walk cost: O(n). Incremental is cheaper when totalDirty + 1024 ≤ n, i.e. when
-// totalDirty ≤ n − 1024 ≈ 0.75n for typical documents. The old formula (n / log₂n) was
-// calibrated for the former O(V×K) reconcileRange; the sweep-line O(K+V) implementation
-// makes incremental viable up to ~75% dirty lines.
+// Incremental repair costs O(K log n + totalDirty); a full walk costs O(n).
+// Leave headroom for repeated tree descents when choosing the incremental path.
 const defaultThresholdFn = (lineCount: number): number =>
   Math.max(256, Math.floor(lineCount * 0.75));
 
 /**
  * Perform full reconciliation of all dirty ranges.
- * Uses incremental updates for small dirty ranges (O(k * log n)),
+ * Uses incremental updates for small dirty ranges (O(K log n + totalDirty)),
  * and an in-place tree walk for large ranges (O(n) with structural sharing).
  * Intended to be called from idle callback.
  */
@@ -396,27 +393,25 @@ export function reconcileFull(
     );
   }
 
-  // Fast path: incremental reconciliation — O(K² + totalDirty) via sweep-line reconcileRange
+  // Repair each range once without repeatedly filtering the remaining ranges.
   const totalDirty = computeTotalDirtyLines(dirtyRanges, state.lineCount);
   const thresholdFn = config?.thresholdFn ?? defaultThresholdFn;
   const threshold = thresholdFn(state.lineCount);
   const hasCollapsedCapSentinel = dirtyRanges === "full-rebuild-needed";
 
-  // 'full-rebuild-needed' means delta information was lost — incremental reconciliation
-  // cannot repair offsets correctly, so fall through to the slow path.
+  // The sentinel has no range boundaries, so repair the whole tree below.
   if (!hasCollapsedCapSentinel && totalDirty <= threshold) {
-    let current: LineIndexState = state;
+    let root = state.root;
     for (const range of dirtyRanges) {
-      const endLine = Math.min(range.endLine, current.lineCount - 1);
-      current = reconcileRange(current, range.startLine, endLine, revision);
+      root = repairLineRange(root, range.startLine, range.endLine, 0, 0)!;
     }
-    return $proveCtx($beginCost("O(n log n)"), toEagerLineIndexState(current, revision));
+    return $proveCtx($beginCost("O(n log n)"), toEagerLineIndexState(state, revision, { root }));
   }
 
   // Slow path: triggered either by a sentinel (delta information lost) or when
   // totalDirty > threshold (non-sentinel ranges covering most of the document).
   // Both cases are intentional — the O(n) in-place tree walk is cheaper than the
-  // O(K²+totalDirty) incremental path when the dirty region is large.
+  // O(K log n + totalDirty) incremental path when the dirty region is large.
   //
   // IMPORTANT: this path uses reconcileInPlace, which recomputes documentOffset
   // values from each node's stored lineLength via an in-order traversal. It does

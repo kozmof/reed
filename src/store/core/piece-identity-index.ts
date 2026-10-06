@@ -1,17 +1,17 @@
 import type { PieceNode } from "../../types/state.js";
 import type { PieceID } from "../../types/branded.js";
-import { PersistentMap } from "./persistent-map.js";
+import { PersistentHashMap } from "./persistent-hash-map.js";
 
 interface Entry {
   readonly node: PieceNode;
   readonly parent: PieceID | null;
 }
-const cache = new WeakMap<PieceNode, PersistentMap<PieceID, Entry>>();
+const cache = new WeakMap<PieceNode, PersistentHashMap<PieceID, Entry>>();
 
-function indexFor(root: PieceNode): PersistentMap<PieceID, Entry> {
+function indexFor(root: PieceNode): PersistentHashMap<PieceID, Entry> {
   const cached = cache.get(root);
   if (cached) return cached;
-  let index = PersistentMap.empty<PieceID, Entry>();
+  let index = PersistentHashMap.empty<PieceID, Entry>();
   function visit(node: PieceNode | null, parent: PieceID | null): void {
     if (!node) return;
     index = index.with(node.id, { node, parent });

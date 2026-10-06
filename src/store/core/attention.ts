@@ -148,7 +148,8 @@ export function createPoint(
  * or the boundary now exceeds the piece's length (e.g. the piece was cut by a
  * delete). Failing closed avoids returning a silently-wrong offset.
  *
- * O(P log P) on the first lookup and O(log² P) with a cached identity index.
+ * Expected O(P) on the first lookup and O(log P) with a cached identity index,
+ * for bounded-length IDs with well-distributed hashes.
  * Insert/delete carry that index across structurally shared tree versions.
  */
 export function resolvePoint(
@@ -366,7 +367,8 @@ function resolveAttentionWithIndex(
  * Resolve an Attention to its current document byte offsets.
  * Returns null when the Attention ID is unknown or a point is dangling.
  *
- * O(P log P + log A) cold and O(log² P + log A) with a cached identity index.
+ * Expected O(P + log A) cold and O(log P + log A) with a cached identity index,
+ * for bounded-length IDs with well-distributed hashes.
  */
 export function resolveAttention(
   root: PieceNode | null,
@@ -412,7 +414,8 @@ export function resolveAllAttentions(
  * Extract the text covered by an Attention.
  * Returns null when the Attention ID is unknown or a point is dangling.
  *
- * Identity lookup plus the bytes read. A cold identity index costs O(P log P).
+ * Identity lookup plus the bytes read. Cold indexing is expected O(P) for
+ * bounded-length IDs with well-distributed hashes.
  */
 export function getTextForAttention(
   pieceTableState: PieceTableState,
