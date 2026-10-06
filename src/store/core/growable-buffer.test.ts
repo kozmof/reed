@@ -1,21 +1,4 @@
-/**
- * Writable-tail ownership.
- *
- * `GrowableBuffer` lets sequential appends reuse spare capacity in a shared
- * backing array instead of copying the valid prefix on every keystroke. What
- * makes that safe is a module-level `WeakMap` recording which `GrowableBuffer`
- * currently owns the writable tail of each backing array. Only the owner may
- * write in place; anything else copies first.
- *
- * That ownership lives in process memory, not in `DocumentState`. These tests
- * pin the consequences, because the invariant is not visible in the serialized
- * state and is easy to break while refactoring:
- *
- * - branching from a stale version must not disturb the newer snapshot;
- * - ownership is per backing array, so growth transfers it;
- * - a buffer that crosses a serialization boundary (checkpoint, worker message)
- *   arrives with no ownership entry and must simply copy on first append.
- */
+/** Snapshot isolation, writable tails, and shared immutable buffer segments. */
 
 import { describe, expect, it } from "vitest";
 import { GrowableBuffer } from "./growable-buffer.js";
@@ -41,7 +24,7 @@ describe("writable tail ownership", () => {
     const base = GrowableBuffer.empty(64).append(bytesOf("shared"));
     const mainline = base.append(bytesOf("-MAIN"));
 
-    // `base` is no longer the tail owner, so this must copy rather than write
+    // `base` is no longer the tail owner, so this must share its prefix rather than write
     // over the bytes `mainline` can see.
     const branch = base.append(bytesOf("-BRANCH"));
 
@@ -79,12 +62,11 @@ describe("writable tail ownership", () => {
     expect(textOf(small)).toBe("abcd");
   });
 
-  it("copies on first append after crossing a serialization boundary", () => {
+  it("preserves restored bytes on first append after serialization", () => {
     const original = GrowableBuffer.empty(64).append(bytesOf("persisted"));
 
     // A buffer rebuilt from bytes — as checkpoint restore or a worker message
-    // does — shares no identity with the original, so it owns nothing and must
-    // copy before writing.
+    // does — has independent storage from the original.
     const rebuilt = new GrowableBuffer(
       Uint8Array.from(unwrapReadonlyUint8Array(original.bytes)),
       original.length,
@@ -108,4 +90,42 @@ describe("writable tail ownership", () => {
     const buffer = GrowableBuffer.empty(64).append(bytesOf("abc"));
     expect(() => (buffer.bytes as unknown as Uint8Array).set([120], 0)).toThrow(TypeError);
   });
+});
+
+it("shares the prefix across branches and reads small ranges without flattening", () => {
+  const original = GrowableBuffer.empty().append(bytesOf("x".repeat(2_000_000)));
+  const mainline = original.append(bytesOf("MAIN"));
+  const branch = original.append(bytesOf("BRANCH"));
+  const originalRange = [...original.ranges(0, 1)][0]!;
+  const branchRange = [...branch.ranges(0, 1)][0]!;
+  expect(unwrapReadonlyUint8Array(branchRange.bytes).buffer).toBe(
+    unwrapReadonlyUint8Array(originalRange.bytes).buffer,
+  );
+  expect(
+    new TextDecoder().decode(unwrapReadonlyUint8Array(branch.subarray(1_999_998, branch.length))),
+  ).toBe("xxBRANCH");
+  expect(textOf(mainline)).toBe("x".repeat(2_000_000) + "MAIN");
+  expect(branch.length).toBe(2_000_006);
+  expect(original.length).toBe(2_000_000);
+});
+
+it("balances many sealed segments and keeps both sides of a fork readable", () => {
+  let buffer = GrowableBuffer.empty();
+  let expected = "";
+  for (let i = 0; i < 2000; i++) {
+    const stale = buffer;
+    buffer.append(bytesOf("discard"));
+    const text = `漢😀${i},`;
+    buffer = stale.append(bytesOf(text));
+    expected += text;
+  }
+  expect(textOf(buffer)).toBe(expected);
+  const bytes = bytesOf(expected);
+  for (let start = 0; start < bytes.length; start += 997)
+    expect([...buffer.subarray(start, Math.min(start + 1500, bytes.length))]).toEqual([
+      ...bytes.subarray(start, start + 1500),
+    ]);
+  expect(() => buffer.subarray(-1, 1)).toThrow();
+  expect(() => buffer.subarray(0, buffer.length + 1)).toThrow();
+  expect(buffer.append(new Uint8Array())).toBe(buffer);
 });

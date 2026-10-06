@@ -289,3 +289,44 @@ it("preserves U+FEFF metrics when CRLF repair reads an inserted range", () => {
     collectLines(value.lineIndex.root).map((n) => [n.lineLength, n.charLength]);
   expect(metrics(state)).toEqual(metrics(expected));
 });
+
+it.each([1000, 15000])("shares surviving line subtrees when deleting %i lines", (removed) => {
+  const state = createInitialState({ content: "abc\n".repeat(20000) });
+  const before = nodes(state.lineIndex.root);
+  const result = documentReducer(
+    state,
+    DocumentActions.delete(byteOffset(400), byteOffset(400 + removed * 4)),
+  );
+  expect(newNodes(result.lineIndex.root, before)).toBeLessThan(120);
+  expect(result.lineIndex.lineCount).toBe(20001 - removed);
+  expect(getLineRangePrecise(result.lineIndex, 20000 - removed)?.start).toBe((20000 - removed) * 4);
+  assertLineIndexInvariants(result.lineIndex.root);
+  assertLineIndexRedBlackProperties(result.lineIndex.root);
+});
+
+it("reuses annotation query indexes and isolates edited and deleted snapshots", async () => {
+  const { findAttentionsAt, findAttentionsOverlapping, deleteAttention, insertWithAttention } =
+    await import("../core/attention.js");
+  const { PersistentMap } = await import("../core/persistent-map.js");
+  const table = createPieceTableState("x".repeat(30000));
+  let layer = emptyAttentionLayerState;
+  const ids = [];
+  for (let i = 0; i < 10000; i++) {
+    const point = createPoint(table.root, byteOffset(i * 3))!;
+    const end = createPoint(table.root, byteOffset(i * 3 + 2))!;
+    const result = createAttention(layer, point, end);
+    layer = result[0];
+    ids.push(result[1]);
+  }
+  expect(findAttentionsAt(layer, table.root, 15000)).toEqual([ids[5000]]);
+  const iteration = vi.spyOn(PersistentMap.prototype, Symbol.iterator);
+  expect(findAttentionsOverlapping(layer, table.root, 14999, 15002)).toEqual([ids[5000]]);
+  expect(iteration).not.toHaveBeenCalled();
+  const edited = insertWithAttention(table, layer, byteOffset(0), "hello");
+  expect(findAttentionsAt(edited.attentionState, edited.pieceTableState.root, 15005)).toEqual([
+    ids[5000],
+  ]);
+  const removed = deleteAttention(edited.attentionState, ids[5000]!);
+  expect(findAttentionsAt(removed, edited.pieceTableState.root, 15005)).toEqual([]);
+  expect(findAttentionsAt(layer, table.root, 15000)).toEqual([ids[5000]]);
+});

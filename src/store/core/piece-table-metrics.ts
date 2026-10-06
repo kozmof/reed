@@ -1,5 +1,5 @@
 import type { PieceNode, PieceTableState } from "../../types/state.js";
-import { unwrapReadonlyUint8Array } from "./runtime-readonly.js";
+import { pieceBufferRanges } from "./piece-buffer-ranges.js";
 import { bufferByteAtCharInRange, bufferCharLength } from "./utf8-metrics.js";
 
 const subtreeChars = new WeakMap<PieceNode, number>();
@@ -11,10 +11,9 @@ function pieceChars(state: PieceTableState, node: PieceNode, length: number = no
   // Chunk seams may split UTF-8 sequences or contain malformed input. Chunked
   // documents use the decoder-based path instead of these valid-UTF-8 metrics.
   if (node.bufferType === "chunk") throw new Error("Chunk metrics require streaming decoding");
-  const bytes = unwrapReadonlyUint8Array(
-    node.bufferType === "original" ? state.originalBuffer : state.addBuffer.bytes,
-  );
-  const result = bufferCharLength(bytes, node.start, node.start + length);
+  let result = 0;
+  for (const range of pieceBufferRanges(state, node, node.start, node.start + length))
+    result += bufferCharLength(range.bytes, range.start, range.end);
   if (length === node.length) ownChars.set(node, result);
   return result;
 }
@@ -41,14 +40,13 @@ export function countPieceTableChars(state: PieceTableState, start: number, end:
       to = Math.min(end, pieceEnd);
     if (from < to) {
       if (node.bufferType === "chunk") throw new Error("Chunk metrics require streaming decoding");
-      const bytes = unwrapReadonlyUint8Array(
-        node.bufferType === "original" ? state.originalBuffer : state.addBuffer.bytes,
-      );
-      chars += bufferCharLength(
-        bytes,
+      for (const range of pieceBufferRanges(
+        state,
+        node,
         node.start + from - pieceStart,
         node.start + to - pieceStart,
-      );
+      ))
+        chars += bufferCharLength(range.bytes, range.start, range.end);
     }
     return chars;
   }
@@ -85,17 +83,17 @@ export function pieceTableByteAtChar(
       to = Math.min(end, pieceEnd);
     if (remaining > 0 && from < to) {
       if (node.bufferType === "chunk") throw new Error("Chunk metrics require streaming decoding");
-      const bytes = unwrapReadonlyUint8Array(
-        node.bufferType === "original" ? state.originalBuffer : state.addBuffer.bytes,
-      );
       const bufferStart = node.start + from - pieceStart;
       const bufferEnd = node.start + to - pieceStart;
-      const found = bufferByteAtCharInRange(bytes, bufferStart, bufferEnd, remaining);
-      result = from + found - bufferStart;
-      remaining =
-        found < bufferEnd
-          ? 0
-          : Math.max(0, remaining - bufferCharLength(bytes, bufferStart, bufferEnd));
+      for (const range of pieceBufferRanges(state, node, bufferStart, bufferEnd)) {
+        const found = bufferByteAtCharInRange(range.bytes, range.start, range.end, remaining);
+        result = from + range.offset - bufferStart + found - range.start;
+        remaining =
+          found < range.end
+            ? 0
+            : Math.max(0, remaining - bufferCharLength(range.bytes, range.start, range.end));
+        if (remaining <= 0) break;
+      }
     }
     visit(node.right, pieceEnd);
   }

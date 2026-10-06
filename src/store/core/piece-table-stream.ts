@@ -34,16 +34,21 @@ export function* inOrderPieces(
   }
 }
 
-function getPieceBufferRaw(state: PieceTableState, piece: PieceNode): Uint8Array {
+function getPieceBufferRaw(
+  state: PieceTableState,
+  piece: PieceNode,
+  start: number,
+  end: number,
+): Uint8Array {
   switch (piece.bufferType) {
     case "original":
-      return unwrapReadonlyUint8Array(state.originalBuffer);
+      return unwrapReadonlyUint8Array(state.originalBuffer).subarray(start, end);
     case "add":
-      return unwrapReadonlyUint8Array(state.addBuffer.subarray(0, state.addBuffer.length));
+      return unwrapReadonlyUint8Array(state.addBuffer.subarray(start, end));
     case "chunk": {
       const chunk = state.chunkMap.get(piece.chunkIndex);
       if (chunk === undefined) throw new Error(`Chunk ${piece.chunkIndex} is not loaded`);
-      return unwrapReadonlyUint8Array(chunk);
+      return unwrapReadonlyUint8Array(chunk).subarray(start, end);
     }
     default: {
       const _never: never = piece;
@@ -163,7 +168,6 @@ function* streamChunks(
   // Process pieces until we reach `end`
   while (currentEntry !== null && documentPosition < end) {
     const { piece } = currentEntry;
-    const buffer = getPieceBufferRaw(state, piece);
 
     const pieceRemaining = piece.length - offsetInCurrentPiece;
     const documentRemaining = end - documentPosition;
@@ -171,7 +175,9 @@ function* streamChunks(
     const bytesToRead = Math.min(pieceRemaining, documentRemaining, chunkRemaining);
 
     chunkBuffer.set(
-      buffer.subarray(
+      getPieceBufferRaw(
+        state,
+        piece,
         piece.start + offsetInCurrentPiece,
         piece.start + offsetInCurrentPiece + bytesToRead,
       ),

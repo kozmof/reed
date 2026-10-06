@@ -47,11 +47,6 @@ import {
   fixInsertWithPath,
   joinBalanced,
   joinTrees,
-  removeMinimum,
-  removeNodeWithAtMostOneChild,
-  repairLeftBlackDeficit,
-  repairRightBlackDeficit,
-  type RemoveResult,
   type WithNodeFn,
   type InsertionPathEntry,
   type RootToLeafInsertPath,
@@ -1074,38 +1069,15 @@ function rebuildWithDeletedRange(
     });
   }
 
-  // Deleting a large fraction is cheaper as one linear rebuild. Small edits use
-  // persistent red-black deletion and retain O(k log n) behavior.
-  if (deletedCount > 64 && deletedCount > root.subtreeLineCount / 4) {
-    const retained: Array<{ offset: number; length: number; charLength: number }> = [];
-    let offset = 0;
-    const lines = collectLines(root);
-    for (let lineNumber = 0; lineNumber < lines.length; lineNumber++) {
-      if (lineNumber > startLine && lineNumber <= endLine) continue;
-      const line = lines[lineNumber]!;
-      const length = lineNumber === startLine ? mergedLength : line.lineLength;
-      const charLength = lineNumber === startLine ? mergedCharLength : line.charLength;
-      retained.push({ offset, length, charLength });
-      offset += length;
-    }
-    return withLineIndexState(state, {
-      root: buildBalancedTreeWithChars(retained, 0, retained.length - 1),
-      lineCount: retained.length,
-      dirtyRanges: Object.freeze([]),
-      lastReconciledRevision: 0,
-      rebuildPending: false,
-    });
-  }
-
-  let newRoot: LineIndexNode | null = updateLineAtNumber(
-    root,
-    startLine,
-    mergedLength,
-    mergedCharLength,
-  );
-  for (let line = endLine; line > startLine && newRoot !== null; line--) {
-    newRoot = rbDeleteLineByNumber(newRoot, startLine + 1);
-  }
+  // Remove the entire rank interval with two splits, sharing surviving subtrees.
+  const updated = updateLineAtNumber(root, startLine, mergedLength, mergedCharLength);
+  const [left, rest] = splitLines(updated, startLine + 1);
+  const [, right] = splitLines(rest, deletedCount);
+  const joined = joinTrees(left, right, withLine);
+  let newRoot =
+    joined === null || joined.color === "black"
+      ? joined
+      : withLineIndexNode(joined, { color: "black" });
 
   if (newRoot === null) {
     return withLineIndexState(state, {
@@ -1131,59 +1103,6 @@ function rebuildWithDeletedRange(
     lastReconciledRevision: 0,
     rebuildPending: false,
   });
-}
-
-/**
- * Line deletion shares the generic persistent red-black primitives with the
- * piece table; only rank navigation and node construction stay local, because
- * those are the parts that depend on line payloads and aggregates.
- */
-type LineDeleteResult = RemoveResult<LineIndexNode>;
-
-/** Delete one line by rank while propagating the removed black height. */
-function rbDeleteLineByNumber(root: LineIndexNode, lineNumber: number): LineIndexNode | null {
-  const result = deleteLineNode(root, lineNumber);
-  if (result.node === null) return null;
-  return result.node.color === "black"
-    ? result.node
-    : withLineIndexNode(result.node, { color: "black" });
-}
-
-function deleteLineNode(node: LineIndexNode, lineNumber: number): LineDeleteResult {
-  const leftLineCount = node.left?.subtreeLineCount ?? 0;
-
-  if (lineNumber < leftLineCount && node.left !== null) {
-    const deleted = deleteLineNode(node.left, lineNumber);
-    const rebuilt = withLineIndexNode(node, { left: deleted.node });
-    return deleted.blackHeightDecreased
-      ? repairLeftBlackDeficit(rebuilt, withLine)
-      : { node: rebuilt, blackHeightDecreased: false };
-  }
-
-  if (lineNumber > leftLineCount && node.right !== null) {
-    const deleted = deleteLineNode(node.right, lineNumber - leftLineCount - 1);
-    const rebuilt = withLineIndexNode(node, { right: deleted.node });
-    return deleted.blackHeightDecreased
-      ? repairRightBlackDeficit(rebuilt, withLine)
-      : { node: rebuilt, blackHeightDecreased: false };
-  }
-
-  if (node.left !== null && node.right !== null) {
-    const extracted = removeMinimum(node.right, withLine);
-    const replacement = createLineIndexNode(
-      extracted.minimum.documentOffset,
-      extracted.minimum.lineLength,
-      node.color,
-      node.left,
-      extracted.node,
-      extracted.minimum.charLength,
-    );
-    return extracted.blackHeightDecreased
-      ? repairRightBlackDeficit(replacement, withLine)
-      : { node: replacement, blackHeightDecreased: false };
-  }
-
-  return removeNodeWithAtMostOneChild(node, withLine);
 }
 
 /**
@@ -1701,9 +1620,8 @@ function deleteLineRangeLazy(
   const { lineNumber: startLine, offsetInLine: startOffset } = startLocation;
   const endLine = startLine + deletedNewlines;
 
-  // Tree shape is repaired immediately. Small ranges use persistent O(k log n)
-  // deletion, while large range removals rebuild once in O(n). Lazy mode defers
-  // only downstream documentOffset updates.
+  // Split/join repairs the tree in O(log L), independent of removed line count.
+  // Lazy mode defers only downstream documentOffset updates.
   const newState = applyDeleteLineRange(
     state,
     startLine,

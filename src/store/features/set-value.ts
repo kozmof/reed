@@ -69,7 +69,7 @@ export interface SetValueOptions {
   /**
    * Strategy to use when computing the edit:
    * - `'fast'` (default) — single REPLACE operation, O(n). Best for interactive edits.
-   * - `'diff'` — memory-bounded Myers script, O(n²). Usually produces finer-grained history.
+   * - `'diff'` — memory- and work-bounded Myers script, O(n²). Usually produces finer-grained history.
    */
   strategy?: "fast" | "diff";
 }
@@ -102,7 +102,7 @@ export function setValueAuto(
 
 /**
  * Set the entire document value to new content using the Myers diff algorithm.
- * Computes a minimal edit script while its trace fits the memory budget; larger
+ * Computes a minimal edit script while its trace and search fit their budgets; larger
  * unrelated inputs safely fall back to a single coarse replacement.
  *
  * Prefer `setValue` for interactive use. Use this when finer diff granularity matters.
@@ -170,7 +170,7 @@ export function computeSetValueActionsFromState(
 
 /**
  * Compute memory-bounded Myers-diff actions needed to transform a piece table.
- * Produces minimal actions while the trace fits the memory budget and a coarse
+ * Produces minimal actions while the trace and search fit their budgets and a coarse
  * replacement otherwise. O(n²) worst-case time.
  *
  * @param pieceTable - Current piece table state

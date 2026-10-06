@@ -1,3 +1,4 @@
+import { pieceBufferRanges } from "./piece-buffer-ranges.js";
 import { SpanIndex } from "./span-index.js";
 /** Resumable maintenance. Intermediate trees stay private until the job finishes. */
 import type {
@@ -15,7 +16,6 @@ import {
   withPieceNode,
 } from "./state.js";
 import { GrowableBuffer } from "./growable-buffer.js";
-import { unwrapReadonlyUint8Array } from "./runtime-readonly.js";
 
 /** Completed shared subtrees remain useful when a later edit restarts a job. */
 export type ReconciliationCache = WeakMap<LineIndexNode, { offset: number; root: LineIndexNode }>;
@@ -102,9 +102,23 @@ export function* compactIncrementally(
   if (workspace.published) workspace = createCompactionWorkspace(state);
   const used = state.root?.subtreeAddLength ?? 0;
   if (used === 0) return freezePieceTableState({ ...state, addBuffer: GrowableBuffer.empty(1024) });
-  const source = unwrapReadonlyUint8Array(state.addBuffer.bytes);
-  let spans = workspace.spans.get(source.buffer);
-  if (!spans) workspace.spans.set(source.buffer, (spans = new SpanIndex()));
+  function* reserve(length: number): Generator<void, number> {
+    const start = workspace.length;
+    const required = start + length;
+    if (required > workspace.bytes.length) {
+      const bytes = new Uint8Array(Math.max(required, workspace.bytes.length * 2));
+      for (let offset = 0; offset < workspace.length; offset += 65536) {
+        bytes.set(
+          workspace.bytes.subarray(offset, Math.min(workspace.length, offset + 65536)),
+          offset,
+        );
+        yield;
+      }
+      workspace.bytes = bytes;
+    }
+    workspace.length = required;
+    return start;
+  }
   function* visit(node: PieceNode | null): Generator<void, PieceNode | null> {
     if (!node) return null;
     yield;
@@ -113,38 +127,41 @@ export function* compactIncrementally(
     const left = yield* visit(node.left);
     let start = node.start;
     if (node.bufferType === "add") {
-      const sourceStart = source.byteOffset + node.start;
-      let span = spans!.containing(sourceStart, node.length);
-      if (!span) {
-        const required = workspace.length + node.length;
-        if (required > workspace.bytes.length) {
-          const bytes = new Uint8Array(Math.max(required, workspace.bytes.length * 2));
-          for (let offset = 0; offset < workspace.length; offset += 65536) {
-            bytes.set(
-              workspace.bytes.subarray(offset, Math.min(workspace.length, offset + 65536)),
-              offset,
-            );
-            yield;
-          }
-          workspace.bytes = bytes;
+      const ranges = pieceBufferRanges(state, node, node.start, node.start + node.length);
+      const first = ranges.next().value!;
+      const single = first.end - first.start === node.length;
+      let destination: number | undefined;
+      if (!single) destination = yield* reserve(node.length);
+      function* copy(range: typeof first): Generator<void, number> {
+        const source = range.bytes;
+        const sourceStart = source.byteOffset + range.start;
+        const length = range.end - range.start;
+        let spans = workspace.spans.get(source.buffer);
+        if (!spans) workspace.spans.set(source.buffer, (spans = new SpanIndex()));
+        let span = single ? spans.containing(sourceStart, length) : undefined;
+        if (!span) {
+          const target =
+            destination === undefined
+              ? yield* reserve(length)
+              : destination + range.offset - node!.start;
+          span = { start: target, copied: 0, sourceStart, length };
+          spans.add(span);
+          yield;
         }
-        span = { start: workspace.length, copied: 0, sourceStart, length: node.length };
-        workspace.length = required;
-        spans!.add(span);
-        yield;
+        const relativeStart = sourceStart - span.sourceStart;
+        const requiredCopy = relativeStart + length;
+        while (span.copied < requiredCopy) {
+          const count = Math.min(65536, requiredCopy - span.copied);
+          const from = span.sourceStart - source.byteOffset + span.copied;
+          workspace.bytes.set(source.subarray(from, from + count), span.start + span.copied);
+          span.copied += count;
+          yield;
+        }
+        return span.start + relativeStart;
       }
-      const relativeStart = sourceStart - span.sourceStart;
-      start = byteOffset(span.start + relativeStart);
-      const requiredCopy = relativeStart + node.length;
-      // A containing span also covers pieces split by an intervening edit.
-      // Copy from the reserved source span, continuing its previous progress.
-      while (span.copied < requiredCopy) {
-        const count = Math.min(65536, requiredCopy - span.copied);
-        const from = span.sourceStart - source.byteOffset + span.copied;
-        workspace.bytes.set(source.subarray(from, from + count), span.start + span.copied);
-        span.copied += count;
-        yield;
-      }
+      const firstStart = yield* copy(first);
+      for (const range of ranges) yield* copy(range);
+      start = byteOffset(destination ?? firstStart);
     }
     const right = yield* visit(node.right);
     const result =

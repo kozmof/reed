@@ -1,3 +1,4 @@
+import { IntervalIndex, type Interval } from "./interval-index.js";
 /**
  * Attention Layer — piece-attached boundary reference system for mutable text.
  *
@@ -435,53 +436,81 @@ export function getTextForAttention(
 // Query API
 // =============================================================================
 
+interface IndexedAttention {
+  id: AttentionID;
+  order: number;
+  start: number;
+  end: number;
+}
+const rangeIndexes = new WeakMap<
+  AttentionLayerState,
+  WeakMap<PieceNode, IntervalIndex<IndexedAttention>>
+>();
+
+function attentionRangeIndex(
+  state: AttentionLayerState,
+  root: PieceNode,
+): IntervalIndex<IndexedAttention> {
+  let roots = rangeIndexes.get(state);
+  if (!roots) rangeIndexes.set(state, (roots = new WeakMap()));
+  const cached = roots.get(root);
+  if (cached) return cached;
+  const pieces = buildPieceOffsetIndex(root);
+  const intervals: Interval<IndexedAttention>[] = [];
+  let order = 0;
+  for (const [id, attention] of state.attentions) {
+    const offsets = resolveAttentionWithIndex(pieces, attention);
+    if (offsets) {
+      intervals.push({
+        start: Math.min(offsets.startOffset, offsets.endOffset),
+        end: Math.max(offsets.startOffset, offsets.endOffset),
+        value: { id, order, start: offsets.startOffset, end: offsets.endOffset },
+      });
+    }
+    order++;
+  }
+  const index = new IntervalIndex(intervals);
+  roots.set(root, index);
+  return index;
+}
+
+function queryAttentions(
+  state: AttentionLayerState,
+  root: PieceNode | null,
+  start: number,
+  end: number,
+  point: boolean,
+): AttentionID[] {
+  if (!root || state.attentions.size === 0) return [];
+  // Restore map iteration order without scanning unrelated annotations.
+  return attentionRangeIndex(state, root)
+    .query(start, end, point)
+    .filter((entry) => entry.end > start && (point ? entry.start <= end : entry.start < end))
+    .sort((a, b) => a.order - b.order)
+    .map((entry) => entry.id);
+}
+
 /**
- * Return IDs of all Attentions whose resolved range contains `offset`.
- *
- * O(n + A) where A is the number of attentions: one tree walk to index the
- * pieces, then an O(1) resolution per attention.
+ * IDs containing offset. A snapshot builds its interval index lazily in
+ * O(P + A log A); warm queries visit matching intervals and boundary paths.
+ * Ordering the K results to preserve map iteration order costs O(K log K).
  */
 export function findAttentionsAt(
   state: AttentionLayerState,
   root: PieceNode | null,
   offset: number,
-): LinearCost<AttentionID[]> {
-  const index = buildPieceOffsetIndex(root);
-  const results: AttentionID[] = [];
-  for (const [id, attention] of state.attentions) {
-    const offsets = resolveAttentionWithIndex(index, attention);
-    if (offsets === null) continue;
-    if (offset >= offsets.startOffset && offset < offsets.endOffset) {
-      results.push(id);
-    }
-  }
-  return $proveCtx($beginCost("O(n)"), results);
+): NLogNCost<AttentionID[]> {
+  return $proveCtx($beginCost("O(n log n)"), queryAttentions(state, root, offset, offset, true));
 }
 
-/**
- * Return IDs of all Attentions that overlap the range [start, end).
- * Two ranges overlap when one starts before the other ends.
- *
- * O(n + A) where A is the number of attentions: one tree walk to index the
- * pieces, then an O(1) resolution per attention.
- */
+/** IDs overlapping [start, end), with the same snapshot index and result order. */
 export function findAttentionsOverlapping(
   state: AttentionLayerState,
   root: PieceNode | null,
   start: number,
   end: number,
-): LinearCost<AttentionID[]> {
-  const index = buildPieceOffsetIndex(root);
-  const results: AttentionID[] = [];
-  for (const [id, attention] of state.attentions) {
-    const offsets = resolveAttentionWithIndex(index, attention);
-    if (offsets === null) continue;
-    // Overlap: not (attention ends before range OR attention starts after range)
-    if (offsets.endOffset > start && offsets.startOffset < end) {
-      results.push(id);
-    }
-  }
-  return $proveCtx($beginCost("O(n)"), results);
+): NLogNCost<AttentionID[]> {
+  return $proveCtx($beginCost("O(n log n)"), queryAttentions(state, root, start, end, false));
 }
 
 // =============================================================================

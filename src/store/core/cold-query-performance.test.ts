@@ -78,3 +78,34 @@ it("keeps first queries local after paste, either compaction path, and checkpoin
     ).toBeLessThanOrEqual(4);
   }
 });
+
+it("keeps reads, Unicode metrics, and compaction local after branching a large add buffer", async () => {
+  const { getText, getValue, getValueStream } = await import("./piece-table.js");
+  const { GrowableBuffer } = await import("./growable-buffer.js");
+  const { lineByteToChar } = await import("./line-offsets.js");
+  const content = "漢😀x".repeat(100000);
+  const original = pieceTableInsert(createPieceTableState(""), byteOffset(0), content).state;
+  const mainline = pieceTableInsert(original, byteOffset(original.totalLength), "main").state;
+  const branch = pieceTableInsert(original, byteOffset(original.totalLength), "branch😀").state;
+  const flattened = vi.spyOn(GrowableBuffer.prototype, "bytes", "get");
+  const copies = vi.spyOn(Uint8Array.prototype, "set");
+  expect(getText(branch, byteOffset(0), byteOffset(8))).toBe("漢😀x");
+  expect(lineCharToByte(branch, 0, branch.totalLength, 1)).toBe(3);
+  expect(lineByteToChar(branch, 0, branch.totalLength, 8)).toBe(4);
+  expect(
+    [...getValueStream(branch, { start: original.totalLength, chunkSize: 3 })]
+      .map((c) => c.content)
+      .join(""),
+  ).toBe("branch😀");
+  const job = compactIncrementally(branch);
+  let next = job.next();
+  while (!next.done) next = job.next();
+  expect(flattened).not.toHaveBeenCalled();
+  expect(Math.max(0, ...copies.mock.calls.map(([source]) => source.length))).toBeLessThanOrEqual(
+    65536,
+  );
+  copies.mockRestore();
+  expect(getValue(next.value)).toBe(content + "branch😀");
+  expect(getValue(mainline)).toBe(content + "main");
+  expect(getValue(original)).toBe(content);
+});

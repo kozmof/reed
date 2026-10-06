@@ -16,8 +16,9 @@ concatenating the byte ranges each piece points to.
 
 ## 2. `addBuffer` Layout
 
-`addBuffer` is a flat, append-only byte array. Bytes are written in edit-chronological
-order, not document order.
+`addBuffer` presents a continuous range of byte offsets backed by shared segments.
+Bytes are appended in edit order. Piece offsets keep the same meaning across
+segments and snapshot branches.
 
 Every insertion appends to the end, regardless of where in the document it appears:
 
@@ -51,7 +52,7 @@ Edit 3: insert "Line3\n"   at doc offset 12
 Edit 4: insert "fix"       at doc offset 3    (correction inside Edit 1's text)
 Edit 5: insert "Line8\n"   at doc offset 40
 
-addBuffer bytes (flat, edit order):
+addBuffer logical bytes (edit order):
   offset  0 : L i n e 1 \n          ← Edit 1  (6 bytes)
   offset  6 : L i n e 4 \n          ← Edit 2  (6 bytes)
   offset 12 : L i n e 3 \n          ← Edit 3  (6 bytes)
@@ -90,26 +91,29 @@ Three pieces now covering the original "Line1\n" region (doc order):
   AddPieceNode { start:4,  length:2 }  → "1\n"      (right of split)
 ```
 
-### 2.2 Capacity growth
+### 2.2 Capacity growth and branching
 
-`GrowableBuffer.append()` returns a new `GrowableBuffer` instance. The newest version
-that owns a backing array's writable tail may reuse spare capacity, so ordinary
-sequential edits do not reallocate. When capacity is exceeded the array is reallocated
-at `max(currentSize × 2, currentSize + newDataSize)`, amortising growth to O(1) per byte.
+`GrowableBuffer.append()` returns a new snapshot. Sequential appends reuse spare
+capacity in the current writable tail. Small tails grow geometrically up to
+64 KiB. Larger appends use a new segment when they exceed the available capacity.
 
-Appending from an older buffer version creates a branch (for example, after transaction
-rollback). That version no longer owns the shared array's writable tail, so `append()`
-first copies its valid prefix into a new backing array. This copy-on-branch rule prevents
-the new branch from overwriting bytes already visible through a descendant snapshot.
+Appending from an older snapshot seals its visible tail as an immutable segment
+and allocates a new tail. The existing bytes are shared without copying. A
+persistent AVL tree locates sealed segments and copies only its search path when
+adding a segment. With S sealed segments and m inserted bytes, a branch append
+costs O(log S + m).
 
-### 2.3 Snapshot safety
+### 2.3 Snapshot isolation and reads
 
-Old `PieceTableState` snapshots hold a `GrowableBuffer` whose `length` was fixed at
-snapshot time. Sequential descendants may write only beyond that boundary. If an older
-version is used to create a different descendant, the copy-on-branch rule above gives it
-independent storage before writing. Consequently every snapshot continues to expose the
-same bytes for its lifetime, including snapshots captured inside a transaction that is
-later rolled back.
+Every snapshot retains its own length and visible byte ranges. Tail ownership
+allows writes only beyond the bytes visible to earlier snapshots. Branching
+preserves logical offsets and does not expose another branch's appended content.
+
+Internal reads use segment ranges, so reading a small slice does not flatten the
+buffer. `subarray()` returns a shared view when the range fits in one segment and
+copies only the requested range when it crosses segments. The `bytes` accessor
+provides a cached contiguous view for callers that need the whole buffer. Reading
+it for a segmented buffer requires O(B) time and storage for B valid bytes.
 
 ### 2.4 Deleted bytes and compaction
 

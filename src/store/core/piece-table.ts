@@ -211,16 +211,26 @@ export function getPieceBuffer(state: PieceTableState, piece: PieceNode): Uint8A
   }
 }
 
-function getPieceBufferRaw(state: PieceTableState, piece: PieceNode): Uint8Array {
+function getPieceBufferRaw(
+  state: PieceTableState,
+  piece: PieceNode,
+  start = 0,
+  end: number = piece.length,
+): Uint8Array {
   switch (piece.bufferType) {
     case "original":
-      return unwrapReadonlyUint8Array(state.originalBuffer);
+      return unwrapReadonlyUint8Array(state.originalBuffer).subarray(
+        piece.start + start,
+        piece.start + end,
+      );
     case "add":
-      return unwrapReadonlyUint8Array(state.addBuffer.subarray(0, state.addBuffer.length));
+      return unwrapReadonlyUint8Array(
+        state.addBuffer.subarray(piece.start + start, piece.start + end),
+      );
     case "chunk": {
       const chunk = state.chunkMap.get(piece.chunkIndex);
       if (chunk === undefined) throw new Error(`Chunk ${piece.chunkIndex} is not loaded`);
-      return unwrapReadonlyUint8Array(chunk);
+      return unwrapReadonlyUint8Array(chunk).subarray(piece.start + start, piece.start + end);
     }
     default: {
       const _never: never = piece;
@@ -238,8 +248,7 @@ export function getRawByte(state: PieceTableState, docOffset: ByteOffset): numbe
   const location = findPieceAtPosition(state.root, docOffset);
   if (location === null) return -1;
   const { node, offsetInPiece } = location;
-  const buffer = getPieceBufferRaw(state, node);
-  return buffer[node.start + offsetInPiece] ?? -1;
+  return getPieceBufferRaw(state, node, offsetInPiece, offsetInPiece + 1)[0] ?? -1;
 }
 
 /**
@@ -976,7 +985,7 @@ export function getValue(state: PieceTableState): LinearCost<string> {
 
           for (const piece of pieces) {
             const buffer = getPieceBufferRaw(state, piece);
-            result.set(buffer.subarray(piece.start, piece.start + piece.length), offset);
+            result.set(buffer, offset);
             offset += piece.length;
           }
 
@@ -1036,11 +1045,10 @@ function collectBytesInRange(
 
   // Collect from this piece if it overlaps
   if (pieceStart < end && pieceEnd > start) {
-    const buffer = getPieceBufferRaw(state, node);
     const copyStart = Math.max(0, start - pieceStart);
     const copyEnd = Math.min(node.length, end - pieceStart);
 
-    result.set(buffer.subarray(node.start + copyStart, node.start + copyEnd), writeState.offset);
+    result.set(getPieceBufferRaw(state, node, copyStart, copyEnd), writeState.offset);
     writeState.offset += copyEnd - copyStart;
   }
 
@@ -1114,7 +1122,7 @@ function findLineOffsets(
       pieceTableInOrder(state.root, (piece, pieceDocOffset) => {
         const buffer = getPieceBufferRaw(state, piece);
         for (let i = 0; i < piece.length; i++) {
-          const b = buffer[piece.start + i];
+          const b = buffer[i];
           const docPos = pieceDocOffset + i;
 
           if (pendingCREnd >= 0) {

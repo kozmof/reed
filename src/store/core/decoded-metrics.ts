@@ -1,6 +1,6 @@
+import { pieceBufferRanges } from "./piece-buffer-ranges.js";
 /** Composable UTF-8 decoding metrics. Byte lengths stay raw even for malformed input. */
 import type { PieceNode, PieceTableState } from "../../types/state.js";
-import { unwrapReadonlyUint8Array } from "./runtime-readonly.js";
 
 export interface DecodedSummary {
   readonly length: number;
@@ -102,13 +102,6 @@ export function summarizeBytes(bytes: Uint8Array, start = 0, end = bytes.length)
   const size = BLOCK * 2 ** Math.ceil(Math.log2(Math.max(1, Math.ceil(bytes.length / BLOCK))));
   return visit(0, size);
 }
-export function rawPieceBytes(state: PieceTableState, node: PieceNode): Uint8Array {
-  if (node.bufferType === "original") return unwrapReadonlyUint8Array(state.originalBuffer);
-  if (node.bufferType === "add") return unwrapReadonlyUint8Array(state.addBuffer.bytes);
-  const bytes = state.chunkMap.get(node.chunkIndex);
-  if (!bytes) throw new Error(`Chunk ${node.chunkIndex} is not loaded`);
-  return unwrapReadonlyUint8Array(bytes);
-}
 export function summarizePieceRange(
   state: PieceTableState,
   start: number,
@@ -123,14 +116,16 @@ export function summarizePieceRange(
       pieceEnd = pieceStart + node.length;
     const from = Math.max(start, pieceStart),
       to = Math.min(end, pieceEnd);
-    const own =
-      from < to
-        ? summarizeBytes(
-            rawPieceBytes(state, node),
-            node.start + from - pieceStart,
-            node.start + to - pieceStart,
-          )
-        : empty;
+    let own = empty;
+    if (from < to) {
+      for (const range of pieceBufferRanges(
+        state,
+        node,
+        node.start + from - pieceStart,
+        node.start + to - pieceStart,
+      ))
+        own = joinDecoded(own, summarizeBytes(range.bytes, range.start, range.end));
+    }
     const result = joinDecoded(
       joinDecoded(visit(node.left, offset), own),
       visit(node.right, pieceEnd),
@@ -157,13 +152,11 @@ export function* pieceByteRanges(
     yield* visit(node.left, offset);
     const from = Math.max(start, pieceStart),
       to = Math.min(end, pieceEnd);
-    if (from < to)
-      yield {
-        bytes: rawPieceBytes(state, node),
-        start: node.start + from - pieceStart,
-        end: node.start + to - pieceStart,
-        offset: from,
-      };
+    if (from < to) {
+      const bufferStart = node.start + from - pieceStart;
+      for (const range of pieceBufferRanges(state, node, bufferStart, node.start + to - pieceStart))
+        yield { ...range, offset: from + range.offset - bufferStart };
+    }
     yield* visit(node.right, pieceEnd);
   }
   yield* visit(state.root, 0);

@@ -72,3 +72,11 @@ it("falls back to a correct replacement when the compact trace exhausts its budg
   expect(checkScript(oldText, newText)).toBe(10_000);
   expect(diff(oldText, newText).edits.map((edit) => edit.type)).toEqual(["delete", "insert"]);
 });
+
+it("bounds matching work even when a tiny Myers trace fits the memory budget", () => {
+  const middle = "x".repeat(9_000_000);
+  const oldText = `a${middle}b`;
+  const newText = `c${middle}d`;
+  expect(diff(oldText, newText).edits.map((edit) => edit.type)).toEqual(["delete", "insert"]);
+  expect(checkScript(oldText, newText)).toBe(oldText.length + newText.length);
+});

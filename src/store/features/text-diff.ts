@@ -1,6 +1,6 @@
 /**
  * Memory-bounded Myers diff implementation for bulk text replacement.
- * Produces a minimal edit script while its trace fits the configured budget,
+ * Produces a minimal edit script while its trace and search fit the configured budgets,
  * then safely falls back to a coarse replacement.
  *
  * Reference: "An O(ND) Difference Algorithm and Its Variations" by Eugene W. Myers
@@ -54,10 +54,14 @@ export interface DiffResult {
  * coarse replacement. The fast setValue path is unaffected.
  */
 const MAX_MYERS_MEMORY_BYTES = 16 * 1024 * 1024;
+// Count frontier visits and matching code units, rather than using a clock.
+// This keeps fallback deterministic and bounds long repeated snakes as well
+// as high edit distances. Prefix/suffix trimming remains linear in input size.
+const MAX_MYERS_WORK = 8 * 1024 * 1024;
 
 /**
  * Compute the diff between two strings using Myers algorithm.
- * Returns a minimal edit script when it fits the memory budget, otherwise a
+ * Returns a minimal edit script when it fits the memory and work budgets, otherwise a
  * correct coarse replacement.
  */
 export function diff(oldText: string, newText: string): QuadCost<DiffResult> {
@@ -181,6 +185,7 @@ function myersDiff(
   // Store completed frontiers so backtracking reads the preceding distance.
   const trace: Int32Array[] = [];
   let allocatedBytes = 0;
+  let work = 0;
   for (let d = 0; d <= n + m; d++) {
     const frontierBytes = (d + 1) * Int32Array.BYTES_PER_ELEMENT;
     if (allocatedBytes + frontierBytes > MAX_MYERS_MEMORY_BYTES) {
@@ -191,6 +196,7 @@ function myersDiff(
     trace.push(current);
     allocatedBytes += frontierBytes;
     for (let j = 0; j <= d; j++) {
+      if (++work > MAX_MYERS_WORK) return coarseReplacement(oldText, newText, oldOffset, newOffset);
       const k = -d + 2 * j;
       let x =
         d === 0
@@ -200,6 +206,8 @@ function myersDiff(
             : previous![j - 1]! + 1;
       let y = x - k;
       while (x < n && y < m && oldText[x] === newText[y]) {
+        if (++work > MAX_MYERS_WORK)
+          return coarseReplacement(oldText, newText, oldOffset, newOffset);
         x++;
         y++;
       }
@@ -216,7 +224,7 @@ function myersDiff(
 
 /**
  * Return a correct, non-minimal replacement when retaining a minimal Myers
- * trace would exceed the memory budget.
+ * trace or search would exceed its budget.
  */
 function coarseReplacement(
   oldText: string,

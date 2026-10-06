@@ -66,10 +66,15 @@ The identity index uses a persistent hash trie. Expected bounds assume bounded-l
 
 ### 4.4 Queries
 
-- `findAttentionsAt(state, root, offset): AttentionID[]` — attentions whose resolved range contains `offset`. `O(n + A)`.
-- `findAttentionsOverlapping(state, root, start, end): AttentionID[]` — attentions overlapping `[start, end)`. `O(n + A)`.
+- `findAttentionsAt(state, root, offset): AttentionID[]` — attentions whose resolved range contains `offset`.
+- `findAttentionsOverlapping(state, root, start, end): AttentionID[]` — attentions overlapping `[start, end)`.
 
-Both index the pieces once, then resolve each attention in `O(1)`. `A` is the number of attentions.
+Both share a cached interval index for each attention state and piece-tree root.
+The first query builds it in O(P + A log A) time for P pieces and A attentions.
+Queries on that snapshot then visit matching intervals and boundary paths. For
+valid spans, returning K matches in map insertion order costs O(log A + K log K),
+with O(log A) work when there are no matches. Changing either snapshot component
+builds a fresh index on the next query. Edits do not build the index themselves.
 
 ### 4.5 Edit support
 
