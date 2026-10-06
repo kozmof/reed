@@ -13,9 +13,19 @@ import {
   type LinearCost,
   type QuadCost,
 } from "../../types/cost-doc.js";
-import { getValue } from "../core/piece-table.js";
+import { getValue, getValueStream } from "../core/piece-table.js";
 import { computeSetValueActions, computeSetValueActionsOptimized } from "./text-diff.js";
 import { documentReducer } from "./reducer.js";
+
+/** Compare with bounded temporary storage instead of materializing the document. */
+function hasValue(state: PieceTableState, text: string): boolean {
+  let offset = 0;
+  for (const chunk of getValueStream(state)) {
+    if (!text.startsWith(chunk.content, offset)) return false;
+    offset += chunk.content.length;
+  }
+  return offset === text.length;
+}
 
 function applyDocumentActions(
   state: DocumentState,
@@ -39,6 +49,7 @@ function applyDocumentActions(
  * @returns New document state with the content changed
  */
 export function setValue(state: DocumentState, newContent: string): LinearCost<DocumentState> {
+  if (hasValue(state.pieceTable, newContent)) return $proveCtx($beginCost("O(n)"), state);
   return $prove(
     "O(n)",
     $checked(() =>
@@ -117,6 +128,7 @@ export function setValueWithDiff(
   state: DocumentState,
   newContent: string,
 ): QuadCost<DocumentState> {
+  if (hasValue(state.pieceTable, newContent)) return $proveCtx($beginCost("O(n^2)"), state);
   return $prove(
     "O(n^2)",
     $checked(() =>

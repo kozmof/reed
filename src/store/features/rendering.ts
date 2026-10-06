@@ -31,6 +31,8 @@ import {
 } from "../core/line-index.js";
 import { getText, getRawByte, isUtf8Boundary } from "../core/piece-table.js";
 
+import { iterateLineRange } from "../core/line-index-query.js";
+
 import { lineCharToByte, lineByteToChar } from "../core/line-offsets.js";
 
 // =============================================================================
@@ -250,14 +252,15 @@ export function getVisibleLines(
     charLength: number;
   }> = [];
 
-  for (let lineNum = firstLine; lineNum <= lastLine; lineNum++) {
-    const range = getLineRangePrecise(state.lineIndex, lineNum);
-    const node = findLineByNumber(state.lineIndex.root, lineNum);
-    if (range === null || node === null) continue;
+  for (const { node, lineNumber, startOffset } of iterateLineRange(
+    state.lineIndex.root,
+    firstLine,
+    lastLine,
+  )) {
     requested.push({
-      lineNumber: lineNum,
-      startOffset: range.start,
-      endOffset: addByteOffset(range.start, range.length),
+      lineNumber,
+      startOffset: byteOffset(startOffset),
+      endOffset: byteOffset(startOffset + node.lineLength),
       charLength: node.charLength,
     });
   }
@@ -449,31 +452,39 @@ export function estimateTotalHeight(
   const SAMPLE_SIZE = 100;
   const charsPerLine = Math.floor(config.viewportWidth / config.charWidth);
 
-  if (totalLines <= SAMPLE_SIZE) {
-    // Small document: reuse the rendered line content so LF/CR/CRLF all strip
-    // terminators consistently with getVisibleLine/getLineContent.
-    const renderedLines = getVisibleLines(state, {
-      startLine: 0,
-      visibleLineCount: residentLineCount,
-      overscan: 0,
-    }).lines;
-    let totalHeight = state.lineIndex.unloadedLineCount * config.baseLineHeight;
-    for (const line of renderedLines) {
-      totalHeight += wrappedHeight(line.content.length, charsPerLine, config.baseLineHeight);
+  // Char lengths already include UTF-16 metrics. Only terminator bytes need reading.
+  function heightAt(lineNumber: number): number | null {
+    const node = findLineByNumber(state.lineIndex.root, lineNumber);
+    const range = getLineRangePrecise(state.lineIndex, lineNumber);
+    if (!node || !range) return null;
+    let chars = node.charLength;
+    const end = range.start + range.length;
+    if (range.length > 0) {
+      const last = getRawByte(state.pieceTable, byteOffset(end - 1));
+      if (last === 10 || last === 13) chars--;
+      if (
+        last === 10 &&
+        range.length > 1 &&
+        getRawByte(state.pieceTable, byteOffset(end - 2)) === 13
+      )
+        chars--;
     }
+    return wrappedHeight(chars, charsPerLine, config.baseLineHeight);
+  }
+
+  if (totalLines <= SAMPLE_SIZE) {
+    let totalHeight = state.lineIndex.unloadedLineCount * config.baseLineHeight;
+    for (let i = 0; i < residentLineCount; i++) totalHeight += heightAt(i) ?? 0;
     return $proveCtx($beginCost("O(n)"), totalHeight);
   }
 
-  // Large document: sample evenly-spaced rendered lines so mixed newline styles
-  // contribute the same wrapped height as the visible-line helpers.
   let sampleHeight = 0;
   const step = Math.max(1, Math.floor(residentLineCount / SAMPLE_SIZE));
   let sampledLines = 0;
-
   for (let i = 0; i < residentLineCount; i += step) {
-    const line = getVisibleLine(state, i);
-    if (line !== null) {
-      sampleHeight += wrappedHeight(line.content.length, charsPerLine, config.baseLineHeight);
+    const height = heightAt(i);
+    if (height !== null) {
+      sampleHeight += height;
       sampledLines++;
     }
   }

@@ -279,6 +279,19 @@ function computeSelectionAfterChange(state: DocumentState, change: HistoryChange
   });
 }
 
+// Coalesced entries share their original changes until a consumer requests the array.
+const coalescedTails = new WeakMap<
+  HistoryEntry,
+  {
+    base: readonly HistoryChange[];
+    tail: HistoryChange;
+  }
+>();
+
+function lastHistoryChange(entry: HistoryEntry): HistoryChange | undefined {
+  return coalescedTails.get(entry)?.tail ?? entry.changes[entry.changes.length - 1];
+}
+
 /**
  * Check if a new change can be coalesced with the last history entry.
  * Coalescing merges consecutive same-type changes within a timeout window
@@ -296,10 +309,8 @@ function canCoalesce(
 ): boolean {
   if (timeout <= 0) return false;
   if (now - lastEntry.timestamp > timeout) return false;
-  if (lastEntry.changes.length === 0) return false;
-
-  // Non-empty by the changes.length === 0 guard above.
-  const last = lastEntry.changes[lastEntry.changes.length - 1]!;
+  const last = lastHistoryChange(lastEntry);
+  if (!last) return false;
   if (last.type !== newChange.type) return false;
 
   switch (newChange.type) {
@@ -419,15 +430,20 @@ export function historyPush(
   const lastEntry = pstackPeek(history.undoStack);
   if (lastEntry && canCoalesce(lastEntry, change, history.coalesceTimeout, now)) {
     // canCoalesce returning true guarantees a non-empty changes list.
-    const lastChange = lastEntry.changes[lastEntry.changes.length - 1]!;
+    const lastChange = lastHistoryChange(lastEntry)!;
     const merged = coalesceChanges(lastChange, change);
-    // Preserve earlier changes in the entry; only the tail change is merged.
+    const base = coalescedTails.get(lastEntry)?.base ?? lastEntry.changes;
+    let materialized: readonly HistoryChange[] | undefined;
+    // Preserve the array API while keeping repeated tail updates constant-space.
     const mergedEntry: HistoryEntry = Object.freeze({
-      changes: Object.freeze([...lastEntry.changes.slice(0, -1), merged]),
+      get changes() {
+        return (materialized ??= Object.freeze([...base.slice(0, -1), merged]));
+      },
       selectionBefore: lastEntry.selectionBefore,
       selectionAfter,
       timestamp: now,
     });
+    coalescedTails.set(mergedEntry, { base, tail: merged });
     const [, restUndo] = pstackPop(history.undoStack!);
     return withState(state, {
       history: Object.freeze({

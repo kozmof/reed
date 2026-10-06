@@ -241,3 +241,35 @@ export function collectLines(root: LineIndexNode | null): LinearCost<readonly Li
 
   return $proveCtx($beginCost("O(n)"), result);
 }
+
+/** Visit consecutive lines in O(log L + V), using current subtree aggregates. */
+export function* iterateLineRange(
+  root: LineIndexNode | null,
+  startLine: number,
+  endLine: number,
+): Generator<{ node: LineIndexNode; lineNumber: number; startOffset: number }> {
+  const stack: Array<{ node: LineIndexNode; lineNumber: number; startOffset: number }> = [];
+  let node = root;
+  let firstLine = 0;
+  let offset = 0;
+  while (node || stack.length > 0) {
+    while (node) {
+      const lineNumber = firstLine + (node.left?.subtreeLineCount ?? 0);
+      const startOffset = offset + (node.left?.subtreeByteLength ?? 0);
+      if (lineNumber < startLine) {
+        firstLine = lineNumber + 1;
+        offset = startOffset + node.lineLength;
+        node = node.right;
+      } else {
+        stack.push({ node, lineNumber, startOffset });
+        node = node.left;
+      }
+    }
+    const entry = stack.pop();
+    if (!entry || entry.lineNumber > endLine) return;
+    yield entry;
+    firstLine = entry.lineNumber + 1;
+    offset = entry.startOffset + entry.node.lineLength;
+    node = entry.node.right;
+  }
+}
