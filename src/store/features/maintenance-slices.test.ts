@@ -7,6 +7,7 @@ import { collectLines } from "../core/line-index.js";
 import { createInitialState } from "../core/state.js";
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -27,6 +28,10 @@ function flush(callbacks: Array<IdleRequestCallback>): void {
 describe("idle maintenance slices", () => {
   it("yields, discards stale work, and resolves waiters only on a complete current index", async () => {
     const callbacks = idleQueue();
+    // Slices are bounded by a time budget; advance the clock per read so the
+    // first callback yields before the work is done, independent of CPU speed.
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (now += 0.01));
     const store = createDocumentStore({ content: "abc\n".repeat(6000) });
     store.dispatch(DocumentActions.insert(byteOffset(0), "x"));
     const pending = store.whenReconciled();
@@ -72,9 +77,27 @@ describe("idle maintenance slices", () => {
     flush(callbacks);
     expect(callbacks).toHaveLength(0);
   });
+  it("keeps working past the step cap while the callback has budget", () => {
+    const callbacks = idleQueue();
+    // 0.001 ms per clock read: the 5 ms budget outlasts many step-cap batches.
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (now += 0.001));
+    const store = createDocumentStore({ content: "a\n".repeat(4000) });
+    store.dispatch(DocumentActions.insert(byteOffset(0), "x"));
+    expect(store.getSnapshot().lineIndex.rebuildPending).toBe(true);
+    callbacks.shift()!(deadline);
+    // Shifting every line offset takes well over 1,024 steps, yet one callback finishes it.
+    expect(store.getSnapshot().lineIndex.rebuildPending).toBe(false);
+    expect(callbacks).toHaveLength(0);
+    store.dispose();
+  });
   it("uses prompt continuation timers after the initial fallback delay", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("requestIdleCallback", undefined);
+    // Slices are bounded by a time budget; advance the clock per read so the
+    // first callback yields before the work is done.
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (now += 0.01));
     const store = createDocumentStore({ content: "a\n".repeat(4000) });
     store.dispatch(DocumentActions.insert(byteOffset(0), "x"));
     vi.advanceTimersByTime(200);
