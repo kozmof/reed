@@ -1,5 +1,4 @@
 import { pieceByteRanges } from "../core/decoded-metrics.js";
-import { byteOffset } from "../../types/branded.js";
 import type { DocumentAction } from "../../types/actions.js";
 import type { DocumentState, PieceTableState } from "../../types/state.js";
 import {
@@ -15,10 +14,19 @@ import {
   type LinearCost,
   type QuadCost,
 } from "../../types/cost-doc.js";
-import { getRawByte, getValue } from "../core/piece-table.js";
+import { getValue } from "../core/piece-table.js";
 import { computeSetValueActions } from "./text-diff.js";
 import { streamingReplacement } from "./streaming-replacement.js";
 import { documentReducer } from "./reducer.js";
+
+/**
+ * True when `text` equals `text.slice(offset)` up to `part`. Equivalent to
+ * `text.startsWith(part, offset)`, which V8 compares char by char; slicing
+ * makes a view without copying, and === compares it natively.
+ */
+function matchesAt(text: string, part: string, offset: number): boolean {
+  return text.slice(offset, offset + part.length) === part;
+}
 
 /** Compare with bounded temporary storage instead of materializing the document. */
 function hasValue(state: PieceTableState, text: string): boolean {
@@ -30,12 +38,12 @@ function hasValue(state: PieceTableState, text: string): boolean {
         range.bytes.subarray(start, Math.min(range.end, start + 65536)),
         { stream: true },
       );
-      if (!text.startsWith(content, offset)) return false;
+      if (!matchesAt(text, content, offset)) return false;
       offset += content.length;
     }
   }
   const tail = decoder.decode();
-  return text.startsWith(tail, offset) && offset + tail.length === text.length;
+  return matchesAt(text, tail, offset) && offset + tail.length === text.length;
 }
 
 function applyDocumentActions(
@@ -157,16 +165,11 @@ export function computeSetValueActionsFromState(
   pieceTable: PieceTableState,
   newContent: string,
 ): LinearCost<DocumentAction[]> {
-  // Chunk bytes may be malformed, and the public decoder strips a leading BOM.
-  // Preserve decoded-value no-ops before comparing raw bytes in these cases.
-  const needsDecodedComparison =
-    pieceTable.chunkMap.size > 0 ||
-    (pieceTable.totalLength >= 3 &&
-      getRawByte(pieceTable, byteOffset(0)) === 0xef &&
-      getRawByte(pieceTable, byteOffset(1)) === 0xbb &&
-      getRawByte(pieceTable, byteOffset(2)) === 0xbf);
-  if (needsDecodedComparison && hasValue(pieceTable, newContent))
-    return $proveCtx($beginCost("O(n)"), []);
+  // Check for a no-op first, for every document. The decoded comparison runs
+  // natively and stops at the first differing block, so it is far cheaper than
+  // the byte-level scan below. It also preserves decoded-value no-ops where raw
+  // bytes differ: malformed chunk bytes, and a leading BOM the decoder strips.
+  if (hasValue(pieceTable, newContent)) return $proveCtx($beginCost("O(n)"), []);
   return $proveCtx($beginCost("O(n)"), streamingReplacement(pieceTable, newContent));
 }
 

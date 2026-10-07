@@ -14,6 +14,8 @@ import {
   resolveAttention,
 } from "../core/attention.js";
 import { getVisibleLines, lineColumnToPosition, positionToLineColumn } from "./rendering.js";
+import { setValue } from "./set-value.js";
+import * as replacement from "./streaming-replacement.js";
 import {
   assertLineIndexInvariants,
   assertLineIndexRedBlackProperties,
@@ -329,4 +331,21 @@ it("reuses annotation query indexes and isolates edited and deleted snapshots", 
   const removed = deleteAttention(edited.attentionState, ids[5000]!);
   expect(findAttentionsAt(removed, edited.pieceTableState.root, 15005)).toEqual([]);
   expect(findAttentionsAt(layer, table.root, 15000)).toEqual([ids[5000]]);
+});
+
+it("detects an unchanged setValue without the byte-level replacement scan", () => {
+  let state = createInitialState({ content: "line 😀\n".repeat(5_000) });
+  for (let i = 0; i < 200; i++) {
+    // Each line is 10 bytes; earlier inserts shift line starts by one each.
+    state = documentReducer(state, DocumentActions.insert(byteOffset(i * 101), "x"));
+  }
+  const content = pieces.getValue(state.pieceTable);
+  const scan = vi.spyOn(replacement, "streamingReplacement");
+
+  expect(setValue(state, content)).toBe(state);
+  expect(scan).not.toHaveBeenCalled();
+
+  const changed = setValue(state, content.slice(0, -1));
+  expect(scan).toHaveBeenCalledTimes(1);
+  expect(pieces.getValue(changed.pieceTable)).toBe(content.slice(0, -1));
 });

@@ -98,3 +98,38 @@ it("preserves raw byte offsets across split and malformed chunk sequences", () =
   const bom = createInitialState({ content: "\uFEFFhello" });
   expect(setValue(bom, "hello")).toBe(bom);
 });
+
+it("matches exact replacement boundaries on fragmented documents larger than one scan chunk", () => {
+  vi.spyOn(Date, "now").mockReturnValue(1);
+  let seed = 977;
+  const next = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0);
+  const alphabet = ["a", "b", "\n", "\r\n", "漢", "😀", "😂", "é"];
+  const randomText = (count: number) =>
+    Array.from({ length: count }, () => alphabet[next() % alphabet.length]).join("");
+  for (let round = 0; round < 40; round++) {
+    const original = "x" + randomText(20_000); // ~40k UTF-16 units across chunks
+    let state = createInitialState({ content: original });
+    // Fragment the table without changing its value.
+    for (let i = 0; i < 30; i++) {
+      const at = byteOffset(pieces.getLength(state.pieceTable) - 1 - (next() % 1000));
+      if (!pieces.isUtf8Boundary(state.pieceTable, at)) continue;
+      state = documentReducer(state, DocumentActions.insert(at, "zz"));
+      state = documentReducer(state, DocumentActions.delete(at, byteOffset(at + 2)));
+    }
+    const oldText = pieces.getValue(state.pieceTable);
+    // Edit at the ends, at the 16k scan-chunk seams, or anywhere.
+    const anchors = [0, oldText.length, 16384, 16383, 32768, next() % oldText.length];
+    let at = anchors[next() % anchors.length]!;
+    if (at > 0 && at < oldText.length && /[\udc00-\udfff]/.test(oldText[at]!)) at--;
+    const removed = next() % 4 === 0 ? 0 : next() % 50;
+    let cut = Math.min(oldText.length, at + removed);
+    if (cut < oldText.length && /[\udc00-\udfff]/.test(oldText[cut]!)) cut++;
+    const desired = oldText.slice(0, at) + randomText(next() % 30) + oldText.slice(cut);
+
+    const actions = computeSetValueActionsFromState(state.pieceTable, desired);
+    let result = state;
+    for (const action of actions) result = documentReducer(result, action);
+    expect(pieces.getValue(result.pieceTable), `round ${round}`).toBe(desired);
+    expect(actions, `round ${round}`).toEqual(computeSetValueActionsOptimized(oldText, desired));
+  }
+});
