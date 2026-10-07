@@ -49,6 +49,7 @@ import {
 } from "../core/state.js";
 import { decodeBase64 } from "../core/base64.js";
 import { inOrderPieces } from "../core/piece-table-stream.js";
+import { decodedCharLength, joinDecoded, type DecodedSummary } from "../core/decoded-metrics.js";
 import { utf8ByteLength } from "../core/encoding.js";
 import { GrowableBuffer } from "../core/growable-buffer.js";
 import {
@@ -486,27 +487,52 @@ function restorePieceTable(
 
 /** Validate line metrics against resident bytes without flattening the document. */
 function validateLineContent(pieceTable: PieceTableState, lines: readonly LineDescriptor[]): void {
-  // Preserve U+FEFF as document content, including at the start of each line.
-  const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+  // Count UTF-16 units arithmetically with the decoder's replacement rules,
+  // keeping U+FEFF as content, in the same pass that finds line breaks. An
+  // ASCII segment has one unit per byte and needs no counting. A code point
+  // can be split across chunk pieces; joinDecoded corrects counts at seams
+  // between non-ASCII segments. An ASCII byte ends any pending sequence, so it
+  // also ends the seam. Decoding each line natively cost two TextDecoder
+  // calls per line plus a separate scan.
   let lineIndex = 0;
-  let byteLength = 0;
-  let charLength = 0;
+  let lineBytes = 0;
+  let lineChars = 0;
+  let seam: DecodedSummary | null = null;
   let pendingCR = false;
 
-  function consume(bytes: Uint8Array): void {
-    byteLength += bytes.length;
-    charLength += decoder.decode(bytes, { stream: true }).length;
+  function consume(bytes: Uint8Array, start: number, end: number, ascii: boolean): void {
+    if (start >= end) return;
+    lineBytes += end - start;
+    if (ascii) {
+      lineChars += end - start;
+      seam = null;
+      return;
+    }
+    const segment: DecodedSummary = {
+      length: end - start,
+      chars: decodedCharLength(bytes, start, end),
+      head: bytes.subarray(start, Math.min(start + 3, end)),
+      tail: bytes.subarray(Math.max(start, end - 3), end),
+    };
+    if (seam) {
+      const joined = joinDecoded(seam, segment);
+      lineChars += joined.chars - seam.chars;
+      seam = joined;
+    } else {
+      lineChars += segment.chars;
+      seam = segment;
+    }
   }
 
   function finishLine(): void {
-    charLength += decoder.decode().length;
     const line = lines[lineIndex];
-    if (line === undefined || line.length !== byteLength || line.charLength !== charLength) {
+    if (line === undefined || line.length !== lineBytes || line.charLength !== lineChars) {
       fail("LINE_INDEX_MISMATCH", `lineIndex.lines[${lineIndex}] disagrees with document content`);
     }
     lineIndex++;
-    byteLength = 0;
-    charLength = 0;
+    lineBytes = 0;
+    lineChars = 0;
+    seam = null;
   }
 
   for (const { piece } of inOrderPieces(pieceTable.root)) {
@@ -519,26 +545,30 @@ function validateLineContent(pieceTable: PieceTableState, lines: readonly LineDe
     );
     const end = piece.start + piece.length;
     let start: number = piece.start;
+    let ascii = true;
     for (let i = start; i < end; i++) {
-      const byte = buffer[i];
+      const byte = buffer[i]!;
       if (pendingCR) {
         pendingCR = false;
         if (byte === 0x0a) {
-          consume(buffer.subarray(start, i + 1));
+          consume(buffer, start, i + 1, true);
           finishLine();
           start = i + 1;
           continue;
         }
         finishLine();
       }
-      if (byte === 0x0d || byte === 0x0a) {
-        consume(buffer.subarray(start, i + 1));
+      if (byte >= 0x80) {
+        ascii = false;
+      } else if (byte === 0x0d || byte === 0x0a) {
+        consume(buffer, start, i + 1, ascii);
         start = i + 1;
+        ascii = true;
         if (byte === 0x0d) pendingCR = true;
         else finishLine();
       }
     }
-    consume(buffer.subarray(start, end));
+    consume(buffer, start, end, ascii);
   }
   if (pendingCR) finishLine();
   finishLine(); // Every document includes a final line, even after a newline.

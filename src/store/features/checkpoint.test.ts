@@ -42,6 +42,7 @@ import {
 } from "../core/attention.js";
 import { createInitialState } from "../core/state.js";
 import { textEncoder } from "../core/encoding.js";
+import { makeDeterministicRng } from "../../../test-utils/large-content.js";
 
 const { insert, delete: del, replace, setSelection, undo, redo } = DocumentActions;
 
@@ -1238,6 +1239,62 @@ describe("checkpoint line content validation", () => {
     );
     const state = store.getEagerSnapshot();
     expectSameDocument(restoreCheckpoint(createCheckpoint(state)), state);
+  });
+
+  it("validates line metrics like the decoder for malformed bytes split across random chunks", () => {
+    // Fragments mix terminators, valid and malformed UTF-8, and BOMs.
+    const fragments = [
+      [0x61], [0x0d], [0x0a], [0x0d, 0x0a], [0xef, 0xbb, 0xbf],
+      [0xc3, 0xa9], [0xe6, 0x97, 0xa5], [0xf0, 0x9f, 0x8e, 0x89],
+      [0x80], [0xbf], [0xc3], [0xe6, 0x97], [0xf0, 0x9f], [0xed, 0xa0, 0x80], [0xff],
+    ];
+    const rng = makeDeterministicRng(2026);
+    for (let round = 0; round < 60; round++) {
+      const bytes: number[] = [];
+      while (bytes.length < 200) bytes.push(...fragments[Math.floor(rng() * fragments.length)]!);
+      const chunkSize = 1 + Math.floor(rng() * 7);
+      const chunks = [];
+      for (let i = 0; i * chunkSize < bytes.length; i++) {
+        chunks.push({
+          chunkIndex: i,
+          data: new Uint8Array(bytes.slice(i * chunkSize, (i + 1) * chunkSize)),
+        });
+      }
+      const store = createDocumentStore({ chunkSize, reconcileMode: "none" });
+      store.dispatch(DocumentActions.loadChunks(chunks));
+      const checkpoint = createCheckpoint(store.getEagerSnapshot());
+
+      // Reference: split raw bytes at CR, LF and CRLF, then decode each line alone.
+      const expected: Array<[number, number]> = [];
+      let start = 0;
+      for (let i = 0; i <= bytes.length; i++) {
+        const atEnd = i === bytes.length;
+        const isBreak = !atEnd && (bytes[i] === 0x0a || bytes[i] === 0x0d);
+        if (!atEnd && !isBreak) continue;
+        const end = !atEnd && bytes[i] === 0x0d && bytes[i + 1] === 0x0a ? i + 2 : atEnd ? i : i + 1;
+        const line = new Uint8Array(bytes.slice(start, end));
+        const chars = new TextDecoder("utf-8", { ignoreBOM: true }).decode(line).length;
+        expected.push([line.length, chars]);
+        start = end;
+        i = end - 1;
+        if (atEnd) break;
+      }
+      // Validate against the decoder reference, not the store's own line index.
+      const draft = clone(checkpoint);
+      draft.lineIndex.lines = expected;
+      const restored = restoreCheckpoint(draft);
+      // getValue strips a leading BOM, as the default decoder does.
+      expect(getValue(restored.pieceTable)).toBe(new TextDecoder().decode(new Uint8Array(bytes)));
+
+      const target = Math.floor(rng() * expected.length);
+      expectRejection(
+        draft,
+        (corrupt) => {
+          corrupt.lineIndex.lines[target]![1] += 1;
+        },
+        "LINE_INDEX_MISMATCH",
+      );
+    }
   });
 });
 
