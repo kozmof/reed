@@ -14,14 +14,24 @@ export function repairChunkLines(
   insertedLength: number,
   revision: number,
 ): LineIndexState {
+  // Metrics are counted separately on each side of `from` and `to`, so no
+  // sequence may cross them. A seam is safe on a non-continuation byte, or on
+  // a continuation byte whose three predecessors are continuation bytes: a
+  // lead claims at most three, so none can reach it. Malformed input can hold
+  // longer continuation runs; stopping inside one after three steps could
+  // split a sequence that starts before the run.
   let from = Math.max(0, start - 3);
   let to = Math.min(previous.totalLength, end + 3);
-  for (
-    let i = 0;
-    i < 3 && from > 0 && (getRawByte(previous, byteOffset(from)) & 0xc0) === 0x80;
-    i++
-  )
-    from--;
+  const isContinuation = (offset: number) =>
+    (getRawByte(previous, byteOffset(offset)) & 0xc0) === 0x80;
+  // Step back to a non-continuation byte (or the document start) within three
+  // bytes. If all four bytes are continuations, `from` itself is already safe.
+  for (let k = 0; k <= 3; k++) {
+    if (from - k === 0 || !isContinuation(from - k)) {
+      from -= k;
+      break;
+    }
+  }
   for (
     let i = 0;
     i < 3 && to < previous.totalLength && (getRawByte(previous, byteOffset(to)) & 0xc0) === 0x80;
