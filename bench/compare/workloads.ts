@@ -4,14 +4,19 @@
  * Every workload touches Reed only through the public module object passed in
  * as `R`, so the same code drives any built `dist/reed.js`. A workload's
  * `prepare` builds a fresh fixture outside the timed interval; `run` is the
- * timed work and returns a checksum that must match across versions, which
- * proves both versions did the same work.
+ * timed work. It returns a checksum that must match across versions, which
+ * proves both versions did the same work. Return a function when computing the
+ * checksum costs real work (e.g. reading the document back): the worker calls
+ * it after the timer stops, so the checksum never pollutes the measurement.
  */
 
 import type * as Reed from "../../src/index.ts";
 import { generateLargeContent, makeDeterministicRng } from "../../test-utils/large-content.ts";
 
 export type ReedModule = typeof Reed;
+
+/** A checksum, or a thunk the worker evaluates outside the timed interval. */
+export type Checksum = string | (() => string);
 
 export interface Workload<F = any> {
   /** Stable identifier used on the command line and in reports. */
@@ -25,7 +30,7 @@ export interface Workload<F = any> {
   /** Set when the versions legitimately produce different output; explains why. */
   readonly outputMayDiffer?: string;
   prepare(R: ReedModule, size: number): F;
-  run(R: ReedModule, fixture: F, size: number): string | Promise<string>;
+  run(R: ReedModule, fixture: F, size: number): Checksum | Promise<Checksum>;
   cleanup?(fixture: F): void;
 }
 
@@ -107,7 +112,7 @@ export const workloads: readonly Workload[] = [
     prepare: (R, n) => store(R, prose(n)),
     run(R, s) {
       fragment(R, s, 1_000, 7);
-      return docChecksum(R, s.getSnapshot());
+      return () => docChecksum(R, s.getSnapshot());
     },
     cleanup: disposeStore,
   },
@@ -128,7 +133,7 @@ export const workloads: readonly Workload[] = [
         const start = Math.floor(rng() * (len - 2));
         s.dispatch(R.store.DocumentActions.delete(off(start), off(start + 1), undefined, 0));
       }
-      return docChecksum(R, s.getSnapshot());
+      return () => docChecksum(R, s.getSnapshot());
     },
     cleanup: disposeStore,
   },
@@ -150,7 +155,7 @@ export const workloads: readonly Workload[] = [
         const start = Math.floor(rng() * (len - span));
         s.dispatch(R.store.DocumentActions.delete(off(start), off(start + span), undefined, 0));
       }
-      return docChecksum(R, s.getSnapshot());
+      return () => docChecksum(R, s.getSnapshot());
     },
     cleanup: disposeStore,
   },
@@ -166,7 +171,7 @@ export const workloads: readonly Workload[] = [
         actions.push(R.store.DocumentActions.insert(off(i * 37), "y", undefined, 0));
       }
       s.batch(actions);
-      return docChecksum(R, s.getSnapshot());
+      return () => docChecksum(R, s.getSnapshot());
     },
     cleanup: disposeStore,
   },
@@ -181,7 +186,8 @@ export const workloads: readonly Workload[] = [
       return s;
     },
     run(R, s) {
-      return hash(R.scan.getValue(s.getSnapshot().pieceTable));
+      const value = R.scan.getValue(s.getSnapshot().pieceTable);
+      return () => hash(value);
     },
     cleanup: disposeStore,
   },
@@ -196,7 +202,10 @@ export const workloads: readonly Workload[] = [
       const next = content.slice(0, mid) + "CHANGED" + content.slice(mid + 40);
       return { state: R.store.createDocumentStore({ content }).getSnapshot(), next };
     },
-    run: (R, f) => docChecksum(R, R.diff.setValue(f.state, f.next)),
+    run(R, f) {
+      const next = R.diff.setValue(f.state, f.next);
+      return () => docChecksum(R, next);
+    },
   },
   {
     name: "setValue-unchanged",
@@ -208,7 +217,10 @@ export const workloads: readonly Workload[] = [
       // Copy so identity shortcuts cannot skip the comparison.
       return { state: R.store.createDocumentStore({ content }).getSnapshot(), next: (" " + content).slice(1) };
     },
-    run: (R, f) => docChecksum(R, R.diff.setValue(f.state, f.next)),
+    run(R, f) {
+      const next = R.diff.setValue(f.state, f.next);
+      return () => docChecksum(R, next);
+    },
   },
   {
     name: "setValueWithDiff",
@@ -224,7 +236,10 @@ export const workloads: readonly Workload[] = [
         next: lines.join("\n"),
       };
     },
-    run: (R, f) => docChecksum(R, R.diff.setValueWithDiff(f.state, f.next)),
+    run(R, f) {
+      const next = R.diff.setValueWithDiff(f.state, f.next);
+      return () => docChecksum(R, next);
+    },
   },
   {
     name: "reconcile",
@@ -341,7 +356,7 @@ export const workloads: readonly Workload[] = [
     run(R, s) {
       for (let i = 0; i < 300; i++) s.dispatch(R.store.DocumentActions.undo());
       for (let i = 0; i < 300; i++) s.dispatch(R.store.DocumentActions.redo());
-      return docChecksum(R, s.getSnapshot());
+      return () => docChecksum(R, s.getSnapshot());
     },
     cleanup: disposeStore,
   },
@@ -368,7 +383,7 @@ export const workloads: readonly Workload[] = [
         if (i % 2 === 0) s.dispatch(R.store.DocumentActions.insert(off(p), "zz", undefined, 0));
         else s.dispatch(R.store.DocumentActions.delete(off(p), off(p + 3), undefined, 0));
       }
-      return docChecksum(R, s.getSnapshot());
+      return () => docChecksum(R, s.getSnapshot());
     },
     cleanup: disposeStore,
   },
@@ -434,7 +449,7 @@ export const workloads: readonly Workload[] = [
         }
         s.dispatch(R.store.DocumentActions.applyRemote(changes));
       }
-      return docChecksum(R, s.getSnapshot());
+      return () => docChecksum(R, s.getSnapshot());
     },
     cleanup: disposeStore,
   },
@@ -474,7 +489,8 @@ export const workloads: readonly Workload[] = [
     },
     run(R, state) {
       const json = R.checkpoint.encode(state);
-      return docChecksum(R, R.checkpoint.decode(json));
+      const restored = R.checkpoint.decode(json);
+      return () => docChecksum(R, restored);
     },
   },
 ];

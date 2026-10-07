@@ -16,7 +16,7 @@
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { getHeapStatistics } from "node:v8";
-import { findWorkload, type ReedModule } from "./workloads.ts";
+import { findWorkload, type Checksum, type ReedModule } from "./workloads.ts";
 
 export interface WorkerResult {
   workload: string;
@@ -65,7 +65,7 @@ const result: WorkerResult = {
 };
 
 // Keeps the latest output alive until its retained size is measured.
-let sink: unknown;
+let sink: Checksum | undefined;
 
 for (let i = 0; i < warmup + samples; i++) {
   if (result.times.length >= MIN_SAMPLES && spentMs > budgetMs) break;
@@ -81,7 +81,7 @@ for (let i = 0; i < warmup + samples; i++) {
   gc();
   const after = heapUsed();
 
-  const checksum = String(sink);
+  const checksum = typeof sink === "function" ? sink() : sink;
   if (result.checksum && result.checksum !== checksum) {
     throw new Error(`non-deterministic checksum: ${result.checksum} vs ${checksum}`);
   }
