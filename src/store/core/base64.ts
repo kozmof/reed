@@ -3,8 +3,10 @@
  *
  * Reed serializes raw buffers (chunk data in `LOAD_CHUNK`, the original/add/chunk
  * buffers in a checkpoint) as base64 so the surrounding envelope stays plain JSON.
- * The implementation is self-contained rather than relying on `btoa`/`Buffer`,
- * which are not both available across the runtimes Reed targets.
+ * The implementation does not rely on `btoa`/`Buffer`, which are not both
+ * available across the runtimes Reed targets. Encoding uses the standard
+ * `Uint8Array.prototype.toBase64` when present and a self-contained fallback
+ * otherwise.
  */
 
 const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -17,41 +19,44 @@ const BASE64_DECODE_TABLE = (() => {
   return table;
 })();
 
-/** Encode bytes as a standard, padded base64 string. */
-export function encodeBase64(bytes: Uint8Array): string {
-  const chunks: string[] = [];
-  let output = "";
-  let i = 0;
+const BASE64_CODES = Uint8Array.from(BASE64_ALPHABET, (char) => char.charCodeAt(0));
+const PADDING = 0x3d; // "="
+const asciiDecoder = new TextDecoder();
 
+type MaybeNativeBase64 = Uint8Array & { toBase64?: () => string };
+
+/**
+ * Encode bytes as a standard, padded base64 string.
+ *
+ * Uses the native `Uint8Array.prototype.toBase64` where the runtime has it.
+ * Otherwise writes ASCII codes into one buffer and decodes it once, which
+ * avoids building the output through per-character string concatenation.
+ */
+export function encodeBase64(bytes: Uint8Array): string {
+  const native = (bytes as MaybeNativeBase64).toBase64;
+  if (typeof native === "function") return native.call(bytes);
+
+  const out = new Uint8Array(Math.ceil(bytes.length / 3) * 4);
+  let i = 0;
+  let o = 0;
   for (; i + 2 < bytes.length; i += 3) {
     const triplet = (bytes[i]! << 16) | (bytes[i + 1]! << 8) | bytes[i + 2]!;
-    output +=
-      BASE64_ALPHABET[(triplet >> 18) & 0x3f]! +
-      BASE64_ALPHABET[(triplet >> 12) & 0x3f]! +
-      BASE64_ALPHABET[(triplet >> 6) & 0x3f]! +
-      BASE64_ALPHABET[triplet & 0x3f]!;
-    if (output.length >= 8192) {
-      chunks.push(output);
-      output = "";
-    }
+    out[o++] = BASE64_CODES[(triplet >> 18) & 0x3f]!;
+    out[o++] = BASE64_CODES[(triplet >> 12) & 0x3f]!;
+    out[o++] = BASE64_CODES[(triplet >> 6) & 0x3f]!;
+    out[o++] = BASE64_CODES[triplet & 0x3f]!;
   }
 
   const remaining = bytes.length - i;
-  if (remaining === 1) {
-    const triplet = bytes[i]! << 16;
-    output +=
-      BASE64_ALPHABET[(triplet >> 18) & 0x3f]! + BASE64_ALPHABET[(triplet >> 12) & 0x3f]! + "==";
-  } else if (remaining === 2) {
-    const triplet = (bytes[i]! << 16) | (bytes[i + 1]! << 8);
-    output +=
-      BASE64_ALPHABET[(triplet >> 18) & 0x3f]! +
-      BASE64_ALPHABET[(triplet >> 12) & 0x3f]! +
-      BASE64_ALPHABET[(triplet >> 6) & 0x3f]! +
-      "=";
+  if (remaining > 0) {
+    const triplet = (bytes[i]! << 16) | (remaining === 2 ? bytes[i + 1]! << 8 : 0);
+    out[o++] = BASE64_CODES[(triplet >> 18) & 0x3f]!;
+    out[o++] = BASE64_CODES[(triplet >> 12) & 0x3f]!;
+    out[o++] = remaining === 2 ? BASE64_CODES[(triplet >> 6) & 0x3f]! : PADDING;
+    out[o++] = PADDING;
   }
 
-  chunks.push(output);
-  return chunks.join("");
+  return asciiDecoder.decode(out);
 }
 
 function decodeBase64Char(base64: string, index: number): number {
