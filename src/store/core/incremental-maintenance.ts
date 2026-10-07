@@ -37,30 +37,64 @@ export function* reconcileIncrementally(
     }
     return lo < ranges.length && ranges[lo]!.startLine < end;
   }
-  function* visit(
-    node: LineIndexNode | null,
-    offset: number,
-    first: number,
-  ): Generator<void, LineIndexNode | null> {
-    if (!node || !intersects(first, first + node.subtreeLineCount)) return node;
-    yield;
-    const cached = cache.get(node);
-    if (cached?.offset === offset) return cached.root;
-    const left = yield* visit(node.left, offset, first);
-    const documentOffset = offset + (node.left?.subtreeByteLength ?? 0);
-    const right = yield* visit(
-      node.right,
-      documentOffset + node.lineLength,
-      first + (node.left?.subtreeLineCount ?? 0) + 1,
-    );
+  // Post-order walk with an explicit stack. Nested generators cost one object
+  // per node, and every resume re-entered a yield* chain as deep as the tree.
+  // One yield per visited dirty node is unchanged, in the same order.
+  interface Frame {
+    node: LineIndexNode;
+    offset: number;
+    first: number;
+    /** Result of the left subtree; undefined until it completes. */
+    left: LineIndexNode | null | undefined;
+  }
+  const stack: Frame[] = [];
+  let returned: LineIndexNode | null = null;
+  let hasPending = true;
+  let pendingNode: LineIndexNode | null = state.root;
+  let pendingOffset = 0;
+  let pendingFirst = 0;
+  while (true) {
+    if (hasPending) {
+      hasPending = false;
+      const node = pendingNode;
+      if (!node || !intersects(pendingFirst, pendingFirst + node.subtreeLineCount)) {
+        returned = node;
+      } else {
+        yield;
+        const cached = cache.get(node);
+        if (cached?.offset === pendingOffset) {
+          returned = cached.root;
+        } else {
+          stack.push({ node, offset: pendingOffset, first: pendingFirst, left: undefined });
+          hasPending = true;
+          pendingNode = node.left;
+          continue;
+        }
+      }
+    }
+    const frame = stack[stack.length - 1];
+    if (!frame) break;
+    const { node } = frame;
+    const documentOffset = frame.offset + (node.left?.subtreeByteLength ?? 0);
+    if (frame.left === undefined) {
+      frame.left = returned;
+      hasPending = true;
+      pendingNode = node.right;
+      pendingOffset = documentOffset + node.lineLength;
+      pendingFirst = frame.first + (node.left?.subtreeLineCount ?? 0) + 1;
+      continue;
+    }
+    stack.pop();
+    const { left } = frame;
+    const right = returned;
     const root =
       left === node.left && right === node.right && documentOffset === node.documentOffset
         ? node
         : withLineIndexNodeOffsets(node, { left, right, documentOffset });
-    cache.set(node, { offset, root });
-    return root;
+    cache.set(node, { offset: frame.offset, root });
+    returned = root;
   }
-  const root = yield* visit(state.root, 0, 0);
+  const root = returned;
   return asEagerLineIndex(
     withLineIndexState(state, {
       root,
