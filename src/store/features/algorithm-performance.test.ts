@@ -12,24 +12,28 @@ import { DocumentActions } from "./actions.js";
 
 afterEach(() => vi.restoreAllMocks());
 
-it.each([1, 120])("estimates %i long lines without decoding their contents", (count) => {
-  const line = "漢😀".repeat(100_000);
-  const state = createInitialState({ content: Array(count).fill(line).join("\r\n") });
-  const reads = vi.spyOn(pieces, "getText");
-  const bytes = vi.spyOn(pieces, "getRawByte");
-  expect(
-    estimateTotalHeight(state, {
-      baseLineHeight: 20,
-      charWidth: 1,
-      viewportWidth: 100,
-      softWrap: true,
-    }),
-  ).toBe(count * 3000 * 20);
-  expect(reads).not.toHaveBeenCalled();
-  expect(bytes.mock.calls.length).toBeLessThanOrEqual(count * 2);
-  // Building ~84 MB of fixture text dominates; under v8 coverage on CI it
-  // exceeds the default 5s even though the estimate itself is near-instant.
-}, 30_000);
+it.each([1, 120])(
+  "estimates %i long lines without decoding their contents",
+  (count) => {
+    const line = "漢😀".repeat(100_000);
+    const state = createInitialState({ content: Array(count).fill(line).join("\r\n") });
+    const reads = vi.spyOn(pieces, "getText");
+    const bytes = vi.spyOn(pieces, "getRawByte");
+    expect(
+      estimateTotalHeight(state, {
+        baseLineHeight: 20,
+        charWidth: 1,
+        viewportWidth: 100,
+        softWrap: true,
+      }),
+    ).toBe(count * 3000 * 20);
+    expect(reads).not.toHaveBeenCalled();
+    expect(bytes.mock.calls.length).toBeLessThanOrEqual(count * 2);
+    // Building ~84 MB of fixture text dominates; under v8 coverage on CI it
+    // exceeds the default 5s even though the estimate itself is near-instant.
+  },
+  30_000,
+);
 
 it("preserves mixed terminator, Unicode, and dirty-index viewport behavior", () => {
   let state = createInitialState({ content: "a\r\n漢😀\rb\n\nlast" });
