@@ -154,60 +154,70 @@ function createStoreOverState(
   let compactWorkspace: CompactionWorkspace | null = null;
   let preferCompaction = false;
 
+  /** Advance one maintenance job by one bounded step batch, alternating jobs. */
+  function runMaintenanceSlice(shouldYield: () => boolean): void {
+    const compactPending = needsCompaction();
+    if (!compactPending) {
+      compactJob = null;
+      compactWorkspace = null;
+    }
+    const runCompaction =
+      compactPending && (preferCompaction || !state.lineIndex.rebuildPending);
+    preferCompaction = !runCompaction;
+    if (state.lineIndex.rebuildPending && !runCompaction) {
+      if (!lineJob || lineJob.source !== state.lineIndex) {
+        lineJob = {
+          source: state.lineIndex,
+          work: reconcileIncrementally(state.lineIndex, state.revision, lineCache),
+        };
+      }
+      const job = lineJob;
+      const result = advanceMaintenance(job.work, shouldYield);
+      if (result.done && job.source === state.lineIndex) {
+        lineJob = null;
+        lineCache = new WeakMap();
+        setState(withState(state, { lineIndex: result.value }));
+        notifyListeners();
+      }
+    } else if (runCompaction) {
+      if (!compactJob || compactJob.source !== state.pieceTable) {
+        // Interrupted jobs can reserve spans later deleted by an edit.
+        // Bound retained scratch space before resuming on the new tree.
+        const used = state.pieceTable.root?.subtreeAddLength ?? 0;
+        if (
+          compactWorkspace &&
+          (compactWorkspace.length > Math.max(used * 2, 65536) ||
+            compactWorkspace.pages.length * 65536 > Math.max(used * 4, 65536))
+        )
+          compactWorkspace = null;
+        compactWorkspace ??= createCompactionWorkspace(state.pieceTable);
+        compactJob = {
+          source: state.pieceTable,
+          work: compactIncrementally(state.pieceTable, compactWorkspace),
+        };
+      }
+      const job = compactJob;
+      const result = advanceMaintenance(job.work, shouldYield);
+      if (result.done && job.source === state.pieceTable) {
+        compactJob = null;
+        compactWorkspace = null;
+        setState(withState(state, { pieceTable: result.value }));
+        notifyListeners();
+      }
+    }
+  }
+
   const schedulerOptions: ReconciliationSchedulerOptions = {
     hasPendingWork: () => !disposed && (state.lineIndex.rebuildPending || needsCompaction()),
     shouldDefer: () => transaction.isActive,
     performWork(shouldYield) {
       if (shouldYield) {
-        const compactPending = needsCompaction();
-        if (!compactPending) {
-          compactJob = null;
-          compactWorkspace = null;
-        }
-        const runCompaction =
-          compactPending && (preferCompaction || !state.lineIndex.rebuildPending);
-        preferCompaction = !runCompaction;
-        if (state.lineIndex.rebuildPending && !runCompaction) {
-          if (!lineJob || lineJob.source !== state.lineIndex) {
-            lineJob = {
-              source: state.lineIndex,
-              work: reconcileIncrementally(state.lineIndex, state.revision, lineCache),
-            };
-          }
-          const job = lineJob;
-          const result = advanceMaintenance(job.work, shouldYield);
-          if (result.done && job.source === state.lineIndex) {
-            lineJob = null;
-            lineCache = new WeakMap();
-            setState(withState(state, { lineIndex: result.value }));
-            notifyListeners();
-          }
-        } else if (runCompaction) {
-          if (!compactJob || compactJob.source !== state.pieceTable) {
-            // Interrupted jobs can reserve spans later deleted by an edit.
-            // Bound retained scratch space before resuming on the new tree.
-            const used = state.pieceTable.root?.subtreeAddLength ?? 0;
-            if (
-              compactWorkspace &&
-              (compactWorkspace.length > Math.max(used * 2, 65536) ||
-                compactWorkspace.pages.length * 65536 > Math.max(used * 4, 65536))
-            )
-              compactWorkspace = null;
-            compactWorkspace ??= createCompactionWorkspace(state.pieceTable);
-            compactJob = {
-              source: state.pieceTable,
-              work: compactIncrementally(state.pieceTable, compactWorkspace),
-            };
-          }
-          const job = compactJob;
-          const result = advanceMaintenance(job.work, shouldYield);
-          if (result.done && job.source === state.pieceTable) {
-            compactJob = null;
-            compactWorkspace = null;
-            setState(withState(state, { pieceTable: result.value }));
-            notifyListeners();
-          }
-        }
+        // A slice stops at advanceMaintenance's step cap, often after about
+        // 1 ms. Keep slicing until the time budget is spent, so each callback
+        // is not followed by a timer gap after a fraction of its budget.
+        do {
+          runMaintenanceSlice(shouldYield);
+        } while (schedulerOptions.hasPendingWork() && !transaction.isActive && !shouldYield());
         return schedulerOptions.hasPendingWork();
       }
       lineJob = null;
