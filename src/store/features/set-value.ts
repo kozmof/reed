@@ -1,3 +1,5 @@
+import { pieceByteRanges } from "../core/decoded-metrics.js";
+import { byteOffset } from "../../types/branded.js";
 import type { DocumentAction } from "../../types/actions.js";
 import type { DocumentState, PieceTableState } from "../../types/state.js";
 import {
@@ -13,18 +15,27 @@ import {
   type LinearCost,
   type QuadCost,
 } from "../../types/cost-doc.js";
-import { getValue, getValueStream } from "../core/piece-table.js";
-import { computeSetValueActions, computeSetValueActionsOptimized } from "./text-diff.js";
+import { getRawByte, getValue } from "../core/piece-table.js";
+import { computeSetValueActions } from "./text-diff.js";
+import { streamingReplacement } from "./streaming-replacement.js";
 import { documentReducer } from "./reducer.js";
 
 /** Compare with bounded temporary storage instead of materializing the document. */
 function hasValue(state: PieceTableState, text: string): boolean {
+  const decoder = new TextDecoder();
   let offset = 0;
-  for (const chunk of getValueStream(state)) {
-    if (!text.startsWith(chunk.content, offset)) return false;
-    offset += chunk.content.length;
+  for (const range of pieceByteRanges(state, 0, state.totalLength)) {
+    for (let start = range.start; start < range.end; start += 65536) {
+      const content = decoder.decode(
+        range.bytes.subarray(start, Math.min(range.end, start + 65536)),
+        { stream: true },
+      );
+      if (!text.startsWith(content, offset)) return false;
+      offset += content.length;
+    }
   }
-  return offset === text.length;
+  const tail = decoder.decode();
+  return text.startsWith(tail, offset) && offset + tail.length === text.length;
 }
 
 function applyDocumentActions(
@@ -49,27 +60,9 @@ function applyDocumentActions(
  * @returns New document state with the content changed
  */
 export function setValue(state: DocumentState, newContent: string): LinearCost<DocumentState> {
-  if (hasValue(state.pieceTable, newContent)) return $proveCtx($beginCost("O(n)"), state);
-  return $prove(
-    "O(n)",
-    $checked(() =>
-      $pipe(
-        $from(getValue(state.pieceTable)),
-        $andThen((oldContent) => {
-          if (oldContent === newContent) {
-            return $lift("O(n)", state);
-          }
-
-          return $pipe(
-            $from(computeSetValueActionsOptimized(oldContent, newContent)),
-            $map((resolvedActions) => {
-              if (resolvedActions.length === 0) return state;
-              return applyDocumentActions(state, resolvedActions);
-            }),
-          );
-        }),
-      ),
-    ),
+  return $proveCtx(
+    $beginCost("O(n)"),
+    applyDocumentActions(state, computeSetValueActionsFromState(state.pieceTable, newContent)),
   );
 }
 
@@ -154,7 +147,7 @@ export function setValueWithDiff(
 
 /**
  * Compute the optimized REPLACE actions needed to transform a piece table to new content.
- * O(n) — uses `computeSetValueActionsOptimized` internally.
+ * O(n), comparing piece bytes with bounded temporary encoding buffers.
  *
  * @param pieceTable - Current piece table state
  * @param newContent - The desired new content
@@ -164,20 +157,17 @@ export function computeSetValueActionsFromState(
   pieceTable: PieceTableState,
   newContent: string,
 ): LinearCost<DocumentAction[]> {
-  return $prove(
-    "O(n)",
-    $checked(() =>
-      $pipe(
-        $from(getValue(pieceTable)),
-        $andThen((oldContent) => {
-          if (oldContent === newContent) {
-            return $lift<"O(n)", DocumentAction[]>("O(n)", []);
-          }
-          return $from(computeSetValueActionsOptimized(oldContent, newContent));
-        }),
-      ),
-    ),
-  );
+  // Chunk bytes may be malformed, and the public decoder strips a leading BOM.
+  // Preserve decoded-value no-ops before comparing raw bytes in these cases.
+  const needsDecodedComparison =
+    pieceTable.chunkMap.size > 0 ||
+    (pieceTable.totalLength >= 3 &&
+      getRawByte(pieceTable, byteOffset(0)) === 0xef &&
+      getRawByte(pieceTable, byteOffset(1)) === 0xbb &&
+      getRawByte(pieceTable, byteOffset(2)) === 0xbf);
+  if (needsDecodedComparison && hasValue(pieceTable, newContent))
+    return $proveCtx($beginCost("O(n)"), []);
+  return $proveCtx($beginCost("O(n)"), streamingReplacement(pieceTable, newContent));
 }
 
 /**

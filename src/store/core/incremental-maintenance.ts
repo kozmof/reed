@@ -79,15 +79,17 @@ interface CopiedSpan {
 }
 export interface CompactionWorkspace {
   published: boolean;
-  bytes: Uint8Array;
+  pages: Uint8Array[];
   length: number;
   nodes: WeakMap<PieceNode, PieceNode>;
   spans: WeakMap<ArrayBufferLike, SpanIndex<CopiedSpan>>;
 }
 
-export function createCompactionWorkspace(state: PieceTableState): CompactionWorkspace {
+const COMPACTION_PAGE_BYTES = 65536;
+
+export function createCompactionWorkspace(_state: PieceTableState): CompactionWorkspace {
   return {
-    bytes: new Uint8Array(Math.max((state.root?.subtreeAddLength ?? 0) * 2, 1024)),
+    pages: [],
     published: false,
     length: 0,
     nodes: new WeakMap(),
@@ -105,16 +107,9 @@ export function* compactIncrementally(
   function* reserve(length: number): Generator<void, number> {
     const start = workspace.length;
     const required = start + length;
-    if (required > workspace.bytes.length) {
-      const bytes = new Uint8Array(Math.max(required, workspace.bytes.length * 2));
-      for (let offset = 0; offset < workspace.length; offset += 65536) {
-        bytes.set(
-          workspace.bytes.subarray(offset, Math.min(workspace.length, offset + 65536)),
-          offset,
-        );
-        yield;
-      }
-      workspace.bytes = bytes;
+    while (workspace.pages.length * COMPACTION_PAGE_BYTES < required) {
+      workspace.pages.push(new Uint8Array(COMPACTION_PAGE_BYTES));
+      yield;
     }
     workspace.length = required;
     return start;
@@ -151,9 +146,14 @@ export function* compactIncrementally(
         const relativeStart = sourceStart - span.sourceStart;
         const requiredCopy = relativeStart + length;
         while (span.copied < requiredCopy) {
-          const count = Math.min(65536, requiredCopy - span.copied);
+          const target = span.start + span.copied;
+          const pageOffset = target % COMPACTION_PAGE_BYTES;
+          const count = Math.min(COMPACTION_PAGE_BYTES - pageOffset, requiredCopy - span.copied);
           const from = span.sourceStart - source.byteOffset + span.copied;
-          workspace.bytes.set(source.subarray(from, from + count), span.start + span.copied);
+          workspace.pages[Math.floor(target / COMPACTION_PAGE_BYTES)]!.set(
+            source.subarray(from, from + count),
+            pageOffset,
+          );
           span.copied += count;
           yield;
         }
@@ -172,11 +172,20 @@ export function* compactIncrementally(
     return result;
   }
   const root = yield* visit(state.root);
+  // Publish bounded segments without allocating a contiguous document buffer.
+  let buffer = GrowableBuffer.empty();
+  for (let offset = 0; offset < workspace.length; offset += COMPACTION_PAGE_BYTES) {
+    const page = workspace.pages[Math.floor(offset / COMPACTION_PAGE_BYTES)]!;
+    buffer = buffer.append(
+      page.subarray(0, Math.min(COMPACTION_PAGE_BYTES, workspace.length - offset)),
+    );
+    yield;
+  }
   workspace.published = true;
   return freezePieceTableState({
     ...state,
     root,
-    addBuffer: new GrowableBuffer(workspace.bytes, workspace.length),
+    addBuffer: buffer,
   });
 }
 

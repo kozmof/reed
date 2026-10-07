@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { byteOffset } from "../../types/branded.js";
 import { createInitialState, createPieceTableState, withLineIndexState } from "./state.js";
 import { reconcileFull } from "./reconcile.js";
@@ -104,7 +104,7 @@ it("reuses partially copied spans when an edit splits a large piece", () => {
   table = pieceTableDelete(table, byteOffset(0), byteOffset(100000));
   const workspace = createCompactionWorkspace(table);
   const job = compactIncrementally(table, workspace);
-  while (workspace.bytes[0] !== 120) expect(job.next().done).toBe(false);
+  while (workspace.pages[0]?.[0] !== 120) expect(job.next().done).toBe(false);
   const original = table;
   table = pieceTableInsert(table, byteOffset(50000), "hello").state;
   const result = drain(compactIncrementally(table, workspace)).value;
@@ -118,7 +118,7 @@ it("grows retained compaction storage in slices and never mutates a published re
   table = pieceTableInsert(table, byteOffset(0), "x".repeat(100_000)).state;
   const workspace = createCompactionWorkspace(table);
   const initialJob = compactIncrementally(table, workspace);
-  while (workspace.bytes[0] !== 120) initialJob.next();
+  while (workspace.pages[0]?.[0] !== 120) initialJob.next();
   table = pieceTableInsert(table, byteOffset(100_000), "y".repeat(300_000)).state;
   const first = drain(compactIncrementally(table, workspace)).value;
   const saved = new Uint8Array(first.addBuffer.bytes);
@@ -127,4 +127,33 @@ it("grows retained compaction storage in slices and never mutates a published re
   const second = drain(compactIncrementally(next, workspace)).value;
   expect(getValue(second)).toBe("z" + getValue(first));
   expect(new Uint8Array(first.addBuffer.bytes)).toEqual(saved);
+});
+
+it("bounds every compaction byte allocation, including reservation and publication", () => {
+  const table = pieceTableInsert(
+    createPieceTableState(""),
+    byteOffset(0),
+    "漢😀x".repeat(100000),
+  ).state;
+  const allocations: number[] = [];
+  const NativeBytes = Uint8Array;
+  vi.stubGlobal(
+    "Uint8Array",
+    new Proxy(NativeBytes, {
+      construct(target, args) {
+        if (typeof args[0] === "number") allocations.push(args[0]);
+        return Reflect.construct(target, args);
+      },
+    }),
+  );
+  try {
+    const workspace = createCompactionWorkspace(table);
+    expect(allocations).toEqual([]);
+    const result = drain(compactIncrementally(table, workspace)).value;
+    expect(Math.max(...allocations)).toBeLessThanOrEqual(65536);
+    vi.unstubAllGlobals();
+    expect(getValue(result)).toBe(getValue(table));
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

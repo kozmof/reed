@@ -166,33 +166,69 @@ export function scanPieceLines(
   start: number,
   end: number,
 ): Array<{ length: number; charLength: number }> {
-  const ends: number[] = [];
+  const lines: Array<{ length: number; charLength: number }> = [];
+  let lineStart = start;
+  let chars = 0;
   let cr = false;
+  // Decoder state crosses piece and buffer seams. Count incomplete sequences
+  // as one replacement, reconsuming an invalid continuation as a new byte.
+  let needed = 0;
+  let width = 0;
+  let lower = 0x80;
+  let upper = 0xbf;
+  function flush(position: number): void {
+    if (needed > 0) {
+      chars++;
+      needed = 0;
+    }
+    lines.push({ length: position - lineStart, charLength: chars });
+    lineStart = position;
+    chars = 0;
+  }
   for (const range of pieceByteRanges(state, start, end)) {
     for (let i = range.start; i < range.end; i++) {
-      const byte = range.bytes[i]!,
-        position = range.offset + i - range.start;
+      const byte = range.bytes[i]!;
+      const position = range.offset + i - range.start;
       if (cr) {
         cr = false;
         if (byte === 10) {
-          ends.push(position + 1);
+          chars++;
+          flush(position + 1);
           continue;
         }
-        ends.push(position);
+        flush(position);
       }
-      if (byte === 13) cr = true;
-      else if (byte === 10) ends.push(position + 1);
+      if (needed > 0) {
+        if (byte >= lower && byte <= upper) {
+          needed--;
+          lower = 0x80;
+          upper = 0xbf;
+          if (needed === 0) chars += width === 3 ? 2 : 1;
+          continue;
+        }
+        chars++;
+        needed = 0;
+      }
+      needed =
+        byte >= 0xc2 && byte <= 0xdf
+          ? 1
+          : byte >= 0xe0 && byte <= 0xef
+            ? 2
+            : byte >= 0xf0 && byte <= 0xf4
+              ? 3
+              : 0;
+      if (needed > 0) {
+        width = needed;
+        lower = byte === 0xe0 ? 0xa0 : byte === 0xf0 ? 0x90 : 0x80;
+        upper = byte === 0xed ? 0x9f : byte === 0xf4 ? 0x8f : 0xbf;
+      } else {
+        chars++;
+        if (byte === 13) cr = true;
+        else if (byte === 10) flush(position + 1);
+      }
     }
   }
-  if (cr) ends.push(end);
-  ends.push(end); // Preserve the final empty line after a separator.
-  let previous = start;
-  return ends.map((position) => {
-    const line = {
-      length: position - previous,
-      charLength: summarizePieceRange(state, previous, position).chars,
-    };
-    previous = position;
-    return line;
-  });
+  if (cr) flush(end);
+  flush(end); // Preserve the final empty line after a separator.
+  return lines;
 }

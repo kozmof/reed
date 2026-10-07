@@ -109,3 +109,51 @@ it("keeps reads, Unicode metrics, and compaction local after branching a large a
   expect(getValue(mainline)).toBe(content + "main");
   expect(getValue(original)).toBe(content);
 });
+
+it("retains column checkpoints across more than 64 chunk-backed long lines", async () => {
+  const { documentReducer } = await import("../features/reducer.js");
+  const { DocumentActions } = await import("../features/actions.js");
+  const pieces = await import("./piece-table.js");
+  const line = "漢😀x".repeat(2048) + "\n";
+  const bytes = new TextEncoder().encode(line.repeat(80));
+  const state = documentReducer(
+    createInitialState({ chunkSize: bytes.length }),
+    DocumentActions.loadChunk(0, bytes),
+  );
+  const width = new TextEncoder().encode(line).length;
+  const column = 6000;
+  for (let i = 0; i < 80; i++)
+    expect(lineCharToByte(state.pieceTable, i * width, (i + 1) * width, column)).toBe(
+      i * width + 12000,
+    );
+  const reads = vi.spyOn(pieces, "getText");
+  for (let i = 0; i < 80; i++)
+    expect(lineCharToByte(state.pieceTable, i * width, (i + 1) * width, column)).toBe(
+      i * width + 12000,
+    );
+  expect(
+    reads.mock.calls.reduce((total, [, start, end]) => total + end - start, 0),
+  ).toBeLessThanOrEqual(80 * 4096);
+});
+
+it("evicts the least recently queried lines when the checkpoint budget fills", async () => {
+  const { documentReducer } = await import("../features/reducer.js");
+  const { DocumentActions } = await import("../features/actions.js");
+  const pieces = await import("./piece-table.js");
+  const bytes = new TextEncoder().encode("abc\n".repeat(8200));
+  const state = documentReducer(
+    createInitialState({ chunkSize: bytes.length }),
+    DocumentActions.loadChunk(0, bytes),
+  );
+  function query(line: number): void {
+    expect(lineCharToByte(state.pieceTable, line * 4, line * 4 + 4, 4)).toBe(line * 4 + 4);
+  }
+  for (let line = 0; line < 8192; line++) query(line);
+  query(0); // Keep the oldest line hot before creating another checkpoint.
+  query(8192);
+  const reads = vi.spyOn(pieces, "getText");
+  query(0);
+  expect(reads).not.toHaveBeenCalled();
+  query(1);
+  expect(reads).toHaveBeenCalled();
+});

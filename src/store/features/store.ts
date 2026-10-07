@@ -190,7 +190,7 @@ function createStoreOverState(
             if (
               compactWorkspace &&
               (compactWorkspace.length > Math.max(used * 2, 65536) ||
-                compactWorkspace.bytes.length > Math.max(used * 4, 65536))
+                compactWorkspace.pages.length * 65536 > Math.max(used * 4, 65536))
             )
               compactWorkspace = null;
             compactWorkspace ??= createCompactionWorkspace(state.pieceTable);
