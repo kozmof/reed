@@ -6,57 +6,112 @@ import { isSurrogatePairAt, textEncoder, utf8ByteLength } from "../core/encoding
 import { isUtf8Boundary } from "../core/piece-table.js";
 import { DocumentActions } from "./actions.js";
 
-/** A cursor holds buffer views, never a flattened copy of the document. */
-function byteReader(state: PieceTableState, start: number): () => number {
-  const ranges = pieceByteRanges(state, start, state.totalLength);
-  let range = ranges.next();
-  let offset = range.done ? 0 : range.value.start;
-  return () => {
-    if (!range.done && offset === range.value.end) {
-      range = ranges.next();
-      offset = range.done ? 0 : range.value.start;
-    }
-    return range.done ? -1 : range.value.bytes[offset++]!;
-  };
+const CHUNK_CHARS = 16384;
+
+interface ByteRange {
+  bytes: Uint8Array;
+  start: number;
+  end: number;
 }
 
-/** Find a single replacement using bounded encoding buffers and two forward cursors. */
-export function streamingReplacement(state: PieceTableState, text: string): DocumentAction[] {
-  const length = utf8ByteLength(text);
-  const delta = state.totalLength - length;
-  const prefixByte = byteReader(state, 0);
-  const suffixByte = byteReader(state, Math.max(0, delta));
+/**
+ * Length of the common prefix of the document bytes and the encoded text,
+ * with the char/byte position of the text chunk where the scan stopped.
+ * Encodes and compares one chunk at a time and stops at the first mismatch.
+ */
+function commonPrefix(
+  ranges: readonly ByteRange[],
+  text: string,
+): { prefix: number; chunkChar: number; chunkByte: number } {
+  let ri = 0;
+  let offset = ranges[0]?.start ?? 0;
   let prefix = 0;
-  let matchingPrefix = true;
-  let newEnd = 0;
-  let position = 0;
   for (let start = 0; start < text.length; ) {
-    let end = Math.min(text.length, start + 16384);
+    let end = Math.min(text.length, start + CHUNK_CHARS);
     if (end < text.length && isSurrogatePairAt(text, end - 1)) end--;
-    const bytes = textEncoder.encode(text.slice(start, end));
-    for (const byte of bytes) {
-      if (matchingPrefix) {
-        matchingPrefix = prefixByte() === byte;
-        if (matchingPrefix) prefix++;
+    const chunkByte = prefix;
+    const encoded = textEncoder.encode(text.slice(start, end));
+    let k = 0;
+    while (k < encoded.length) {
+      if (ri === ranges.length) return { prefix, chunkChar: start, chunkByte };
+      const range = ranges[ri]!;
+      const bytes = range.bytes;
+      const count = Math.min(encoded.length - k, range.end - offset);
+      for (let j = 0; j < count; j++) {
+        if (bytes[offset + j] !== encoded[k + j]) {
+          return { prefix: prefix + j, chunkChar: start, chunkByte };
+        }
       }
-      // Align this cursor with the document's end. The last mismatch bounds
-      // the replacement; later equal bytes form the common suffix.
-      if (position + delta < 0 || suffixByte() !== byte) newEnd = position + 1;
-      position++;
+      prefix += count;
+      k += count;
+      offset += count;
+      if (offset === range.end && ++ri < ranges.length) offset = ranges[ri]!.start;
     }
     start = end;
   }
+  return { prefix, chunkChar: text.length, chunkByte: prefix };
+}
+
+/**
+ * Length of the common suffix, up to `limit` bytes, scanning both the
+ * document ranges and the text backwards. Stops at the first mismatch.
+ */
+function commonSuffix(ranges: readonly ByteRange[], text: string, limit: number): number {
+  let ri = ranges.length - 1;
+  let offset = ranges[ri]?.end ?? 0;
+  let suffix = 0;
+  for (let end = text.length; end > 0 && suffix < limit; ) {
+    let start = Math.max(0, end - CHUNK_CHARS);
+    if (start > 0 && isSurrogatePairAt(text, start - 1)) start--;
+    const encoded = textEncoder.encode(text.slice(start, end));
+    let k = encoded.length;
+    while (k > 0) {
+      if (ri < 0 || suffix === limit) return suffix;
+      const range = ranges[ri]!;
+      const bytes = range.bytes;
+      const count = Math.min(k, offset - range.start, limit - suffix);
+      for (let j = 1; j <= count; j++) {
+        if (bytes[offset - j] !== encoded[k - j]) return suffix + j - 1;
+      }
+      suffix += count;
+      k -= count;
+      offset -= count;
+      if (offset === range.start && --ri >= 0) offset = ranges[ri]!.end;
+    }
+    end = start;
+  }
+  return suffix;
+}
+
+/**
+ * Find a single replacement with bounded encoding buffers. The prefix scan
+ * runs forward and the suffix scan backward, each stopping at the first
+ * mismatch, so unchanged regions are read once and compared in tight loops
+ * over buffer ranges. Char positions are found by walking only from the chunk
+ * where the prefix ended.
+ */
+export function streamingReplacement(state: PieceTableState, text: string): DocumentAction[] {
+  const length = utf8ByteLength(text);
+  const delta = state.totalLength - length;
+  const ranges: ByteRange[] = [];
+  for (const range of pieceByteRanges(state, 0, state.totalLength)) {
+    if (range.end > range.start) ranges.push(range);
+  }
+  const { prefix, chunkChar, chunkByte } = commonPrefix(ranges, text);
   if (prefix === length && delta === 0) return [];
-  newEnd = Math.max(newEnd, prefix, prefix - delta);
+  const suffix = commonSuffix(ranges, text, Math.min(state.totalLength, length) - prefix);
+  const newEnd = length - suffix;
 
   // Byte comparisons may stop inside a code point. Choose boundaries in both
   // strings and retain UTF-16 indices for slicing the replacement text.
-  let charStart = 0;
-  let byteStart = 0;
+  // Every char before chunkChar ends at or before the prefix, so the walk can
+  // start there.
+  let charStart = chunkChar;
+  let byteStart = chunkByte;
   let charEnd = text.length;
   let byteEnd = length;
-  let bytes = 0;
-  for (let i = 0; ; ) {
+  let bytes = chunkByte;
+  for (let i = chunkChar; ; ) {
     if (bytes <= prefix) {
       charStart = i;
       byteStart = bytes;
