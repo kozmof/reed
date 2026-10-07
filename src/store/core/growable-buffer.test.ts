@@ -129,3 +129,29 @@ it("balances many sealed segments and keeps both sides of a fork readable", () =
   expect(() => buffer.subarray(0, buffer.length + 1)).toThrow();
   expect(buffer.append(new Uint8Array())).toBe(buffer);
 });
+
+it("reads raw ranges identical to subarray across segments, tails, and branches", () => {
+  // Branching seals tails, so this builds many prefix segments of varied size.
+  let buffer = GrowableBuffer.empty(16);
+  const expected: number[] = [];
+  for (let i = 0; i < 300; i++) {
+    const chunk = bytesOf(`<${i}:${"x".repeat(i % 7)}>`);
+    if (i % 3 === 0) buffer.append(bytesOf("dead branch"));
+    buffer = buffer.append(chunk);
+    expected.push(...chunk);
+  }
+  const raw = (start: number, end: number) => Array.from(buffer.rawSubarray(start, end));
+  const viaProxy = (start: number, end: number) =>
+    Array.from(unwrapReadonlyUint8Array(buffer.subarray(start, end)));
+
+  for (let start = 0; start <= buffer.length; start += 13) {
+    for (const span of [0, 1, 5, 40, 400]) {
+      const end = Math.min(buffer.length, start + span);
+      expect(raw(start, end)).toEqual(expected.slice(start, end));
+      expect(raw(start, end)).toEqual(viaProxy(start, end));
+    }
+  }
+  expect(raw(0, buffer.length)).toEqual(expected);
+  expect(() => buffer.rawSubarray(-1, 2)).toThrow(/out-of-bounds/);
+  expect(() => buffer.rawSubarray(0, buffer.length + 1)).toThrow(/out-of-bounds/);
+});

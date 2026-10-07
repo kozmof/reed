@@ -44,7 +44,7 @@ function getPieceBufferRaw(
     case "original":
       return unwrapReadonlyUint8Array(state.originalBuffer).subarray(start, end);
     case "add":
-      return unwrapReadonlyUint8Array(state.addBuffer.subarray(start, end));
+      return state.addBuffer.rawSubarray(start, end);
     case "chunk": {
       const chunk = state.chunkMap.get(piece.chunkIndex);
       if (chunk === undefined) throw new Error(`Chunk ${piece.chunkIndex} is not loaded`);

@@ -170,9 +170,7 @@ export function getBufferSlice(state: PieceTableState, ref: BufferReference): Ui
         ref.start + ref.length,
       );
     case "add":
-      return unwrapReadonlyUint8Array(
-        state.addBuffer.subarray(ref.start, ref.start + ref.length),
-      ).slice();
+      return state.addBuffer.rawSubarray(ref.start, ref.start + ref.length).slice();
     case "chunk": {
       const chunk = state.chunkMap.get(ref.chunkIndex);
       if (chunk === undefined) throw new Error(`Chunk ${ref.chunkIndex} is not loaded`);
@@ -224,9 +222,7 @@ function getPieceBufferRaw(
         piece.start + end,
       );
     case "add":
-      return unwrapReadonlyUint8Array(
-        state.addBuffer.subarray(piece.start + start, piece.start + end),
-      );
+      return state.addBuffer.rawSubarray(piece.start + start, piece.start + end);
     case "chunk": {
       const chunk = state.chunkMap.get(piece.chunkIndex);
       if (chunk === undefined) throw new Error(`Chunk ${piece.chunkIndex} is not loaded`);

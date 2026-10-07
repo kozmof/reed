@@ -145,6 +145,39 @@ export class GrowableBuffer {
       };
   }
 
+  /**
+   * Raw view for internal read paths that unwrap immediately. Avoids the
+   * generator walk and readonly proxies of `subarray`, which dominate per-piece
+   * reads of fragmented documents. A piece is written by one `append`, so its
+   * bytes lie in one segment; a range crossing segments falls back to a copy.
+   * Callers must not mutate the result.
+   */
+  rawSubarray(start: number, end: number): Uint8Array {
+    if (start < 0 || end > this.length || start > end) {
+      throw new Error(
+        `GrowableBuffer: out-of-bounds read [${start}, ${end}) exceeds valid length ${this.length}`,
+      );
+    }
+    const tailStart = this.#prefix?.length ?? 0;
+    if (start >= tailStart) return this.#tail.subarray(start - tailStart, end - tailStart);
+    let node = this.#prefix;
+    let offset = 0;
+    while (node) {
+      const ownStart = offset + (node.left?.length ?? 0);
+      const ownEnd = ownStart + node.bytes.length;
+      if (start < ownStart) {
+        node = node.left;
+      } else if (start >= ownEnd) {
+        offset = ownEnd;
+        node = node.right;
+      } else {
+        if (end <= ownEnd) return node.bytes.subarray(start - ownStart, end - ownStart);
+        break;
+      }
+    }
+    return unwrapReadonlyUint8Array(this.subarray(start, end));
+  }
+
   /** Zero-copy for one segment; cross-segment reads allocate only their range. */
   subarray(start: number, end: number): ReadonlyUint8Array {
     const ranges = this.ranges(start, end);
