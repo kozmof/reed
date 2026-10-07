@@ -473,7 +473,9 @@ export const workloads: readonly Workload[] = [
       for (let i = 0; i < n; i++) s.dispatch(R.store.DocumentActions.loadChunk(i, chunk));
       for (let i = 0; i < n; i += 2) s.dispatch(R.store.DocumentActions.evictChunk(i));
       const st = s.getSnapshot();
-      return `${st.pieceTable.chunkMap.size}:${R.query.getResidentLineCount(st)}`;
+      // getResidentLineCount appeared after 2.0.0; there getLineCount counted resident lines.
+      const resident = R.query.getResidentLineCount ?? R.query.getLineCount;
+      return `${st.pieceTable.chunkMap.size}:${resident(st)}`;
     },
     cleanup: (f) => f.s.dispose(),
   },
