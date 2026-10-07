@@ -19,6 +19,15 @@ import { computeSetValueActions } from "./text-diff.js";
 import { streamingReplacement } from "./streaming-replacement.js";
 import { documentReducer } from "./reducer.js";
 
+/**
+ * True when `text` equals `text.slice(offset)` up to `part`. Equivalent to
+ * `text.startsWith(part, offset)`, which V8 compares char by char; slicing
+ * makes a view without copying, and === compares it natively.
+ */
+function matchesAt(text: string, part: string, offset: number): boolean {
+  return text.slice(offset, offset + part.length) === part;
+}
+
 /** Compare with bounded temporary storage instead of materializing the document. */
 function hasValue(state: PieceTableState, text: string): boolean {
   const decoder = new TextDecoder();
@@ -29,12 +38,12 @@ function hasValue(state: PieceTableState, text: string): boolean {
         range.bytes.subarray(start, Math.min(range.end, start + 65536)),
         { stream: true },
       );
-      if (!text.startsWith(content, offset)) return false;
+      if (!matchesAt(text, content, offset)) return false;
       offset += content.length;
     }
   }
   const tail = decoder.decode();
-  return text.startsWith(tail, offset) && offset + tail.length === text.length;
+  return matchesAt(text, tail, offset) && offset + tail.length === text.length;
 }
 
 function applyDocumentActions(
