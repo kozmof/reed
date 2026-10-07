@@ -42,6 +42,7 @@
     "coverage": "vitest run --coverage",
     "gen-fixture": "npx tsx test-utils/gen-fixture.ts",
     "bench": "npx tsx test-utils/benchmarks/bench.ts",
+    "bench:compare": "node --no-warnings bench/compare/run.ts",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "lint": "oxlint",
