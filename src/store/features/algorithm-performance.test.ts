@@ -27,7 +27,9 @@ it.each([1, 120])("estimates %i long lines without decoding their contents", (co
   ).toBe(count * 3000 * 20);
   expect(reads).not.toHaveBeenCalled();
   expect(bytes.mock.calls.length).toBeLessThanOrEqual(count * 2);
-});
+  // Building ~84 MB of fixture text dominates; under v8 coverage on CI it
+  // exceeds the default 5s even though the estimate itself is near-instant.
+}, 30_000);
 
 it("preserves mixed terminator, Unicode, and dirty-index viewport behavior", () => {
   let state = createInitialState({ content: "a\r\n漢😀\rb\n\nlast" });
