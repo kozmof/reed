@@ -210,8 +210,7 @@ function summarize(cell: Cell): Summary {
   const headMs = median(ht);
   const ratio = headMs / baseMs;
   const ci = bootstrapRatio(bt, ht);
-  const verdict =
-    ci.hi < 1 - NOISE ? "faster" : ci.lo > 1 + NOISE ? "SLOWER" : "~ same";
+  const verdict = ci.hi < 1 - NOISE ? "faster" : ci.lo > 1 + NOISE ? "SLOWER" : "~ same";
 
   const baseSums = new Set(cell.raw.base.map((r) => r.checksum));
   const headSums = new Set(cell.raw.head.map((r) => r.checksum));
@@ -299,7 +298,9 @@ md.push(
 md.push("|---|---:|---:|---:|---:|---|---|---|---|---|");
 for (const { cell, s } of rows) {
   if (!s) {
-    md.push(`| ${cell.workload} | ${cell.size.toLocaleString("en-US")} | — | — | — | — | ERROR: ${cell.error} | | | |`);
+    md.push(
+      `| ${cell.workload} | ${cell.size.toLocaleString("en-US")} | — | — | — | — | ERROR: ${cell.error} | | | |`,
+    );
     continue;
   }
   md.push(
@@ -308,7 +309,9 @@ for (const { cell, s } of rows) {
 }
 md.push("", "## Workloads", "");
 for (const w of selected) {
-  md.push(`- **${w.name}** — ${w.unit}. Covers: ${w.covers}.${w.outputMayDiffer ? ` Output differs by design: ${w.outputMayDiffer}.` : ""}`);
+  md.push(
+    `- **${w.name}** — ${w.unit}. Covers: ${w.covers}.${w.outputMayDiffer ? ` Output differs by design: ${w.outputMayDiffer}.` : ""}`,
+  );
 }
 
 const outDir = resolve(args.out!);
@@ -316,7 +319,10 @@ mkdirSync(outDir, { recursive: true });
 const stamp = startedAt.toISOString().replace(/[:.]/g, "-");
 const jsonPath = join(outDir, `perf-compare-${stamp}.json`);
 const mdPath = join(outDir, `perf-compare-${stamp}.md`);
-writeFileSync(jsonPath, JSON.stringify({ meta, cells: rows.map(({ cell, s }) => ({ ...cell, summary: s })) }, null, 2));
+writeFileSync(
+  jsonPath,
+  JSON.stringify({ meta, cells: rows.map(({ cell, s }) => ({ ...cell, summary: s })) }, null, 2),
+);
 writeFileSync(mdPath, md.join("\n") + "\n");
 console.log(md.join("\n"));
 console.error(`\nwrote ${mdPath}\nwrote ${jsonPath}`);

@@ -215,7 +215,10 @@ export const workloads: readonly Workload[] = [
     prepare(R, n) {
       const content = prose(n);
       // Copy so identity shortcuts cannot skip the comparison.
-      return { state: R.store.createDocumentStore({ content }).getSnapshot(), next: (" " + content).slice(1) };
+      return {
+        state: R.store.createDocumentStore({ content }).getSnapshot(),
+        next: (" " + content).slice(1),
+      };
     },
     run(R, f) {
       const next = R.diff.setValue(f.state, f.next);
@@ -251,7 +254,9 @@ export const workloads: readonly Workload[] = [
       const rng = makeDeterministicRng(29);
       for (let i = 0; i < 500; i++) {
         const len = R.query.getLength(s.getSnapshot().pieceTable);
-        s.dispatch(R.store.DocumentActions.insert(off(Math.floor(rng() * len)), "a\nb", undefined, 0));
+        s.dispatch(
+          R.store.DocumentActions.insert(off(Math.floor(rng() * len)), "a\nb", undefined, 0),
+        );
       }
       return s;
     },
@@ -270,7 +275,9 @@ export const workloads: readonly Workload[] = [
       const rng = makeDeterministicRng(31);
       for (let i = 0; i < 500; i++) {
         const len = R.query.getLength(s.getSnapshot().pieceTable);
-        s.dispatch(R.store.DocumentActions.insert(off(Math.floor(rng() * len)), "q\n", undefined, 0));
+        s.dispatch(
+          R.store.DocumentActions.insert(off(Math.floor(rng() * len)), "q\n", undefined, 0),
+        );
       }
       const done = await s.whenReconciled();
       return String(R.query.getLineCount(done));
@@ -466,7 +473,9 @@ export const workloads: readonly Workload[] = [
         reconcileMode: "none",
       });
       const line = "chunk line of text\n";
-      const chunk = new TextEncoder().encode(line.repeat(Math.ceil(chunkSize / line.length)).slice(0, chunkSize));
+      const chunk = new TextEncoder().encode(
+        line.repeat(Math.ceil(chunkSize / line.length)).slice(0, chunkSize),
+      );
       return { s, chunk };
     },
     run(R, { s, chunk }, n) {

@@ -1244,9 +1244,21 @@ describe("checkpoint line content validation", () => {
   it("validates line metrics like the decoder for malformed bytes split across random chunks", () => {
     // Fragments mix terminators, valid and malformed UTF-8, and BOMs.
     const fragments = [
-      [0x61], [0x0d], [0x0a], [0x0d, 0x0a], [0xef, 0xbb, 0xbf],
-      [0xc3, 0xa9], [0xe6, 0x97, 0xa5], [0xf0, 0x9f, 0x8e, 0x89],
-      [0x80], [0xbf], [0xc3], [0xe6, 0x97], [0xf0, 0x9f], [0xed, 0xa0, 0x80], [0xff],
+      [0x61],
+      [0x0d],
+      [0x0a],
+      [0x0d, 0x0a],
+      [0xef, 0xbb, 0xbf],
+      [0xc3, 0xa9],
+      [0xe6, 0x97, 0xa5],
+      [0xf0, 0x9f, 0x8e, 0x89],
+      [0x80],
+      [0xbf],
+      [0xc3],
+      [0xe6, 0x97],
+      [0xf0, 0x9f],
+      [0xed, 0xa0, 0x80],
+      [0xff],
     ];
     const rng = makeDeterministicRng(2026);
     for (let round = 0; round < 60; round++) {
@@ -1271,7 +1283,8 @@ describe("checkpoint line content validation", () => {
         const atEnd = i === bytes.length;
         const isBreak = !atEnd && (bytes[i] === 0x0a || bytes[i] === 0x0d);
         if (!atEnd && !isBreak) continue;
-        const end = !atEnd && bytes[i] === 0x0d && bytes[i + 1] === 0x0a ? i + 2 : atEnd ? i : i + 1;
+        const end =
+          !atEnd && bytes[i] === 0x0d && bytes[i + 1] === 0x0a ? i + 2 : atEnd ? i : i + 1;
         const line = new Uint8Array(bytes.slice(start, end));
         const chars = new TextDecoder("utf-8", { ignoreBOM: true }).decode(line).length;
         expected.push([line.length, chars]);

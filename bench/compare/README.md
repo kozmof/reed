@@ -23,16 +23,16 @@ Requires Node 22.18 or later (native TypeScript type stripping).
 
 Options:
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `--rounds` | 5 | Worker processes per version per cell, alternating base/head order |
-| `--samples` | 10 | Timed samples per process |
-| `--warmup` | 2 | Untimed samples per process. Skipped once a sample exceeds 1 s |
-| `--budget` | 20000 | Per-process time budget in ms. Sampling stops after 3 samples once exceeded |
-| `--sizes` | `all` | `small` runs only each workload's first size |
-| `--only` | all | Comma-separated workload names |
-| `--cpu` | none | Pin workers to this core with `taskset` |
-| `--out` | `report` | Output directory |
+| Flag        | Default  | Meaning                                                                     |
+| ----------- | -------- | --------------------------------------------------------------------------- |
+| `--rounds`  | 5        | Worker processes per version per cell, alternating base/head order          |
+| `--samples` | 10       | Timed samples per process                                                   |
+| `--warmup`  | 2        | Untimed samples per process. Skipped once a sample exceeds 1 s              |
+| `--budget`  | 20000    | Per-process time budget in ms. Sampling stops after 3 samples once exceeded |
+| `--sizes`   | `all`    | `small` runs only each workload's first size                                |
+| `--only`    | all      | Comma-separated workload names                                              |
+| `--cpu`     | none     | Pin workers to this core with `taskset`                                     |
+| `--out`     | `report` | Output directory                                                            |
 
 ## Method
 

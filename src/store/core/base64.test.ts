@@ -16,8 +16,7 @@ function patterned(length: number, seed = 7): Uint8Array {
   return Uint8Array.from({ length }, (_, i) => (i * 131 + seed) & 0xff);
 }
 
-const hasNative =
-  typeof (Uint8Array.prototype as { toBase64?: unknown }).toBase64 === "function";
+const hasNative = typeof (Uint8Array.prototype as { toBase64?: unknown }).toBase64 === "function";
 
 describe.each([
   ["native", (bytes: Uint8Array) => bytes],

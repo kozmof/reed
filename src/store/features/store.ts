@@ -161,8 +161,7 @@ function createStoreOverState(
       compactJob = null;
       compactWorkspace = null;
     }
-    const runCompaction =
-      compactPending && (preferCompaction || !state.lineIndex.rebuildPending);
+    const runCompaction = compactPending && (preferCompaction || !state.lineIndex.rebuildPending);
     preferCompaction = !runCompaction;
     if (state.lineIndex.rebuildPending && !runCompaction) {
       if (!lineJob || lineJob.source !== state.lineIndex) {
