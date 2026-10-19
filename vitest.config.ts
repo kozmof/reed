@@ -10,8 +10,8 @@ export default defineConfig({
       // Enumerate all production modules, including files no test imports.
       // Without include, thresholds only cover modules executed by the suite.
       include: ["src/**/*.ts"],
-      // Test data/helpers and benchmarks under test-utils are not product code;
-      // don't gate them on product coverage thresholds.
+      // Apply product coverage thresholds to production modules. Exclude test
+      // helpers and benchmarks under test-utils.
       exclude: [...coverageConfigDefaults.exclude, "src/**/*.test.ts", "test-utils/**"],
       // Per-file gates sit ~1.5 pts under the current per-file floor (the
       // worst-covered file per metric, not the aggregate): statements and lines
@@ -24,7 +24,7 @@ export default defineConfig({
       // 51 statements from line-index.ts, 49 of which were covered, so its
       // ratio fell while its absolute uncovered count went *down* (91 -> 89)
       // and whole-project coverage rose. The floor tracks the file's new
-      // composition; it is not a regression in tested behaviour.
+      // composition. The change preserves coverage of existing behaviour.
       thresholds: {
         statements: 78,
         branches: 72,

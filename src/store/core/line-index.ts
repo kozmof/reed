@@ -121,7 +121,7 @@ function splitLines(
 }
 
 /** Repair only the lines touching an edit, including neighboring CRLF boundaries.
- * readText addresses the post-edit document; state describes the pre-edit tree.
+ * Pass post-edit text through readText and the pre-edit tree through state.
  */
 export function repairLineIndexWindow(
   state: LineIndexState,
@@ -182,7 +182,7 @@ export function repairLineIndexWindow(
   });
 }
 
-/** Only separators next to the edit need text decoding; retain the outer line bodies by size. */
+/** Decode separators beside the edit and retain outer line bodies by size. */
 function repairWindowWithMetrics(
   windowStart: ByteOffset,
   windowEnd: ByteOffset,

@@ -137,7 +137,7 @@ const end = attention.createPoint(pt.root, position.byteOffset(11))!;
 let id;
 [att, id] = attention.createAttention(att, start, end);
 
-// Edit earlier in the document; the attention follows "world" automatically.
+// Insert earlier in the document while keeping the attention on "world".
 const next = attention.insertWithAttention(pt, att, position.byteOffset(0), ">> ");
 pt = next.pieceTableState;
 att = next.attentionState;
@@ -159,7 +159,7 @@ loaded reference from becoming dangling after eviction and reload.
 
 ### 8.2 Attention actions
 
-- `CREATE_ATTENTION { start, end }` — anchor a span by document byte offsets (offsets are serializable, and piece IDs are process-scoped and never appear in an action). The reducer converts offsets to points against the current tree, and an empty tree is a no-op. The minted `AttentionID` is deterministic (`a{attention.nextID}` of the pre-dispatch state), so read it from the post-dispatch snapshot's `attention` layer.
+- `CREATE_ATTENTION { start, end }` — anchor a span by document byte offsets (actions use offsets so callers do not need piece identities). The reducer converts offsets to points against the current tree, and an empty tree is a no-op. The minted `AttentionID` is deterministic (`a{attention.nextID}` of the pre-dispatch state), so read it from the post-dispatch snapshot's `attention` layer.
 - `DELETE_ATTENTION { id }` — remove an attention, treating unknown IDs as a no-op.
 
 Both are content-neutral. They produce a new immutable state reference (so subscribers fire) but MUST NOT increment `revision`, so they are never misread as content edits, mirroring reconciliation. (See the "Revision semantics" contract in [docs/invariants.md](../docs/invariants.md).) Create them via `store.createAttention(start, end)` / `store.deleteAttention(id)` (the `DocumentActions` factory), and they round-trip through `serializeAction` / `deserializeAction`.

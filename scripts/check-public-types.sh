@@ -9,7 +9,7 @@
 # It deliberately does NOT reject references to `store/core` or `store/features`.
 # The public namespaces are assembled by re-exporting those modules, `files`
 # ships all of `dist`, and the CI `package` job type-checks a real consumer
-# against the packed tarball — so those references resolve and are by design.
+# against the packed tarball to verify that those module references resolve.
 # What must not escape is the `$prove` / `LogCost` cost algebra, which would
 # force consumers to depend on internal complexity annotations, and anything
 # from `test-utils`, which is not packaged at all.

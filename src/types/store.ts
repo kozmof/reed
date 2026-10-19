@@ -103,8 +103,8 @@ export interface TransactionControl {
    * If this is the outermost rollback, listeners are notified.
    * @throws if called with no active transaction (depth is 0).
    *
-   * **Inner rollback semantics:** rolling back an inner (nested) transaction restores only the
-   * snapshot taken at that nesting level — it does NOT abort the enclosing transaction. The outer
+   * Rolling back a nested transaction restores the snapshot from that level.
+   * The enclosing transaction remains open. The outer
    * transaction continues from the state it had before the inner `beginTransaction` call. To abort
    * the entire nested sequence, the outer transaction must also call `rollbackTransaction`.
    */

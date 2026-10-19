@@ -1,12 +1,11 @@
 /**
  * Explicit interface types for API namespaces.
  *
- * These contracts pin the public shape of each namespace (parameter and return
- * types) and are applied with `satisfies` on each namespace export:
- *   export const query = { ... } satisfies QueryApi;
+ * Each namespace export uses an explicit interface annotation to define its
+ * public parameter and return types.
  *
- * Returns are plain (unbranded): the `cost-doc` algebra is an implementation
- * detail of `store/core`, stripped at the `api/*` boundary via `$uncostedFn`.
+ * Public results omit the internal cost brands. The `api/*` wrappers remove
+ * these brands with `$uncostedFn` while preserving position and identity brands.
  * Algorithmic complexity is documented with `@complexity` JSDoc tags on each
  * namespace member instead of being carried in the type.
  */
@@ -95,7 +94,8 @@ export interface QueryLineIndexApi {
 
 /**
  * Contract for the `query` namespace.
- * Operations are O(1), O(log n) for the balanced piece table, or O(h) for line-index tree height — see the `` tags on `query`.
+ * Lookups use cached values or tree traversal. Range reads also depend on the
+ * amount of text returned. See the `@complexity` tags on `query` members.
  */
 export interface QueryApi {
   getText(state: PieceTableState, start: ByteOffset, end: ByteOffset): string;

@@ -1,6 +1,7 @@
 # ADR 001 — Checkpoint compatibility and chunk payload growth
 
-- Status: **accepted** for the migration policy; **proposed** for the skeleton checkpoint
+- Migration policy status: accepted
+- Skeleton checkpoint status: proposed
 - Date: 2026-09-14
 - Supersedes: nothing
 - Related: `src/store/features/checkpoint-migrate.ts`, `spec/11-checkpoint.md`
@@ -9,15 +10,13 @@
 
 `CHECKPOINT_VERSION` has been `1` for the life of the format. Restore compared
 the version for exact equality and raised `VERSION_UNSUPPORTED` on anything
-else. That is correct but terminal: the first time the format needs to change,
-every checkpoint already written by a deployed build becomes unreadable, and the
-upgrade path has to be designed under release pressure.
+else. Without a migration path, a format change would make existing checkpoints
+unreadable. The registry defines that path before the first version change.
 
-Separately, chunked documents cannot use `normalized` capture — flattening a
-partially loaded file would discard its unloaded ranges — so they always take
-the `exact` path, which base64-inlines every resident chunk. Payload size
-therefore tracks _everything the user has looked at_, not what they have
-changed. Measured on 4 KiB chunks with no edits at all:
+Chunked documents use `exact` capture because normalized capture would discard
+unloaded ranges. Exact capture includes every resident chunk as base64, so
+payload size grows with resident content even when the user makes no edits.
+The following measurements use unedited 4 KiB chunks.
 
 | Chunks resident | Bytes viewed | Checkpoint chars | Ratio |
 | --------------: | -----------: | ---------------: | ----: |
@@ -31,65 +30,60 @@ produces a large checkpoint describing a document the user never edited.
 
 ## Decision 1 — Migration policy (accepted, implemented)
 
-**Supported source window.** Derived from the migration registry rather than
-maintained by hand: `minimumSupportedVersion()` walks backwards through the
-registered steps. With the registry empty it equals `CHECKPOINT_VERSION`, and it
+`minimumSupportedVersion()` derives the supported source window by walking
+backwards through the registered migration steps. With the registry empty it equals `CHECKPOINT_VERSION`, and it
 widens automatically as steps are appended.
 
-**Stepwise registry.** Migrations are single-version (`v1 -> v2 -> v3`), never
+Stepwise registry. Migrations are single-version (`v1 -> v2 -> v3`), never
 direct jumps. Each step is written once, against the format immediately
 preceding it, and is exercised by every later upgrade. A direct `v1 -> v3` step
 would have to be rewritten each time the format moves again.
 
-**Migrations operate on raw wire data, before validation.** The validators
-encode the shape of the _current_ version, so an older payload cannot be
-validated until it has been brought forward. Resource limits still apply: they
-are enforced when fields are read, which happens after migration, so a migration
-cannot be used to smuggle an oversized payload past the budget.
+Migrations operate on raw wire data, before validation. The validators
+describe the current format, so an older payload must be migrated first.
+Field-level resource limits apply when validation reads the migrated payload.
 
-**Unknown fields are preserved.** A checkpoint written by a newer patch release
+Unknown fields are preserved. A checkpoint written by a newer patch release
 of the same version may carry fields this build does not read. Dropping them
 would silently downgrade a round trip, so each step shallow-copies and rewrites
 only what it owns.
 
-**Downgrade is not supported.** A checkpoint from a future version fails with
+Downgrade is not supported. A checkpoint from a future version fails with
 `VERSION_UNSUPPORTED` rather than a lossy best effort. Callers that hold the
 original file can branch on that code and re-load from source, which is always
 better than restoring an approximation of state the build cannot represent.
 
-**Error codes stay stable.** Migration failure reuses `VERSION_UNSUPPORTED`, the
+Error codes stay stable. Migration failure reuses `VERSION_UNSUPPORTED`, the
 code callers already branch on, with a message naming the supported window.
 
 ## Decision 2 — Skeleton checkpoint (proposed, not implemented)
 
-The intent is to separate _document structure and user edits_ from _externally
-reloadable chunk bytes_, so checkpoint size tracks edits rather than browsing.
+The proposed format would store document structure and user edits while letting
+the loader fetch unmodified chunk bytes. Checkpoint size would then depend on edits.
 
 Sketch:
 
-- Chunk pieces whose bytes are unmodified serialise as a **reference**: source
-  identity, chunk index, byte range, checksum, and encoding — not the bytes.
-- Chunks overlapped by user edits serialise **inline**, as today. The existing
-  eviction-refusal rule already identifies exactly this set: a chunk that cannot
-  be evicted because edits overlap it is a chunk that cannot be represented as a
-  pure reference.
+- Unmodified chunk pieces store a reference containing the source identity,
+  chunk index, byte range, checksum, and encoding.
+- Chunks overlapped by user edits serialise inline, as today. The existing
+  eviction-refusal rule identifies chunks whose ranges overlap edits. These
+  chunks need inline bytes to preserve their edited content.
 - Restore re-fetches referenced chunks through the loader and verifies the
   checksum.
 
-**This is deliberately not implemented in this change.** It requires a v2 wire
-format and several product decisions that are not the deletion fix's to make:
+Implementing this proposal requires a v2 wire format and decisions about the
+following requirements.
 
-1. **Source identity.** What names a source stably enough to survive a restart —
-   a path, a content hash, an application-supplied opaque token? Reed does not
-   own file I/O and must not start.
-2. **Restore with an unavailable source.** Fail closed, or restore a degraded
+1. Source identity. Choose a stable source identifier, such as a path, content
+   hash, or application-supplied token. File I/O remains the caller's responsibility.
+2. Restore with an unavailable source. Fail closed, or restore a degraded
    state that reports which ranges are missing? The latter needs a public way to
    express "this document is partially unavailable", which the API has no
    vocabulary for today.
-3. **Stale or mismatched source.** A checksum mismatch must never substitute
+3. Stale or mismatched source. A checksum mismatch must never substitute
    wrong bytes silently. Whether it is fatal or per-chunk degradable is the same
    question as (2).
-4. **Loader compatibility.** A checkpoint referencing external chunks is only
+4. Loader compatibility. A checkpoint referencing external chunks is only
    restorable by a caller that supplies a compatible loader, which makes restore
    conditional on runtime configuration for the first time.
 
@@ -103,7 +97,6 @@ above exists so that answering them later is an append, not a redesign.
   preservation, and failure are already covered by
   `checkpoint-migrate.test.ts` against synthetic fixtures.
 - Chunked checkpoints keep growing with resident chunks until Decision 2 ships.
-  Callers that care can evict before capturing; that is a workaround, not a fix,
-  and it is why the numbers above are recorded here.
+  Evict eligible chunks before capture to reduce the payload with the current format.
 - Any v2 payload change is a wire-format change and takes explicit semver
   treatment.

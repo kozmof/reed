@@ -36,7 +36,7 @@ import type { DocumentState, SelectionRange } from "../types/state.js";
  *
  * `SET_SELECTION` accepts byte-offset `SelectionRange[]`, which is easy to confuse
  * with char offsets. Use this factory when constructing a selection from user-visible
- * cursor positions — it performs the char→byte conversion for you.
+ * cursor positions and convert character offsets to byte offsets.
  *
  * @param charAnchor - Anchor char offset (where the selection started)
  * @param charHead   - Head char offset (cursor position / end of selection)
@@ -50,8 +50,7 @@ function selectionRange(
   charHead: number,
   state: DocumentState,
 ): SelectionRange {
-  // charOffsetsToSelection returns a cost-branded SelectionRange; the brand is
-  // assignable to the plain type, so it strips automatically at this boundary.
+  // The explicit return type hides the internal cost brand from callers.
   return charOffsetsToSelection(state, {
     anchor: charOffset(charAnchor),
     head: charOffset(charHead),

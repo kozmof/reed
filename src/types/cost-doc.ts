@@ -15,7 +15,7 @@
  *    in store/application code.
  *
  * @remarks
- * **Cost labels are documentation annotations, not runtime contracts.**
+ * Cost labels are documentation annotations, not runtime contracts.
  * The type-level algebra (`$prove`, `$proveCtx`, `$lift`) checks that label
  * relationships are internally consistent (e.g. O(n) is not declared inside
  * an O(1) boundary), but it does NOT measure actual execution cost, count
@@ -23,7 +23,7 @@
  * loop as O(1) and the type system will not object. Use a benchmark harness
  * to validate cost claims against real data.
  *
- * **Context identity is partial.** `$beginCost`/`$withCost` carry a phantom
+ * Context identity is partial. `$beginCost`/`$withCost` carry a phantom
  * region so that escaping an internal context value can be rejected, but
  * TypeScript conflates the regions of sibling/nested contexts created in the
  * same scope. Mixing two same-bound contexts is therefore NOT reliably caught;
@@ -250,9 +250,9 @@ type Prev = [never, 0, 1, 2, 3, 4, 5, 6];
  * branded value inside an otherwise-cheap payload.
  *
  * @remarks
- * Only brands present in the **static type** are visible; a value whose brand
- * was stripped (e.g. via `$value`) reads as `const`. Depth is capped to keep
- * type-checking tractable on deep object graphs.
+ * Payload costs depend on brands visible in the static type. Removing a brand
+ * with a helper such as `$value` makes its cost read as `const`. A depth cap
+ * limits type-checking work on deep object graphs.
  */
 type PayloadLabel<T, D extends number = 6> = D extends 0
   ? LabelOf<T>
@@ -271,15 +271,15 @@ export type PayloadCost<T> = CostOfLabel<PayloadLabel<T>>;
  * A proof context opened by {@link $beginCost} / {@link $withCost}.
  *
  * Carries the declared upper-bound label `L`, its {@link Cost} pair `C`, and a
- * phantom region `S`. The region is **invariant** (the `(s: S) => S` field is
+ * phantom region `S`. The region is invariant (the `(s: S) => S` field is
  * the classic `runST` encoding): a value tagged with one region cannot be used
  * where a different region is expected. `$beginCost` mints `S = unknown` (no
  * identity); `$withCost` mints a *fresh* `S` per call so context values cannot
  * escape their scope.
  *
  * @remarks
- * All three fields are **phantom** — they exist only in the type. At runtime a
- * context is `{ __label }` and a context value is a tagged `{ value }`.
+ * The three fields below exist only in the type. Runtime contexts contain
+ * `{ __label }`, and context values contain a tagged `{ value }`.
  */
 export type CostCtx<S, L extends CostLabel, C extends Cost> = {
   readonly __region: (s: S) => S;
@@ -354,7 +354,7 @@ export function $uncostedFn<Args extends readonly unknown[], R>(
  * Use this when a proof plan is not modeled.
  * For checked boundaries, use `$prove` or `$proveCtx`.
  *
- * This is a **pure assertion** with no compile-time or runtime verification. A caller can
+ * This is a pure assertion with no compile-time or runtime verification. A caller can
  * annotate an O(n) value as O(1) and the type system will not object. `$unsafeDeclare` exists for
  * contexts where cost is provable by reasoning but cannot be expressed through the
  * `$pipe`/`$andThen` combinator algebra (e.g., amortized bounds, platform-specific guarantees).
@@ -375,7 +375,7 @@ export function $unsafeDeclare(max: CostInputLabel, value: unknown): unknown {
  * @remarks
  * The `max` label is not enforced at runtime. This function verifies only that
  * the composed plan's type-level cost is ≤ `max` at compile time. Actual
- * runtime performance is unchecked — see module-level note.
+ * See the module-level note for the limits of cost annotations.
  */
 export function $prove<L extends CostInputLabel, C extends Cost, T>(
   max: L,
@@ -390,7 +390,8 @@ export function $prove(max: CostInputLabel, plan: CheckedPlan<Cost, unknown>): u
  * Compile-time checked boundary from a precomputed context.
  *
  * @remarks
- * Like `$prove`, the label is not enforced at runtime — see module-level note.
+ * The label records the caller's cost claim. See the module-level note for
+ * validation limits.
  */
 export function $proveCtx<L extends CostInputLabel, C extends Cost, T>(
   max: L,
@@ -489,7 +490,7 @@ export function $quadCostFn<Args extends readonly unknown[], R>(
  * Context value carrying only a compile-time cost.
  *
  * @remarks
- * `_cost` is a **phantom field** — it exists in the TypeScript type but is never
+ * `_cost` is a phantom field — it exists in the TypeScript type but is never
  * initialized or read at runtime. All constructors (`$lift`, `$andThen`, `$map`,
  * etc.) create objects with only `{ value }` and cast to `Ctx<C, T>`. This is
  * intentional and safe as long as no code accesses `_cost` directly. The phantom
@@ -559,7 +560,7 @@ export function $beginCost<L extends CostInputLabel>(
  * Region separation in TypeScript is reliable for a value that escapes one
  * scope and is reused in another, but TypeScript conflates the regions of
  * sibling/nested `$beginCost`/`$withCost` contexts in the same scope — so
- * cross-context mixing is **not** fully detectable. See the module-level note.
+ * cross-context mixing is not fully detectable. See the module-level note.
  */
 export function $withCost<L extends CostInputLabel, R>(
   label: L,
@@ -579,7 +580,7 @@ export function $withCost<L extends CostInputLabel, R>(
  * result with the context's region.
  *
  * @remarks
- * Neither form verifies or constrains runtime cost — see the module-level note.
+ * Validate runtime costs separately with benchmarks. See the module-level note.
  */
 export function $lift<L extends CostInputLabel, T>(
   label: L,
@@ -795,7 +796,7 @@ export const $zipCtx = <C1 extends Cost, A, C2 extends Cost, B, U>(
 /**
  * O(n * body) nested combinator for side effects.
  * Body is evaluated once per element and contributes multiplicatively.
- * The original array is returned unchanged — use `$mapN` to collect results.
+ * Use `$mapN` to collect body results. This combinator returns the original array.
  */
 export const $forEachN =
   <E, BodyC extends Cost>(body: (e: E) => Ctx<BodyC, unknown>) =>

@@ -110,7 +110,7 @@ export function ensureBlackRoot<N extends RBNode<N>>(node: N, withNode: WithNode
  * Rotate away a red-red violation at a node, for the narrow case where the
  * uncle is known to be black.
  *
- * This is **not** a general red-black repair, and must not be used as one:
+ * This is not a general red-black repair, and must not be used as one:
  *
  * - It cannot repair a black deficit. Deletion needs
  *   {@link repairLeftBlackDeficit} / {@link repairRightBlackDeficit}, which
@@ -357,7 +357,7 @@ export interface RepairResult<N extends RBNode<N>> {
 }
 
 /**
- * Repair a subtree whose **left** child has lost one black level.
+ * Repair a subtree whose left child has lost one black level.
  *
  * The four standard deletion cases, in order: red sibling (rotate to make it
  * black and retry), black sibling with two black children (push the deficit up),
@@ -412,7 +412,7 @@ export function repairLeftBlackDeficit<N extends RBNode<N>>(
   };
 }
 
-/** Repair a subtree whose **right** child has lost one black level. */
+/** Repair a subtree whose right child has lost one black level. */
 export function repairRightBlackDeficit<N extends RBNode<N>>(
   parent: N,
   withNode: WithNodeFn<N>,

@@ -5,7 +5,7 @@
  * context) to locate line breaks and reason about CR/LF/CRLF boundaries. They
  * hold no tree state and depend on nothing else in the line-index module, so
  * they live here as a leaf module to keep `line-index.ts` focused on tree
- * maintenance. All are internal — not part of the public API.
+ * maintenance. These helpers are internal.
  */
 
 import { byteOffset, type ByteOffset } from "../../types/branded.js";
@@ -22,7 +22,7 @@ import { isSurrogatePairAt } from "./encoding.js";
  * Uses charCodeAt instead of textEncoder.encode to avoid allocating a Uint8Array
  * on every call (hot path: invoked on every insert). This is correct because
  * 0x0A (\n) and 0x0D (\r) are single-byte ASCII and never appear in UTF-8
- * continuation bytes — so character index equals byte index for these code points.
+ * continuation bytes. Character and byte indices match for these code points.
  * Non-ASCII characters are accounted for in the running byteLen accumulator using
  * the standard UTF-8 width rules (1/2/3/4 bytes per code point).
  */

@@ -6,17 +6,15 @@
  * boundary rather than a document offset, so a reference survives tree rotations,
  * rebalancing, inserts, and deletes without the caller re-tracking offsets.
  *
- * State is immutable and caller-owned: pass the current `AttentionLayerState`
- * into each state-returning op and store the result. Start from `emptyState`.
+ * Pass the current, immutable `AttentionLayerState` into each operation and
+ * keep the returned state. Start from `emptyState`.
  *
  * Use `insertWithAttention` / `deleteWithAttention` to advance the piece table
- * and attention layer together; resolution is fail-closed (a dangling point
- * resolves to `null` rather than to a corrupt offset).
+ * and attention layer together. A dangling point resolves to `null`.
  *
- * Cost discipline is an implementation detail of `store/core`: the core ops are
- * authored against the `cost-doc` algebra so their declared complexity is checked
- * at composition time, but the brand is stripped at this boundary so callers get
- * plain values. Complexity is documented here via `@complexity` tags instead.
+ * Core operations use `cost-doc` annotations to track declared costs when
+ * composing functions. These annotations do not verify runtime performance.
+ * Public wrappers remove cost brands. See the `@complexity` tags below.
  *
  * @see scan — full-document traversals
  */

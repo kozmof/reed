@@ -21,7 +21,7 @@ import { dirname } from "path";
 import { generateLargeContent, approximateByteSize } from "./large-content.js";
 
 // ---------------------------------------------------------------------------
-// Arg parsing (no dependencies — keep this script zero-dep)
+// Parse arguments without adding dependencies.
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv: string[]) {

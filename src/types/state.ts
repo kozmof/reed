@@ -142,7 +142,7 @@ export interface ChunkPieceNode extends PieceNodeBase {
 /**
  * Immutable piece node in the Red-Black tree.
  * Discriminated union — narrow with `bufferType` to access variant-specific fields.
- * Only `ChunkPieceNode` carries `chunkIndex`; the other variants do not have that field.
+ * Only `ChunkPieceNode` carries `chunkIndex`.
  *
  * Note: Parent references are removed for immutability.
  * Use zipper pattern or path tracking for traversal.
@@ -465,7 +465,7 @@ class PStackNode<T> {
   readonly size: number;
   readonly height: number;
   readonly last: T;
-  /** Newest stack value; retained for compatibility with earlier snapshots. */
+  /** Newest stack value, retained for compatibility with earlier snapshots. */
   readonly top: T;
 
   constructor(value: T, left: PStack<T>, right: PStack<T>) {
@@ -478,7 +478,7 @@ class PStackNode<T> {
     this.top = this.last;
   }
 
-  /** Stack without its newest value; retained for compatibility. */
+  /** Stack without its newest value, retained for compatibility. */
   get rest(): PStack<T> {
     return pstackPopNewest(this as unknown as NonNullable<PStack<T>>)[1];
   }

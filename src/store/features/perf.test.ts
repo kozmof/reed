@@ -1,7 +1,7 @@
 /**
  * Large-file performance tests for the Reed document store.
  *
- * The thresholds here are **catastrophic-failure ceilings**, not regression
+ * The thresholds here are catastrophic-failure ceilings, not regression
  * budgets. They sit roughly an order of magnitude above observed timings so
  * they do not flap on slower CI hardware, which also means they cannot detect
  * an ordinary regression: the persistent-deletion defect fixed in v3.2.0 ran

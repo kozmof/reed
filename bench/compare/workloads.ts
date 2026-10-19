@@ -3,11 +3,10 @@
  *
  * Every workload touches Reed only through the public module object passed in
  * as `R`, so the same code drives any built `dist/reed.js`. A workload's
- * `prepare` builds a fresh fixture outside the timed interval; `run` is the
- * timed work. It returns a checksum that must match across versions, which
- * proves both versions did the same work. Return a function when computing the
- * checksum costs real work (e.g. reading the document back): the worker calls
- * it after the timer stops, so the checksum never pollutes the measurement.
+ * `prepare` builds a fresh fixture before timing starts. `run` performs the
+ * timed work and returns a checksum to detect output differences between versions.
+ * Return a function when computing the checksum requires substantial work, such
+ * as reading the document. The worker evaluates that function after timing stops.
  */
 
 import type * as Reed from "../../src/index.ts";
@@ -27,7 +26,7 @@ export interface Workload<F = any> {
   readonly sizes: readonly number[];
   /** Human-readable meaning of the size parameter. */
   readonly unit: string;
-  /** Set when the versions legitimately produce different output; explains why. */
+  /** Explain an expected output difference between versions. */
   readonly outputMayDiffer?: string;
   prepare(R: ReedModule, size: number): F;
   run(R: ReedModule, fixture: F, size: number): Checksum | Promise<Checksum>;

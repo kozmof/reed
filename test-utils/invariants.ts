@@ -16,10 +16,8 @@ import {
 /**
  * The maximum height a red-black tree of `count` nodes may have.
  *
- * A red-black tree satisfies `h <= 2*log2(n + 1)`; because heights are integers
- * the floor of that expression is the tightest admissible bound. This is the
- * property callers actually depend on — `O(log n)` piece-table operations are
- * a consequence of bounded height, not of the colour rules themselves.
+ * A red-black tree has height at most `2*log2(n + 1)`. Round down to obtain
+ * an integer bound. This height bound keeps piece-table traversals logarithmic.
  */
 export function redBlackHeightBound(count: number): number {
   return Math.floor(2 * Math.log2(count + 1));
@@ -40,9 +38,9 @@ export function measurePieceTree(node: PieceNode | null): { count: number; heigh
  * Assert persistent piece-tree ordering, aggregates, identity, and RB properties.
  *
  * `strictRedBlack` additionally checks root blackness, the absence of red-red
- * edges, uniform black height, and the height bound above. It defaults to
- * `false` only so that callers asserting a narrower contract stay unchanged;
- * any test driving live inserts and deletes should pass `true`.
+ * edges, uniform black height, and the height bound above. The default `false`
+ * preserves the narrower checks used by existing callers. Pass `true` in tests
+ * that drive live inserts and deletes.
  */
 export function assertPieceTableInvariants(
   state: PieceTableState,

@@ -8,9 +8,8 @@ an assertion at a mode boundary such as `asEagerLineIndex`.
 
 ## 1. Piece Table Invariants
 
-The piece table is an immutable persistent Red-Black tree whose leaves
-(`PieceNode`) reference contiguous byte ranges in one of three backing buffers:
-`originalBuffer`, `addBuffer`, or a chunk map entry.
+The piece table is an immutable red-black tree. Each `PieceNode` references a
+contiguous byte range in `originalBuffer`, `addBuffer`, or a chunk map entry.
 
 ### 1.1 Subtree Aggregate Fields
 
@@ -53,7 +52,7 @@ upward. `joinTrees` discharges the deficit from removing its join key before
 either subtree's rank is read, and `joinBalanced` grafts at a node of matching
 black height. Only the final root is normalised to black.
 
-`fixRedViolations` is **not** a general repair: it handles neither a black
+`fixRedViolations` is not a general repair: it handles neither a black
 deficit nor a red uncle. Before v3.2.0 the deletion path used it alone and
 recoloured the root to finish, which left the tree with red-red edges and
 uneven black height after ordinary interior, prefix and suffix deletes. Document
@@ -302,12 +301,12 @@ index.
 
 ---
 
-## 5. Checkpoint Restore Invariants
+## 6. Checkpoint Restore Invariants
 
 A checkpoint is untrusted input. `restoreCheckpoint` assembles no state until the payload has
 been shown to satisfy the invariants above, and raises `CheckpointError` otherwise.
 
-### 5.1 Aggregates and Offsets Are Rebuilt, Not Read
+### 6.1 Aggregates and Offsets Are Rebuilt, Not Read
 
 Restore stores no subtree aggregate and no line byte offset. Both trees are bulk-loaded through
 `createPieceNode`, `createChunkPieceNode`, and `createLineIndexNode`, which recompute every
@@ -318,7 +317,7 @@ Bulk loading uses median-split recursion with the deepest real nodes colored red
 1.2 holds as well. Tree topology is not preserved across a round trip, and nothing depends on
 it, since attention anchors to `PieceID` rather than to tree shape.
 
-### 5.2 Checked Before Assembly
+### 6.2 Checked Before Assembly
 
 - every piece range lies inside the buffer it names, and chunk pieces name a chunk present in the payload
 - chunk pieces appear in ascending `chunkIndex` order, as invariant 1.4 requires
@@ -326,14 +325,14 @@ it, since attention anchors to `PieceID` rather than to tree shape.
 - no duplicate piece id and no duplicate attention id
 - every attention point names a piece in the payload with a boundary inside that piece
 
-### 5.3 Allocator Cursors Stay Ahead of Live Identities
+### 6.3 Allocator Cursors Stay Ahead of Live Identities
 
 `pieceTable.nextPieceID` exceeds every `p<n>` identity in the payload, and
 `attention.nextID` exceeds every `a<n>` identity. Without this, the first edit after restore
 would mint an id that is already anchored. Identities that do not match those patterns are
 opaque and place no constraint on the allocator.
 
-### 5.4 History Byte Lengths Are Derived
+### 6.4 History Byte Lengths Are Derived
 
 Restore recomputes `byteLength` and `oldByteLength` from their strings rather than reading
 them, so invariant 4 cannot be violated by an edited payload.
@@ -346,35 +345,24 @@ document as it stands now.
 
 ## 7. Add-Buffer Writable-Tail Ownership
 
-`GrowableBuffer` avoids copying the valid prefix on every keystroke by letting
-sequential appends write into spare capacity of a shared backing array. Safety
-rests on one rule:
+`GrowableBuffer` shares sealed byte segments across snapshots. Sequential
+appends reuse spare capacity in the current tail. Only the version recorded in
+`tailOwners`, a module-level `WeakMap` in `growable-buffer.ts`, may append in
+place. Writes begin after that version's visible bytes.
 
-> At most one `GrowableBuffer` owns the writable tail of a given backing array,
-> and only that owner may write in place. Every other version copies first.
+Appending from an older version seals its visible tail as a shared segment and
+allocates a new tail. It does not copy the existing prefix. A persistent AVL tree
+stores sealed segments and preserves each branch's logical byte offsets.
 
-Ownership is recorded in a module-level `WeakMap` keyed by the backing
-`Uint8Array` (`writableTailOwner` in `growable-buffer.ts`). Consequences that
-are easy to miss:
+Small tails grow geometrically up to 64 KiB. An append that exceeds both the
+available capacity and that limit seals the current tail and starts a new one.
+The constructor registers ownership of its backing array, including when
+checkpoint restore constructs a buffer from decoded bytes.
 
-- **Ownership is not part of `DocumentState`.** It depends on in-process object
-  identity. It is therefore invisible to serialization and cannot be asserted
-  from a snapshot alone.
-- **Crossing a boundary drops ownership, safely.** A buffer rebuilt from bytes —
-  checkpoint restore, a `postMessage` clone, any structured clone — shares no
-  identity with the original, owns nothing, and copies on its first append. The
-  fallback is correctness-preserving, so no boundary needs special handling.
-- **Growth transfers ownership.** Reallocating for capacity produces a new
-  backing array whose owner is the new version, so older versions branching from
-  the same prefix still copy.
-- **Branching after rollback is the case this exists for.** Appending from a
-  stale version must never overwrite bytes a newer snapshot can still see.
-- **Exposed views are fixed-length.** `buffer.bytes` is a
-  `subarray(0, length)` snapshot, so a later append cannot extend what an older
-  version exposes.
+Read views retain their snapshot's length. `subarray` shares storage for a range
+within one segment and copies a range that crosses segments. The `bytes` accessor
+caches a contiguous view and can allocate for a segmented buffer.
 
-`src/store/core/growable-buffer.test.ts` covers sequential reuse, branch
-isolation, ownership transfer on growth, the serialization-boundary fallback,
-and view stability. Change the ownership design only with a concrete
-cross-realm requirement or a measurement that justifies it; the current scheme
-trades a `WeakMap` lookup for avoiding an O(n) copy per keystroke.
+See [the buffer layout](../spec/09-piece-table-internals.md#2-addbuffer-layout)
+for growth and read costs. `src/store/core/growable-buffer.test.ts` covers
+sequential reuse, branch isolation, growth, restored buffers, and stable views.

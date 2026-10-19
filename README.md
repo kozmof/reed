@@ -12,6 +12,8 @@ pnpm add @kozmof/reed
 
 ## Quick start
 
+Create a store, dispatch an edit, and read the result.
+
 ```ts
 import { store, scan, position } from "@kozmof/reed";
 
@@ -49,9 +51,11 @@ Types are exported flat and can be imported directly.
 import type { DocumentState, InsertAction, ByteOffset } from "@kozmof/reed";
 ```
 
-Use `query` on hot paths such as keystrokes, scrolling, and rendering. Reserve `scan` for occasional work such as exporting a document or running background analysis. Every `scan.*` call walks the whole document.
+Use `query` on hot paths such as keystrokes, scrolling, and rendering. Range reads also cost time proportional to the text returned. Reserve `scan` for occasional work such as exporting a document or running background analysis.
 
 ## Creating a store
+
+Pass initial content and optional settings to the store factory.
 
 ```ts
 import { store } from "@kozmof/reed";
@@ -161,7 +165,7 @@ const state = doc.getSnapshot();
 
 scan.getValue(state.pieceTable); // the entire document as a string
 
-// Each chunk is a DocumentChunk { content, byteOffset, ... }; good for exporting large files.
+// Stream DocumentChunk values to export large files without one large string.
 for (const chunk of scan.getValueStream(state.pieceTable)) {
   write(chunk.content);
 }
@@ -169,7 +173,7 @@ for (const chunk of scan.getValueStream(state.pieceTable)) {
 
 ## Rendering a viewport
 
-The `rendering` namespace turns document state into the lines a UI needs to paint, plus position conversions for cursor handling.
+Use `rendering.getVisibleLines` to read the lines your UI needs to paint. The namespace also converts cursor positions.
 
 ```ts
 import { rendering } from "@kozmof/reed";
@@ -225,7 +229,7 @@ const end = attention.createPoint(pt.root, position.byteOffset(11))!;
 let id;
 [att, id] = attention.createAttention(att, start, end);
 
-// Insert earlier in the document; advance both layers together.
+// Advance both layers when inserting earlier in the document.
 const next = attention.insertWithAttention(pt, att, position.byteOffset(0), ">> ");
 pt = next.pieceTableState;
 att = next.attentionState;
@@ -265,7 +269,7 @@ await manager.ensureLoaded(0);
 
 Chunk metadata makes `query.getLineCount(state)` report the expected total before every chunk is loaded. Use `query.getLineCountInfo(state)` to keep expected counts separate from the resident line tree used by rendering selectors.
 
-Background re-indexing after edits is handled by a reconciliation scheduler. A fully-resolved (eager) state can be forced when needed immediately, for example before an `O(n)` export.
+The reconciliation scheduler repairs cached line offsets after edits. Call `reconcileNow()` when an operation requires an eager state immediately.
 
 ```ts
 const eager = doc.reconcileNow(); // returns a fully reconciled DocumentState

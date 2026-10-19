@@ -68,8 +68,8 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
  * either from configuration (`createDocumentStore`) or from an already-assembled
  * state (`createDocumentStoreFromCheckpoint`).
  *
- * The runtime it owns — listeners, transaction depth, scheduler, reconciliation
- * waiters — always starts fresh, whatever the state's history.
+ * Listeners, transaction depth, the scheduler, and reconciliation waiters start
+ * fresh even when the state contains restored history.
  */
 function createStoreOverState(
   initialState: DocumentState,
@@ -462,7 +462,7 @@ function createStoreOverState(
 
   /**
    * Shared core: apply reconcileFull in-place and return eager state.
-   * Does NOT increment revision — offset resolution is content-neutral.
+   * Resolving cached offsets preserves revision because it leaves content unchanged.
    */
   function reconcileInPlace(): DocumentState<"eager"> {
     if (!state.lineIndex.rebuildPending) return state as DocumentState<"eager">;
@@ -652,8 +652,8 @@ function assertRuntimeOnlyConfig(config: DocumentStoreRuntimeConfig): void {
  *
  * Only runtime configuration is accepted. Content, history limit, line ending,
  * chunk size, and the rest of the state-bearing options come from the
- * checkpoint. Store runtime always starts fresh — no listeners, no open
- * transaction, and a new reconciliation scheduler — so a caller restoring a
+ * checkpoint. The new store starts with empty listener and transaction state
+ * and a fresh reconciliation scheduler. A caller restoring a
  * chunked document rebuilds its `ChunkManager` as well.
  *
  * Pass resource limits as the third argument when the checkpoint comes from

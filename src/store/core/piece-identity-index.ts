@@ -59,7 +59,7 @@ export function carryPieceIdentityIndex(
   return root;
 }
 
-/** Cold lookup builds an index; subsequent edits and lookups follow tree paths. */
+/** Build the index on first lookup, then follow tree paths for edits and reads. */
 export function resolvePieceIdentity(
   root: PieceNode,
   id: PieceID,

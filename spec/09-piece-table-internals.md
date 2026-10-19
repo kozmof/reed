@@ -3,8 +3,8 @@
 ## 1. Overview
 
 The piece table stores document content in a red-black tree of lightweight nodes.
-Each node points to a `(bufferType, start, length)` window in one of two backing byte
-buffers instead of holding text directly.
+Each node identifies a byte range with `bufferType`, `start`, and `length`.
+The range belongs to an original buffer, an add buffer, or a loaded chunk.
 
 - `originalBuffer: Uint8Array` — immutable, loaded once from the initial content string.
 - `addBuffer: GrowableBuffer` — append-only, grows as the user edits.
@@ -180,14 +180,13 @@ are allocated, and all untouched subtrees are structurally shared with the previ
 
 ## 4. Deletion Across Multiple Pieces / Buffer Types
 
-Relevant code: `pieceTableDelete`, `deleteRange`, `mergeTrees` in
+Relevant code: `pieceTableDelete` in
 `src/store/core/piece-table.ts`.
 
 ### 4.1 Buffer-type agnosticism
 
-Deletion is indifferent to `bufferType`. `deleteRange` is a recursive tree walk that
-handles every overlapping piece by the same four cases, whether it is `'original'` or
-`'add'`.
+Deletion handles original, add-buffer, and chunk pieces using the same range
+boundaries. It splits the tree around the deleted range and joins the retained sides.
 
 ### 4.2 Per-piece cases
 
@@ -200,7 +199,7 @@ keepAfter  = pieceEnd   - deleteEnd     // bytes after the cut
 
 | Condition                           | Action                                                                 |
 | ----------------------------------- | ---------------------------------------------------------------------- |
-| `keepBefore <= 0 && keepAfter <= 0` | Entire piece deleted — merge subtrees via `mergeTrees()`               |
+| `keepBefore <= 0 && keepAfter <= 0` | Entire piece removed from the retained tree               |
 | `keepBefore > 0 && keepAfter > 0`   | Deletion punches a hole — split into two pieces (same as insert-split) |
 | `keepBefore > 0`                    | Trim right end — shorten `length`, `start` unchanged                   |
 | `keepAfter > 0`                     | Trim left end — advance `start`, shorten `length`                      |
@@ -226,15 +225,13 @@ present but are no longer referenced by any piece.
 
 ### 4.4 Tree rebalancing after deletion
 
-Removing entire pieces requires joining the orphaned left and right subtrees.
-`mergeTrees` handles this by:
+`pieceTableDelete` splits the tree at both range boundaries and joins the
+retained sides with `joinTrees`. Removing the join key can reduce black height.
+The deletion repair propagates that deficit before `joinBalanced` combines the
+subtrees at matching black heights. The final root is black.
 
-1. `extractMin(rightSubtree)` — pulls the leftmost node out as the join key (O(log n)).
-2. `joinByBlackHeight(left, key, right)` — merges the two subtrees maintaining the
-   black-height invariant. Delegates to `joinRight` or `joinLeft` when heights differ,
-   walking the appropriate spine and calling `fixRedViolations` on the way back up.
-
-All rebalancing is O(log n).
+See [red-black invariants](../docs/invariants.md#12-red-black-invariants)
+for the repair helpers and validation contract.
 
 ---
 

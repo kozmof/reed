@@ -1,5 +1,5 @@
 /**
- * Attention Layer data types — the piece-anchored reference system that forms
+ * Types for the piece-anchored attention reference system, which forms
  * Reed's third independent layer (alongside the piece table and line index).
  *
  * These are the pure, dependency-light state shapes. The operations that read

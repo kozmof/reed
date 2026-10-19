@@ -5,7 +5,7 @@
  * createInitialState({ content }) or written to disk via gen-fixture script.
  */
 
-/** Simple LCG RNG — same algorithm used in store.usecase.test.ts */
+/** Deterministic linear congruential generator shared with store.usecase.test.ts. */
 export function makeDeterministicRng(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
@@ -29,7 +29,7 @@ export interface LargeContentOptions {
    *  - 'uniform'   – every line is identical (stress-tests deduplication paths)
    *  - 'random'    – random printable ASCII of varying widths
    *  - 'multibyte' – mixed ASCII, kanji (3 bytes/char), and emoji (4 bytes/char)
-   *                  byte length >> UTF-16 length; exercises offset translation paths
+   *                  exercises conversion between byte and UTF-16 offsets
    */
   pattern?: "prose" | "code" | "uniform" | "random" | "multibyte";
   /** RNG seed for deterministic output (default: 42) */
@@ -228,10 +228,10 @@ export function generateLargeContent(options: LargeContentOptions = {}): string 
 
 /**
  * Approximate byte size of a string when UTF-8 encoded.
- * (Exact for ASCII-only content; use TextEncoder for exact measurement.)
+ * Exact for ASCII-only content. Use TextEncoder to measure other text exactly.
  */
 export function approximateByteSize(content: string): number {
-  // ASCII fast-path; falls back to encoder for multi-byte
+  // Use the encoder when the text contains non-ASCII characters.
   let size = 0;
   for (let i = 0; i < content.length; i++) {
     const c = content.charCodeAt(i);

@@ -2,7 +2,7 @@
 
 ## 1. Latest Verified Run
 
-Counts are **generated, not transcribed**. Run:
+Generate the latest verification report.
 
 ```sh
 bash scripts/verification-summary.sh
@@ -12,9 +12,8 @@ It writes `report/verification-summary.md` with the commit SHA, Node version,
 platform, and the test counts read from vitest's JSON reporter. CI uploads the
 same file as a build artifact.
 
-This section previously carried hand-copied totals and drifted: it claimed
-`1154` functional tests while the suite ran `1163`. Quote the generated
-summary or the CI run, and do not restate counts here.
+Read test counts from the generated summary or the CI run. Keep counts out of
+this document so they do not become stale.
 
 ## 2. Current Test Suites
 
@@ -101,7 +100,7 @@ strict red-black balance after every reconciled step. Dedicated deletion tests
 cover both persistent deletion and the large-range rebuild path. Line-index
 lookups remain O(log n).
 
-Strict red-black validation now also runs on **live** edit sequences, not only
+Strict red-black validation now also runs on live edit sequences, not only
 on checkpoint-restored trees. Until v3.2.0 the model-based suite checked tree
 shape strictly only at `model-based.test.ts:222`, against a bulk-built restored
 tree, so a piece tree that lost its balance guarantee through ordinary deletes
@@ -116,7 +115,7 @@ ordinary functional suite.
 
 ## 5. Guidance for Spec-Driven Testing
 
-When adding new capabilities, keep tests in three layers:
+Cover new capabilities at both levels.
 
 1. Pure function/reducer tests for determinism.
 2. Store workflow tests for batching, rollback, snapshot gating, and event semantics.

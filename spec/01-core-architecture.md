@@ -9,7 +9,7 @@ Reed is an immutable text engine built from state snapshots, a reducer, and a st
 - State transition: pure reducer (`src/store/features/reducer.ts`)
 - Runtime orchestration: store factory + transaction manager (`src/store/features/store.ts`)
 - Background maintenance: reconciliation scheduler + add-buffer compaction (`src/store/features/reconciliation-scheduler.ts`)
-- Public runtime access: `store/query/scan/events/rendering/history/diff/position/attention` namespaces (`src/api/*`)
+- Public runtime access: `store/query/scan/events/rendering/history/diff/position/attention/checkpoint` namespaces (`src/api/*`)
 
 The piece table and line index remain independent structures. Piece nodes do not store line metadata. Initial loading encodes the content once and shares those UTF-8 bytes while building both structures.
 

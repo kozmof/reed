@@ -5,8 +5,8 @@
 #
 # Uses `git archive` rather than a worktree so the export carries no git
 # metadata. node_modules is symlinked from the current checkout, which is valid
-# only while the ref's package.json/pnpm-lock.yaml dependencies match; the
-# script refuses otherwise.
+# only when package.json and pnpm-lock.yaml dependencies match the requested ref.
+# The script rejects dependency mismatches.
 set -euo pipefail
 
 ref="${1:?usage: prepare.sh <git-ref> <out-dir>}"

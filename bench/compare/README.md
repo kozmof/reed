@@ -1,10 +1,11 @@
 # Cross-version performance comparison
 
-Measures how Reed's performance changed between two commits. Both builds run
-the same workloads through the public API, so the harness stays the same and
-only the engine changes.
+Use this harness to compare Reed's performance between two commits. Both builds
+run the same workloads through the public API.
 
 ## Run it
+
+Build both commits, then pass their output directories to the comparison command.
 
 ```bash
 # 1. Build both commits. Each export shares this checkout's node_modules.
@@ -45,8 +46,8 @@ Options:
   interval excludes 1 ± 5%.
 - Every workload returns a checksum of its output. The run exits non-zero if
   base and head disagree, unless the workload declares `outputMayDiffer`.
-- Memory columns come from V8 heap statistics: "alloc" is heap growth during
-  the timed run, "retained" is what survives a GC after it.
+- The "alloc" column reports heap growth during the timed run. The "retained"
+  column reports heap growth remaining after garbage collection.
 
 ## Adding a workload
 

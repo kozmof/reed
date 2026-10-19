@@ -9,15 +9,15 @@
  *
  * Design decisions (see `docs/adr/001-checkpoint-compatibility.md`):
  *
- * - Migrations run on **raw wire data**, before validation. Validators encode
+ * - Migrations run on raw wire data, before validation. Validators encode
  *   the shape of the current version, so an older payload cannot be validated
  *   before it has been brought forward.
- * - Steps are **single-version**: `v1 -> v2 -> v3`, never `v1 -> v3` directly.
+ * - Steps are single-version: `v1 -> v2 -> v3`, never `v1 -> v3` directly.
  *   Each step is written once, against the format immediately preceding it.
- * - Unknown fields are **preserved**. A checkpoint written by a newer patch
+ * - Unknown fields are preserved. A checkpoint written by a newer patch
  *   release of the same version may carry fields this build does not read;
  *   dropping them would silently downgrade a round trip.
- * - Downgrade is **not supported**. A checkpoint from a future version fails
+ * - Downgrade is not supported. A checkpoint from a future version fails
  *   with `VERSION_UNSUPPORTED` so callers can fall back to re-loading from the
  *   original source rather than restoring a lossy approximation.
  */

@@ -234,7 +234,7 @@ Piece-anchored boundary references (the third Reed layer). State is immutable an
 - attentions: `createAttention`, `getAttention`, `deleteAttention`
 - resolution/text: `resolveAttention`, `getTextForAttention`
 - queries: `findAttentionsAt`, `findAttentionsOverlapping`
-- edit support: `insertWithAttention`, `deleteWithAttention`, `migrateSplits`
+- edit support: `insertWithAttention`, `deleteWithAttention`, `migrateSplits`, `migrateDelete`
 
 See [10-attention.md](10-attention.md) for the full design and migration semantics.
 

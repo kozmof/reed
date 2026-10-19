@@ -63,9 +63,9 @@ function getLineStartOffset(state: DocumentState, lineNumber: number) {
 /**
  * Return the byte range of a line. Requires an eager state (all offsets resolved).
  *
- * Use this when the caller already holds a `DocumentState<'eager'>` — e.g. the
- * result of `store.reconcileNow()` or after an undo/redo operation.
- * Guaranteed non-null at compile time; no runtime check overhead.
+ * Pass a `DocumentState<'eager'>` from `doc.reconcileNow()` or an undo/redo
+ * operation. The type requires reconciled offsets without a runtime mode check.
+ * Returns `null` when the line does not exist.
  *
  * Decision guide:
  *  - Caller has eager state (post-reconcile) → use `getLineRange`

@@ -114,9 +114,9 @@ export interface HistoryClearAction {
  * Record that the document has been persisted successfully.
  *
  * Reed never performs I/O. The caller writes the bytes wherever they belong and
- * dispatches this **after** the write succeeds, which clears `isDirty` and
- * stamps `lastSaved`. No event implies that bytes reached durable storage —
- * only that the caller said so.
+ * dispatches this after the write succeeds to clear `isDirty` and stamp
+ * `lastSaved`. The event records the caller's report of a successful save.
+ * Reed does not verify durable storage.
  */
 export interface MarkSavedAction {
   readonly type: "MARK_SAVED";
@@ -152,13 +152,12 @@ export interface ApplyRemoteAction {
 
 /**
  * Create an attention spanning [start, end) and add it to the layer.
- * Both bounds are document byte offsets — the reducer anchors them to piece
- * boundaries against the current tree (offsets are serializable; piece IDs are
- * process-scoped and must never appear in an action). Clamped to document
- * bounds; a span that cannot be anchored (empty tree) is a no-op.
+ * Supply document byte offsets. The reducer clamps them to document bounds and
+ * anchors them to pieces in the current tree. Actions use offsets so callers do
+ * not need piece identities. An empty tree cannot anchor a span and is a no-op.
  *
  * The minted `AttentionID` is deterministic (`a{attention.nextID}` of the
- * pre-dispatch state); read it from the post-dispatch snapshot's attention layer.
+ * pre-dispatch state). Read it from the post-dispatch snapshot's attention layer.
  */
 export interface CreateAttentionAction {
   readonly type: "CREATE_ATTENTION";
@@ -213,12 +212,12 @@ export interface LoadChunksAction {
  * the current in-memory document. Offsets after the removed range shift left by the
  * chunk's byte length. Loading the chunk again reinserts it in chunk-index order.
  *
- * **Safe operations after eviction:**
+ * Safe operations after eviction:
  * - Reading and editing the remaining resident document.
  * - Structural queries that include pre-declared metadata for unloaded chunks.
  * - Loading the chunk again via `LOAD_CHUNK` to restore text access.
  *
- * **What callers must do before evicting:**
+ * What callers must do before evicting:
  * - Ensure no in-progress edit (open transaction) spans the chunk's byte range.
  * - If the document has unsaved changes in the chunk, persist them first — eviction
  *   does not write back to any backing store.

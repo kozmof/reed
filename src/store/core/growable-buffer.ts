@@ -18,7 +18,7 @@ function node(bytes: Uint8Array, left: Segment | null, right: Segment | null): S
     length: (left?.length ?? 0) + bytes.length + (right?.length ?? 0),
   };
 }
-/** Persistent AVL append; only the rightmost search path changes. */
+/** Append a segment by copying the rightmost AVL search path. */
 function appendSegment(root: Segment | null, bytes: Uint8Array): Segment | null {
   if (bytes.length === 0) return root;
   if (!root) return node(bytes, null, null);
@@ -149,7 +149,7 @@ export class GrowableBuffer {
    * Raw view for internal read paths that unwrap immediately. Avoids the
    * generator walk and readonly proxies of `subarray`, which dominate per-piece
    * reads of fragmented documents. A piece is written by one `append`, so its
-   * bytes lie in one segment; a range crossing segments falls back to a copy.
+   * bytes lie in one segment. Cross-segment ranges copy the requested bytes.
    * Callers must not mutate the result.
    */
   rawSubarray(start: number, end: number): Uint8Array {
@@ -178,7 +178,7 @@ export class GrowableBuffer {
     return unwrapReadonlyUint8Array(this.subarray(start, end));
   }
 
-  /** Zero-copy for one segment; cross-segment reads allocate only their range. */
+  /** Share a single-segment view or copy the requested cross-segment range. */
   subarray(start: number, end: number): ReadonlyUint8Array {
     const ranges = this.ranges(start, end);
     const first = ranges.next();

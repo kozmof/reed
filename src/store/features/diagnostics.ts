@@ -3,7 +3,7 @@ import type { ReedLogger } from "../../types/state.js";
 /**
  * Maximum number of observer-triggered delivery steps drained synchronously.
  * Prevents a consumer callback that always dispatches from monopolizing the
- * current call stack. The state changes still commit; further observer delivery
+ * current call stack. State changes still commit. Further observer delivery
  * for that cycle is dropped and reported through the configured diagnostics sink.
  */
 export const MAX_OBSERVER_REENTRANT_STEPS = 100;

@@ -3,9 +3,9 @@
  *
  * Every function here walks the full document (or a large portion of it).
  * **Do not call `scan.*` inside a hot rendering loop or on every keystroke.**
- * Hot paths — line lookups, cursor positioning, range reads — belong in
- * `query.*`, which provides O(1) and tree-height-bounded alternatives backed by the
- * piece-tree and line-index prefix sums.
+ * Use `query.*` for line lookups, cursor positioning, and bounded range reads.
+ * Its selectors use cached values and tree prefix sums. Range reads also depend
+ * on the amount of text returned.
  *
  * Appropriate uses of `scan.*`:
  * - One-time export / serialisation of the whole document

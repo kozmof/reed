@@ -236,7 +236,7 @@ export function rebuildLineIndexFromPieceTableState(state: DocumentState): Docum
     byteOffset(state.pieceTable.totalLength),
   );
   const rebuilt = rebuildLineIndex(content);
-  // Preserve user-configured maxDirtyRanges — rebuildLineIndex resets it to the default 32.
+  // Restore maxDirtyRanges because rebuildLineIndex uses the default of 32.
   const rebuiltWithConfig = withLineIndexState(rebuilt, {
     maxDirtyRanges: state.lineIndex.maxDirtyRanges,
   });
@@ -299,7 +299,7 @@ function lastHistoryChange(entry: HistoryEntry): HistoryChange | undefined {
  *
  * Coalescing targets the LAST change in the entry regardless of how many
  * changes it contains (e.g., the tail of a batched transaction). The earlier
- * changes are preserved in the merged entry — see historyPush.
+ * changes are preserved in the merged entry by historyPush.
  */
 function canCoalesce(
   lastEntry: HistoryEntry,

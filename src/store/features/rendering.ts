@@ -633,7 +633,7 @@ export function lineColumnToPosition(
  * Convert a single byte offset to a character offset using the line index.
  * Uses subtreeCharLength for O(log n) prefix sum, then reads only the
  * partial current line for the within-line offset.
- * O(log n + line_length) — contract-faithful.
+ * O(log n + line_length).
  */
 function byteOffsetToCharOffset(state: DocumentState, position: ByteOffset): LinearCost<number> {
   if (position <= state.pieceTable.totalLength && !isUtf8Boundary(state.pieceTable, position)) {
@@ -719,7 +719,7 @@ export function selectionToCharOffsets(
  * Convert a single character offset to a byte offset using the line index.
  * Uses subtreeCharLength for O(log n) line lookup, then reads only the
  * target line to find the exact byte position.
- * O(log n + line_length) — contract-faithful.
+ * O(log n + line_length).
  */
 function charOffsetToByteOffset(state: DocumentState, charPos: number): LinearCost<ByteOffset> {
   if (charPos <= 0) {
@@ -753,7 +753,7 @@ function charOffsetToByteOffset(state: DocumentState, charPos: number): LinearCo
 
 /**
  * Convert a character-offset CharSelectionRange to a byte-offset SelectionRange.
- * Uses the line index for O(log n + line_length) per offset — contract-faithful.
+ * Uses the line index for O(log n + line_length) work per offset.
  */
 export function charOffsetsToSelection(
   state: DocumentState,
