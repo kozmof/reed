@@ -199,7 +199,7 @@ keepAfter  = pieceEnd   - deleteEnd     // bytes after the cut
 
 | Condition                           | Action                                                                 |
 | ----------------------------------- | ---------------------------------------------------------------------- |
-| `keepBefore <= 0 && keepAfter <= 0` | Entire piece removed from the retained tree               |
+| `keepBefore <= 0 && keepAfter <= 0` | Entire piece removed from the retained tree                            |
 | `keepBefore > 0 && keepAfter > 0`   | Deletion punches a hole — split into two pieces (same as insert-split) |
 | `keepBefore > 0`                    | Trim right end — shorten `length`, `start` unchanged                   |
 | `keepAfter > 0`                     | Trim left end — advance `start`, shorten `length`                      |
