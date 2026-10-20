@@ -1,6 +1,6 @@
 /**
  * DocumentStore interface for the Reed document editor.
- * Framework-agnostic store interface compatible with React's useSyncExternalStore,
+ * Works with React's useSyncExternalStore,
  * Redux, Zustand, Vue, Svelte, and vanilla JavaScript.
  */
 
@@ -172,8 +172,7 @@ export interface ReconcilableDocumentStore extends DocumentStore, TransactionCon
    * background reconciliation or a `reconcileNow()` call. In `reconcileMode: "none"`,
    * Reed reconciles immediately because no background scheduler exists.
    *
-   * Eliminates the polling pattern (`while (lineIndex.rebuildPending) { ... }`)
-   * seen in tests and async consumers that need an eager `DocumentState<"eager">`.
+   * Await this method when an operation requires `DocumentState<"eager">`.
    *
    * @example
    * ```ts
@@ -258,5 +257,5 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
   readonly events: DocumentEventEmitter;
 }
 
-// ReadTextFn and DeleteBoundaryContext are defined in types/state.ts.
+// ReadTextFn and DeleteBoundaryContext are defined in types/operations.ts.
 // They are parameters of line-index functions.

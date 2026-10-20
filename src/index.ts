@@ -4,13 +4,14 @@
  * Main entry point with public API namespaces and supporting exports:
  *
  * - `store.*`     — store lifecycle, actions, type guards, and unsafe low-level helpers
- * - `query.*`     — O(1) and O(log n) read operations (tree-based lookups)
+ * - `query.*`     — O(1) and tree-height-bounded read operations
  * - `scan.*`      — O(n) operations (full document traversals)
  * - `events.*`    — event emitter and document event factories
  * - `rendering.*` — viewport calculations and position/line-column conversion
  * - `history.*`   — undo/redo state queries
  * - `diff.*`      — diff algorithm and setValue operations
  * - `position.*`  — branded position constructors, arithmetic, and constants
+ * - `attention.*` — track references to text across edits
  * - `checkpoint.*` — capture state as JSON-safe data and load it back
  *
  * Each namespace member documents its cost with `@complexity` JSDoc tags.

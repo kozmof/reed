@@ -67,7 +67,7 @@ self_test() {
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' RETURN
 
-  # Negative fixture: a clean surface must pass.
+  # Accept declarations that contain no forbidden references.
   mkdir -p "$tmp/clean/api"
   echo 'export declare const a: number;' >"$tmp/clean/index.d.ts"
   echo 'export declare const b: string;' >"$tmp/clean/api/query.d.ts"
@@ -76,7 +76,7 @@ self_test() {
     return 1
   fi
 
-  # Positive fixtures: each forbidden pattern must be caught.
+  # Reject each forbidden reference.
   for entry in "${forbidden_patterns[@]}"; do
     local pattern=${entry%%|*}
     local case_dir="$tmp/leak"

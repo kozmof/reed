@@ -1,10 +1,8 @@
 /**
  * Tests for checkpoint capture and restore.
  *
- * Three things have to hold for a checkpoint to be worth having:
- * the restored document reads identically, it keeps editing correctly
- * (identities and allocator cursors survive), and a payload that would corrupt
- * it is refused rather than loaded.
+ * Check that restore preserves text, piece identities, and allocator cursors.
+ * Verify subsequent edits and reject payloads that violate state invariants.
  */
 
 import { describe, it, expect, expectTypeOf } from "vitest";

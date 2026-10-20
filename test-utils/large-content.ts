@@ -231,7 +231,7 @@ export function generateLargeContent(options: LargeContentOptions = {}): string 
  * Exact for ASCII-only content. Use TextEncoder to measure other text exactly.
  */
 export function approximateByteSize(content: string): number {
-  // Use the encoder when the text contains non-ASCII characters.
+  // Count each UTF-16 code unit separately. Surrogate pairs are overestimated.
   let size = 0;
   for (let i = 0; i < content.length; i++) {
     const c = content.charCodeAt(i);

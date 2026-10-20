@@ -1216,10 +1216,8 @@ describe("dirty-range utilities", () => {
 });
 
 describe("newline-free lazy edits defer their offsets", () => {
-  // A newline-free edit adds no line, so it is tempting to treat it as a pure
-  // length update. Doing that strands the cached documentOffset of every later
-  // line: reconciliation applies dirty-range deltas rather than recomputing, so
-  // a delta that was never recorded can never be repaired.
+  // Edits without newlines still shift later cached offsets. Record those
+  // lines as dirty so range reconciliation visits and repairs them.
   const fiveLines = () => createLineIndexState("a\na\na\na\na\n");
 
   it("records a dirty range carrying the byte delta", () => {
@@ -1430,7 +1428,7 @@ describe("offset repair preserves subtree aggregates", () => {
   // reconcileRange rewrites nodes with withLineIndexNodeOffsets, which copies
   // subtreeLineCount / subtreeByteLength / subtreeCharLength instead of
   // recomputing them. That is only sound because an offset repair cannot change
-  // a line's length or the shape of the tree, so pin it.
+  // a line's length or the shape of the tree. Assert those aggregates stay unchanged.
   const aggregates = (root: LineIndexNode | null): unknown[] => {
     if (root === null) return [];
     return [

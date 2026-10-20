@@ -1,4 +1,4 @@
-/** The position namespace constructs, compares, and calculates branded positions. */
+/** The position namespace creates, compares, and performs arithmetic on branded positions. */
 
 import {
   byteOffset,
@@ -94,6 +94,6 @@ export const position = {
   rawCharOffset,
 
   // Selection factory
-  /** Build a byte-offset SelectionRange from char offsets. Use with SET_SELECTION. */
+  /** Build a byte-offset `SelectionRange` from UTF-16 offsets for `SET_SELECTION`. */
   selectionRange,
 } as const;

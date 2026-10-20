@@ -1,6 +1,5 @@
 /**
- * Standalone transaction manager for the Reed document editor.
- * Extracted from store.ts for testability, reusability, and composability.
+ * Track nested transactions and saved document snapshots.
  */
 
 import type { DocumentState } from "../../types/state.js";
@@ -66,8 +65,7 @@ export interface TransactionManager {
 }
 
 /**
- * Factory function to create a TransactionManager.
- * Uses closure-based encapsulation consistent with the codebase pattern.
+ * Create a transaction manager with private depth and snapshot state.
  */
 export function createTransactionManager(): TransactionManager {
   let depth = 0;

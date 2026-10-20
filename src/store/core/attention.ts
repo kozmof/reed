@@ -102,7 +102,7 @@ function freezeAttentionState(
  * Returns null for an empty tree or an out-of-range offset.
  *
  * The boundary within the piece equals `offset - pieceStartOffset`, so the
- * point tracks the *same character gap* even when later inserts shift the
+ * point tracks the same byte boundary even when later inserts shift the
  * piece's absolute position.
  *
  * O(log n).
@@ -140,9 +140,8 @@ export function createPoint(
 
 /**
  * Resolve an AttentionPoint to its current document byte offset.
- * Returns null for a dangling reference: the piece ID is no longer in the tree,
- * or the boundary now exceeds the piece's length (e.g. the piece was cut by a
- * delete). Failing closed avoids returning a silently-wrong offset.
+ * Returns null if the piece ID is missing or the boundary exceeds the piece's
+ * length after a deletion. This prevents returning an incorrect offset.
  *
  * Expected O(P) on the first lookup and O(log P) with a cached identity index,
  * for bounded-length IDs with well-distributed hashes.
@@ -308,9 +307,8 @@ function updateAttentionState(
 /**
  * Build a piece-ID → {offset, length} index in a single in-order pass.
  *
- * Amortizes resolution: once built, each point resolves in O(1) instead of
- * walking the tree. Callers that resolve many points against the same tree
- * (e.g. `findAttentionsAt`) should build this once and reuse it.
+ * Reuse this index when resolving many points against one tree. Each point
+ * then resolves in O(1) without another tree walk.
  *
  * O(n).
  */

@@ -159,8 +159,7 @@ export function getBuffer(state: PieceTableState, ref: BufferReference): Uint8Ar
 }
 
 /**
- * Get a subarray slice from the appropriate buffer.
- * This is the most common operation - extracting bytes from a piece.
+ * Read the bytes covered by a buffer reference.
  */
 export function getBufferSlice(state: PieceTableState, ref: BufferReference): Uint8Array {
   switch (ref.bufferType) {
@@ -782,8 +781,7 @@ function insertWithSplit(
 /**
  * Replace a piece in the tree using the path for O(log n) performance.
  *
- * Instead of traversing the entire tree O(n), we walk back up the path
- * that was built during findPieceAtPosition, creating only O(log n) new nodes.
+ * Reuse the path from `findPieceAtPosition` to copy O(log n) ancestors.
  */
 function replacePieceInTree(
   path: readonly PathEntry[],

@@ -247,8 +247,8 @@ export function fixInsertWithPath<N extends RBNode<N>>(
   withNode: WithNodeFn<N>,
 ): N {
   for (let i = insertPath.length - 1; i >= 0; i--) {
-    // Capture the entry guaranteed by the loop guard to avoid repeated
-    // assertions and lets mutations flow back through the shared object reference.
+    // The loop guard guarantees this entry exists. Keep its reference so
+    // mutations update the shared path entry.
     const entry = insertPath[i]!;
     // Sync: if the child below was modified, update this node's reference to it
     if (i < insertPath.length - 1) {

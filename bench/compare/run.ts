@@ -1,10 +1,9 @@
 /**
  * Cross-version performance comparison.
  *
- * Runs every workload in workloads.ts against two built Reed bundles, one
- * fresh process per (version, workload, size, round), alternating the version
- * order each round so machine drift lands evenly on both sides. Writes raw
- * samples as JSON and a Markdown summary to the output directory.
+ * Compare workloads against two built Reed bundles. Run each version,
+ * workload, size, and round in a fresh process. Alternate version order each
+ * round to reduce timing bias. Write raw JSON samples and a Markdown summary.
  *
  * Usage:
  *   node bench/compare/run.ts --base <dir|dist/reed.js> --head <dir|dist/reed.js>

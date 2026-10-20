@@ -187,10 +187,8 @@ export function getVisibleLineRange(
 }
 
 /**
- * Get the text content of a specific line using the line index for O(log n) lookup.
- *
- * Unlike `getLine()` from piece-table.ts which scans the entire document O(n),
- * this leverages the line index tree for efficient random access.
+ * Read a line by locating its byte range in the line index, then decoding it.
+ * Lookup costs O(log n), plus the cost of reading the returned text.
  *
  * @param state - The full document state (needs both pieceTable and lineIndex)
  * @param lineNum - 0-indexed line number

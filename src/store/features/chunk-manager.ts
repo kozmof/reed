@@ -5,7 +5,7 @@
  * - Async chunk loading via a user-supplied ChunkLoader
  * - In-flight deduplication (concurrent ensureLoaded calls for the same chunk
  *   share a single fetch)
- * - LRU eviction policy (keeps at most maxLoadedChunks chunks in memory)
+ * - LRU eviction toward maxLoadedChunks when unpinned chunks can be removed
  * - Chunk pinning (setActiveChunks prevents LRU eviction of hot chunks)
  *
  * Apply all state transitions through store.dispatch(DocumentActions.*).
@@ -111,7 +111,7 @@ export interface ChunkManager {
    * After disposal, ensureLoaded / prefetch are no-ops and in-flight fetches
    * receive an abort signal. Fetches that have not yet dispatched LOAD_CHUNK
    * will not dispatch, even when their loader ignores cancellation.
-   * The underlying DocumentStore is NOT destroyed.
+   * The underlying DocumentStore remains usable.
    */
   dispose(): void;
 }

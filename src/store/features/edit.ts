@@ -559,10 +559,8 @@ export function applyInverseChange(state: DocumentState, change: HistoryChange):
 // =============================================================================
 
 /**
- * Describes an edit operation as a proper discriminated union.
- * The `kind` field makes the variant unambiguous and eliminates all
- * `op.deleteEnd !== undefined` guards that previously coupled delete-phase
- * decisions to insert-phase behavior.
+ * An edit operation distinguished by `kind`. Each variant carries only the
+ * fields needed for its delete and insert phases.
  */
 export type StructuralEditOperation =
   | {

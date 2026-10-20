@@ -162,11 +162,9 @@ export function mergeDirtyRanges(
  * `subtreeByteLength` are exact at all times (invariants 2.1 and 2.2), which
  * lets a subtree lying entirely outside the range return untouched.
  *
- * Deriving beats adding a delta to whatever a node currently holds. A line
- * inserted by the lazy path carries `documentOffset: null` and has no base to
- * add to, so delta arithmetic gave it the delta itself as an absolute offset.
- * Deriving also makes the repair independent of whether the recorded delta was
- * right, so one mis-recorded edit cannot corrupt the cache permanently.
+ * Compute offsets from aggregates because lazily inserted lines may have
+ * `documentOffset: null`. This also repairs stale offsets independently of
+ * the recorded delta.
  *
  * Nodes already holding the correct offset are returned as they are, so a clean
  * window costs no allocations.

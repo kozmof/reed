@@ -1,7 +1,7 @@
 /**
  * Document action types for the Reed document editor.
- * All document mutations are expressed as serializable actions.
- * Actions are serializable for debugging, time-travel, and collaboration.
+ * Serializable actions describe document mutations for debugging, replay,
+ * and collaboration.
  */
 
 import type { SelectionRange, ChunkMetadata } from "./state.js";
@@ -233,7 +233,7 @@ export interface EvictChunkAction {
 /**
  * Pre-declare metadata for one or more chunks before their content is loaded.
  * This lets the line index answer line-count queries for unloaded ranges.
- * Does NOT increment state.revision and does NOT emit a content-change event.
+ * Leaves `state.revision` unchanged and emits no content-change event.
  */
 export interface DeclareChunkMetadataAction {
   readonly type: "DECLARE_CHUNK_METADATA";

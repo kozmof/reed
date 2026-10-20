@@ -13,18 +13,13 @@ export default defineConfig({
       // Apply product coverage thresholds to production modules. Exclude test
       // helpers and benchmarks under test-utils.
       exclude: [...coverageConfigDefaults.exclude, "src/**/*.test.ts", "test-utils/**"],
-      // Per-file gates sit ~1.5 pts under the current per-file floor (the
-      // worst-covered file per metric, not the aggregate): statements and lines
-      // are bounded by line-index.ts (~79% / ~81%), branches by rendering.ts
-      // (~74%), functions by chunk-manager.ts (~83%).
-      // Tightening these further requires lifting coverage of those files.
+      // Enforce coverage thresholds for each production file. Improve the
+      // lowest-covered files before raising these thresholds.
       //
-      // statements/lines were lowered by 2 points in v3.2.0, when line-index
-      // deletion moved onto the shared primitives in rb-tree.ts. That removed
-      // 51 statements from line-index.ts, 49 of which were covered, so its
-      // ratio fell while its absolute uncovered count went down (91 -> 89)
-      // and whole-project coverage rose. The floor tracks the file's new
-      // composition. The change preserves coverage of existing behaviour.
+      // The statement and line thresholds fell by two points in v3.2.0 after
+      // deletion logic moved from line-index.ts to shared rb-tree.ts helpers.
+      // Removing mostly covered code lowered the file's coverage percentage
+      // even though fewer statements remained uncovered.
       thresholds: {
         statements: 78,
         branches: 72,

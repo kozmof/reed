@@ -8,7 +8,7 @@
  *   node --expose-gc bench/compare/worker.ts <dist/reed.js> <workload> <size> <samples> <warmup> <budgetMs>
  *
  * Sampling stops early once timed work exceeds `budgetMs` and at least
- * MIN_SAMPLES were taken, so a pathological baseline cannot stall the run.
+ * MIN_SAMPLES were taken, limiting time spent on a slow baseline.
  * Warm-up is skipped for samples slower than SELF_WARMING_MS, which are long
  * enough to reach optimized code on their own.
  */

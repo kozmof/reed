@@ -13,7 +13,7 @@
 export const CHECKPOINT_FORMAT = "reed-checkpoint";
 export type CheckpointFormat = typeof CHECKPOINT_FORMAT;
 
-/** Current checkpoint format version. Restore accepts only this version. */
+/** Current checkpoint format version. This build supports version 1 only. */
 export const CHECKPOINT_VERSION = 1;
 
 /**
@@ -179,9 +179,9 @@ export interface CheckpointEnvelope {
 /**
  * A captured `DocumentState`, ready to be stringified.
  *
- * Store runtime is deliberately absent: listeners, transaction depth, the
- * reconciliation scheduler, and `ChunkManager` pins/LRU order all belong to a
- * store instance rather than to the state, and are rebuilt fresh on restore.
+ * Listeners, transaction depth, the reconciliation scheduler, and
+ * `ChunkManager` pins and LRU order belong to the store instance. Checkpoints
+ * omit them. Creating a store from a checkpoint initializes new runtime state.
  */
 export interface DocumentCheckpoint {
   readonly format: CheckpointFormat;
@@ -202,8 +202,8 @@ export interface CheckpointOptions {
   /**
    * Capture fidelity (default: `'exact'`).
    *
-   * `'normalized'` throws `CHUNKED_NORMALIZE` for chunked documents: flattening
-   * a partially-loaded file to text would silently drop the unloaded ranges.
+   * Capturing a chunked document in `'normalized'` mode throws `CHUNKED_NORMALIZE`.
+   * Flattening a partially loaded file would discard its unloaded ranges.
    */
   readonly mode?: CheckpointMode;
   /**

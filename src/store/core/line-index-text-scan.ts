@@ -139,9 +139,8 @@ export function getInsertBoundaryContext(
 
   const pos = position;
 
-  // Reading pos-1 is safe here: only '\r' (0x0D, single-byte ASCII) is ever
-  // checked against prevChar, and ASCII bytes never appear as UTF-8 continuation
-  // bytes, so pos-1 is always a valid character boundary for our purposes.
+  // Only CR (0x0D) is checked at pos-1. ASCII bytes cannot be UTF-8
+  // continuation bytes, so this check cannot mistake part of a character for CR.
   const prevChar = pos > 0 ? readText(byteOffset(pos - 1), position) : "";
   const nextChar = readText(
     byteOffset(pos + insertedByteLength),

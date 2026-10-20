@@ -85,11 +85,11 @@ function int(rng: () => number, min: number, max: number): number {
 }
 
 describe("piece table red-black contract", () => {
-  // Each sequence below is the shortest one found by breadth-first search over
-  // insert/delete programs that drives the tree out of the red-black invariant.
+  // These regression sequences were found by breadth-first search over
+  // insert/delete programs that violated red-black invariants.
   describe("minimal reproducers", () => {
     it("keeps the red property through a prefix delete", () => {
-      // Never reaches extractMin: mergeTrees returns `right` directly.
+      // Never reaches removeMinimum: joinTrees returns `right` directly.
       runSequence([insert(0, "ab"), insert(1, "ab"), insert(2, "ab"), remove(0, 1)], "prefix/red");
     });
 
@@ -101,7 +101,7 @@ describe("piece table red-black contract", () => {
     });
 
     it("keeps the red property through a suffix delete", () => {
-      // Never reaches extractMin: mergeTrees returns `left` directly.
+      // Never reaches removeMinimum: joinTrees returns `left` directly.
       runSequence(
         [insert(0, "ab"), insert(0, "ab"), insert(0, "ab"), insert(1, "ab"), remove(5, 8)],
         "suffix/red",
@@ -123,7 +123,7 @@ describe("piece table red-black contract", () => {
     });
 
     it("keeps the red property through an interior delete", () => {
-      // Reaches extractMin, because both sides of the split are non-empty.
+      // Reaches removeMinimum, because both sides of the split are non-empty.
       runSequence(
         [insert(0, "ab"), insert(0, "ab"), insert(1, "ab"), remove(4, 5)],
         "interior/red",

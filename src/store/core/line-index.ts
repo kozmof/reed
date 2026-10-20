@@ -289,7 +289,7 @@ function bstInsertLine(
     }
   }
 
-  // Phase 2 rebuilds path-copied nodes from the bottom up in root-to-leaf array order.
+  // Rebuild copied nodes from the bottom up by reading the descent array in reverse.
   const insertPath: InsertionPathEntry<LineIndexNode>[] = Array.from({ length: descent.length });
   let child: LineIndexNode = newNode;
 
@@ -329,9 +329,7 @@ export function lineIndexInsert(
   const { positions: newlinePositions, byteLength } = findNewlineBytePositions(text);
   const insertContext = getInsertBoundaryContext(position, byteLength, readText);
 
-  // Boundary merge case (e.g. inserting '\r' before existing '\n').
-  // Local boundary repair handles CRLF pairs formed across the insertion boundary.
-  // cross-boundary CRLF composition requires local boundary repair.
+  // Repair neighboring lines when insertion forms or splits a CRLF pair.
   if (readText && hasCrossBoundaryCRLFMerge(text, insertContext)) {
     const repaired: LineIndexState = reconcileFull(
       repairLineIndexWindow(
@@ -421,12 +419,8 @@ function updateLineLength(
  * a dirty range carrying the delta, so reconciliation restores exact offsets for
  * every line after the edited one.
  *
- * A newline-free edit shifts every later line without adding or removing one, so
- * there is no structural work to do and it is tempting to skip the bookkeeping
- * entirely. Skipping it strands the cached offsets permanently, because
- * reconciliation only visits lines that a dirty range covers. Typing is exactly
- * this case, which makes recording it the difference between a cache that
- * converges and one that drifts forever.
+ * Even an edit without newlines must mark later lines dirty. Their cached
+ * offsets shift, and range reconciliation visits only recorded dirty lines.
  */
 function updateLineLengthLazy(
   state: LineIndexState,
@@ -447,8 +441,7 @@ function updateLineLengthLazy(
     charLengthDelta,
   );
 
-  // Nothing sits after the edited line, so no cached offset moved. This covers
-  // appending to the end of a document, the most common edit of all.
+  // Editing the last line leaves all cached line-start offsets unchanged.
   if (lengthDelta === 0 || lineNumber + 1 >= state.lineCount) {
     return withLineIndexState(state, { root: newRoot });
   }
@@ -1573,7 +1566,7 @@ export function lineIndexDeleteLazy(
   const deleteLength = end - start;
   const deletedNewlines = countDeletedLineBreaks(deletedText, deleteContext);
 
-  // Update only the line length when no newlines are inserted.
+  // Update line length and defer later offsets when no line breaks are deleted.
   if (deletedNewlines === 0) {
     return $proveCtx(
       $beginCost("O(n log n)"),

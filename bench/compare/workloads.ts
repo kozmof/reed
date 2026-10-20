@@ -14,7 +14,7 @@ import { generateLargeContent, makeDeterministicRng } from "../../test-utils/lar
 
 export type ReedModule = typeof Reed;
 
-/** A checksum, or a thunk the worker evaluates outside the timed interval. */
+/** A checksum, or a function that computes it after timing stops. */
 export type Checksum = string | (() => string);
 
 export interface Workload<F = any> {

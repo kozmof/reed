@@ -22,7 +22,7 @@ export type { ReadTextFn, DeleteBoundaryContext } from "./operations.js";
  * Buffer type indicator for piece table operations.
  * - 'original': the initial immutable buffer loaded from content string
  * - 'add': the append-only buffer for user edits
- * - 'chunk': a lazily-loaded chunk buffer for large-file streaming (Phase 3+)
+ * - 'chunk': a chunk buffer loaded on demand for large-file streaming
  */
 export type BufferType = "original" | "add" | "chunk";
 
@@ -217,10 +217,9 @@ export interface PieceTableState {
  * - `'lazy'`: `documentOffset` is `number | null` (`null` means pending reconciliation)
  * - Default (union): `number | null` for backward compatibility
  *
- * `<M>` is intentionally kept on individual nodes (not only on `LineIndexState`) so that
- * `getLineRangePrecise` overloads can statically guarantee a non-null `documentOffset` in eager
- * mode on a per-node basis. Restricting `<M>` to `LineIndexState` alone would make
- * `documentOffset` always `number | null` on every node, collapsing those overload guarantees.
+ * Each node carries `<M>` so eager-state reads can guarantee a non-null
+ * `documentOffset`. Carrying the mode only on `LineIndexState` would leave
+ * individual node offsets typed as `number | null`.
  */
 export interface LineIndexNode<M extends EvaluationMode = EvaluationMode> extends RBNode<
   LineIndexNode<M>
@@ -596,8 +595,7 @@ export const pstackFromArray = <T>(arr: readonly T[]): PStack<T> => {
 };
 
 /**
- * Trim a PStack to at most `maxSize` entries, keeping the `maxSize` most-recently
- * pushed (newest) entries and discarding the rest.
+ * Keep at most `maxSize` entries, retaining the newest ones.
  *
  * Cost: O(log n) via a persistent AVL split. The retained suffix shares
  * untouched subtrees with the input stack, so saturated history does not rebuild

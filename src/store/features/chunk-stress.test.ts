@@ -106,9 +106,8 @@ async function flushPrefetches(): Promise<void> {
 }
 
 /**
- * The heart of the suite: read the *actual* resident chunk set and assert the
- * assembled document, its byte length, and its reconciled line index all match
- * a from-scratch rebuild of exactly those chunks.
+ * Read the resident chunk set and compare its text, byte length, and
+ * reconciled line index with a fresh rebuild of those chunks.
  */
 function assertConsistent(
   store: ReturnType<typeof createDocumentStore>,

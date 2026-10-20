@@ -1,10 +1,9 @@
 /**
  * The attention namespace tracks references to text across edits.
  *
- * The attention layer is the third independent Reed layer, alongside the piece
- * table (content) and the line index (navigation). An attention pins to a piece
- * boundary rather than a document offset, so a reference survives tree rotations,
- * rebalancing, inserts, and deletes without the caller re-tracking offsets.
+ * An attention stores two piece boundaries to track a text range. Piece IDs
+ * survive tree rotations and rebalancing. Use the edit helpers below to migrate
+ * boundaries when inserts split pieces or deletes remove tracked text.
  *
  * Pass the current, immutable `AttentionLayerState` into each operation and
  * keep the returned state. Start from `emptyState`.
@@ -63,9 +62,15 @@ export const attention: AttentionApi = {
   getTextForAttention: $uncostedFn(getTextForAttention),
 
   // Queries
-  /** @complexity O(n + A) — one tree walk to index pieces, O(1) per attention */
+  /**
+   * @complexity O(P + A log A) to build the snapshot index. Cached queries visit
+   * matching intervals and boundary paths, then sort K results in O(K log K).
+   */
   findAttentionsAt: $uncostedFn(findAttentionsAt),
-  /** @complexity O(n + A) — one tree walk to index pieces, O(1) per attention */
+  /**
+   * @complexity O(P + A log A) to build the snapshot index. Cached queries visit
+   * matching intervals and boundary paths, then sort K results in O(K log K).
+   */
   findAttentionsOverlapping: $uncostedFn(findAttentionsOverlapping),
 
   // Edit support

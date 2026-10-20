@@ -1,11 +1,7 @@
 /**
- * Document reducer for the Reed document editor.
- * Pure reducer function for document state transitions.
- * No side effects - produces new state from old state + action.
+ * Apply document actions as pure state transitions.
  *
- * The heavy lifting (edit pipeline, history push, undo/redo application) is
- * delegated to `edit.ts` and `history.ts`. This file is an orchestrator that
- * maps DocumentActions to the correct pipeline function.
+ * Route text edits to `edit.ts` and undo/redo to `history.ts`.
  */
 
 import type { DocumentState, SelectionRange, NonEmptyReadonlyArray } from "../../types/state.js";
@@ -187,8 +183,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
     }
 
     case "MARK_SAVED": {
-      // Idempotent: saving an already-clean document is a no-op, so repeated
-      // saves do not churn the revision or emit spurious events.
+      // Keep state and revision unchanged when the document is already clean.
       if (!state.metadata.isDirty && state.metadata.lastSaved === action.timestamp) {
         return state;
       }
@@ -287,9 +282,8 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       // Leave state unchanged when the tree cannot anchor a span.
       if (startPoint === null || endPoint === null) return state;
       const [newAttention] = createAttention(state.attention, startPoint, endPoint);
-      // Attention changes are content-neutral: a new state reference (so
-      // subscribers fire) but MUST NOT increment `revision`, so they are never
-      // misread as content edits (mirrors reconciliation). See docs/invariants.md.
+      // Return a new state to notify subscribers. Keep `revision` unchanged
+      // because attention changes do not edit content. See docs/invariants.md.
       return withState(state, { attention: newAttention });
     }
 

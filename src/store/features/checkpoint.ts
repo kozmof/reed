@@ -911,9 +911,9 @@ function validateChunkLineIndex(
 /**
  * Rebuild a document state from a checkpoint.
  *
- * Pass the returned `DocumentState<'eager'>` to
- * `store.createDocumentStoreFromCheckpoint` for a live store, or read it
- * directly with the `query` / `scan` namespaces.
+ * Read the returned `DocumentState<'eager'>` with `query` and `scan`.
+ * To create a live store, pass the checkpoint payload to
+ * `store.createDocumentStoreFromCheckpoint` instead.
  *
  * Invalid pieces, incomplete line coverage, dangling attention anchors, and
  * allocator cursors that would reuse a live ID raise `CheckpointError`.
