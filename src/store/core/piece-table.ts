@@ -238,7 +238,7 @@ function getPieceBufferRaw(
 /**
  * Read the raw byte value at a single document offset.
  * Returns -1 if the offset is out of range.
- * O(log n) — delegates to findPieceAtPosition.
+ * Find the piece in O(log n) with `findPieceAtPosition`.
  */
 export function getRawByte(state: PieceTableState, docOffset: ByteOffset): number {
   const location = findPieceAtPosition(state.root, docOffset);
@@ -1119,7 +1119,7 @@ function findLineOffsets(
 
           if (pendingCREnd >= 0) {
             if (b === 0x0a) {
-              // CRLF pair complete: line ends after the \n.
+              // End the line after the completed CRLF pair.
               const lineEnd = docPos + 1;
               pendingCREnd = -1;
               if (currentLine === lineNumber) {
@@ -1133,7 +1133,7 @@ function findLineOffsets(
               lineStartOffset = lineEnd;
               continue;
             } else {
-              // Standalone CR: commit the line break at the saved end position.
+              // Commit the standalone CR at the saved end position.
               const lineEnd = pendingCREnd;
               pendingCREnd = -1;
               if (currentLine === lineNumber) {
@@ -1150,7 +1150,7 @@ function findLineOffsets(
           }
 
           if (b === 0x0d) {
-            // Defer: might be CR-only or the start of CRLF.
+            // Wait to determine whether this is a standalone CR or part of CRLF.
             pendingCREnd = docPos + 1;
           } else if (b === 0x0a) {
             const lineEnd = docPos + 1;

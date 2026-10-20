@@ -419,8 +419,7 @@ describe("Line Index Operations", () => {
 
       it("should insert emoji with multiple newlines", () => {
         // 'X' = 1 byte, insert '😀\n🎉\nZ' (4+1+4+1+1 = 11 bytes) at position 1
-        // Result: 'X😀\n🎉\nZX' wait... insert at end of 'X': 'X😀\n🎉\nZ'
-        // Actually: insert at byteOffset(1) into 'X' → 'X😀\n🎉\nZ'
+        // Inserting at byte offset 1 appends to 'X', producing 'X😀\n🎉\nZ'.
         const state = createLineIndexState("X");
         const newState = lineIndexInsert(state, byteOffset(1), "😀\n🎉\nZ");
         expect(getLineCountFromIndex(newState)).toBe(3);
@@ -1023,8 +1022,8 @@ describe("dirty range remapping — sequential edits", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Sentinel passthrough: after Fix 2 in mergeDirtyRanges, a sentinel in the
-  // input produces a sentinel in the output, forcing reconcileInPlace (slow path).
+  // Preserve the full-rebuild sentinel through range merging so reconciliation
+  // rebuilds the index.
   // -------------------------------------------------------------------------
 
   it("'full-rebuild-needed' is preserved as-is through an insert remap", () => {

@@ -445,7 +445,7 @@ export function estimateTotalHeight(
   const residentLineCount = state.lineIndex.lineCount;
 
   if (!config.softWrap) {
-    // Fixed height mode: simple multiplication
+    // Calculate the position from the fixed line height.
     return $proveCtx($beginCost("O(n)"), totalLines * config.baseLineHeight);
   }
 
@@ -644,7 +644,7 @@ function byteOffsetToCharOffset(state: DocumentState, position: ByteOffset): Lin
 
   const location = findLineAtPosition(state.lineIndex.root, position);
   if (location === null) {
-    // Fallback: read from start (shouldn't happen with valid positions)
+    // Read from the start if the position lookup fails.
     const text = getText(state.pieceTable, byteOffset(0), position);
     return $proveCtx(
       "O(n)",

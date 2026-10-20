@@ -82,7 +82,7 @@ describe("ChunkManager.ensureLoaded", () => {
     ];
     await Promise.all([p1, p2, p3]);
 
-    // Only one fetch should have been issued
+    // Concurrent requests share one fetch.
     expect(loader.loadChunk.mock.calls.length).toBe(1);
     manager.dispose();
   });
@@ -125,7 +125,7 @@ describe("ChunkManager.ensureLoaded", () => {
     const manager = createChunkManager(store, loader);
 
     await expect(manager.ensureLoaded(0)).rejects.toThrow();
-    // Second attempt should succeed
+    // Retry successfully after the failed fetch.
     await manager.ensureLoaded(0);
     expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(true);
     manager.dispose();
@@ -207,7 +207,7 @@ describe("ChunkManager LRU eviction", () => {
 
     await manager.ensureLoaded(0);
     await manager.ensureLoaded(1);
-    // Loading chunk 2 should evict chunk 0 (LRU)
+    // Loading chunk 2 evicts the least recently used chunk, chunk 0.
     await manager.ensureLoaded(2);
 
     const snap = store.getSnapshot();
@@ -278,8 +278,7 @@ describe("ChunkManager.prefetch", () => {
     const manager = createChunkManager(store, loader);
 
     manager.prefetch(0); // fire and forget
-    // Immediately: chunk may or may not be loaded yet
-    // After a tick: it should be loaded
+    // Allow the asynchronous fetch to finish before checking the loaded chunk.
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(true);
     manager.dispose();

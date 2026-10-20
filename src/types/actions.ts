@@ -391,10 +391,9 @@ export interface ActionValidationResult {
  * Validate an action with detailed error messages.
  * Validates action shape and invariants that the reducer does not normalize away.
  *
- * Numeric edit positions may be outside `documentLength`: the reducer clamps
- * them to document bounds as part of its fail-soft input handling. The validator
- * still rejects non-integral, NaN, and infinite positions because those cannot
- * be safely converted to branded offsets.
+ * The reducer clamps numeric edit positions to document bounds. The validator
+ * accepts out-of-bounds positions but rejects non-integral, NaN, and infinite
+ * values because those cannot be safely converted to branded offsets.
  *
  * @example
  * ```typescript
@@ -405,7 +404,7 @@ export interface ActionValidationResult {
  * ```
  *
  * @param value - Value to validate as an action
- * @param documentLength - Optional current document length; validated when provided
+ * @param documentLength - Optional current document length, validated when provided
  * @returns Validation result with errors array
  */
 export function validateAction(value: unknown, documentLength?: number): ActionValidationResult {

@@ -50,11 +50,7 @@ const AUTO_COMPACT_WASTE_RATIO = 0.5;
 const AUTO_COMPACT_MIN_BYTES = 16384; // 16 KB
 
 /**
- * Factory function to create a DocumentStore.
- * Encapsulates internal mutable state (listeners, transaction depth).
- *
- * Note: We use a factory function rather than exporting a class directly.
- * This provides encapsulation while maintaining the pure functions + store pattern.
+ * Create a document store with private listeners and transaction state.
  *
  * @param config - Optional configuration for the store
  * @returns A new DocumentStore instance
@@ -84,9 +80,9 @@ function createStoreOverState(
   const reconcileMode = config.reconcileMode ?? "idle";
   const logger = config.logger;
   let disposed = false;
-  // Listeners array with on-demand COW: mutations during an active notification clone
-  // the array so the in-progress for-of iteration is not disturbed. Outside notification
-  // (the common case) push/splice mutate in place — O(1) add, O(n) remove (n ≈ 2–3).
+  // Clone the listeners array when it changes during notification so the active
+  // iteration keeps its snapshot. Otherwise, mutate it in place. Adding a listener
+  // takes O(1), and removing one takes O(n) for n listeners.
   let listeners: StoreListener[] = [];
   let notifying = false;
   // A dispatch from inside a listener cannot recurse through the listener list,
@@ -246,9 +242,8 @@ function createStoreOverState(
    * recursive listener execution while ensuring subscribers that ran before a
    * nested dispatch are notified of the resulting state.
    *
-   * The listeners array uses copy-on-write semantics: subscribe/unsubscribe
-   * clone the array before mutating when `notifying` is true, so the
-   * iteration here never sees mid-notify additions or removals.
+   * Subscriptions added or removed during notification clone the listeners
+   * array first. The active iteration keeps its original snapshot.
    */
   function notifyListeners(): void {
     if (notifying) {
@@ -292,8 +287,8 @@ function createStoreOverState(
    */
   function subscribe(listener: StoreListener): Unsubscribe {
     if (disposed) return () => {};
-    // Clone only if a notification is in progress so the for-of iteration keeps
-    // its snapshot; otherwise mutate in place (O(1)).
+    // Preserve the active notification snapshot by cloning before adding a
+    // listener. Outside notification, append in place in O(1).
     if (notifying) {
       listeners = [...listeners, listener];
     } else {
@@ -460,13 +455,13 @@ function createStoreOverState(
   }
 
   /**
-   * Shared core: apply reconcileFull in-place and return eager state.
+   * Apply `reconcileFull` to the current state and return an eager state.
    * Resolving cached offsets preserves revision because it leaves content unchanged.
    */
   function reconcileInPlace(): DocumentState<"eager"> {
     if (!state.lineIndex.rebuildPending) return state as DocumentState<"eager">;
     const newLineIndex = reconcileFull(state.lineIndex, state.revision);
-    // Capture before notifying: a subscriber may immediately make state lazy again.
+    // Capture the eager state before a subscriber can make it lazy again.
     const eagerSnapshot = withState(state, { lineIndex: newLineIndex }) as DocumentState<"eager">;
     if (newLineIndex !== state.lineIndex) {
       setState(eagerSnapshot);
@@ -533,7 +528,7 @@ function createStoreOverState(
     }
     return new Promise<DocumentState<"eager">>((resolve, reject) => {
       whenReconciledWaiters.push({ resolve, reject });
-      // Register the waiter before scheduling: a custom scheduler is allowed to
+      // Register the waiter first because a custom scheduler is allowed to
       // reconcile synchronously from schedule(), in which case setState() must
       // be able to observe and resolve this waiter during the same call stack.
       scheduleReconciliation();
@@ -589,8 +584,8 @@ function createStoreOverState(
  * - 'history-change': On UNDO, REDO
  * - 'dirty-change': When isDirty state changes
  *
- * Event buffering during transactions: events emitted while a transaction is active
- * are buffered per nesting depth. On outermost commit they are flushed in order.
+ * Buffer transaction events at each nesting depth. Flush them in order
+ * when the outermost transaction commits.
  * On any rollback the current depth's buffered events are discarded, preserving
  * events from enclosing transaction depths.
  *
@@ -720,7 +715,7 @@ export function createDocumentStoreWithEventsFromCheckpoint(
  * Only completion of the outermost transaction notifies listeners.
  *
  * @param store - The store to transact against
- * @param fn - Callback that performs work using the store; its return value is forwarded
+ * @param fn - Callback whose return value is forwarded to the caller
  * @returns The value returned by `fn`
  *
  * @example

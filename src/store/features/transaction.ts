@@ -58,7 +58,7 @@ export interface TransactionManager {
   readonly isActive: boolean;
 
   /**
-   * Emergency reset: clears all transaction state and returns the
+   * Clear all transaction state and return the
    * earliest snapshot (outermost), or null if no snapshots exist.
    * Used when rollback itself fails.
    */

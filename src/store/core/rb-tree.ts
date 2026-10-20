@@ -573,9 +573,9 @@ function joinLeft<N extends RBNode<N>>(
  * Cost is proportional to the difference in black heights, so a join against a
  * much shorter tree does not walk the taller one.
  *
- * The returned root may be red — that is a well-formed intermediate result and
- * keeps nested joins from repeatedly inflating the black height. Callers that
- * need a canonical tree apply {@link ensureBlackRoot} to the final root only.
+ * A red root is valid for an intermediate result. Keeping it red prevents
+ * nested joins from repeatedly increasing the black height. Apply
+ * {@link ensureBlackRoot} only to the final root when a black root is required.
  */
 export function joinBalanced<N extends RBNode<N>>(
   left: N | null,

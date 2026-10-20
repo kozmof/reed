@@ -215,7 +215,7 @@ describe("Editor Use Cases", () => {
       store.dispatch(DocumentActions.undo());
       expect(pstackSize(store.getSnapshot().history.redoStack)).toBe(1);
 
-      // New edit should clear redo stack
+      // A new edit clears the redo stack.
       store.dispatch(DocumentActions.insert(byteOffset(0), "X"));
       expect(pstackSize(store.getSnapshot().history.redoStack)).toBe(0);
     });
@@ -227,7 +227,7 @@ describe("Editor Use Cases", () => {
       store.dispatch(DocumentActions.undo());
       const stateAfter = store.getSnapshot();
 
-      // State should be unchanged (same reference)
+      // Preserve the state reference.
       expect(stateAfter).toBe(stateBefore);
     });
 
@@ -239,7 +239,7 @@ describe("Editor Use Cases", () => {
       store.dispatch(DocumentActions.redo());
       const stateAfter = store.getSnapshot();
 
-      // State should be unchanged (same reference)
+      // Preserve the state reference.
       expect(stateAfter).toBe(stateBefore);
     });
   });
@@ -527,10 +527,8 @@ describe("Editor Use Cases", () => {
     it("commitTransaction failure calls emergencyReset and store is usable after", () => {
       const store = createDocumentStore({ content: "Hello" });
 
-      // Artificially corrupt depth via multiple begins without matching commits,
-      // then force an invariant violation by manipulating internals indirectly.
-      // Instead: verify that a commitTransaction with no active transaction is a no-op
-      // (commit() at depth 0 returns isOutermost:false without throwing).
+      // Verify that committing with no active transaction is a no-op.
+      // At depth 0, commit() returns isOutermost:false without throwing.
       store.beginTransaction();
       store.dispatch(DocumentActions.insert(byteOffset(5), "!"));
       store.commitTransaction();
@@ -571,7 +569,7 @@ describe("Editor Use Cases", () => {
           // which throws, triggering emergencyReset (store.ts line 691).
         }),
       ).toThrow("fn error");
-      // Store should still be functional after emergencyReset
+      // The store remains usable after emergencyReset.
       expect(() => store.getSnapshot()).not.toThrow();
     });
   });
@@ -1314,7 +1312,7 @@ describe("Editor Use Cases", () => {
       store.subscribe(errorListener);
       store.subscribe(normalListener);
 
-      // Should not throw, and second listener should still be called
+      // Catch the first listener's error and call the second listener.
       expect(() => {
         store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
       }).not.toThrow();

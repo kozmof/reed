@@ -119,7 +119,7 @@ export function createPoint(
 
   if (clampedOffset < 0) return null;
 
-  // At document end: attach to the rightmost piece's right boundary.
+  // Attach the document end to the rightmost piece's right boundary.
   if (clampedOffset === totalLength) {
     const last = findLastPiece(root);
     if (last === null) return null;

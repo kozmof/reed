@@ -68,7 +68,7 @@ describe("Diff Algorithm", () => {
 
     it("should handle complete replacement", () => {
       const result = diff("abc", "xyz");
-      // Should have deletes and inserts
+      // Include both deletions and insertions.
       const hasDelete = result.edits.some((e) => e.type === "delete");
       const hasInsert = result.edits.some((e) => e.type === "insert");
       expect(hasDelete).toBe(true);
@@ -79,7 +79,7 @@ describe("Diff Algorithm", () => {
       const old = "line1\nline2\nline3";
       const newText = "line1\nmodified\nline3";
       const result = diff(old, newText);
-      // Should detect the change in the middle
+      // Detect the changed middle region.
       expect(result.distance).toBeGreaterThan(0);
     });
   });

@@ -30,14 +30,14 @@ import { charOffsetsToSelection } from "../store/features/rendering.js";
 import type { DocumentState, SelectionRange } from "../types/state.js";
 
 /**
- * Build a `SelectionRange` (byte offsets) from character (UTF-16 code unit) offsets.
+ * Build a byte-offset `SelectionRange` from UTF-16 code unit offsets.
  *
  * `SET_SELECTION` accepts byte offsets. Use this factory when cursor positions
  * are measured in UTF-16 code units.
  *
- * @param charAnchor - Anchor char offset (where the selection started)
- * @param charHead   - Head char offset (cursor position / end of selection)
- * @param state      - Current document state (used for char→byte conversion)
+ * @param charAnchor - UTF-16 offset where the selection started
+ * @param charHead   - UTF-16 offset of the cursor or selection end
+ * @param state      - Document state used to convert UTF-16 offsets to bytes
  * @returns A `SelectionRange` using byte offsets, suitable for `SET_SELECTION`
  *
  * @complexity O(log n + line_length) per offset

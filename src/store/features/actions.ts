@@ -342,7 +342,7 @@ export const DocumentActions = {
 /**
  * Serialize an action to JSON string.
  * Useful for debugging and time-travel.
- * Note: Uint8Array in LoadChunkAction is converted to base64.
+ * Convert the `Uint8Array` in `LoadChunkAction` to base64.
  */
 export function serializeAction(action: DocumentAction): string {
   if (action.type === "LOAD_CHUNK") {
@@ -364,7 +364,7 @@ export function serializeAction(action: DocumentAction): string {
 /**
  * Deserialize an action from JSON string.
  * Useful for replaying actions from logs.
- * Note: base64 data in LOAD_CHUNK is converted back to Uint8Array.
+ * Convert base64 data in `LOAD_CHUNK` back to `Uint8Array`.
  */
 export function deserializeAction(json: string): DocumentAction {
   const parsed = JSON.parse(json);

@@ -140,7 +140,7 @@ export function mergeDirtyRanges(
   }
   if (current !== null) merged.push(current);
 
-  // Safety cap: if too many ranges accumulated, collapse to full-document rebuild.
+  // Rebuild the full document if the range count exceeds the cap.
   // Threshold is configurable via DocumentStoreConfig.maxDirtyRanges (default 32).
   if (merged.length > maxRanges) {
     return $proveCtx($beginCost("O(n log n)"), "full-rebuild-needed" as const);

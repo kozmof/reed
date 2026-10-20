@@ -115,7 +115,7 @@ describe("Event Emitter", () => {
       const emitter = createEventEmitter();
       const handler = vi.fn();
 
-      // Should not throw
+      // Removing an unregistered handler succeeds.
       expect(() => {
         emitter.removeEventListener("save", handler);
       }).not.toThrow();
@@ -156,12 +156,12 @@ describe("Event Emitter", () => {
 
       const state = createInitialState();
 
-      // Should not throw, error is caught internally
+      // Catch the handler error internally.
       expect(() => {
         emitter.emit("save", createSaveEvent(state));
       }).not.toThrow();
 
-      // Good handler should still be called
+      // Continue to the remaining handler after the error.
       expect(goodHandler).toHaveBeenCalledTimes(1);
       expect(error).toHaveBeenCalledTimes(1);
     });
@@ -561,7 +561,7 @@ describe("Batch event emission with intermediate states", () => {
       DocumentActions.insert(byteOffset(5), " World"),
     ]);
 
-    // With intermediate states, first event should show 0→5, second 5→11
+    // Intermediate states give ranges 0→5 for the first event and 5→11 for the second.
     expect(events).toHaveLength(2);
     expect(events[0]!.prevLength).toBe(0);
     expect(events[0]!.nextLength).toBe(5);
@@ -752,7 +752,7 @@ describe("Store event transaction guards", () => {
 
     store.removeEventListener("content-change", handler);
     store.dispatch(DocumentActions.insert(byteOffset(6), "?"));
-    // Handler should NOT be called again after removal
+    // Do not call the removed handler again.
     expect(handler).toHaveBeenCalledTimes(1);
   });
 

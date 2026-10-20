@@ -294,7 +294,7 @@ function backtrack(
 }
 
 /**
- * Simple diff for small strings - easier to understand and debug.
+ * Compute a longest common subsequence for small strings.
  */
 function simpleDiff(
   oldText: string,
@@ -302,12 +302,12 @@ function simpleDiff(
   oldOffset: number,
   newOffset: number,
 ): DiffEdit[] {
-  // Use dynamic programming LCS approach with flat typed array
+  // Store the longest common subsequence lengths in a flat typed array.
   const n = oldText.length;
   const m = newText.length;
   const cols = m + 1;
 
-  // Flat Int32Array: dp[i][j] accessed as dp[i * cols + j], zero-initialized
+  // Access the zero-initialized cell dp[i][j] at dp[i * cols + j].
   const dp = new Int32Array((n + 1) * cols);
 
   for (let i = 1; i <= n; i++) {
@@ -431,8 +431,8 @@ export function computeSetValueActions(
   }
 
   // Myers operates on JavaScript string indices (UTF-16 code units). A diff can
-  // therefore align on just one half of a surrogate pair, as with 😀 and
-  // 😂 share their high surrogate. Converting that interior code-unit boundary
+  // therefore align on just one half of a surrogate pair. For example,
+  // U+1F600 and U+1F602 share their high surrogate. Converting that interior code-unit boundary
   // to a UTF-8 byte offset would produce an edit in the middle of a four-byte
   // sequence and corrupt the document. The optimized single-range strategy
   // explicitly normalizes surrogate boundaries, so use it whenever either
@@ -448,14 +448,11 @@ export function computeSetValueActions(
   const diffResult = diff(oldContent, newContent);
   const actions: DocumentAction[] = [];
 
-  // Convert diff edits to document actions
-  // We need to process in reverse order for deletes to maintain correct positions
-  // Or we need to track position offsets
-
-  // First pass: collect all operations with their positions
+  // Collect operations at their original UTF-16 offsets. Track the byte
+  // offset changes when applying them in document order below.
   interface PendingOp {
     type: "insert" | "delete";
-    position: number; // String position in original
+    position: number; // UTF-16 offset in the original content.
     text: string;
   }
 
@@ -514,9 +511,9 @@ export function computeSetValueActions(
  * Convert a single string index to a byte index.
  * Used by computeSetValueActionsOptimized which calls it at most twice per invocation.
  *
- * Goes through charToByteOffset rather than encoding a slice: slicing mid-surrogate-pair leaves
- * a lone high surrogate that TextEncoder turns into U+FFFD, which would put the result inside a
- * code point instead of on a boundary.
+ * Use `charToByteOffset` to keep the result on a code point boundary.
+ * Encoding a slice that ends inside a surrogate pair would replace the lone
+ * high surrogate with U+FFFD and could return an offset inside a code point.
  */
 function stringIndexToByteIndex(str: string, index: number): number {
   return charToByteOffset(str, index);
@@ -585,8 +582,8 @@ export function computeSetValueActionsOptimized(
   }
 
   // Don't split surrogate pairs at the end either. Extend only when the high surrogate we
-  // stopped after is actually paired with the code unit at the end index; a lone high surrogate is
-  // its own character, and extending over it could land inside the pair that follows.
+  // stopped after is paired with the code unit at the end index. Treat a lone
+  // high surrogate as its own character to avoid extending into the next pair.
   if (
     oldEnd < oldContent.length &&
     isHighSurrogate(oldContent.charCodeAt(oldEnd - 1)) &&

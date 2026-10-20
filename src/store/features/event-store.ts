@@ -206,7 +206,7 @@ export function withEvents(
   }
 
   /**
-   * Emergency reset: clears all pending event levels in addition to base store reset.
+   * Clear all pending event levels and reset the base store.
    */
   function emergencyReset(): DocumentState | null {
     if (disposed) return null;

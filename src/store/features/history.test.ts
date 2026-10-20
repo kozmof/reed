@@ -337,7 +337,7 @@ describe("HISTORY_CLEAR action", () => {
     state = documentReducer(state, DocumentActions.insert(byteOffset(5), " World"));
     state = documentReducer(state, DocumentActions.undo());
 
-    // Should have entries in both stacks
+    // Both stacks contain entries.
     expect(getUndoCount(state)).toBe(1);
     expect(getRedoCount(state)).toBe(1);
 
@@ -382,7 +382,7 @@ describe("HISTORY_CLEAR action", () => {
   it("should work on empty history", () => {
     let state = createInitialState();
 
-    // Should not throw when clearing empty history
+    // Clearing empty history succeeds.
     state = documentReducer(state, DocumentActions.historyClear());
 
     expect(isHistoryEmpty(state)).toBe(true);
@@ -458,7 +458,7 @@ describe("History helpers integration", () => {
 
     expect(getRedoCount(state)).toBe(1);
 
-    // New edit should clear redo stack
+    // A new edit clears the redo stack.
     state = documentReducer(state, DocumentActions.insert(byteOffset(1), "c"));
 
     expect(getRedoCount(state)).toBe(0);
@@ -577,10 +577,10 @@ describe("Undo coalescing", () => {
     state = documentReducer(state, DocumentActions.insert(byteOffset(1), "b"));
     state = documentReducer(state, DocumentActions.insert(byteOffset(2), "c"));
 
-    // All three inserts should be coalesced into one entry
+    // Coalesce all three inserts into one history entry.
     expect(getUndoCount(state)).toBe(1);
 
-    // Undo should remove all three characters at once
+    // Undo removes all three characters at once.
     state = documentReducer(state, DocumentActions.undo());
     expect(state.pieceTable.totalLength).toBe(0);
   });
@@ -629,10 +629,10 @@ describe("Undo coalescing", () => {
     // Delete 'b' (backspace)
     state = documentReducer(state, DocumentActions.delete(byteOffset(1), byteOffset(2)));
 
-    // All three backspaces should coalesce into one entry
+    // Coalesce all three backspaces into one history entry.
     expect(getUndoCount(state)).toBe(1);
 
-    // Undo should restore all three characters
+    // Undo restores all three characters.
     state = documentReducer(state, DocumentActions.undo());
     expect(state.pieceTable.totalLength).toBe(4);
   });
@@ -645,10 +645,10 @@ describe("Undo coalescing", () => {
     // Forward delete at same position (delete 'c', which shifted into position 1)
     state = documentReducer(state, DocumentActions.delete(byteOffset(1), byteOffset(2)));
 
-    // Both forward deletes should coalesce
+    // Coalesce both forward deletes.
     expect(getUndoCount(state)).toBe(1);
 
-    // Undo should restore both characters
+    // Undo restores both characters.
     state = documentReducer(state, DocumentActions.undo());
     expect(state.pieceTable.totalLength).toBe(4);
   });
@@ -704,7 +704,7 @@ describe("Undo coalescing", () => {
     expect(getUndoCount(state)).toBe(1);
 
     // Type "Y" contiguously after "X" (byte offset 1).
-    // Should coalesce with the tail insert "X" → "XY", preserving the delete.
+    // Coalesce the tail insert into "XY" and preserve the earlier delete.
     state = documentReducer(state, DocumentActions.insert(byteOffset(1), "Y"));
 
     expect(getUndoCount(state)).toBe(1);

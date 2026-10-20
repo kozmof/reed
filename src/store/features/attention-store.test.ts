@@ -196,7 +196,7 @@ describe("attention-change event", () => {
 
     const handler = vi.fn();
     store.addEventListener("attention-change", handler);
-    // Insert *inside* the span: splits the anchored piece, so the end point's
+    // Insert within the span to split the anchored piece. The end point's
     // stored {pieceID, boundary} is rewritten to the right half.
     store.dispatch(DocumentActions.insert(byteOffset(8), "XYZ"));
 

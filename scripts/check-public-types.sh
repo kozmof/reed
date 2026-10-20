@@ -10,9 +10,9 @@
 # The public namespaces are assembled by re-exporting those modules, `files`
 # ships all of `dist`, and the CI `package` job type-checks a real consumer
 # against the packed tarball to verify that those module references resolve.
-# What must not escape is the `$prove` / `LogCost` cost algebra, which would
-# force consumers to depend on internal complexity annotations, and anything
-# from `test-utils`, which is not packaged at all.
+# Reject the `$prove` / `LogCost` cost algebra so consumers do not depend on
+# internal complexity annotations. Also reject references to `test-utils`,
+# which is not packaged.
 #
 # Run standalone against a different tree with DIST_DIR, and self-test with
 # `bash scripts/check-public-types.sh --self-test`.

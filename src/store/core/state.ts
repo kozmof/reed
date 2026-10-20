@@ -293,7 +293,7 @@ export function createPieceNode(
  * @param color - RB-tree color (default: black)
  * @param left - Left child (default: null)
  * @param right - Right child (default: null)
- * @param id - Stable piece identity; auto-generated if omitted
+ * @param id - Stable piece identity, generated automatically if omitted
  */
 export function createChunkPieceNode(
   chunkIndex: number,
@@ -705,7 +705,7 @@ export function withState(state: DocumentState, changes: Partial<DocumentState>)
 
 /**
  * Helper to create modified line index state with structural sharing.
- * Centralizes LineIndexState construction to ensure consistency.
+ * Construct line index states with consistent defaults.
  * Preserves the evaluation mode parameter for type safety.
  *
  * When `M` is inferred as the union `EvaluationMode` (e.g., because

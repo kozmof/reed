@@ -141,8 +141,7 @@ export interface ChunkPieceNode extends PieceNodeBase {
  * Narrow with `bufferType` to access fields specific to each variant.
  * Only `ChunkPieceNode` carries `chunkIndex`.
  *
- * Note: Parent references are removed for immutability.
- * Use zipper pattern or path tracking for traversal.
+ * Track the traversal path or use a zipper to navigate without parent pointers.
  */
 export type PieceNode = OriginalPieceNode | AddPieceNode | ChunkPieceNode;
 
@@ -176,8 +175,8 @@ export interface PieceTableState {
   readonly chunkSize: number;
   /**
    * High-water mark for sequential chunk loading.
-   * After out-of-order support: still advances to Math.max(prev, chunkIndex + 1)
-   * on each first-time load. Use `loadedChunks` to test whether a specific chunk
+   * Advances to `Math.max(prev, chunkIndex + 1)` on each first-time load,
+   * including out-of-order loads. Use `loadedChunks` to test whether a specific chunk
    * has ever been successfully loaded.
    * Irrelevant when chunkSize === 0.
    */
@@ -328,13 +327,13 @@ export interface LineIndexState<M extends EvaluationMode = EvaluationMode> {
 }
 
 /**
- * Fully-resolved line index state: no dirty ranges, no pending rebuild.
+ * Line index state with resolved offsets, no dirty ranges, and no pending rebuild.
  * Use this instead of `LineIndexState<'eager'>` to make mode changes visible at call sites.
  */
 export type EagerLineIndexState = LineIndexState<"eager">;
 
 /**
- * Lazily-maintained line index state: may have dirty ranges and a pending rebuild.
+ * Line index state that may have dirty ranges and a pending rebuild.
  * Use this instead of `LineIndexState<'lazy'>` to make mode changes visible at call sites.
  */
 export type LazyLineIndexState = LineIndexState<"lazy">;
@@ -752,7 +751,7 @@ export interface DocumentStoreConfigBase {
   lineEnding?: "lf" | "crlf" | "cr";
   /**
    * When `true`, text inserted via INSERT or REPLACE actions is normalized to
-   * match `lineEnding` before being applied. Default: `false` (no coercion).
+   * match `lineEnding` before being applied. Defaults to `false` (no coercion).
    *
    * Enable this to prevent silent line-ending drift when the document has a
    * declared `lineEnding` style. When disabled, inserts are stored verbatim.
@@ -780,8 +779,7 @@ export interface DocumentStoreConfigBase {
 /**
  * Configuration options for creating a document store.
  *
- * The `reconcileMode` and `scheduler` fields are mutually exclusive: providing
- * both at the same time is a compile error. Use `reconcileMode` for the built-in
+ * Choose either `reconcileMode` or `scheduler`. Providing both is a compile error. Use `reconcileMode` for the built-in
  * presets or `scheduler` to supply a custom scheduler factory. Pre-built
  * scheduler instances remain supported for backward compatibility.
  */

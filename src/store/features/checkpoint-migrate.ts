@@ -29,8 +29,7 @@ export type CheckpointWireData = Record<string, unknown>;
  * One single-version upgrade step.
  *
  * `migrate` receives the payload at version `from` and must return it at
- * version `to`. It must not mutate its input: restore may be retried, and a
- * caller may hold the original object.
+ * version `to`. Preserve the input so callers can retain it or retry restore.
  */
 export interface CheckpointMigration {
   readonly from: number;
@@ -49,9 +48,8 @@ export const CHECKPOINT_MIGRATIONS: readonly CheckpointMigration[] = Object.free
 /**
  * The lowest version this build can bring forward.
  *
- * With an empty registry this is the current version: there is nothing older to
- * upgrade from. It widens automatically as steps are appended, so the supported
- * window is derived from the registry rather than maintained by hand.
+ * An empty registry supports only the current version. Adding migration steps
+ * extends the supported version range automatically.
  */
 export function minimumSupportedVersion(
   registry: readonly CheckpointMigration[] = CHECKPOINT_MIGRATIONS,

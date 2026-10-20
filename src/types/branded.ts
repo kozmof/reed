@@ -139,8 +139,7 @@ export type CharOffset = Branded<number, "CharOffset">;
  * Byte length (size/count of bytes).
  * Represents a length in terms of UTF-8 bytes.
  *
- * Semantically distinct from ByteOffset: an offset is a position,
- * a length is a size/count.
+ * Use `ByteLength` for a byte count and `ByteOffset` for a position.
  */
 export type ByteLength = Branded<number, "ByteLength">;
 

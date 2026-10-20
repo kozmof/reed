@@ -19,7 +19,7 @@ export function* inOrderPieces(
     while (currentNode !== null) {
       nodeStack.push(currentNode);
       offsetStack.push(currentOffset);
-      // Do NOT add left.subtreeLength here — left child's subtree starts at the
+      // Keep the same offset because the left child's subtree starts at the
       // same offset as the current node's subtree, so currentOffset is correct as-is.
       // (currentOffset is updated to pieceStart + n.length after each pop, which
       // correctly seeds the right child's offset.)
@@ -160,7 +160,7 @@ function* streamChunks(
   let chunkBuffer = new Uint8Array(chunkSize);
   let chunkOffset = 0;
   let chunkStartPosition = documentPosition;
-  // Decoder state must span yielded byte chunks: a fixed byte boundary can fall
+  // Preserve decoder state across yielded byte chunks because a boundary can fall
   // in the middle of a multi-byte UTF-8 sequence. A decoder local to this
   // generator also keeps concurrent streams independent.
   const decoder = new TextDecoder();

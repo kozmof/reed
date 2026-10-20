@@ -487,7 +487,7 @@ function validateLineContent(pieceTable: PieceTableState, lines: readonly LineDe
   // Count UTF-16 units arithmetically with the decoder's replacement rules,
   // keeping U+FEFF as content, in the same pass that finds line breaks. An
   // ASCII segment has one unit per byte and needs no counting. A code point
-  // can be split across chunk pieces; joinDecoded corrects counts at seams
+  // can span chunk pieces. joinDecoded corrects counts at seams
   // between non-ASCII segments. An ASCII byte ends any pending sequence, so it
   // also ends the seam. Decoding each line natively cost two TextDecoder
   // calls per line plus a separate scan.
@@ -589,9 +589,8 @@ function restoreLineIndex(
     fail("MALFORMED", "lineIndex.lines is empty: even an empty document has one line");
   }
 
-  // A line's offset is the running prefix sum of the lengths before it: the
-  // canonical eager value, rather than whatever cached offset the captured tree
-  // happened to hold.
+  // Derive each eager line offset from the lengths of preceding lines.
+  // The captured tree may contain stale cached offsets.
   const lines: LineDescriptor[] = [];
   let coveredLength = 0;
   for (let i = 0; i < rawLines.length; i++) {
@@ -702,8 +701,8 @@ function restoreHistoryChange(raw: unknown, what: string, budget: RestoreBudget)
   const kind = readEnum(tuple[0], ["i", "d", "r"] as const, `${what}[0]`, budget);
   const position = byteOffset(readCount(tuple[1], `${what}[1]`));
   const text = readString(tuple[2], `${what}[2]`, budget);
-  // Byte lengths are derived, never trusted: a stored length that disagreed with
-  // its text would misplace every offset an undo computes from it.
+  // Derive byte lengths from text so an incorrect stored length cannot
+  // shift the offsets computed during undo.
   const textLength = byteLength(utf8ByteLength(text));
 
   if (kind === "r") {
@@ -941,9 +940,8 @@ export function restoreCheckpoint(
   }
   readString(source.format, "checkpoint.format", budget);
   const version = readCount(source.version, "checkpoint.version");
-  // Older payloads are brought forward before any field is validated: the
-  // validators below encode the shape of the current version only. Throws
-  // VERSION_UNSUPPORTED when no migration path exists.
+  // Migrate older payloads before validating fields against the current
+  // format. Raise VERSION_UNSUPPORTED when no migration path exists.
   const migrated =
     version === CHECKPOINT_VERSION ? source : migrateCheckpointData(source, version).data;
   readEnum(migrated.mode, ["exact", "normalized"] as const, "checkpoint.mode", budget);

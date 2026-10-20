@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Reed Document Store — Standalone Benchmark Harness
+ * Standalone benchmarks for the Reed document store
  *
  * Measures wall-clock time for the most performance-sensitive operations.
  * Each benchmark prints a summary line and flags regressions against a soft

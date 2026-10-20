@@ -347,7 +347,7 @@ export function lineIndexInsert(
     return $proveCtx($beginCost("O(n)"), repaired);
   }
 
-  // No newlines: update the affected line and every downstream cached offset.
+  // Update the affected line and later cached offsets when no newlines are inserted.
   // Unlike the lazy path, eager mode promises that documentOffset is exact.
   if (newlinePositions.length === 0) {
     return $proveCtx(
@@ -516,7 +516,7 @@ function updateLineLengthInTree(
 }
 
 /**
- * Shared structural append: updates first line, inserts middle/last lines.
+ * Update the first appended line and insert the remaining lines.
  * Handles the core logic shared between eager and lazy append operations.
  * Caller must handle the null-root case before calling this.
  */
@@ -626,7 +626,7 @@ function addToLastLine(
 }
 
 /**
- * Shared structural insert: splits line at location, inserts middle/last lines.
+ * Split the line at the insertion point and insert the remaining lines.
  * `computeOffset` controls whether exact offsets or null placeholders are used.
  */
 function insertLinesStructural(
@@ -705,7 +705,7 @@ function insertLinesAtPosition(
   byteLength: number,
   readText?: ReadTextFn,
 ): LineIndexState {
-  // Eager: compute real offsets relative to line start
+  // Compute eager offsets relative to the line start.
   const lineStart = getLineStartOffset(state.root, location.lineNumber);
 
   // Compute charsBefore using readText if available
@@ -1410,7 +1410,7 @@ export function lineIndexInsertLazy(
     );
   }
 
-  // No newlines: update the line's length and defer the offsets after it
+  // Update the line length and defer later offsets when no newlines are inserted.
   if (newlinePositions.length === 0) {
     return $proveCtx(
       $beginCost("O(n)"),
@@ -1517,7 +1517,7 @@ function insertLinesAtPositionLazy(
     charsBefore = 0;
   }
 
-  // Lazy: use null placeholder for all new line offsets
+  // Defer all new line offsets with null placeholders.
   const result = insertLinesStructural(
     state.root!,
     state.lineCount,
@@ -1573,7 +1573,7 @@ export function lineIndexDeleteLazy(
   const deleteLength = end - start;
   const deletedNewlines = countDeletedLineBreaks(deletedText, deleteContext);
 
-  // No newlines: just update line length
+  // Update only the line length when no newlines are inserted.
   if (deletedNewlines === 0) {
     return $proveCtx(
       $beginCost("O(n log n)"),

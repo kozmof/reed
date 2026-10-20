@@ -3,11 +3,11 @@
  * it without replaying the edits that produced it.
  *
  * `store.getSnapshot()` returns an in-memory `DocumentState`. A checkpoint
- * serializes that state. Capture takes a `DocumentState<'eager'>`, so reach for
- * `store.getEagerSnapshot()` (or `await store.whenReconciled()`) rather than
- * `getSnapshot()`. Checkpoints never carry pending reconciliation work.
+ * serializes that state. Capture requires a `DocumentState<'eager'>`. Obtain it
+ * with `store.getEagerSnapshot()` or `await store.whenReconciled()`.
+ * Checkpoints contain no pending reconciliation work.
  *
- * Restore fails closed. A payload that would violate a piece-table or
+ * Restore rejects invalid data. A payload that would violate a piece-table or
  * line-index invariant raises `CheckpointError` instead of loading.
  * Add restore limits when input comes from outside the application.
  *

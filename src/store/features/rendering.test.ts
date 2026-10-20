@@ -471,7 +471,7 @@ describe("lineColumnToPosition", () => {
     });
 
     // Line 0 is 'Hi\n' (3 chars with newline, 2 without)
-    // Column 100 should clamp to end of line
+    // Clamp column 100 to the end of the line.
     const result = lineColumnToPosition(state, 0, 100);
     expect(result).toBe(3); // Clamped to line length including newline
   });
@@ -769,7 +769,7 @@ describe("charOffsetsToSelection", () => {
       anchor: charOffset(100),
       head: charOffset(100),
     });
-    // Should return totalLength (3 bytes for "abc")
+    // Return totalLength, which is 3 bytes for "abc".
     expect(result.anchor).toBe(3);
     expect(result.head).toBe(3);
   });
