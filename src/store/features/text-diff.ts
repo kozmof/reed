@@ -379,7 +379,7 @@ function simpleDiff(
   }
 
   flushRun();
-  // Backtracking walks from end→start, so runs are in reverse document order — reverse.
+  // Reverse the runs produced by backtracking to restore document order.
   edits.reverse();
   return edits;
 }
@@ -431,7 +431,7 @@ export function computeSetValueActions(
   }
 
   // Myers operates on JavaScript string indices (UTF-16 code units). A diff can
-  // therefore align on only one half of a surrogate pair — for example 😀 and
+  // therefore align on just one half of a surrogate pair, as with 😀 and
   // 😂 share their high surrogate. Converting that interior code-unit boundary
   // to a UTF-8 byte offset would produce an edit in the middle of a four-byte
   // sequence and corrupt the document. The optimized single-range strategy

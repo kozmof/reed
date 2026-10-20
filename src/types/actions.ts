@@ -129,8 +129,8 @@ export interface MarkSavedAction {
 // =============================================================================
 
 /**
- * Remote change from collaboration (e.g., from Yjs).
- * Discriminated union on `type` — `text` is required for inserts, `length` for deletes.
+ * Remote change from collaboration, such as Yjs.
+ * Narrow on `type` to require `text` for inserts or `length` for deletes.
  */
 export type RemoteChange =
   | { readonly type: "insert"; readonly start: ByteOffset; readonly text: string }
@@ -187,7 +187,7 @@ export interface LoadChunkAction {
   readonly type: "LOAD_CHUNK";
   /** Index of the chunk */
   readonly chunkIndex: number;
-  /** Chunk data (readonly — callers must not mutate the buffer after dispatch) */
+  /** Read-only chunk data. Do not mutate the buffer after dispatch. */
   readonly data: ReadonlyUint8Array;
 }
 
@@ -219,8 +219,8 @@ export interface LoadChunksAction {
  *
  * What callers must do before evicting:
  * - Ensure no in-progress edit (open transaction) spans the chunk's byte range.
- * - If the document has unsaved changes in the chunk, persist them first — eviction
- *   does not write back to any backing store.
+ * - Persist unsaved chunk changes before eviction. Eviction does not write
+ *   to a backing store.
  * - Use `ChunkManager.setActiveChunks()` (from `createChunkManager`) to pin chunks
  *   that must remain resident rather than evicting them manually.
  */
@@ -237,7 +237,7 @@ export interface EvictChunkAction {
  */
 export interface DeclareChunkMetadataAction {
   readonly type: "DECLARE_CHUNK_METADATA";
-  /** Metadata entries to register. One entry per chunk; duplicates for already-loaded chunks are ignored. */
+  /** Metadata entries, one per chunk. Ignore duplicates for already-loaded chunks. */
   readonly metadata: readonly ChunkMetadata[];
 }
 
@@ -269,10 +269,9 @@ export type DocumentAction =
 /**
  * Single source of truth for all valid action type strings.
  * `DocumentActionType` is derived from this object's keys.
- * Adding a key here automatically expands the type; both `isDocumentAction`
- * and `validateAction` switch on `DocumentActionType`, so TypeScript's
- * exhaustiveness check (never-typed default) will error at those sites if a
- * new key is added here but its case is not yet handled.
+ * Adding a key expands `DocumentActionType`. Add matching cases to
+ * `isDocumentAction` and `validateAction` to satisfy their never-typed
+ * exhaustiveness checks.
  */
 export const DocumentActionTypes = strEnum([
   "INSERT",
@@ -311,7 +310,7 @@ function isNonNegativeInteger(value: unknown): value is number {
 }
 
 function isValidEditPosition(value: unknown): value is number {
-  // Local edit positions may be outside document bounds; the reducer clamps them.
+  // Allow out-of-bounds local edit positions because the reducer clamps them.
   // They still must be integral and finite so branded offset construction is safe.
   return isInteger(value);
 }

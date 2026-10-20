@@ -48,9 +48,8 @@ export function assertPieceTableInvariants(
   strictRedBlack = false,
 ): void {
   const ids = new Set<string>();
-  // Shape is reported alongside every strict failure: a bare "black-height"
-  // mismatch does not say how badly the tree has degraded, and the node count
-  // and height are what identify the offending workload.
+  // Include node count and height in strict failures to show the extent
+  // of tree-shape degradation and identify the failing workload.
   const shape = strictRedBlack ? measurePieceTree(state.root) : null;
   const where = shape ? `${context} [pieces=${shape.count} height=${shape.height}]` : context;
 
@@ -104,7 +103,7 @@ export function assertPieceTableInvariants(
   }
 }
 
-/** Assert line-tree aggregates and, for eager trees, exact document offsets. */
+/** Assert line-tree counts and byte/UTF-16 length aggregates. */
 export function assertLineIndexInvariants(
   root: LineIndexNode | null,
   context = "line index",

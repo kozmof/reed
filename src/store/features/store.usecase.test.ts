@@ -368,12 +368,12 @@ describe("Editor Use Cases", () => {
 
       store.beginTransaction();
       store.dispatch(DocumentActions.insert(byteOffset(1), "B"));
-      store.commitTransaction(); // inner commit — no notification
+      store.commitTransaction(); // Keep notifications buffered on inner commit.
 
       expect(listener).not.toHaveBeenCalled();
 
       store.dispatch(DocumentActions.insert(byteOffset(2), "C"));
-      store.commitTransaction(); // outer commit — notifies
+      store.commitTransaction(); // Notify on outer commit.
 
       expect(listener).toHaveBeenCalledTimes(1);
     });
@@ -420,7 +420,7 @@ describe("Editor Use Cases", () => {
       store.beginTransaction();
       store.dispatch(DocumentActions.insert(byteOffset(1), "B"));
 
-      store.rollbackTransaction(); // inner only — keeps 'A'
+      store.rollbackTransaction(); // Rollback only the inner level and keep 'A'.
       expect(store.getSnapshot().pieceTable.totalLength).toBe(1);
 
       store.commitTransaction(); // outer
@@ -479,7 +479,7 @@ describe("Editor Use Cases", () => {
       store.beginTransaction();
       store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
 
-      // Inner withTransaction — should be silent (inner commit)
+      // Keep the inner withTransaction commit silent.
       withTransaction(store, (s) => {
         s.dispatch(DocumentActions.insert(byteOffset(1), "B"));
       });
@@ -515,7 +515,7 @@ describe("Editor Use Cases", () => {
       const store = createDocumentStore({ content: "Hello" });
       const original = store.getSnapshot();
 
-      // rollbackTransaction at depth 0 throws — emergencyReset should be the fallback
+      // Fall back to emergencyReset when rollbackTransaction throws at depth 0.
       expect(() => store.rollbackTransaction()).toThrow();
 
       // emergencyReset is still callable and returns null (no snapshots to restore)

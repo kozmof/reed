@@ -74,8 +74,8 @@ interface RemoteRange {
 
 /**
  * Transform intermediate ranges into final document coordinates in expected
- * O(m log m) time and O(m) space. Two randomized treaps hold starts and ends;
- * lazy suffix shifts and interval clamps avoid replaying edits per endpoint.
+ * O(m log m) time and O(m) space. Two randomized treaps hold starts and ends.
+ * Lazy suffix shifts and interval clamps avoid replaying edits per endpoint.
  * Starts have right affinity, ends left affinity. If a range collapses, its
  * right-affinity start wins over its end when producing the final range.
  */

@@ -1437,10 +1437,9 @@ describe("sync reconciliation re-entrancy", () => {
     const store = createDocumentStore({ reconcileMode: "sync" });
 
     // In sync mode the first dispatch notifies (call #1) and then runs
-    // reconciliation, whose own setState notifies again (call #2) — that second
-    // notification fires while the scheduler is mid-flight. A listener that
-    // dispatches there schedules follow-up work re-entrantly; the scheduler must
-    // drain it rather than drop it.
+    // reconciliation, whose setState triggers notification #2 while the scheduler
+    // is running. A dispatch from that notification schedules follow-up work
+    // that the scheduler must drain.
     let notifyCount = 0;
     store.subscribe(() => {
       notifyCount += 1;
@@ -1615,7 +1614,7 @@ describe("LOAD_CHUNK", () => {
 
   it("accepts out-of-order chunk loads (random-access support)", () => {
     const state = createInitialState({ chunkSize: 64 });
-    // Out-of-order first load: chunk 1 before chunk 0 — must be accepted.
+    // Accept chunk 1 as the first load even though chunk 0 is not loaded yet.
     const bytes = textEncoder.encode("hello");
     const next = documentReducer(state, DocumentActions.loadChunk(1, bytes));
     expect(next).not.toBe(state);

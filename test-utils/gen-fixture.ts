@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CLI script: generate a large text fixture file for performance tests.
+ * Generate a large text fixture file for performance tests.
  *
  * Usage (via tsx / ts-node / node --import):
  *   npx tsx test-utils/gen-fixture.ts [options]

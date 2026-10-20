@@ -221,14 +221,14 @@ describe("DocumentStoreConfig.totalFileSize", () => {
 
   it("is ignored when content is provided (non-chunked mode)", () => {
     const state = createInitialState({ content: "hello", totalFileSize: 9999 });
-    // content mode is not chunked; totalFileSize stored as 0
+    // Content mode is not chunked, so totalFileSize is 0.
     expect(state.pieceTable.totalFileSize).toBe(0);
   });
 });
 
 describe("LOAD_CHUNK integrity", () => {
   it("rejects a chunk whose length exceeds the known totalFileSize", () => {
-    // Repro: a declared four-byte file must not accept an eight-byte chunk —
+    // Reject an eight-byte chunk for a declared four-byte file because
     // doing so reports totalLength: 8 and corrupts every backing-file offset.
     const state0 = createInitialState({ chunkSize: 64, totalFileSize: 4 });
     const state1 = documentReducer(

@@ -721,7 +721,7 @@ describe("structural sharing", () => {
 
     const joined = ensureBlackRoot(joinBalanced(left, key, right, withTestNode), withTestNode);
 
-    // A join that rebuilt the tree would create ~1000 nodes; a path copy creates
+    // A full rebuild would create about 1000 nodes. A path copy creates
     // a number bounded by the tree's height.
     const fresh = countFreshNodes(joined, left);
     expect(fresh, `join copied ${fresh} nodes from a 1000-node tree`).toBeLessThanOrEqual(

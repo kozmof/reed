@@ -1,20 +1,12 @@
 /**
  * Large-file performance tests for the Reed document store.
  *
- * The thresholds here are catastrophic-failure ceilings, not regression
- * budgets. They sit roughly an order of magnitude above observed timings so
- * they do not flap on slower CI hardware, which also means they cannot detect
- * an ordinary regression: the persistent-deletion defect fixed in v3.2.0 ran
- * the piece tree at twice its admissible height while `random delete × 1000`
- * still finished in 33 ms against a 500 ms ceiling.
+ * Thresholds allow substantial timing variation across CI machines and catch
+ * severe slowdowns. They do not detect every performance regression.
+ * Use complexity.test.ts for deterministic checks of the red-black height
+ * bound that supports logarithmic traversal.
  *
- * Structural regressions are therefore gated separately and deterministically
- * in `complexity.test.ts`, which asserts tree height against the red-black
- * bound and runs in the ordinary functional suite. Treat a failure here as
- * "something is catastrophically slow", and a failure there as "an algorithm
- * lost its complexity guarantee".
- *
- * Run in isolation to get the cleanest numbers:
+ * Run these tests in isolation for more consistent timings:
  *   npm run test:perf
  */
 
@@ -37,7 +29,7 @@ import { generateLargeContent, makeDeterministicRng } from "../../../test-utils/
 // ---------------------------------------------------------------------------
 
 interface BenchOptions {
-  /** Number of measured runs; median is returned. */
+  /** Number of measured runs used to compute the median. */
   runs?: number;
   /** Number of unmeasured warm-up runs. */
   warmupRuns?: number;
@@ -86,9 +78,8 @@ function assertPerf(label: string, elapsedMs: number, thresholdMs: number, itera
 /**
  * Fail a reconciliation benchmark that has nothing to repair.
  *
- * Reconcile paths return the state unchanged in O(1) when there is no pending
- * work, so an unguarded benchmark can time an empty call and still pass its
- * threshold — the faster the number looks, the more likely it measured nothing.
+ * Reconciliation returns the original state in O(1) when no work is pending.
+ * Require pending work so the benchmark measures a repair.
  *
  * `'full-rebuild-needed'` counts as pending work here: `reconcileFull` takes its
  * slow path on the sentinel and rebuilds the whole tree. Use
@@ -681,7 +672,7 @@ describe("Mixed edit workload", () => {
 const LINES_MB = 50_000;
 let content_mb: string; // multibyte fixture, built once
 
-// Use a nested beforeAll — vitest runs it before tests in this file scope.
+// Use a nested beforeAll so Vitest prepares this fixture before its tests.
 beforeAll(() => {
   content_mb = generateLargeContent({ lineCount: LINES_MB, pattern: "multibyte", seed: 7 });
 });
@@ -783,7 +774,7 @@ describe("Multibyte content (kanji + emoji)", () => {
 
   it("1 000 appends of kanji + emoji strings", () => {
     const ITERS = 1_000;
-    // Tokens to append — mix of kanji (3 bytes) and emoji (4 bytes each)
+    // Append tokens containing kanji (3 bytes each) and emoji (4 bytes each).
     const tokens = ["日本語", "😀", "世界", "🚀", "漢字", "🎉"];
     const tokenBytes = tokens.map(utf8ByteLength);
     const store = createDocumentStore({ content: content_mb });
@@ -815,7 +806,7 @@ describe("Multibyte content (kanji + emoji)", () => {
     let inserted = 0;
     let insertedBytes = 0;
     const ms = bench(() => {
-      // Re-read state each time — previous inserts shift offsets, so use line 0
+      // Read current state after each insert and use line 0 because offsets shift.
       // (offset 0) to stay at a guaranteed byte boundary regardless of insertions.
       const targetLine = Math.floor(rng() * Math.min(lineCount, 100));
       // getLineStartOffset on the *current* (lazy) state root still returns the

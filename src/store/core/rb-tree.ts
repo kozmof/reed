@@ -110,14 +110,14 @@ export function ensureBlackRoot<N extends RBNode<N>>(node: N, withNode: WithNode
  * Rotate away a red-red violation at a node, for the narrow case where the
  * uncle is known to be black.
  *
- * This is not a general red-black repair, and must not be used as one:
+ * Use this only when the uncle is black and there is no black deficit.
  *
  * - It cannot repair a black deficit. Deletion needs
  *   {@link repairLeftBlackDeficit} / {@link repairRightBlackDeficit}, which
  *   carry the deficit in their return value.
  * - It does not handle a red uncle. That case needs the colour flip in
- *   `fixInsertViolation`, which also propagates the violation upward; applying
- *   only the rotations below leaves the violation in place, one level deeper.
+ *   `fixInsertViolation` to propagate the violation upward. The rotations
+ *   below alone leave a violation one level deeper.
  *
  * Its callers are insertion fix-up and right-spine grafting (chunk loading),
  * where both preconditions hold.
@@ -227,7 +227,7 @@ function fixInsertViolation<N extends RBNode<N>>(
     };
   }
 
-  // Uncle is black: rotation (terminal — subtree root becomes black)
+  // Rotate for a black uncle to finish repair with a black subtree root.
   return { fixed: fixRedViolations(node, withNode), propagate: false };
 }
 
@@ -247,7 +247,7 @@ export function fixInsertWithPath<N extends RBNode<N>>(
   withNode: WithNodeFn<N>,
 ): N {
   for (let i = insertPath.length - 1; i >= 0; i--) {
-    // Index is in-bounds by the loop guard; capturing the entry avoids repeated
+    // Capture the entry guaranteed by the loop guard to avoid repeated
     // assertions and lets mutations flow back through the shared object reference.
     const entry = insertPath[i]!;
     // Sync: if the child below was modified, update this node's reference to it
@@ -313,14 +313,12 @@ export function appendToRightmost<N extends RBNode<N>>(
 // =============================================================================
 
 /**
- * Black height of a subtree: the number of black nodes on a root-to-null path,
- * counting the null terminator as one.
+ * Return the black height by counting black nodes on one root-to-null path.
+ * Count the null terminator as one.
  *
  * Only one spine is read, which is correct exactly when the subtree already
- * satisfies the black-height invariant. Never call this on a tree that is
- * part-way through being rebuilt — a malformed tree returns a rank that is not
- * a property of the tree at all, and joins driven by that rank compound the
- * damage instead of repairing it.
+ * satisfies the black-height invariant. Finish repairing the tree before
+ * calling. An invalid rank can cause later joins to damage the tree further.
  */
 export function blackHeight<N extends RBNode<N>>(node: N | null): number {
   let height = 1;
@@ -337,13 +335,12 @@ export function blackHeight<N extends RBNode<N>>(node: N | null): number {
 // =============================================================================
 
 /**
- * Outcome of a removal or repair step.
+ * Result of a removal or repair step.
  *
- * `blackHeightDecreased` is the black deficit made explicit: it reports that
- * `node` is one black level shorter than the subtree it replaces, so the caller
- * must repair at its own level or propagate further up. Encoding the deficit in
- * the return value — rather than in a colour, or by recolouring the root at the
- * end — is what lets deletion preserve the invariant at every level.
+ * `blackHeightDecreased` reports that `node` is one black level shorter than
+ * the subtree it replaces. The caller must repair this deficit or propagate
+ * it upward. Keeping the deficit in the result lets each level preserve the
+ * red-black invariants.
  */
 export interface RemoveResult<N extends RBNode<N>> {
   readonly node: N | null;
@@ -369,7 +366,7 @@ export function repairLeftBlackDeficit<N extends RBNode<N>>(
   withNode: WithNodeFn<N>,
 ): RepairResult<N> {
   const sibling = parent.right;
-  // No sibling means the deficit cannot be repaired here; propagate it.
+  // Propagate the deficit when no sibling is available for repair.
   if (sibling === null) return { node: parent, blackHeightDecreased: true };
 
   if (sibling.color === "red") {
@@ -572,7 +569,7 @@ function joinLeft<N extends RBNode<N>>(
  * Join `left`, `key` and `right` into one red-black tree, where every key in
  * `left` precedes `key` and `key` precedes every key in `right`.
  *
- * The key's colour and children are overwritten; only its payload is used.
+ * Use the key's payload and replace its colour and children.
  * Cost is proportional to the difference in black heights, so a join against a
  * much shorter tree does not walk the taller one.
  *

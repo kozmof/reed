@@ -70,7 +70,7 @@ export interface AddBufferRef {
 /**
  * Reference to a location inside a loaded chunk buffer.
  * `chunkIndex` identifies which entry in `PieceTableState.chunkMap` to use.
- * `start` is the byte offset *within* that chunk (not an absolute file offset).
+ * `start` is the byte offset within that chunk (not an absolute file offset).
  */
 export interface ChunkBufferRef {
   readonly bufferType: "chunk";
@@ -103,12 +103,9 @@ export interface RBNode<T extends RBNode<T>> {
   readonly right: T | null;
 }
 
-/**
- * Fields shared by all piece node variants.
- * Not exported — use the `PieceNode` union type externally.
- */
+/** Fields shared by piece node variants. Use the exported `PieceNode` union. */
 interface PieceNodeBase extends RBNode<PieceNode> {
-  /** Structural discriminant — distinguishes PieceNode from LineIndexNode in generic RB-tree contexts. */
+  /** Distinguishes PieceNode from LineIndexNode in generic red-black tree operations. */
   readonly _nodeKind: "piece";
   /** Stable identity that survives tree rotations, rebalancing, and offset movement. */
   readonly id: PieceID;
@@ -141,7 +138,7 @@ export interface ChunkPieceNode extends PieceNodeBase {
 
 /**
  * Immutable piece node in the Red-Black tree.
- * Discriminated union — narrow with `bufferType` to access variant-specific fields.
+ * Narrow with `bufferType` to access fields specific to each variant.
  * Only `ChunkPieceNode` carries `chunkIndex`.
  *
  * Note: Parent references are removed for immutability.
@@ -187,15 +184,15 @@ export interface PieceTableState {
   readonly nextExpectedChunk: number;
   /**
    * Set of chunk indices that have been loaded at least once.
-   * Persists across evictions — used to distinguish first-time loads from re-loads
-   * and to guard against duplicate registration of unloaded line counts.
+   * Persists across evictions to distinguish first loads from reloads
+   * and prevent duplicate registration of unloaded line counts.
    * Empty when chunkSize === 0.
    */
   readonly loadedChunks: ReadonlySet<number>;
   /**
    * Pre-declared metadata for chunks not yet in memory.
-   * Populated by DECLARE_CHUNK_METADATA; entries are not removed on LOAD_CHUNK
-   * (they serve as a cache for post-eviction re-loads).
+   * DECLARE_CHUNK_METADATA adds entries. LOAD_CHUNK retains them
+   * as a cache for reloads after eviction.
    * Empty when chunkSize === 0.
    */
   readonly chunkMetadata: ReadonlyMap<number, ChunkMetadata>;
@@ -229,7 +226,7 @@ export interface PieceTableState {
 export interface LineIndexNode<M extends EvaluationMode = EvaluationMode> extends RBNode<
   LineIndexNode<M>
 > {
-  /** Structural discriminant — distinguishes LineIndexNode from PieceNode in generic RB-tree contexts. */
+  /** Distinguishes LineIndexNode from PieceNode in generic red-black tree operations. */
   readonly _nodeKind: "lineIndex";
   /** Byte offset in document where this line starts. null when using lazy mode before reconciliation. */
   readonly documentOffset: M extends "eager" ? number : number | null;
@@ -260,9 +257,8 @@ export interface DirtyLineRangeEntry {
 }
 
 /**
- * Alias for a concrete dirty line range entry.
- * The list-level `"full-rebuild-needed"` sentinel in `DirtyLineRangeList` is the
- * single sentinel form — there is no element-level sentinel.
+ * A concrete dirty line range entry.
+ * Only the enclosing `DirtyLineRangeList` can hold the `"full-rebuild-needed"` sentinel.
  */
 export type DirtyLineRange = DirtyLineRangeEntry;
 
@@ -271,9 +267,8 @@ export type DirtyLineRange = DirtyLineRangeEntry;
  * `'full-rebuild-needed'` when delta information has been lost (too many ranges
  * were accumulated) and a full O(n) tree walk is required.
  *
- * Prefer this type over `readonly DirtyLineRange[]` in new code — the list-level
- * sentinel makes the full-rebuild state unmistakable and prevents accidentally
- * treating a sentinel as a range entry.
+ * Prefer this type over `readonly DirtyLineRange[]` to distinguish a required
+ * full rebuild from a list of ranges.
  *
  * @example
  * ```ts
@@ -321,8 +316,8 @@ export interface LineIndexState<M extends EvaluationMode = EvaluationMode> {
   /**
    * Line counts for chunks declared via DECLARE_CHUNK_METADATA but not yet loaded
    * (or currently evicted).  Keyed by chunk index.
-   * Entries are added by DECLARE_CHUNK_METADATA and EVICT_CHUNK (when metadata is
-   * known); entries are removed by LOAD_CHUNK.
+   * DECLARE_CHUNK_METADATA and EVICT_CHUNK add entries when metadata is known.
+   * LOAD_CHUNK removes entries.
    */
   readonly unloadedLineCountsByChunk: ReadonlyMap<number, number>;
   /**
@@ -427,10 +422,7 @@ export interface HistoryReplaceChange {
   readonly oldByteLength: ByteLength;
 }
 
-/**
- * A single change record for undo/redo.
- * Discriminated union — `oldText` is only present on 'replace' changes.
- */
+/** An undo/redo change. Narrow on `type` to access `oldText` on 'replace' changes. */
 export type HistoryChange = HistoryInsertChange | HistoryDeleteChange | HistoryReplaceChange;
 
 /**
@@ -453,7 +445,7 @@ export interface HistoryEntry {
 
 /**
  * Internal AVL node for the persistent stack.
- * Not exported — construction is module-internal only.
+ * Constructed only within this module.
  * The `private declare _brand` field (zero runtime overhead) prevents plain
  * object literals from being structurally assignable to `PStack<T>`.
  */
@@ -491,8 +483,8 @@ declare const _pstackBrand: unique symbol;
  * structural sharing across snapshots. Empty stack is `null`.
  *
  * The `[_pstackBrand]` symbol is unexported, so external code cannot construct
- * or structurally pattern-match against the non-null branch — only the exported
- * helper functions (`pstackPush`, `pstackPeek`, etc.) form the public API.
+ * or structurally pattern-match against the non-null branch. Use the exported
+ * helpers such as `pstackPush` and `pstackPeek`.
  */
 export type PStack<T> = null | (PStackNode<T> & { readonly [_pstackBrand]: never });
 
@@ -681,14 +673,12 @@ export interface DocumentState<M extends EvaluationMode = EvaluationMode> {
    */
   readonly revision: number;
   /**
-   * Monotonically increasing counter incremented only on SET_SELECTION.
+   * Counter incremented only by SET_SELECTION.
    *
-   * Note: `revision` also increments on selection changes, so it cannot single
-   * out a selection-only change. To skip content re-computation, compare
-   * piece-table reference identity instead: `state.pieceTable === prev.pieceTable`
-   * is true (O(1) via structural sharing) whenever content is unchanged —
-   * including across selection-only changes — while `selectionRevision` tells you
-   * a SET_SELECTION occurred.
+   * `revision` also changes for content edits, so use `selectionRevision` to
+   * detect SET_SELECTION actions. To skip content recomputation, compare
+   * `state.pieceTable === prev.pieceTable`. Structural sharing makes this an
+   * O(1) identity check, including across selection-only changes.
    */
   readonly selectionRevision: number;
   /** Piece table containing the document content */
@@ -702,10 +692,10 @@ export interface DocumentState<M extends EvaluationMode = EvaluationMode> {
   /** Document metadata */
   readonly metadata: DocumentMetadata;
   /**
-   * Attention layer: piece-anchored references that survive edits.
-   * The third independent Reed layer alongside the piece table and line index.
-   * Content edits (INSERT/DELETE/REPLACE/APPLY_REMOTE/UNDO/REDO) migrate these
-   * points automatically; CREATE_ATTENTION / DELETE_ATTENTION mutate the set.
+   * Piece-anchored references that survive edits.
+   * This layer is independent of the piece table and line index.
+   * Content edits (INSERT/DELETE/REPLACE/APPLY_REMOTE/UNDO/REDO) migrate points
+   * automatically. CREATE_ATTENTION and DELETE_ATTENTION change the set.
    */
   readonly attention: AttentionLayerState;
 }
@@ -715,8 +705,8 @@ export interface DocumentState<M extends EvaluationMode = EvaluationMode> {
 // =============================================================================
 
 /**
- * Reconciliation scheduling options — mutually exclusive: either a preset
- * `reconcileMode` string or a custom `scheduler` factory or instance, never both.
+ * Choose either a preset `reconcileMode` or a custom `scheduler` factory or instance.
+ * The two options are mutually exclusive.
  */
 type ReconcileModeConfig = { reconcileMode?: "idle" | "sync" | "none"; scheduler?: never };
 type CustomSchedulerConfig = {
@@ -726,13 +716,11 @@ type CustomSchedulerConfig = {
 export type ReconcileOptions = ReconcileModeConfig | CustomSchedulerConfig;
 
 /**
- * The part of a store's configuration that belongs to the store instance rather
- * than to its state: diagnostics and reconciliation scheduling.
+ * Runtime settings for diagnostics and reconciliation scheduling.
  *
- * Everything else in `DocumentStoreConfig` — content, history limit, line
- * ending, chunk size — describes state, and a restored store takes those from
- * its checkpoint. `createDocumentStoreFromCheckpoint` therefore accepts only
- * this narrower config.
+ * `createDocumentStoreFromCheckpoint` accepts these settings and restores
+ * state settings, such as content, history limit, line ending, and chunk size,
+ * from the checkpoint.
  */
 export type DocumentStoreRuntimeConfig = { logger?: ReedLogger } & ReconcileOptions;
 
@@ -754,8 +742,8 @@ export interface DocumentStoreConfigBase {
   /** Maximum history entries (default: 1000) */
   historyLimit?: number;
   /**
-   * Chunk size for large-file streaming. Omit to use non-chunked mode;
-   * explicitly providing a positive value opts an empty document into chunked mode.
+   * Chunk size for large-file streaming.
+   * Omit to use non-chunked mode. A positive value enables chunking for an empty document.
    */
   chunkSize?: number;
   /** File encoding. Reed currently supports UTF-8 only. */
@@ -780,12 +768,11 @@ export interface DocumentStoreConfigBase {
    */
   totalFileSize?: number;
   /**
-   * Maximum number of disjoint dirty line-ranges before `mergeDirtyRanges`
-   * collapses them into a full-rebuild sentinel (default: 32).
-   * Increasing this threshold delays the O(n) full rebuild at the cost of a
-   * larger dirty-range array; decreasing it triggers rebuilds sooner.
-   * Exposing this gives consumers explicit back-pressure control over
-   * background reconciliation frequency in high-throughput scenarios.
+   * Maximum number of disjoint dirty line ranges before `mergeDirtyRanges`
+   * marks the index for a full rebuild (default: 32).
+   *
+   * Increase the threshold to defer O(n) rebuilds while retaining more ranges.
+   * Decrease it to trigger rebuilds sooner.
    */
   maxDirtyRanges?: number;
 }

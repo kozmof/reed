@@ -1,15 +1,12 @@
 /**
- * Checkpoint format types — the on-the-wire shape of a captured `DocumentState`.
+ * Types for storing a captured `DocumentState` as JSON-safe data.
  *
- * A checkpoint is a plain JSON-safe value: every field is a string, number,
- * boolean, array, or plain object, so it can be written to disk, put in
- * IndexedDB, or sent over a socket without a custom replacer. Byte buffers are
- * base64 strings; the piece and line trees are stored as flat in-order lists and
- * rebuilt into balanced Red-Black trees on restore.
+ * A checkpoint can be written to disk, IndexedDB, or a socket without a custom
+ * JSON replacer. Buffers are base64 strings. Piece and line trees are stored
+ * as flat in-order lists and rebuilt as balanced red-black trees on restore.
  *
- * "Snapshot" already names an in-memory `DocumentState` throughout Reed
- * (`getSnapshot`, `isCurrentSnapshot`, `getEagerSnapshot`), so the serialized
- * form is called a *checkpoint* instead.
+ * Reed uses snapshot for an in-memory `DocumentState` and checkpoint for
+ * its serialized form.
  */
 
 /** Envelope discriminator. Present on every checkpoint. */
@@ -37,8 +34,8 @@ export type CheckpointMode = "exact" | "normalized";
 export type CheckpointBufferTag = "o" | "a" | "c";
 
 /**
- * One piece, in document order. Chunk pieces carry a fifth element naming the
- * chunk they read from; `start` is then an offset *within* that chunk.
+ * A piece in document order. A chunk piece has a fifth element identifying
+ * its chunk, and `start` is a byte offset within that chunk.
  */
 export type CheckpointPiece =
   | readonly [id: string, buffer: "o" | "a", start: number, length: number]
@@ -64,7 +61,7 @@ export interface CheckpointPieceTable {
   readonly originalBuffer: string;
   /** Base64-encoded add buffer, valid prefix only. */
   readonly addBuffer: string;
-  /** Bytes per chunk; 0 when the document is not in chunked mode. */
+  /** Bytes per chunk, or 0 for a document without chunking. */
   readonly chunkSize: number;
   /** High-water mark for sequential chunk loading. */
   readonly nextExpectedChunk: number;
@@ -81,12 +78,12 @@ export interface CheckpointPieceTable {
 }
 
 /**
- * One line: byte length (including its newline) and UTF-16 code-unit length.
+ * A line's byte length, including its newline, and UTF-16 code-unit length.
  *
- * Byte offsets are not stored. A line's offset is the prefix sum of the lengths
- * before it — which is exactly what `reconcileFull` computes and what
- * `assertEagerOffsets` checks — so restore derives offsets rather than trusting
- * a cached value that may have drifted from the tree it describes.
+ * Restore derives each byte offset from the sum of preceding line lengths.
+ * Offsets are not stored, so restore does not trust cached values that could
+ * disagree with the tree. `reconcileFull` computes the same sum, and
+ * `assertEagerOffsets` checks it.
  */
 export type CheckpointLine = readonly [lineLength: number, charLength: number];
 
@@ -112,11 +109,11 @@ export interface CheckpointSelection {
 }
 
 /**
- * One undo/redo change. `'i'` = insert, `'d'` = delete, `'r'` = replace;
- * replace carries the text it displaced as a fourth element.
+ * An undo/redo change tagged `'i'` for insert, `'d'` for delete, or `'r'` for replace.
+ * A replace change carries the displaced text as its fourth element.
  *
- * Byte lengths are not stored — they are recomputed from the text on restore so
- * a hand-edited payload cannot desynchronize them from their string.
+ * Restore recomputes byte lengths from text to keep them consistent even
+ * when the payload was edited by hand.
  */
 export type CheckpointHistoryChange =
   | readonly [kind: "i" | "d", position: number, text: string]

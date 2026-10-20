@@ -27,7 +27,7 @@ import { declareChunkMetadata, evictChunk, loadChunk, loadChunks } from "./chunk
 /**
  * Normalize line endings in `text` to match `lineEnding`.
  * Returns the original string unchanged if it contains no CR or LF characters
- * (fast path — avoids regex overhead for typical short inserts without newlines).
+ * to avoid regex work on typical short inserts without newlines.
  */
 function normalizeLineEndings(text: string, lineEnding: "lf" | "crlf" | "cr"): string {
   if (!text.includes("\r") && !text.includes("\n")) return text;
@@ -284,7 +284,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
         root,
         validateBoundaryPosition(state, action.end, "attention end"),
       );
-      // Cannot anchor against an empty tree (or otherwise) — no-op.
+      // Leave state unchanged when the tree cannot anchor a span.
       if (startPoint === null || endPoint === null) return state;
       const [newAttention] = createAttention(state.attention, startPoint, endPoint);
       // Attention changes are content-neutral: a new state reference (so
@@ -295,7 +295,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
 
     case "DELETE_ATTENTION": {
       const newAttention = deleteAttention(state.attention, action.id);
-      if (newAttention === state.attention) return state; // unknown ID — no-op
+      if (newAttention === state.attention) return state; // Leave state unchanged for an unknown attention ID.
       return withState(state, { attention: newAttention });
     }
 

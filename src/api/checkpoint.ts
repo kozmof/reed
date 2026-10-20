@@ -47,6 +47,6 @@ export const checkpoint: CheckpointApi = {
   encode: encodeCheckpoint,
   /** @complexity O(n) — JSON.parse plus restore */
   decode: decodeCheckpoint,
-  /** @complexity O(1) — envelope fields only; restore does the full validation */
+  /** @complexity O(1) envelope check. Restore performs full validation */
   isCheckpoint,
 };

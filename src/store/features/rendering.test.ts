@@ -559,7 +559,7 @@ describe("lineColumnToPosition", () => {
       content: "hi\na😀b",
     });
 
-    // Line 1 starts at byte 3; column 2 snaps to the end of the emoji (3 + 5).
+    // Snap column 2 to the emoji end at byte 8 on the line starting at byte 3.
     expect(lineColumnToPosition(state, 1, 2)).toBe(8);
     expect(lineColumnToPosition(state, 1, 3)).toBe(8);
   });
@@ -650,7 +650,7 @@ describe("positionToLineColumn edge cases", () => {
 
   it("should handle position at exact document end", () => {
     const state = createInitialState({ content: "Hello" });
-    // "Hello" is 5 bytes; position 5 is the end of the document
+    // Position 5 is the end of the five-byte document "Hello".
     const result = positionToLineColumn(state, byteOffset(5));
     expect(result).toEqual({ line: 0, column: 5 });
   });
@@ -681,7 +681,7 @@ describe("selectionToCharOffsets", () => {
 
   it("should convert unicode byte-offset selection to char offsets", () => {
     const state = createInitialState({ content: "世界\nHello" });
-    // '世界\n' = 7 bytes; char offsets 0..2
+    // '世界\n' uses 7 bytes and occupies UTF-16 offsets 0..2.
     const result = selectionToCharOffsets(state, {
       anchor: byteOffset(0),
       head: byteOffset(6),
@@ -724,7 +724,7 @@ describe("selectionToCharOffsets", () => {
       anchor: byteOffset(6),
       head: byteOffset(6),
     });
-    // 'Hello\n' is 6 chars; line 1 starts at char offset 6
+    // Line 1 starts at UTF-16 offset 6 after 'Hello\n'.
     expect(result.anchor).toBe(6);
     expect(result.head).toBe(6);
   });
@@ -764,7 +764,7 @@ describe("charOffsetsToSelection", () => {
 
   it("should clamp char offset past end of line to line length", () => {
     const state = createInitialState({ content: "abc" });
-    // charOffset(100) is past end; should land at end of last line
+    // Clamp charOffset(100) to the end of the last line.
     const result = charOffsetsToSelection(state, {
       anchor: charOffset(100),
       head: charOffset(100),
@@ -797,7 +797,7 @@ describe("getLineContent (optimization)", () => {
 
   it("should return empty string for empty document", () => {
     const state = createInitialState();
-    // Line 0 exists (empty document has one empty line); content is '' not null.
+    // Return '' for line 0 in an empty document because the empty line exists.
     expect(getLineContent(state, 0)).toBe("");
   });
 

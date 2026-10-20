@@ -232,17 +232,14 @@ export function columnNumber(value: number): ColumnNumber {
 }
 
 /**
- * Brand a raw string as a PieceID. Identity at runtime — IDs are opaque tokens,
- * so no validation is performed. Use when generating or deserializing IDs.
+ * Brand a raw string as a PieceID without validation or runtime conversion.
+ * Use when generating or deserializing opaque piece IDs.
  */
 export function pieceID(value: string): PieceID {
   return value as PieceID;
 }
 
-/**
- * Brand a raw string as an AttentionID. Identity at runtime — IDs are opaque
- * tokens, so no validation is performed.
- */
+/** Brand a raw string as an opaque AttentionID without validation or runtime conversion. */
 export function attentionID(value: string): AttentionID {
   return value as AttentionID;
 }
@@ -253,7 +250,7 @@ export function attentionID(value: string): AttentionID {
 
 /**
  * Extract the raw number from a ByteOffset.
- * Identity at runtime — the brand only exists at compile time.
+ * Return the number unchanged because the brand exists only at compile time.
  * Use this instead of `as unknown as number` when you need a plain number
  * from a branded offset (e.g. after reading state.selection.ranges[i].head).
  */
@@ -261,10 +258,7 @@ export function rawByteOffset(o: ByteOffset): number {
   return o as number;
 }
 
-/**
- * Extract the raw number from a CharOffset.
- * Identity at runtime — the brand only exists at compile time.
- */
+/** Extract the number from a CharOffset without runtime conversion. */
 export function rawCharOffset(o: CharOffset): number {
   return o as number;
 }

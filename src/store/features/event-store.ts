@@ -185,7 +185,7 @@ export function withEvents(
         pendingEventLevels[pendingEventLevels.length - 1]!.push(...events);
       }
     } catch (e) {
-      // baseStore already called emergencyReset internally; clear our buffer to match.
+      // Clear our buffer to match the emergencyReset already performed by baseStore.
       pendingEventLevels.length = 0;
       throw e;
     }

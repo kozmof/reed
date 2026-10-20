@@ -211,8 +211,7 @@ export const DocumentActions = {
   /**
    * Record a successful save.
    *
-   * Dispatch this *after* the caller has persisted the document; Reed performs
-   * no I/O of its own. Clears `metadata.isDirty` and stamps
+   * Dispatch after persisting the document. Reed performs no I/O. Clears `metadata.isDirty` and stamps
    * `metadata.lastSaved`, which makes an event store emit `save` and, when the
    * document was dirty, `dirty-change`.
    *
@@ -228,7 +227,7 @@ export const DocumentActions = {
    * Use this in `compositionend` when a keydown character was already inserted
    * speculatively and must be rolled back before the composed text is committed.
    * Dispatching this single action creates one history entry (type `replace`),
-   * so one `u` press undoes the entire composition session.
+   * so one undo action reverses the entire composition session.
    *
    * Typical flow:
    * ```
@@ -238,7 +237,7 @@ export const DocumentActions = {
    * ```
    *
    * If the user cancels composition (composedText is empty), this is equivalent
-   * to a delete of the speculative character — still one history entry.
+   * to deleting the speculative character with one history entry.
    *
    * @param rollbackStart - Start of the speculatively inserted character(s)
    * @param rollbackEnd   - End of the speculatively inserted character(s) (exclusive)
@@ -265,10 +264,10 @@ export const DocumentActions = {
   /**
    * Create an attention spanning [start, end).
    *
-   * Both bounds are document byte offsets; the reducer anchors them to piece
-   * boundaries against the current tree. The minted `AttentionID` is
-   * deterministic (`a{attention.nextID}` of the pre-dispatch state) — read it
-   * from the post-dispatch snapshot's `attention` layer.
+   * Supply document byte offsets for both bounds. The reducer anchors them to
+   * pieces in the current tree. Read the new `AttentionID` from the
+   * post-dispatch snapshot's `attention` layer. Its value is deterministic,
+   * using `a{attention.nextID}` from the pre-dispatch state.
    *
    * @param start - Start of the span (inclusive, byte offset)
    * @param end - End of the span (exclusive, byte offset)

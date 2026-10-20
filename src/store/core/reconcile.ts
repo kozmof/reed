@@ -40,7 +40,7 @@ export function mergeDirtyRanges(
   }
   if (ranges.length <= 1) return $proveCtx($beginCost("O(n log n)"), [...ranges]);
 
-  // Sort by startLine — skip sort if already in order (common case: appended sequentially).
+  // Sort by startLine only when ranges are out of order.
   let needsSort = false;
   for (let j = 1; j < ranges.length; j++) {
     if (ranges[j]!.startLine < ranges[j - 1]!.startLine) {
@@ -55,7 +55,7 @@ export function mergeDirtyRanges(
   let i = 0;
   // Loop invariant: `current` is the "in-flight" range that has NOT yet been
   // pushed to `merged`. It is set to null only in the e1===e2 branch when the
-  // input is exhausted mid-loop — the post-loop push checks for null to avoid
+  // input is exhausted mid-loop. The post-loop push checks for null to avoid
   // a double push.
   let current: DirtyLineRangeEntry | null = sorted[0]!;
 
@@ -64,14 +64,14 @@ export function mergeDirtyRanges(
     const next = sorted[i]!; // i < sorted.length by the loop guard
     if (next.startLine <= current!.endLine + 1) {
       if (next.offsetDelta === current!.offsetDelta && next.startLine > current!.endLine) {
-        // Adjacent (non-overlapping) same delta — extend current to cover both
+        // Extend current to cover adjacent ranges with the same delta.
         current = Object.freeze({
           startLine: current!.startLine,
           endLine: Math.max(current!.endLine, next.endLine),
           offsetDelta: current!.offsetDelta,
         });
       } else if (next.startLine === current!.startLine) {
-        // Same start, different delta — sum deltas (equivalent to applying both)
+        // Sum deltas for ranges with the same start to apply both changes.
         current = Object.freeze({
           startLine: current!.startLine,
           endLine: Math.max(current!.endLine, next.endLine),
@@ -89,7 +89,7 @@ export function mergeDirtyRanges(
         );
         const combinedDelta = current!.offsetDelta + next.offsetDelta;
         if (current!.endLine < next.endLine) {
-          // current ends first — overlap ends at current.endLine
+          // End the overlap at current.endLine because current ends first.
           merged.push(
             Object.freeze({
               startLine: next.startLine,
@@ -103,7 +103,7 @@ export function mergeDirtyRanges(
             offsetDelta: next.offsetDelta,
           });
         } else if (current!.endLine > next.endLine) {
-          // next ends first — overlap ends at next.endLine
+          // End the overlap at next.endLine because next ends first.
           merged.push(
             Object.freeze({
               startLine: next.startLine,
@@ -117,8 +117,8 @@ export function mergeDirtyRanges(
             offsetDelta: current!.offsetDelta,
           });
         } else {
-          // e1 === e2: both ranges fully consumed by the overlap — no tail remains.
-          // Push the resolved combined segment; advance to the next input range.
+          // Both ranges are consumed when e1 === e2, leaving no tail.
+          // Push the combined segment and advance to the next input range.
           // Setting current = null when input is exhausted prevents the post-loop
           // push from double-counting a range already in `merged`.
           merged.push(
@@ -133,7 +133,7 @@ export function mergeDirtyRanges(
         }
       }
     } else {
-      // No overlap — finalize current, start fresh
+      // Finalize current and start a new range when there is no overlap.
       merged.push(current!);
       current = next;
     }
@@ -225,16 +225,12 @@ function computeTotalDirtyLines(dirtyRanges: DirtyLineRangeList, lineCount: numb
 }
 
 /**
- * Walk the tree in-order and update offsets by accumulating line lengths.
- * Uses structural sharing — only nodes with incorrect offsets get new allocations.
+ * Walk the tree in order and compute offsets from accumulated line lengths.
+ * Only nodes with incorrect offsets are copied.
  *
- * There is no subtree-level short-circuit (a "subtree-clean" flag that would skip whole subtrees).
- * Adding one would require invalidating it across every lazy mutation: insertLinesAtPositionLazy,
- * rbDeleteLineByNumber, RB rotations, etc. That coordination complexity is not justified here
- * because reconcileInPlace is already the last resort — it runs only when the dirty region spans
- * most of the document or when delta information has been lost (sentinel dirty range). The
- * per-node structural-sharing check (`node.documentOffset !== correctOffset`) keeps allocations
- * minimal without the overhead of a subtree flag.
+ * This full walk is used when most of the document is dirty or delta
+ * information has been lost. It visits every node without tracking separate
+ * subtree-clean flags across mutations and rotations.
  */
 function reconcileInPlace(
   node: LineIndexNode | null,
@@ -279,7 +275,7 @@ function toEagerLineIndexState(
  * Reconcile a specific range of lines.
  * Updates offsets for lines in [startLine, endLine].
  *
- * @internal Low-level operation — callers must understand dirty-range semantics:
+ * @internal Follow the dirty-range requirements below.
  * `revision` must match the state revision, and line bounds must be within
  * `[0, state.lineCount - 1]`. Misuse can leave the line index in a partially
  * reconciled state. Prefer the higher-level entry points:
@@ -300,7 +296,7 @@ export function reconcileRange(
   const clampedEnd = Math.min(endLine, state.lineCount - 1);
   if (clampedStart > clampedEnd) return $proveCtx($beginCost("O(n log n)"), state);
 
-  // Repair each dirty range clipped to [clampedStart, clampedEnd] — O(K) passes,
+  // Repair each dirty range clipped to [clampedStart, clampedEnd] in O(K) passes,
   // each O(V + log n) for the V lines it covers. The ranges are sorted and
   // non-overlapping (mergeDirtyRanges guarantees both), so no line is walked
   // twice.
@@ -363,7 +359,7 @@ export interface ReconciliationConfig {
   thresholdFn?: (lineCount: number) => number;
 }
 
-// Incremental repair costs O(K log n + totalDirty); a full walk costs O(n).
+// Compare O(K log n + totalDirty) incremental repair with an O(n) full walk.
 // Leave headroom for repeated tree descents when choosing the incremental path.
 const defaultThresholdFn = (lineCount: number): number =>
   Math.max(256, Math.floor(lineCount * 0.75));
@@ -410,12 +406,11 @@ export function reconcileFull(
 
   // Slow path: triggered either by a sentinel (delta information lost) or when
   // totalDirty > threshold (non-sentinel ranges covering most of the document).
-  // Both cases are intentional — the O(n) in-place tree walk is cheaper than the
+  // Both cases use the O(n) in-place tree walk because it is cheaper than the
   // O(K log n + totalDirty) incremental path when the dirty region is large.
   //
-  // IMPORTANT: this path uses reconcileInPlace, which recomputes documentOffset
-  // values from each node's stored lineLength via an in-order traversal. It does
-  // NOT call getText or rebuildLineIndex — no full document decode occurs here.
+  // Recompute documentOffset from stored lineLength values with reconcileInPlace.
+  // This path does not call getText or rebuildLineIndex or decode the document.
   const newRoot = reconcileInPlace(state.root, { offset: 0 });
 
   return $proveCtx(
@@ -446,7 +441,7 @@ export function reconcileViewport(
   if (clampedStart > clampedEnd) return $proveCtx($beginCost("O(n log n)"), state);
 
   // Check if any viewport lines are dirty.
-  // 'full-rebuild-needed' means the entire document is dirty — viewport is always dirty.
+  // Treat every viewport as dirty when dirtyRanges is 'full-rebuild-needed'.
   const viewportDirty =
     dirtyRanges === "full-rebuild-needed" ||
     dirtyRanges.some((range) => range.startLine <= clampedEnd && range.endLine >= clampedStart);

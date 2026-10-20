@@ -65,8 +65,8 @@ describe("writable tail ownership", () => {
   it("preserves restored bytes on first append after serialization", () => {
     const original = GrowableBuffer.empty(64).append(bytesOf("persisted"));
 
-    // A buffer rebuilt from bytes — as checkpoint restore or a worker message
-    // does — has independent storage from the original.
+    // Rebuilding from bytes, as in checkpoint restore or a worker message,
+    // creates storage independent of the original buffer.
     const rebuilt = new GrowableBuffer(
       Uint8Array.from(unwrapReadonlyUint8Array(original.bytes)),
       original.length,

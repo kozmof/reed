@@ -22,7 +22,7 @@ export default defineConfig({
       // statements/lines were lowered by 2 points in v3.2.0, when line-index
       // deletion moved onto the shared primitives in rb-tree.ts. That removed
       // 51 statements from line-index.ts, 49 of which were covered, so its
-      // ratio fell while its absolute uncovered count went *down* (91 -> 89)
+      // ratio fell while its absolute uncovered count went down (91 -> 89)
       // and whole-project coverage rose. The floor tracks the file's new
       // composition. The change preserves coverage of existing behaviour.
       thresholds: {

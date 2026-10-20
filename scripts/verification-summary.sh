@@ -2,10 +2,8 @@
 #
 # Produce a machine-generated record of a verification run.
 #
-# `spec/06-testing.md` used to transcribe test counts by hand, which drifted:
-# it claimed 1,154 functional tests while the suite actually ran 1,163. This
-# script writes the counts, the commit they came from, and the environment they
-# ran in, so the document can point at evidence instead of restating it.
+# Record test counts, the commit, and the execution environment so
+# spec/06-testing.md can link to evidence without copying counts by hand.
 #
 # Usage: bash scripts/verification-summary.sh [output-path]
 # Default output: report/verification-summary.md

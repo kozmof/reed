@@ -20,9 +20,8 @@ import { streamingReplacement } from "./streaming-replacement.js";
 import { documentReducer } from "./reducer.js";
 
 /**
- * True when `text` equals `text.slice(offset)` up to `part`. Equivalent to
- * `text.startsWith(part, offset)`, which V8 compares char by char; slicing
- * makes a view without copying, and === compares it natively.
+ * Check whether `part` matches the substring of `text` starting at `offset`.
+ * Use substring equality as an alternative to a character-by-character prefix check.
  */
 function matchesAt(text: string, part: string, offset: number): boolean {
   return text.slice(offset, offset + part.length) === part;
@@ -59,7 +58,7 @@ function applyDocumentActions(
 
 /**
  * Set the entire document value to new content using a single optimized REPLACE operation.
- * Scans for the changed region and emits at most one action — O(n) in document size.
+ * Find the changed region in O(n) time and emit at most one action.
  *
  * For store semantics (single notification and rollback safety), callers should use store.batch().
  *
@@ -91,8 +90,8 @@ export interface SetValueOptions {
  * Routes to `setValue` (O(n), single REPLACE) or `setValueWithDiff` (O(n²),
  * memory-bounded diff) based on the `strategy` option.
  *
- * Use `strategy: 'diff'` only when fine-grained undo history matters — e.g. collaborative
- * editing or patch generation. For all other cases the default `'fast'` is preferable.
+ * Use `strategy: 'diff'` when fine-grained undo history matters.
+ * Prefer the default `'fast'` for interactive updates.
  *
  * For store semantics (single notification and rollback safety), callers should use store.batch().
  *
@@ -114,8 +113,8 @@ export function setValueAuto(
 
 /**
  * Set the entire document value to new content using the Myers diff algorithm.
- * Computes a minimal edit script while its trace and search fit their budgets; larger
- * unrelated inputs safely fall back to a single coarse replacement.
+ * Compute a minimal edit script while its trace and search fit their budgets.
+ * Fall back to one coarse replacement for larger unrelated inputs.
  *
  * Prefer `setValue` for interactive use. Use this when finer diff granularity matters.
  *

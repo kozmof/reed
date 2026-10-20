@@ -288,7 +288,7 @@ export function createPieceNode(
  * Create a chunk piece node that references a loaded chunk buffer.
  *
  * @param chunkIndex - Index into PieceTableState.chunkMap
- * @param offsetInChunk - Byte offset *within* the chunk (not an absolute file offset)
+ * @param offsetInChunk - Byte offset within the chunk (not an absolute file offset)
  * @param length - Number of bytes this piece covers
  * @param color - RB-tree color (default: black)
  * @param left - Left child (default: null)
@@ -344,11 +344,11 @@ export interface PieceDescriptor {
  * rule to equalize black-height. Because every node is built through
  * `createPieceNode` / `createChunkPieceNode`, `subtreeLength` and
  * `subtreeAddLength` are recomputed from the children rather than trusted from
- * the input — bulk-loading a piece list cannot violate invariants §1.1.
+ * the input, preserving the subtree aggregates in invariants §1.1.
  *
  * Used to rebuild a piece table from a checkpoint, where the original tree
- * topology was not serialized (nothing depends on it: attention anchors to
- * `PieceID`, not to tree shape).
+ * topology was not serialized. Attention anchors depend on `PieceID` and
+ * remain valid across changes to tree shape.
  */
 export function buildPieceTree(
   pieces: readonly PieceDescriptor[],
@@ -381,10 +381,7 @@ export function buildPieceTree(
     : createPieceNode(piece.bufferType, piece.start, piece.length, color, left, right, piece.id);
 }
 
-/**
- * Create a piece table state from initial content.
- * Chunked mode is not applicable here — initial content is loaded eagerly.
- */
+/** Create a piece table from content loaded eagerly without chunking. */
 export function createPieceTableState(content: string): PieceTableState {
   return createPieceTableFromBytes(textEncoder.encode(content));
 }
@@ -511,7 +508,7 @@ function createLineIndexFromBytes(
     charI += charStep;
 
     if (bytes[i - byteStep] === 0x0a) {
-      // '\n' — single byte in UTF-8
+      // Count '\n' as one UTF-8 byte.
       lineStarts.push({
         offset: lineStart,
         length: i - lineStart,
@@ -520,7 +517,7 @@ function createLineIndexFromBytes(
       lineStart = i;
       lineCharStart = charI;
     } else if (bytes[i - byteStep] === 0x0d) {
-      // '\r' — single byte in UTF-8
+      // Count '\r' as one UTF-8 byte.
       // Handle CRLF: peek ahead
       if (i < bytes.length && bytes[i] === 0x0a) {
         // Advance past the '\n'
@@ -588,8 +585,8 @@ export interface LineDescriptor {
  * both leaf depths the same black-height while preserving the red-parent rule
  * because those deepest nodes have no children.
  *
- * Follow-on insert/delete operations use the standard `fixInsertWithPath` rebalancer,
- * which handles arbitrary topologies and introduces red nodes as needed.
+ * Later insertions use `fixInsertWithPath`. Deletions use the shared
+ * black-deficit repair helpers in rb-tree.ts.
  */
 export function buildLineIndexTree(
   lines: readonly LineDescriptor[],
@@ -669,8 +666,8 @@ export function createInitialState(config: DocumentStoreConfig = {}): DocumentSt
   const bytes = textEncoder.encode(content);
 
   // Use chunked mode when content is empty and a chunkSize is explicitly provided.
-  // Non-zero DEFAULT_CONFIG.chunkSize alone does not enable chunked mode — the
-  // caller must explicitly pass chunkSize to opt in.
+  // Pass chunkSize explicitly to enable chunked mode.
+  // A non-zero DEFAULT_CONFIG.chunkSize alone does not enable it.
   const chunkSize =
     content.length === 0 && config.chunkSize !== undefined ? mergedConfig.chunkSize : 0;
 
@@ -711,7 +708,7 @@ export function withState(state: DocumentState, changes: Partial<DocumentState>)
  * Centralizes LineIndexState construction to ensure consistency.
  * Preserves the evaluation mode parameter for type safety.
  *
- * **Narrowing caveat:** When `M` is inferred as the union `EvaluationMode` (e.g., because
+ * When `M` is inferred as the union `EvaluationMode` (e.g., because
  * the `state` argument is typed as plain `LineIndexState` without a concrete mode), the
  * `changes` parameter accepts `Partial<LineIndexState<EvaluationMode>>`, which allows
  * `rebuildPending: boolean` even on a nominally eager state. To get compile-time protection
@@ -762,11 +759,12 @@ export function asEagerLineIndex(state: LineIndexState): LineIndexState<"eager">
 }
 
 /**
- * Settable fields on a PieceNode.
- * `id`, `bufferType`, and `chunkIndex` are excluded: `id` is stable identity and
- * must never change via withPieceNode (use createPieceNode with an explicit id for splits);
- * `bufferType` is the discriminant; `chunkIndex` only exists on ChunkPieceNode.
- * subtreeLength and subtreeAddLength are recomputed automatically.
+ * Fields that `withPieceNode` can update.
+ *
+ * Preserve `id` as the piece identity and `bufferType` as the discriminant.
+ * `chunkIndex` belongs only to ChunkPieceNode and cannot be changed here.
+ * Use createPieceNode with an explicit ID when splitting a piece.
+ * Recompute subtreeLength and subtreeAddLength automatically.
  */
 export type PieceNodeUpdates = Partial<
   Pick<PieceNode, "color" | "left" | "right" | "start" | "length">
@@ -807,8 +805,7 @@ export function withPieceNode<T extends PieceNode>(node: T, changes: PieceNodeUp
  * When `M` is a concrete `'eager'` or `'lazy'`, the `documentOffset` field is
  * constrained accordingly (eager requires `number`, lazy allows `number | null`).
  * Internal rb-tree/line-index callers use the default union mode (`M = EvaluationMode`)
- * and receive no additional constraint — the protection applies only when the caller
- * explicitly uses a concrete mode.
+ * and receive these constraints only when they explicitly use a concrete mode.
  *
  * subtreeLineCount, subtreeByteLength, and subtreeCharLength are always recomputed
  * from children and lineLength, so they cannot be set directly.
@@ -825,7 +822,7 @@ export type LineIndexNodeUpdates<M extends EvaluationMode = EvaluationMode> = Pa
  *
  * When `M` is a concrete mode (`'eager'` or `'lazy'`), the `changes.documentOffset`
  * field is type-checked against that mode. Callers using the default union mode are
- * unprotected by design — the internal rb-tree operations work on unparameterized nodes.
+ * unconstrained because internal rb-tree operations use unparameterized nodes.
  */
 /**
  * Rewrite a node during an offset repair, copying its subtree aggregates.

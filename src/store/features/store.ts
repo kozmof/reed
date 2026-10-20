@@ -342,8 +342,7 @@ function createStoreOverState(
    * @param action - Action to dispatch
    * @returns New state after applying the action
    *
-   * **Notification contract:** listeners are notified synchronously on every
-   * non-transaction dispatch. During an active transaction notifications are
+   * Notify listeners synchronously when a non-transaction dispatch changes state. During an active transaction notifications are
    * suppressed and delivered as a single call on outermost commit or outermost rollback.
    */
   function dispatch(action: DocumentAction): DocumentState {
@@ -517,8 +516,8 @@ function createStoreOverState(
 
   /**
    * Return a Promise that resolves once the line index is fully reconciled.
-   * Resolves immediately when rebuildPending is already false; otherwise waits
-   * for the next store notification after which the index is clean.
+   * Resolve immediately if rebuildPending is false, or wait until a store state
+   * update leaves the index clean.
    * In reconcileMode 'none', this performs an immediate synchronous reconcile
    * because there is no background scheduler to make forward progress.
    */
@@ -619,7 +618,7 @@ export function createDocumentStoreWithEvents(
 /**
  * Configuration keys that describe state rather than runtime. A restored store
  * takes each of these from its checkpoint, so passing one would be silently
- * ignored — reject it instead.
+ * ignored. Reject those options to prevent configuration mistakes.
  */
 const STATE_BEARING_CONFIG_KEYS = [
   "content",
@@ -647,8 +646,8 @@ function assertRuntimeOnlyConfig(config: DocumentStoreRuntimeConfig): void {
 /**
  * Create a store whose state comes from a checkpoint rather than from config.
  *
- * The checkpoint is validated first: a payload that would break a piece-table or
- * line-index invariant raises `CheckpointError` and no store is created.
+ * Validate the checkpoint before creating a store. Payloads that violate
+ * piece-table or line-index invariants raise `CheckpointError`.
  *
  * Only runtime configuration is accepted. Content, history limit, line ending,
  * chunk size, and the rest of the state-bearing options come from the
@@ -682,9 +681,8 @@ export function createDocumentStoreFromCheckpoint(
 /**
  * Checkpoint-restoring counterpart of `createDocumentStoreWithEvents`.
  *
- * Restoring does not emit events — the returned store starts with no listeners,
- * and the first event a subscriber sees is the one their own first dispatch
- * produces.
+ * The restored store starts with no listeners and emits no restore events.
+ * Later dispatches emit events for subscribed listeners.
  *
  * Pass resource limits as the third argument when the checkpoint comes from
  * outside the application.
@@ -716,10 +714,10 @@ export function createDocumentStoreWithEventsFromCheckpoint(
  * rollback itself throws.
  *
  * If commitTransaction throws (invariant violation), the store has already called
- * emergencyReset internally — no additional rollback is attempted.
+ * emergencyReset internally, so no further rollback is attempted.
  *
- * Nests correctly: if the store is already in a transaction, this starts an
- * inner transaction and only the outermost completion notifies listeners.
+ * If a transaction is already active, begin an inner transaction.
+ * Only completion of the outermost transaction notifies listeners.
  *
  * @param store - The store to transact against
  * @param fn - Callback that performs work using the store; its return value is forwarded
@@ -764,7 +762,7 @@ export function withTransaction<T>(
     }
     throw e;
   }
-  // fn succeeded — commit (handles its own failure internally via emergencyReset)
+  // Commit after the callback succeeds. Commit handles failures with emergencyReset.
   store.commitTransaction();
   return result;
 }

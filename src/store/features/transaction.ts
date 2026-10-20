@@ -33,10 +33,10 @@ export interface RollbackResult {
 export type TransactionResult = CommitResult | RollbackResult;
 
 /**
- * Manages nested transaction state: depth tracking and snapshot stack.
+ * Track nested transaction depths and their saved snapshots.
  *
- * This is a stateful coordinator — it does NOT own the document state
- * or know how to apply actions. The store provides state and interprets results.
+ * The store owns document state and applies actions. This coordinator
+ * tracks transaction state and returns results for the store to interpret.
  */
 export interface TransactionManager {
   /** Start a new transaction (or nest within an existing one). */

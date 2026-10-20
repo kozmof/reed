@@ -411,7 +411,7 @@ describe("normalized mode", () => {
     state = { ...state, attention };
 
     // Deleting the referenced text collapses the span onto the deletion point
-    // rather than dangling it — normalized capture re-anchors it there.
+    // during normalized capture, which re-anchors it to the new piece.
     state = documentReducer(state, del(byteOffset(6), byteOffset(11)));
     const collapsed = resolveAttention(state.pieceTable.root, state.attention, id);
     expect(collapsed).toEqual({ startOffset: 6, endOffset: 6 });
@@ -496,7 +496,7 @@ describe("chunked documents", () => {
         })),
       ),
     );
-    // Load the first two; the third stays declared-but-unloaded.
+    // Load two chunks and leave the third declared but unloaded.
     state = documentReducer(state, DocumentActions.loadChunk(0, textEncoder.encode(chunks[0]!)));
     state = documentReducer(state, DocumentActions.loadChunk(1, textEncoder.encode(chunks[1]!)));
     return state as DocumentState<"eager">;
@@ -1104,7 +1104,7 @@ describe("restore rejects untrustworthy payloads", () => {
   it("accepts piece ids that do not follow the pN convention", () => {
     const draft = clone(base);
     // Opaque ids are not minted by the allocator, so they place no constraint
-    // on nextPieceID — but the pieces they name must still resolve.
+    // on nextPieceID. The pieces they name must still resolve.
     const renamed = new Map<string, string>();
     draft.pieceTable.pieces.forEach((piece, i) => {
       renamed.set(piece[0], `piece-${i}`);

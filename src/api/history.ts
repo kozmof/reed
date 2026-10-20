@@ -1,6 +1,4 @@
-/**
- * History namespace — undo/redo state queries.
- */
+/** The history namespace reports undo and redo state. */
 
 import {
   canUndo,

@@ -28,8 +28,8 @@ function flush(callbacks: Array<IdleRequestCallback>): void {
 describe("idle maintenance slices", () => {
   it("yields, discards stale work, and resolves waiters only on a complete current index", async () => {
     const callbacks = idleQueue();
-    // Slices are bounded by a time budget; advance the clock per read so the
-    // first callback yields before the work is done, independent of CPU speed.
+    // Advance the clock on each read to force the first callback to yield
+    // before work finishes, independent of CPU speed.
     let now = 0;
     vi.spyOn(performance, "now").mockImplementation(() => (now += 0.01));
     const store = createDocumentStore({ content: "abc\n".repeat(6000) });
@@ -94,8 +94,8 @@ describe("idle maintenance slices", () => {
   it("uses prompt continuation timers after the initial fallback delay", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("requestIdleCallback", undefined);
-    // Slices are bounded by a time budget; advance the clock per read so the
-    // first callback yields before the work is done.
+    // Advance the clock on each read to force the first callback to yield
+    // before work finishes.
     let now = 0;
     vi.spyOn(performance, "now").mockImplementation(() => (now += 0.01));
     const store = createDocumentStore({ content: "a\n".repeat(4000) });

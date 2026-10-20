@@ -110,8 +110,8 @@ function hasAddPieceTouchingRange(
 /**
  * Return true when removing `chunkIndex` would delete a piece identity used by
  * an attention point. Offsets before/after other chunks resolve through the
- * current tree automatically; only removal of the anchored piece can dangle a
- * point, so eviction is refused just as it is for overlapping user edits.
+ * current tree automatically. Removing an anchored piece could leave a
+ * dangling point, so eviction is refused as it is for overlapping user edits.
  */
 function hasAttentionAnchoredToChunk(state: DocumentState, chunkIndex: number): boolean {
   if (state.attention.attentions.size === 0) return false;

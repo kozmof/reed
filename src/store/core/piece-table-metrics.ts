@@ -28,7 +28,7 @@ function totalChars(state: PieceTableState, node: PieceNode | null): number {
   return result;
 }
 
-/** Count only intersecting subtrees; an unrelated document prefix is never visited. */
+/** Visit only intersecting subtrees to avoid scanning unrelated document prefixes. */
 export function countPieceTableChars(state: PieceTableState, start: number, end: number): number {
   function visit(node: PieceNode | null, offset: number): number {
     if (!node || offset >= end || offset + node.subtreeLength <= start) return 0;

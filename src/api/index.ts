@@ -1,5 +1,5 @@
 /**
- * Complexity-stratified and domain-categorized API namespaces.
+ * Public API namespaces grouped by task and operation cost.
  *
  * - `store.*`     — store lifecycle, actions, type guards, and unsafe low-level helpers
  * - `query.*`     — O(1) and tree-height-bounded read operations
@@ -12,8 +12,8 @@
  * - `attention.*` — piece-anchored boundary references (the third Reed layer)
  * - `checkpoint.*` — capture state as JSON-safe data and load it back
  *
- * Algorithmic complexity is documented on each namespace member with
- * `@complexity` JSDoc tags; the cost algebra itself is internal to `store/core`.
+ * Each namespace member documents its cost with `@complexity` JSDoc tags.
+ * The cost algebra is internal to `store/core`.
  */
 
 export type {

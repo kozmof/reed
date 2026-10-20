@@ -1,5 +1,6 @@
 /**
- * Store namespace — store lifecycle, actions, type guards, and explicitly unsafe low-level helpers.
+ * The store namespace manages document stores, actions, and type guards.
+ * It also exposes unsafe helpers for low-level operations.
  */
 
 import type { DocumentState } from "../types/state.js";
@@ -173,9 +174,9 @@ function setStoreValue(
 }
 
 /**
- * Returns true if dispatching EVICT_CHUNK for `chunkIndex` successfully removed
- * the chunk from memory — i.e. it is present in `prevState.pieceTable.chunkMap`
- * and absent from `nextState.pieceTable.chunkMap`.
+ * Return true when EVICT_CHUNK removed `chunkIndex` from memory. The chunk
+ * must be present in `prevState.pieceTable.chunkMap` and absent from
+ * `nextState.pieceTable.chunkMap`.
  *
  * Returns false when eviction was silently refused (e.g. user edits overlap the
  * chunk's byte range). Use this instead of comparing `chunkMap.size` so that the
@@ -187,7 +188,7 @@ function setStoreValue(
  * store.dispatch(DocumentActions.evictChunk(chunkIndex));
  * const next = store.getSnapshot();
  * if (!store.didEvict(prev, next, chunkIndex)) {
- *   // chunk has overlapping edits — cannot evict right now
+ *   // Check whether edits or attention anchors prevented eviction.
  * }
  * ```
  */

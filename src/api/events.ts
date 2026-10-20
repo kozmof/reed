@@ -1,6 +1,4 @@
-/**
- * Events namespace — event emitter factory and document event creators.
- */
+/** The events namespace creates event emitters and document events. */
 
 import {
   createEventEmitter,

@@ -224,7 +224,7 @@ describe("attention-change event", () => {
     const handler = vi.fn();
     store.addEventListener("attention-change", handler);
     // Insert at offset 0 prepends a new piece without splitting the anchored one,
-    // so the stored points are unchanged — resolution shifts for free.
+    // so their resolved offsets shift while the stored points stay unchanged.
     store.dispatch(DocumentActions.insert(byteOffset(0), ">> "));
 
     expect(handler).not.toHaveBeenCalled();

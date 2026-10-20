@@ -1,6 +1,6 @@
 /**
- * Tests for ChunkManager — async chunk fetch subsystem (issue #009, Part 4).
- * Verifies deduplication, LRU eviction, pinning, prefetch, and dispose behaviour.
+ * Test asynchronous chunk loading with ChunkManager.
+ * Cover deduplication, LRU eviction, pinning, prefetch, and disposal.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -65,7 +65,7 @@ describe("ChunkManager.ensureLoaded", () => {
 
     await manager.ensureLoaded(0);
     const callsBefore = loader.loadChunk.mock.calls.length;
-    await manager.ensureLoaded(0); // second call — already loaded
+    await manager.ensureLoaded(0); // The second call finds the chunk already loaded.
     expect(loader.loadChunk.mock.calls.length).toBe(callsBefore); // no extra fetch
     manager.dispose();
   });
@@ -226,7 +226,7 @@ describe("ChunkManager LRU eviction", () => {
     await manager.ensureLoaded(2); // should evict chunk 1, not pinned chunk 0
 
     const snap = store.getSnapshot();
-    expect(snap.pieceTable.chunkMap.has(0)).toBe(true); // pinned — must survive
+    expect(snap.pieceTable.chunkMap.has(0)).toBe(true); // Keep the pinned chunk resident.
     manager.dispose();
   });
 

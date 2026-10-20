@@ -1,27 +1,14 @@
 /**
- * Randomized, high-scale streaming stress suite.
+ * Randomized streaming stress tests with reproducible seeds.
  *
- * Closes the gap acknowledged in spec/06-testing.md (§4 — "no large-scale
- * randomized multi-operation streaming stress suite yet") and the near-term
- * priority in spec/08-implementation.md (§4): it drives long, seeded sequences
- * of chunk load / evict / reload operations through the StreamingDocumentLoader
- * runtime and, after every step, checks that the resident document stays
- * structurally consistent with a from-scratch reference model.
+ * Run long sequences of chunk loads, evictions, and reloads through
+ * StreamingDocumentLoader. After each step, read the actual resident chunk
+ * set and compare the assembled text and reconciled line index with a
+ * fresh rebuild of those chunks. Log the seed to reproduce a failure.
  *
- * Design note — why this is a meaningful invariant:
- *   LOAD_CHUNK / EVICT_CHUNK piece-table surgery and line-index reconciliation
- *   are the two subsystems most likely to drift under repeated out-of-order
- *   load/evict/reload. We never *predict* the eviction policy; instead we read
- *   the actual resident chunk set from the store and assert that the assembled
- *   text and the reconciled line index exactly match a fresh rebuild of those
- *   same chunks. Any piece ordering bug, lost-byte bug, or stale line/char
- *   offset surfaces as a mismatch — with a logged seed for replay.
- *
- * Strict red-black balance is asserted after every reconciled step, including
- * persistent deletion paths.
- *
- * CRLF configs deliberately let byte-aligned chunk boundaries split "\r\n"
- * pairs, exercising the CR/LF/CRLF-aware boundary path under load/evict/reload.
+ * Assert strict red-black balance after every reconciled step, including
+ * persistent deletion paths. CRLF configurations allow chunk boundaries
+ * to split "\r\n" pairs and exercise line-break repair across chunks.
  */
 
 import { describe, it, expect } from "vitest";

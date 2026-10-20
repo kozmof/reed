@@ -1,12 +1,9 @@
 /**
- * ReconciliationScheduler — encapsulates the async scheduling lifecycle for
- * background maintenance (line-index reconciliation and add-buffer compaction).
+ * ReconciliationScheduler schedules background maintenance.
  *
- * Extracted from createDocumentStore so that:
- * - The store remains focused on state transitions and listener notifications.
- * - Tests can inject a custom scheduler (via DocumentStoreConfig.scheduler)
- *   without relying on the reconcileMode: 'sync' config toggle.
- * - The idle/sync/none dispatch logic lives in one well-tested place.
+ * It coordinates line-index reconciliation and add-buffer compaction in
+ * idle, synchronous, or disabled mode. Supply a custom scheduler through
+ * DocumentStoreConfig.scheduler to control scheduling in applications or tests.
  */
 
 // =============================================================================
@@ -15,8 +12,7 @@
 
 /**
  * Options passed to createReconciliationScheduler.
- * All three callbacks are live closures — the scheduler always reads the
- * latest store state when they are invoked.
+ * Callbacks read the latest store state when invoked.
  */
 export interface ReconciliationSchedulerOptions {
   /** Return true when there is pending work (reconciliation or compaction). */
@@ -26,7 +22,7 @@ export interface ReconciliationSchedulerOptions {
    * active and state mutations should not be flushed yet).
    */
   shouldDefer(): boolean;
-  /** Run maintenance; a yield predicate requests bounded work. Return true to resume later. */
+  /** Run maintenance until the yield predicate requests a pause. Return true if work remains. */
   performWork(shouldYield?: () => boolean): boolean | void;
 }
 
@@ -194,7 +190,7 @@ export function createReconciliationScheduler(
 
   // mode === 'idle'
   // NOTE: `hasPendingWork` and `shouldDefer` are live closures that always
-  // read the latest store state — not snapshots from when schedule() was called.
+  // read current store state when invoked rather than capturing it during schedule().
   function scheduleIdle(delay = 200): void {
     if (idleCallbackId !== null) return; // already scheduled
     if (!hasPendingWork()) return;

@@ -70,7 +70,7 @@ it("matches contiguous replacement boundaries across Unicode and fragmented piec
     let result = state;
     for (const action of actions) result = documentReducer(result, action);
     expect(pieces.getValue(result.pieceTable)).toBe(normalized);
-    // Compare exact boundaries on canonical inputs; lone surrogates are
+    // Compare exact boundaries on canonical inputs. Lone surrogates are
     // normalized by encoding, and a leading BOM has separate read semantics.
     if (
       !desired!.includes("\ud800") &&

@@ -1,26 +1,13 @@
 /**
- * Red-black contract of the persistent piece tree.
+ * Red-black invariants of the persistent piece tree.
  *
- * `docs/invariants.md` §1.2 states that the standard red-black invariants hold
- * "after every structural operation". The piece table has fix-up paths for
- * insertion (`fixInsertWithPath`) and for right-spine grafts
- * (`fixRedViolations`), but none for deletion: neither `extractMin` nor the
- * `splitAt` / `joinByBlackHeight` pair can represent the black deficit that
- * removing a black node creates.
+ * Assert colour rules, black height, and the logarithmic height bound after
+ * every structural operation, as required by docs/invariants.md §1.2.
+ * Text and aggregate checks alone can miss an invalid tree shape.
  *
- * These tests pin that contract directly. They are expected to fail until the
- * deletion path is repaired. Text and aggregates stay correct throughout — that
- * is why the rest of the suite passes over a malformed tree — so every case here
- * asserts the tree shape in addition to the string model.
- *
- * The three delete paths fail independently and are tested separately:
- *
- *   - interior delete      → `mergeTrees` calls `extractMin`
- *   - prefix delete (s=0)  → `left === null`, `mergeTrees` returns early
- *   - suffix delete (e=len)→ `right === null`, `mergeTrees` returns early
- *
- * Prefix and suffix deletes never reach `extractMin`, so a fix confined to it
- * leaves those two cases red.
+ * Exercise interior, prefix, and suffix deletion separately because they
+ * take different split and join paths. Compare each resulting tree with a
+ * plain-string model as well as checking its structure.
  */
 
 import { describe, expect, it } from "vitest";
@@ -204,7 +191,7 @@ describe("piece table red-black contract", () => {
   });
 
   describe("height bound", () => {
-    // The property users actually depend on. Colour rules are the mechanism;
+    // Tree height is the property that bounds traversal cost. Colour rules enforce it, and
     // bounded height is the O(log n) guarantee the public API documents.
     it("keeps height within 2*log2(n+1) under insert/delete fragmentation", () => {
       const rng = rngFor(0x5eed);

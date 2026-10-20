@@ -272,7 +272,7 @@ describe("serializeAction / deserializeAction", () => {
     });
 
     it("throws on base64 with single '=' without matching '='", () => {
-      // "AB=C": ch2='=' but ch3='C' (not '=') — malformed single-pad
+      // Reject "AB=C" because a single padding character must be in the last position.
       expect(() =>
         deserializeAction(JSON.stringify({ type: "LOAD_CHUNK", chunkIndex: 0, data: "AB=C" })),
       ).toThrow("Invalid base64 payload");

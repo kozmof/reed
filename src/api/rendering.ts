@@ -1,6 +1,4 @@
-/**
- * Rendering namespace — viewport calculations, line content retrieval, and position conversion.
- */
+/** The rendering namespace reads viewport content and converts positions. */
 
 import {
   getVisibleLineRange,

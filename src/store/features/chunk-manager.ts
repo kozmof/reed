@@ -1,5 +1,5 @@
 /**
- * ChunkManager — async chunk fetch subsystem for large-file streaming.
+ * ChunkManager loads and evicts chunks for large-file streaming.
  *
  * Sits between user code and the DocumentStore, coordinating:
  * - Async chunk loading via a user-supplied ChunkLoader
@@ -8,8 +8,7 @@
  * - LRU eviction policy (keeps at most maxLoadedChunks chunks in memory)
  * - Chunk pinning (setActiveChunks prevents LRU eviction of hot chunks)
  *
- * Does NOT touch the reducer directly — all state transitions go through
- * store.dispatch(DocumentActions.*).
+ * Apply all state transitions through store.dispatch(DocumentActions.*).
  */
 
 import type { ReedLogger } from "../../types/state.js";
@@ -30,8 +29,8 @@ export interface ChunkLoader {
    * Fetch the raw bytes for the given chunk index.
    * When provided, `signal` is aborted if the manager is disposed before the
    * load completes. Loaders should pass it to their underlying I/O operation.
-   * The returned Uint8Array must remain valid until LOAD_CHUNK has been
-   * dispatched — do not mutate it afterward.
+   * Keep the returned Uint8Array valid until LOAD_CHUNK is dispatched.
+   * Do not mutate it afterward.
    * Return an empty Uint8Array or throw to signal a load failure.
    */
   loadChunk(chunkIndex: number, signal?: AbortSignal): Promise<Uint8Array>;
@@ -287,9 +286,9 @@ export function createChunkManager(
               if (disposed || abortController.signal.aborted) return;
               if (data.length === 0)
                 throw new Error(`ChunkLoader returned empty data for chunk ${chunkIndex}`);
-              // Reject lengths that contradict the declared file geometry before
-              // dispatching — otherwise the reducer silently drops the load and the
-              // post-dispatch retention check below would report a misleading error.
+              // Reject lengths that contradict the declared file geometry before dispatch.
+              // Otherwise the reducer drops the load and the retention check
+              // below reports a misleading error.
               const { pieceTable } = store.getSnapshot();
               if (!isChunkByteLengthValid(pieceTable, chunkIndex, data.length)) {
                 const declared = pieceTable.chunkMetadata.get(chunkIndex);
@@ -495,7 +494,7 @@ export function createChunkManager(
     if (getChunkIndexError(chunkIndex) !== null) return;
     if (store.getSnapshot().pieceTable.chunkMap.has(chunkIndex)) return;
     if (inFlight.has(chunkIndex)) return;
-    // Fire and forget — errors are silently swallowed for prefetch.
+    // Start prefetch without waiting and ignore its errors.
     ensureLoaded(chunkIndex).catch(() => {});
   }
 
@@ -516,7 +515,7 @@ export function createChunkManager(
         canceled.push(controller);
       }
     }
-    // Abort callbacks may start replacement loads; leave those requests intact.
+    // Preserve replacement loads started by abort callbacks.
     for (const controller of canceled) controller.abort();
   }
 

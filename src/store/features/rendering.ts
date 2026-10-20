@@ -602,8 +602,8 @@ export function positionToLineColumn(
  * (between the two UTF-16 code units of a surrogate pair) snaps forward to the end of that
  * character, so the returned offset is always a UTF-8 code-point boundary. The snap is always
  * forward and is not reported back, so a caller building a range from two columns can see both
- * ends land on the same offset when they sit inside one character; snap the leading side backward
- * yourself if the range has to keep covering that character.
+ * ends land on the same offset when they sit inside one character. Snap the leading side backward
+ * if the range must include that character.
  */
 export function lineColumnToPosition(
   state: DocumentState,
@@ -660,7 +660,7 @@ function byteOffsetToCharOffset(state: DocumentState, position: ByteOffset): Lin
     return charStart;
   }
 
-  // Add chars within the current line up to the byte offset — O(line_length)
+  // Count UTF-16 code units before the byte offset within this line in O(line_length).
   const range = getLineRangePrecise(state.lineIndex, location.lineNumber);
   if (!range) {
     return charStart;

@@ -59,8 +59,8 @@ export interface DocumentStore {
    * Dispatch an action to modify state.
    * Returns the new state after the action is applied synchronously.
    *
-   * For undo/redo, prefer using the return value directly rather than
-   * calling getSnapshot() afterward — they return the same reference.
+   * Use the return value to read restored selection state after undo/redo.
+   * It has the same reference as getSnapshot() immediately after dispatch.
    * Alternatively, subscribe to the `history-change` event on a
    * DocumentStoreWithEvents to centralise cursor sync in one handler.
    *
@@ -111,10 +111,7 @@ export interface TransactionControl {
   rollbackTransaction(): void;
 }
 
-/**
- * Store with reconciliation capabilities.
- * Returned by createDocumentStore — reconciliation methods are always present.
- */
+/** Store with reconciliation methods, returned by createDocumentStore. */
 export interface ReconcilableDocumentStore extends DocumentStore, TransactionControl {
   /**
    * Schedule background reconciliation of the line index.
@@ -151,7 +148,7 @@ export interface ReconcilableDocumentStore extends DocumentStore, TransactionCon
 
   /**
    * Get the current state, reconciling dirty line-index ranges immediately if needed.
-   * Returns DocumentState<'eager'> — all line offsets are guaranteed accurate.
+   * Return DocumentState<'eager'> with all line offsets resolved.
    * Like reconcileNow(), this preserves the revision number because resolving
    * offsets does not change visible content. A subscriber may edit during notification,
    * so the returned eager snapshot may already be stale.
@@ -171,10 +168,9 @@ export interface ReconcilableDocumentStore extends DocumentStore, TransactionCon
    * Return a Promise that resolves with an eager (fully-reconciled) state.
    *
    * Resolves immediately when `lineIndex.rebuildPending` is already false.
-   * Otherwise subscribes to the store and resolves on the first notification
-   * after which `rebuildPending` is false — i.e. after background reconciliation
-   * completes (or `reconcileNow()` is called). In `reconcileMode: "none"`,
-   * Reed performs that reconcile immediately because no background scheduler exists.
+   * Otherwise wait for a state update with `rebuildPending` false after
+   * background reconciliation or a `reconcileNow()` call. In `reconcileMode: "none"`,
+   * Reed reconciles immediately because no background scheduler exists.
    *
    * Eliminates the polling pattern (`while (lineIndex.rebuildPending) { ... }`)
    * seen in tests and async consumers that need an eager `DocumentState<"eager">`.
@@ -225,7 +221,7 @@ export type DocumentReducer = (state: DocumentState, action: DocumentAction) => 
 export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
   /**
    * Subscribe to typed document events.
-   * More specific than subscribe() - you get detailed event information.
+   * Receive details about specific changes through typed events.
    *
    * @example
    * ```typescript
@@ -262,5 +258,5 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
   readonly events: DocumentEventEmitter;
 }
 
-// ReadTextFn and DeleteBoundaryContext have moved to types/state.ts —
-// they are operational parameters of line-index functions, not store interface types.
+// ReadTextFn and DeleteBoundaryContext are defined in types/state.ts.
+// They are parameters of line-index functions.

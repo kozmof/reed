@@ -44,7 +44,7 @@ export function* reconcileIncrementally(
     node: LineIndexNode;
     offset: number;
     first: number;
-    /** Result of the left subtree; undefined until it completes. */
+    /** Left subtree result, undefined until that subtree completes. */
     left: LineIndexNode | null | undefined;
   }
   const stack: Frame[] = [];

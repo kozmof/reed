@@ -1,8 +1,8 @@
 /**
- * Scan namespace — O(n) operations.
+ * The scan namespace traverses document content in O(n) time.
  *
  * Every function here walks the full document (or a large portion of it).
- * **Do not call `scan.*` inside a hot rendering loop or on every keystroke.**
+ * Avoid `scan.*` inside a rendering loop or on every keystroke.
  * Use `query.*` for line lookups, cursor positioning, and bounded range reads.
  * Its selectors use cached values and tree prefix sums. Range reads also depend
  * on the amount of text returned.

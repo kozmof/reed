@@ -80,15 +80,15 @@ export interface HistoryChangeEvent extends DocumentEvent {
 }
 
 /**
- * Fired when the attention layer's *stored* state changes: an attention is
- * created or deleted, or a content edit rewrites a stored point (a split during
- * an insert, or a re-anchor during a delete).
+ * Fired when stored attention state changes.
  *
- * `changedIds` lists every attention whose entry differs between `prevState` and
- * `nextState` — created, deleted, or migrated. Note that an insert/delete *before*
- * a tracked span does NOT fire this event: piece-anchoring means the stored point
- * is unchanged and its resolved offset shifts for free. Subscribe to
- * `content-change` if you need to recompute resolved positions on every edit.
+ * Creating or deleting an attention changes its stored state. Content edits
+ * can also rewrite points when pieces split or points are re-anchored after deletion.
+ * `changedIds` lists all created, deleted, or migrated attentions.
+ *
+ * An edit before a tracked span can shift its resolved offset without changing
+ * its stored points, so it does not fire this event. Subscribe to `content-change`
+ * to recompute resolved positions on every edit.
  */
 export interface AttentionChangeEvent extends DocumentEvent {
   readonly type: "attention-change";
@@ -349,8 +349,8 @@ export function createHistoryChangeEvent(
  * Covers created (present only in next), deleted (present only in prev), and
  * migrated (same ID, different frozen `Attention` object) attentions. Copy-on-
  * write guarantees an unchanged attention keeps the same object reference, so a
- * reference comparison is sufficient. Persistent maps skip shared subtrees;
- * externally supplied maps use a full scan.
+ * reference comparison is sufficient. Persistent maps skip shared subtrees.
+ * Externally supplied maps require a full scan.
  */
 export function diffChangedAttentionIds(
   prevState: DocumentState,

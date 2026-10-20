@@ -6,7 +6,7 @@
 # reads. This script fails the build when they expose the internal cost algebra
 # or test helpers.
 #
-# It deliberately does NOT reject references to `store/core` or `store/features`.
+# Allow references to `store/core` and `store/features`.
 # The public namespaces are assembled by re-exporting those modules, `files`
 # ships all of `dist`, and the CI `package` job type-checks a real consumer
 # against the packed tarball to verify that those module references resolve.

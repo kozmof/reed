@@ -152,7 +152,7 @@ export function getTextRange(state: DocumentState, start: ByteOffset, end: ByteO
 }
 
 // =============================================================================
-// Line Index Strategies (Formalized Eager/Lazy Duality)
+// Eager and lazy line-index update strategies
 // =============================================================================
 
 /**
@@ -203,8 +203,8 @@ export function getDeleteBoundaryContext(
   const totalLength = state.pieceTable.totalLength;
 
   // Read raw bytes immediately before and after the delete range.
-  // Only CR (0x0d) and LF (0x0a) are meaningful for CRLF boundary detection;
-  // all other byte values (including multi-byte UTF-8 continuation bytes that
+  // Detect CRLF boundaries using only CR (0x0d) and LF (0x0a).
+  // All other byte values (including multi-byte UTF-8 continuation bytes that
   // could appear at the boundary) are irrelevant and map to undefined.
   const prevByte = start > 0 ? getRawByte(state.pieceTable, byteOffset(start - 1)) : -1;
   const nextByte = end < totalLength ? getRawByte(state.pieceTable, end) : -1;
@@ -596,7 +596,7 @@ export type EditOperation = StructuralEditOperation & {
  * Local edits and APPLY_REMOTE both use this path so piece-table mutation,
  * attention migration, CRLF boundary handling, and lazy line-index maintenance
  * cannot drift into separate implementations. `revision` is the revision that
- * owns the resulting dirty ranges; the caller commits it after composing any
+ * owns the resulting dirty ranges. The caller commits it after composing any
  * additional structural edits.
  */
 export function applyUntrackedEdit(

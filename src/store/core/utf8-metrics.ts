@@ -19,7 +19,7 @@ function count(bytes: Uint8Array, start: number, end: number): number {
   return chars;
 }
 
-/** Positions may be inside a sequence; callers snap returned positions to boundaries. */
+/** Snap returned positions to boundaries when the input lies inside a sequence. */
 export function bufferCharPrefix(bytes: Uint8Array, end: number): number {
   const counts = indexFor(bytes);
   const block = Math.floor(end / BLOCK);
@@ -85,7 +85,7 @@ export function bufferByteAtCharInRange(
   const counts = indexes.get(bytes.buffer)?.get(bytes.byteOffset);
   if (counts && Math.floor(end / BLOCK) < counts.length) {
     const base = bufferCharPrefix(bytes, start);
-    // The existing prefix index is ready; avoid preparing beyond the range.
+    // Use the existing prefix index without preparing beyond the requested range.
     return Math.min(end, bufferByteAtChar(bytes.subarray(0, end), base + target));
   }
   return start + bufferByteAtChar(bytes.subarray(start, end), target);

@@ -3,10 +3,10 @@
 #
 # Usage: bash bench/compare/prepare.sh <git-ref> <out-dir>
 #
-# Uses `git archive` rather than a worktree so the export carries no git
-# metadata. node_modules is symlinked from the current checkout, which is valid
-# only when package.json and pnpm-lock.yaml dependencies match the requested ref.
-# The script rejects dependency mismatches.
+# Use git archive to export files without Git metadata. Reuse node_modules
+# through a symlink to the current checkout. Reject the requested ref if its
+# pnpm-lock.yaml differs from HEAD. Keep installed dependencies in sync
+# with that lockfile before running.
 set -euo pipefail
 
 ref="${1:?usage: prepare.sh <git-ref> <out-dir>}"

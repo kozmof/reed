@@ -126,7 +126,7 @@ const KANJI_WORDS = [
   "保存",
 ];
 
-// Emoji tokens (each base emoji is 4 bytes in UTF-8, 2 UTF-16 code units — a surrogate pair)
+// Each base emoji uses 4 UTF-8 bytes and a UTF-16 surrogate pair.
 const EMOJI_POOL = [
   "😀",
   "🎉",

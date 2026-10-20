@@ -1,11 +1,8 @@
 /**
- * Pure text/boundary scanning helpers for the line index.
+ * Internal helpers for finding line breaks in text.
  *
- * These functions inspect raw strings (and optional one-character boundary
- * context) to locate line breaks and reason about CR/LF/CRLF boundaries. They
- * hold no tree state and depend on nothing else in the line-index module, so
- * they live here as a leaf module to keep `line-index.ts` focused on tree
- * maintenance. These helpers are internal.
+ * Inspect strings and optional one-character boundary context to handle LF,
+ * CR, and CRLF line endings. These helpers do not hold tree state.
  */
 
 import { byteOffset, type ByteOffset } from "../../types/branded.js";
@@ -19,12 +16,9 @@ import { isSurrogatePairAt } from "./encoding.js";
  * Supports LF (\n), CR (\r), and CRLF (\r\n) line endings.
  * For CRLF, records the position of '\n' so the break width is included.
  *
- * Uses charCodeAt instead of textEncoder.encode to avoid allocating a Uint8Array
- * on every call (hot path: invoked on every insert). This is correct because
- * 0x0A (\n) and 0x0D (\r) are single-byte ASCII and never appear in UTF-8
- * continuation bytes. Character and byte indices match for these code points.
- * Non-ASCII characters are accounted for in the running byteLen accumulator using
- * the standard UTF-8 width rules (1/2/3/4 bytes per code point).
+ * Use charCodeAt to avoid allocating a Uint8Array on each insertion.
+ * Count UTF-8 bytes separately from UTF-16 indices, including non-ASCII
+ * characters and lone-surrogate replacement. CR and LF each use one byte.
  */
 export function findNewlineBytePositions(text: string): {
   positions: number[];

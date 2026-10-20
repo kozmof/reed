@@ -279,15 +279,15 @@ describe("Diff Algorithm", () => {
 
     it("setValue completes without error when content contains a lone high surrogate", () => {
       // U+D800 is a lone high surrogate. TextEncoder normalises it to U+FFFD (3 bytes),
-      // so the piece-table stores and returns the replacement character — not the original
-      // surrogate. buildCharToByteMap must agree with TextEncoder on the 3-byte count so
+      // so the piece table stores and returns the replacement character.
+      // buildCharToByteMap must agree with TextEncoder on the 3-byte count so
       // that the delete range computed by computeSetValueActionsOptimized is correct.
       const loneHighSurrogate = "\uD800";
       const original = `text${loneHighSurrogate}`;
       const state = createInitialState({ content: original });
       const appended = `text${loneHighSurrogate}after`;
       const newState = setValue(state, appended);
-      // TextEncoder normalises the lone surrogate to U+FFFD during encode; TextDecoder
+      // TextEncoder replaces the lone surrogate with U+FFFD. TextDecoder
       // then returns U+FFFD. Verify the operation succeeds and the suffix is correct.
       const result = getValue(newState.pieceTable);
       expect(result.endsWith("after")).toBe(true);
@@ -355,7 +355,7 @@ describe("Diff Algorithm", () => {
 
   describe("surrogate-pair boundary in computeSetValueActionsOptimized", () => {
     it("should not split a surrogate pair when the suffix scan lands on the high surrogate", () => {
-      // U+10000 = 𐀀, U+10400 = 𐐀 — same low surrogate, different high surrogate
+      // U+10000 (𐀀) and U+10400 (𐐀) share a low surrogate but have different high surrogates.
       const oldContent = "A𐀀B";
       const newContent = "A𐐀B";
       const actions = computeSetValueActionsOptimized(oldContent, newContent);
@@ -366,7 +366,7 @@ describe("Diff Algorithm", () => {
     // A lone surrogate is a character on its own, so the pair guards must not step over it into
     // the neighbouring pair. Both offsets below used to land inside the emoji's 4-byte sequence.
     it("should keep offsets on a boundary when a lone low surrogate follows a pair", () => {
-      // "😀\uDC00" — the trailing lone low surrogate encodes to U+FFFD, so the emoji occupies
+      // In "😀\uDC00", the trailing lone low surrogate encodes to U+FFFD, so the emoji occupies
       // bytes 0..4 and the lone surrogate bytes 4..7.
       const actions = computeSetValueActionsOptimized("\u{1F600}\uDC00", "\u{1F600}X");
       expect(actions.length).toBe(1);
@@ -376,7 +376,7 @@ describe("Diff Algorithm", () => {
     });
 
     it("should keep offsets on a boundary when a lone high surrogate precedes a pair", () => {
-      // "\uD83D😀" — the leading lone high surrogate encodes to U+FFFD (bytes 0..3), so the
+      // In "\uD83D😀", the leading lone high surrogate encodes to U+FFFD at bytes [0, 3), so the
       // emoji occupies bytes 3..7.
       const actions = computeSetValueActionsOptimized("\uD83D\u{1F600}", "X\u{1F600}");
       expect(actions.length).toBe(1);

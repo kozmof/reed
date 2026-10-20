@@ -336,7 +336,7 @@ it("reuses annotation query indexes and isolates edited and deleted snapshots", 
 it("detects an unchanged setValue without the byte-level replacement scan", () => {
   let state = createInitialState({ content: "line 😀\n".repeat(5_000) });
   for (let i = 0; i < 200; i++) {
-    // Each line is 10 bytes; earlier inserts shift line starts by one each.
+    // Each line is 10 bytes, and each earlier insert shifts later line starts by one.
     state = documentReducer(state, DocumentActions.insert(byteOffset(i * 101), "x"));
   }
   const content = pieces.getValue(state.pieceTable);

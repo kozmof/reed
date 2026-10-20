@@ -2,8 +2,8 @@
  * Branded algorithmic cost types and combinators.
  *
  * Usage policy:
- * 1. For an inline boundary, open a context and prove a value against it:
- *    `$proveCtx($beginCost('O(n)'), value)`. The cost label is stated once.
+ * 1. Declare an inline boundary with `$proveCtx($beginCost('O(n)'), value)`.
+ *    This states the cost label once.
  * 2. For a multi-step boundary, use `$prove(level, $checked(() => plan))` and
  *    compose with the pipeline combinators, seeding via `$from`/`$lift(label, …)`.
  * 3. Use `$unsafeDeclare(level, value)` for explicit unchecked declarations at
@@ -11,7 +11,7 @@
  * 4. Use `$withCost(level, ctx => …)` when an internal context value must not
  *    escape its scope.
  * 5. Keep internal arithmetic/data as plain types and apply branding only at
- *    explicit boundaries (or via `CostFn` wrappers); avoid direct cast helpers
+ *    explicit boundaries or through `CostFn` wrappers. Avoid direct cast helpers
  *    in store/application code.
  *
  * @remarks
@@ -26,18 +26,15 @@
  * Context identity is partial. `$beginCost`/`$withCost` carry a phantom
  * region so that escaping an internal context value can be rejected, but
  * TypeScript conflates the regions of sibling/nested contexts created in the
- * same scope. Mixing two same-bound contexts is therefore NOT reliably caught;
- * do not rely on it as a guarantee.
+ * same scope. The type system may accept mixing two same-bound contexts.
+ * Do not rely on context identity to reject those combinations.
  */
 
 // =============================================================================
 // Algorithmic Cost Algebra + Brands
 // =============================================================================
 
-/**
- * Phantom symbol for cost-level branding.
- * Never exists at runtime — zero overhead.
- */
+/** Compile-time symbol for cost branding with no runtime allocation. */
 declare const costLevel: unique symbol;
 
 /**
@@ -198,7 +195,7 @@ export type JoinCostLevel<A extends CostLevel, B extends CostLevel> =
 /**
  * Internal helper to cast a value to a declared cost level.
  * Keeps runtime behavior unchanged while centralizing type assertions.
- * The level parameter is intentionally unused at runtime — branding is compile-time only.
+ * Branding exists only at compile time, so the level parameter is unused at runtime.
  */
 function castCost<L extends CostLevel, T>(_level: L, value: T): Costed<L, T> {
   return value as Costed<L, T>;
@@ -268,14 +265,13 @@ type PayloadLabel<T, D extends number = 6> = D extends 0
 export type PayloadCost<T> = CostOfLabel<PayloadLabel<T>>;
 
 /**
- * A proof context opened by {@link $beginCost} / {@link $withCost}.
+ * A proof context opened by {@link $beginCost} or {@link $withCost}.
  *
- * Carries the declared upper-bound label `L`, its {@link Cost} pair `C`, and a
- * phantom region `S`. The region is invariant (the `(s: S) => S` field is
- * the classic `runST` encoding): a value tagged with one region cannot be used
- * where a different region is expected. `$beginCost` mints `S = unknown` (no
- * identity); `$withCost` mints a *fresh* `S` per call so context values cannot
- * escape their scope.
+ * Carries the upper-bound label `L`, its {@link Cost} pair `C`, and phantom
+ * region `S`. The invariant `(s: S) => S` field prevents values with different
+ * region types from being mixed. `$beginCost` uses `S = unknown`. `$withCost`
+ * introduces a region scoped to its callback to restrict escaping values.
+ * TypeScript can still conflate sibling or nested regions in the same scope.
  *
  * @remarks
  * The three fields below exist only in the type. Runtime contexts contain
@@ -291,9 +287,9 @@ export type CostCtx<S, L extends CostLabel, C extends Cost> = {
 export type RegionCtx<S, C extends Cost, T> = { readonly __region: (s: S) => S } & Ctx<C, T>;
 
 /**
- * Runtime brand marking a context value produced by `$lift(ctx, value)`, so
- * `$proveCtx(ctx, …)` can distinguish a lifted value from a raw payload.
- * Phantom at the type level; the only runtime field beyond `value`.
+ * Runtime brand for values produced by `$lift(ctx, value)`.
+ * It lets `$proveCtx(ctx, …)` distinguish lifted values from raw payloads
+ * and is the only runtime field beyond `value`.
  */
 const ctxValueBrand = Symbol("cost-ctx-value");
 
@@ -307,7 +303,7 @@ function isCtxValue(x: unknown): x is { value: unknown } {
 
 /**
  * Extract the plain value from a cost-branded result.
- * Identity at runtime — the brand only exists at compile time.
+ * Return the value unchanged because the brand exists only at compile time.
  *
  * Use this instead of `as unknown as T` when a function returns a cost-branded
  * type (e.g. `ConstCost<number>`, `LogCost<{ lineNumber: number; ... }>`) and
@@ -330,18 +326,15 @@ export function $value<T>(costed: Costed<CostLevel, T>): T {
 export type Uncosted<R> = R extends Costed<CostLevel, infer U> ? U : R;
 
 /**
- * Re-type a cost-branded function so it returns the plain (unbranded) value.
+ * Retype a cost-branded function to return its plain value.
  *
- * Identity at runtime — the cost brand is compile-time only, so this is a pure
- * type-level cast. Use it at the `api/*` boundary to keep the cost algebra an
- * implementation detail of `store/core`: core ops stay authored against the
- * algebra (their declared complexity is checked at composition time), while
- * callers receive plain values. Document the complexity with an `@complexity`
- * JSDoc tag instead. Parameter types are preserved from `fn`, so the public
- * signature tracks `store/core` automatically.
+ * Use at the `api/*` boundary to keep the cost algebra internal to `store/core`.
+ * This type assertion leaves the function unchanged at runtime and preserves
+ * its parameter types. Core functions retain their cost annotations while
+ * public callers receive plain results. Document costs with `@complexity` tags.
  *
- * The inverse of the `$constCostFn` / `$linearCostFn` / … family, which *add* a
- * brand to a function.
+ * The `$constCostFn` and `$linearCostFn` family performs the reverse operation
+ * by adding a cost brand to a function.
  */
 export function $uncostedFn<Args extends readonly unknown[], R>(
   fn: (...args: Args) => R,
@@ -358,8 +351,8 @@ export function $uncostedFn<Args extends readonly unknown[], R>(
  * annotate an O(n) value as O(1) and the type system will not object. `$unsafeDeclare` exists for
  * contexts where cost is provable by reasoning but cannot be expressed through the
  * `$pipe`/`$andThen` combinator algebra (e.g., amortized bounds, platform-specific guarantees).
- * The `unsafe` prefix makes the trade-off explicit so reviewers know to scrutinize these call
- * sites; reserve it for system boundaries and legacy migration points.
+ * Reserve these calls for system boundaries and legacy migration points.
+ * The `unsafe` prefix identifies declarations that require manual review.
  */
 export function $unsafeDeclare<L extends CostInputLabel, T>(
   max: L,
@@ -427,8 +420,8 @@ export function $proveCtx(
 }
 
 /**
- * Internal helper for declaring function cost contracts.
- * The level parameter is unused at runtime — branding is compile-time only.
+ * Declare a function's cost with a compile-time brand.
+ * The level parameter is unused at runtime.
  */
 function annotateCostFn<L extends CostLevel, Args extends readonly unknown[], R>(
   _level: L,
@@ -490,7 +483,7 @@ export function $quadCostFn<Args extends readonly unknown[], R>(
  * Context value carrying only a compile-time cost.
  *
  * @remarks
- * `_cost` is a phantom field — it exists in the TypeScript type but is never
+ * `_cost` exists in the TypeScript type and is never
  * initialized or read at runtime. All constructors (`$lift`, `$andThen`, `$map`,
  * etc.) create objects with only `{ value }` and cast to `Ctx<C, T>`. This is
  * intentional and safe as long as no code accesses `_cost` directly. The phantom
@@ -528,15 +521,14 @@ export const $from = <L extends CostLevel, T>(value: Costed<L, T>): Ctx<CostOfLa
 /**
  * Open a proof context at a declared upper bound.
  *
- * The returned context owns the cost bound and a proof scope; pass it to
- * `$proveCtx(ctx, value)` to export a public cost-branded value, or to
+ * Use the returned context with
+ * `$proveCtx(ctx, value)` to export a public cost-branded value, or with
  * `$lift(ctx, value)` to insert a value for further composition. The context
- * has no per-call identity (region `unknown`); use {@link $withCost} when
- * escape-prevention matters.
+ * uses region `unknown`. Use {@link $withCost} to restrict escaping values.
  *
  * @remarks
- * The bound is a documentation annotation, not a runtime contract — see the
- * module-level note.
+ * Validate the documented bound separately with benchmarks.
+ * See the module-level note for limits of the type checks.
  */
 export function $beginCost<L extends CostInputLabel>(
   label: L,
@@ -549,18 +541,18 @@ export function $beginCost<L extends CostInputLabel>(
 }
 
 /**
- * Open a proof context with a *fresh* region bound to the callback scope.
+ * Open a proof context with a region bound to the callback scope.
  *
  * The rank-2 `<S>` mints a region unique to this invocation, so a value lifted
- * into `ctx` (a {@link RegionCtx}) cannot escape the callback — only the value
- * returned by `$proveCtx(ctx, …)` leaves. Use for boundaries where an internal
+ * into `ctx` (a {@link RegionCtx}) cannot escape the callback. Export its result
+ * with `$proveCtx(ctx, …)`. Use for boundaries where an internal
  * context value must not leak.
  *
  * @remarks
  * Region separation in TypeScript is reliable for a value that escapes one
  * scope and is reused in another, but TypeScript conflates the regions of
- * sibling/nested `$beginCost`/`$withCost` contexts in the same scope — so
- * cross-context mixing is not fully detectable. See the module-level note.
+ * sibling/nested `$beginCost`/`$withCost` contexts in the same scope.
+ * These checks cannot detect all cross-context mixing. See the module-level note.
  */
 export function $withCost<L extends CostInputLabel, R>(
   label: L,

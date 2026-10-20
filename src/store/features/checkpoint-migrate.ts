@@ -1,22 +1,20 @@
 /**
  * Checkpoint version migration.
  *
- * Version 1 is currently the only format that has ever shipped, so the registry
- * below is empty. The dispatch exists anyway, and is tested against synthetic
- * fixtures, so that introducing a version 2 is a matter of appending one step
- * rather than designing an upgrade path under pressure — at which point every
- * v1 checkpoint already written by a deployed build must still restore.
+ * The registry is empty while version 1 is the only supported format.
+ * Synthetic fixtures test migration routing before a newer format ships.
+ * Add one migration step per new version to keep older checkpoints readable.
  *
  * Design decisions (see `docs/adr/001-checkpoint-compatibility.md`):
  *
  * - Migrations run on raw wire data, before validation. Validators encode
  *   the shape of the current version, so an older payload cannot be validated
  *   before it has been brought forward.
- * - Steps are single-version: `v1 -> v2 -> v3`, never `v1 -> v3` directly.
+ * - Migrate one version at a time, following `v1 -> v2 -> v3`.
  *   Each step is written once, against the format immediately preceding it.
  * - Unknown fields are preserved. A checkpoint written by a newer patch
- *   release of the same version may carry fields this build does not read;
- *   dropping them would silently downgrade a round trip.
+ *   release of the same version may carry fields this build does not read.
+ *   Keep them so a round trip preserves the data.
  * - Downgrade is not supported. A checkpoint from a future version fails
  *   with `VERSION_UNSUPPORTED` so callers can fall back to re-loading from the
  *   original source rather than restoring a lossy approximation.
@@ -44,7 +42,7 @@ export interface CheckpointMigration {
  * The shipped migration registry, ordered by `from`.
  *
  * Empty while version 1 is the only format. Append a step here when bumping
- * `CHECKPOINT_VERSION`; `migrationPath` does the routing.
+ * `CHECKPOINT_VERSION` so `migrationPath` can route older data.
  */
 export const CHECKPOINT_MIGRATIONS: readonly CheckpointMigration[] = Object.freeze([]);
 
@@ -95,11 +93,9 @@ export function migrationPath(
 }
 
 /**
- * Bring raw checkpoint data forward to the current version.
- *
- * Throws `CheckpointError('VERSION_UNSUPPORTED')` when no path exists, which is
- * the same code an unreadable version produced before migration existed — so
- * callers that already branch on it keep working.
+ * Migrate raw checkpoint data to the current version.
+ * Throw `CheckpointError('VERSION_UNSUPPORTED')` when no migration path exists.
+ * This preserves the error code used for unsupported versions before migration.
  */
 export function migrateCheckpointData(
   data: CheckpointWireData,

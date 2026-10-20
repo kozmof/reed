@@ -395,7 +395,7 @@ describe("getAffectedRanges", () => {
     ]);
     const ranges = getAffectedRanges(action);
 
-    // Two distinct ranges — not a merged bounding box
+    // Keep the two ranges distinct instead of merging their bounding box.
     expect(ranges).toEqual([
       [2, 4],
       [10, 14],
@@ -419,7 +419,7 @@ describe("getAffectedRanges", () => {
   });
 
   it("should return [[0, 0]] for APPLY_REMOTE with empty insert text", () => {
-    // empty string is falsy — the insert branch is skipped, entries stays empty
+    // Skip the insert branch for empty text, leaving entries empty.
     const action = DocumentActions.applyRemote([
       { type: "insert", start: byteOffset(0), text: "" },
     ]);
@@ -432,7 +432,7 @@ describe("getAffectedRanges", () => {
       normalizeInsertedLineEndings: true,
       lineEnding: "crlf",
     });
-    // "hello" has no line endings — the early-return branch at the top of normalizeLineEndings fires
+    // Return early from normalizeLineEndings because "hello" has no line endings.
     const action = DocumentActions.insert(byteOffset(0), "hello");
     const ranges = getAffectedRanges(action, prevState);
     expect(ranges).toEqual([[0, 5]]);
@@ -458,7 +458,7 @@ describe("getAffectedRanges", () => {
 
   it("should return [[0, 0]] for APPLY_REMOTE with a zero-size delete (clamped to empty range)", () => {
     const prevState = createInitialState({ content: "abc" }); // 3 bytes
-    // Delete at position 1000 (past end) — clamps to size 0, no entry pushed
+    // Clamp deletion at position 1000 to zero length and add no entry.
     const action = DocumentActions.applyRemote([
       { type: "delete", start: byteOffset(1000), length: byteLength(5) },
     ]);
@@ -514,7 +514,7 @@ describe("getAffectedRanges", () => {
     // change[0]: insert "XY" at position 7 (prevState space)
     // change[1]: insert "Z"  at position 2 (intermediate space, after change[0])
     // change[1] sits before change[0]'s region, so it shifts change[0] by +1 byte.
-    // In nextState: "Z" is at [2, 3), "XY" is at [8, 10) — not [7, 9).
+    // In nextState, "Z" occupies [2, 3) and "XY" occupies [8, 10).
     const action = DocumentActions.applyRemote([
       { type: "insert", start: byteOffset(7), text: "XY" },
       { type: "insert", start: byteOffset(2), text: "Z" },
@@ -713,10 +713,10 @@ describe("Store event transaction guards", () => {
     store.beginTransaction(); // level 1 (outer)
     store.beginTransaction(); // level 2 (inner)
     store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
-    store.commitTransaction(); // inner commit — events buffered to outer level, not emitted yet
+    store.commitTransaction(); // Buffer events at the outer level on inner commit.
     expect(handler).not.toHaveBeenCalled();
 
-    store.commitTransaction(); // outer commit — events emitted now
+    store.commitTransaction(); // Emit buffered events on outer commit.
     expect(handler).toHaveBeenCalledTimes(1);
   });
 

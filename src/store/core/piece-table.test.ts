@@ -588,7 +588,7 @@ describe("Piece Table Operations", () => {
     });
 
     it("should handle mid-character byte offset by returning start of char", () => {
-      // '你好' — byte offset 1 or 2 is mid-character, should return 0
+      // Return 0 for byte offsets 1 or 2 inside the first character of '你好'.
       expect(byteToCharOffset("你好", 1)).toBe(0);
       expect(byteToCharOffset("你好", 2)).toBe(0);
       expect(byteToCharOffset("你好", 4)).toBe(1);
@@ -714,7 +714,7 @@ describe("Piece Table Operations", () => {
 
     it("maintains RB invariant after delete spanning multiple pieces", () => {
       // Build a fragmented tree with many small pieces, then delete a range
-      // that crosses several piece boundaries — the core scenario from §5.2/§8.1.
+      // that crosses several piece boundaries, as required by §5.2/§8.1.
       let state = buildFragmentedState(["aa", "bb", "cc", "dd", "ee", "ff", "gg"]);
       expect(getValue(state)).toBe("aabbccddeeffgg");
 
@@ -806,7 +806,7 @@ describe("Piece Table Operations", () => {
     });
 
     it("reads the first UTF-8 byte of a multi-byte code point", () => {
-      // "é" (U+00E9) encodes to 0xC3 0xA9 in UTF-8; offset 0 is the lead byte.
+      // Offset 0 points to the lead byte of "é" (UTF-8 bytes 0xC3 0xA9).
       const state = createPieceTableState("é");
       expect(getRawByte(state, byteOffset(0))).toBe(0xc3);
       expect(getRawByte(state, byteOffset(1))).toBe(0xa9);

@@ -64,8 +64,8 @@ function remove<K extends string, V>(
 }
 
 /**
- * Unordered persistent string index. Hash paths have at most seven levels;
- * edits copy only that path. Equal hashes use AVL buckets, keeping adversarial
+ * Unordered persistent string index with hash paths of at most seven levels.
+ * Edits copy only the affected path. Equal hashes use AVL buckets, keeping adversarial
  * collisions O(log C), where C is the bucket size. With bounded key lengths
  * and well-distributed hashes, lookup and updates take expected O(1) work.
  */

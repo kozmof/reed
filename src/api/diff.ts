@@ -1,6 +1,4 @@
-/**
- * Diff namespace — text diff algorithm and setValue operations.
- */
+/** The diff namespace compares text and replaces document content. */
 
 import {
   diff as diffAlgorithm,
@@ -20,13 +18,14 @@ export const diff = {
   computeSetValueActionsOptimized,
   computeSetValueActionsFromState,
   computeSetValueActionsFromStateWithDiff,
-  /** O(n) — single REPLACE operation. Best for interactive edits. */
+  /** Replace the changed region with one REPLACE operation in O(n). Best for interactive edits. */
   setValue,
-  /** O(n²) — memory-bounded Myers script. Use when finer history matters. */
+  /** Compute a memory-bounded Myers script in O(n²). Use when finer history matters. */
   setValueWithDiff,
   /**
-   * Unified entry point: routes to `setValue` (default, O(n)) or `setValueWithDiff`
-   * (O(n²)) via `options.strategy`. Prefer this over calling the two variants directly.
+   * Set document content with the strategy selected by `options.strategy`.
+   * The default uses `setValue` in O(n). The diff strategy uses
+   * `setValueWithDiff` in O(n²). Prefer this entry point for strategy selection.
    */
   setValueAuto,
 } as const;

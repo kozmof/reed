@@ -4,8 +4,7 @@
  * The piece table stores UTF-8 byte offsets while JavaScript strings are indexed
  * by UTF-16 code units. These two helpers translate between the two encodings for
  * a given text. They are pure string functions with no piece-table state, so they
- * live in this leaf module; `piece-table.ts` re-exports them to preserve the
- * public import surface.
+ * live in this leaf module. `piece-table.ts` re-exports them for existing callers.
  */
 
 import { $beginCost, $proveCtx, type LinearCost } from "../../types/cost-doc.js";
@@ -26,7 +25,7 @@ import { textEncoder } from "./encoding.js";
  * ```typescript
  * charToByteOffset('Hello', 2);     // Returns 2 (ASCII: 1 byte per char)
  * charToByteOffset('你好', 1);       // Returns 3 (CJK: 3 bytes per char)
- * charToByteOffset('Hello 😀', 7);  // Returns 8 (emoji: 4 bytes)
+ * charToByteOffset('Hello 😀', 7);  // Returns 10 (snaps past the surrogate pair)
  * ```
  */
 export function charToByteOffset(text: string, charOffset: number): LinearCost<number> {
@@ -39,7 +38,7 @@ export function charToByteOffset(text: string, charOffset: number): LinearCost<n
     } else if (c < 0x800) {
       bytes += 2;
     } else if (c >= 0xd800 && c <= 0xdbff) {
-      // High surrogate: lone encodes as 3 bytes; full pair adds 1 more (4 total).
+      // Count a lone high surrogate as 3 bytes or a complete surrogate pair as 4.
       bytes += 3;
       const lo = i + 1 < text.length ? text.charCodeAt(i + 1) : 0;
       if (lo >= 0xdc00 && lo <= 0xdfff) {

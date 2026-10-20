@@ -429,7 +429,7 @@ describe("Branded Types", () => {
       // Ideally this would be rejected (`v` belongs to `a`, not `b`), but
       // `$beginCost` mints region `unknown`, so TypeScript treats same-bound
       // contexts as interchangeable. This compiles intentionally and locks in
-      // the known limitation — see the module-level note in cost-doc.ts.
+      // the limitation described in the module-level note in cost-doc.ts.
       const proven = $proveCtx(b, v);
       expect(proven).toBe(5);
     });
@@ -511,7 +511,7 @@ describe("Branded Types", () => {
 
       // left: O(log n), value = indexOf(3) = 2
       // right: O(n), value = [3, 4, 5]
-      // dominant cost: O(n); pick element at found index → [3,4,5][2] = 5
+      // Pick [3,4,5][2] = 5 with O(n) as the dominant cost.
       const plan = $checked(() => {
         const left = $from(fetchIndex([1, 2, 3, 4, 5], 3));
         const right = $from(findAbove([1, 2, 3, 4, 5], 2));

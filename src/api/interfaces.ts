@@ -63,7 +63,7 @@ export interface LineCountInfo {
   readonly resident: number;
   /** Newline-terminated lines declared for chunks that are not resident. */
   readonly unloaded: number;
-  /** `resident + unloaded`; equivalent to `query.getLineCount(state)`. */
+  /** Expected total line count, equal to `resident + unloaded` and `query.getLineCount(state)`. */
   readonly expected: number;
   readonly isComplete: boolean;
 }
@@ -137,7 +137,7 @@ export interface QueryApi {
 
 /**
  * Contract for the `scan` namespace.
- * All operations are O(n) — see the `@complexity` tags on `scan`.
+ * See the `@complexity` tags on `scan` for its O(n) operations.
  */
 export interface ScanApi {
   getValue(state: PieceTableState): string;
@@ -184,7 +184,7 @@ export interface RenderingApi {
 
 /**
  * Contract for the `history` namespace.
- * All operations are O(1) — see the `@complexity` tags on `history`.
+ * See the `@complexity` tags on `history` for its O(1) operations.
  */
 export interface HistoryApi {
   canUndo(state: DocumentState | HistoryState): boolean;
@@ -200,7 +200,7 @@ export interface HistoryApi {
 
 /**
  * Contract for the `attention` namespace.
- * Mixed complexity — see the `@complexity` tags on `attention`.
+ * See the `@complexity` tags on each member for operation costs.
  */
 export interface AttentionApi {
   emptyState: AttentionLayerState;
@@ -260,10 +260,7 @@ export interface AttentionApi {
 // Checkpoint namespace interface
 // =============================================================================
 
-/**
- * Contract for the `checkpoint` namespace — capture a state as JSON-safe data
- * and load it back.
- */
+/** Contract for capturing and restoring JSON-safe data with `checkpoint`. */
 export interface CheckpointApi {
   create(state: DocumentState<"eager">, options?: CheckpointOptions): DocumentCheckpoint;
   restore(checkpoint: unknown, options?: CheckpointRestoreOptions): DocumentState<"eager">;

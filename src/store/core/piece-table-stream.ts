@@ -99,7 +99,7 @@ export interface DocumentChunk {
  * @yields DocumentChunk objects
  *
  * @remarks
- * Pieces are traversed lazily — no upfront O(n) array allocation.
+ * Traverse pieces lazily to avoid allocating an O(n) array upfront.
  * UTF-8 decoder state is preserved between chunks, so concatenating `content`
  * reconstructs the selected byte range even when a character crosses a byte
  * boundary. A chunk can have empty `content` while the decoder waits for the

@@ -1,10 +1,9 @@
 /**
- * Migration dispatch, exercised against synthetic versions.
+ * Test migration dispatch with synthetic versions.
  *
- * The shipped registry is empty — version 1 is the only format that exists — so
- * routing, failure, ordering and field preservation are proved with injected
- * fixtures. The point is that the path is tested *before* a real version 2
- * needs it, not afterwards.
+ * The shipped registry is empty while version 1 is the only format. Inject
+ * fixtures to test routing, failure, ordering, and field preservation before
+ * a newer format needs a real migration.
  */
 
 import { describe, expect, it } from "vitest";

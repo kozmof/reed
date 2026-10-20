@@ -241,10 +241,9 @@ function captureNormalizedCheckpoint(state: DocumentState<"eager">): DocumentChe
 /**
  * Capture a document state as a JSON-safe checkpoint.
  *
- * Requires an eager state — obtain one with `store.getEagerSnapshot()`,
- * `store.reconcileNow()`, or `await store.whenReconciled()`. The type parameter
- * does the enforcing: a lazily-reconciled state cannot be passed here, so a
- * checkpoint can never contain unresolved line offsets.
+ * Obtain an eager state with `store.getEagerSnapshot()`, `store.reconcileNow()`,
+ * or `await store.whenReconciled()`. The eager type requires resolved line
+ * offsets at capture time.
  *
  * @param state - Fully reconciled state to capture
  * @param options - Capture fidelity and add-buffer compaction
@@ -264,7 +263,7 @@ export function createCheckpoint(
 
   let source = state;
   if (compact) {
-    // threshold 0 forces compaction regardless of how little waste there is;
+    // threshold 0 forces compaction for any amount of waste,
     // the store's own auto-compaction only fires past AUTO_COMPACT_WASTE_RATIO.
     const compacted = compactAddBuffer(source.pieceTable, 0);
     if (compacted !== source.pieceTable) {

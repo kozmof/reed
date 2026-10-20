@@ -85,7 +85,7 @@ export {
   mergeDirtyRanges,
   isLineDirty,
   getOffsetDeltaForLine,
-  // Reconciliation — prefer reconcileNow() / setViewport() over reconcileRange() directly.
+  // Prefer reconcileNow() or setViewport() for reconciliation.
   // reconcileRange is a low-level primitive that requires callers to understand dirty-range
   // semantics (revision parameter, line bounds). See its JSDoc for details.
   reconcileRange,
@@ -170,11 +170,11 @@ export {
   isHistoryEmpty,
 } from "./features/history.js";
 
-// Chunk manager — async chunk fetch subsystem for large-file streaming
+// Asynchronous chunk loading
 export { createChunkManager } from "./features/chunk-manager.js";
 export type { ChunkLoader, ChunkManagerConfig, ChunkManager } from "./features/chunk-manager.js";
 
-// Streaming document loader — high-level chunk lifecycle wrapper
+// Streaming document lifecycle
 export { createStreamingDocumentLoader } from "./features/streaming-loader.js";
 export type {
   StreamingDocumentLoaderConfig,
@@ -189,7 +189,7 @@ export type {
   ReconciliationSchedulerOptions,
 } from "./features/reconciliation-scheduler.js";
 
-// Attention Layer — piece-attached reference system (third Reed layer)
+// Piece-anchored attention references
 export {
   emptyAttentionLayerState,
   createPoint,

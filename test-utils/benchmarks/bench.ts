@@ -9,9 +9,8 @@
  * Usage:
  *   npm run bench
  *
- * The harness uses Node.js `performance.now()` (which wraps HPET / TSC on
- * most systems) rather than vitest so it can run in CI without the test
- * infrastructure overhead.
+ * The harness uses Node.js `performance.now()` and runs independently of
+ * Vitest to avoid test infrastructure overhead.
  *
  * Coverage:
  *   1. Large-document initial load (1 MB prose)
@@ -143,7 +142,7 @@ console.log("\n3. Mixed line-ending inserts");
   const lfContent = "line one\nline two\nline three\n".repeat(500);
   const ITERS = 200;
   // Insert CRLF sequences into an LF document (normalizeInsertedLineEndings: false
-  // so the insert goes in raw — this exercises the rebuild-on-CRLF path).
+  // so the raw insert exercises CRLF boundary handling).
   const ms = bench(
     () => {
       const store = createDocumentStoreWithEvents({ content: lfContent });

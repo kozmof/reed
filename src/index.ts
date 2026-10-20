@@ -1,7 +1,7 @@
 /**
- * Reed - A high-performance text editor library
+ * Reed is a fast, immutable text engine for building editors.
  *
- * Main entry point. All runtime exports are organized into named namespaces:
+ * Main entry point with public API namespaces and supporting exports:
  *
  * - `store.*`     — store lifecycle, actions, type guards, and unsafe low-level helpers
  * - `query.*`     — O(1) and O(log n) read operations (tree-based lookups)
@@ -13,15 +13,15 @@
  * - `position.*`  — branded position constructors, arithmetic, and constants
  * - `checkpoint.*` — capture state as JSON-safe data and load it back
  *
- * Algorithmic complexity is documented on each namespace member with
- * `@complexity` JSDoc tags; the cost algebra itself is internal to `store/core`.
+ * Each namespace member documents its cost with `@complexity` JSDoc tags.
+ * The cost algebra is internal to `store/core`.
  *
  * Types are exported flat and can be imported directly:
- *   import type { DocumentState, InsertAction } from 'reed'
+ *   import type { DocumentState, InsertAction } from '@kozmof/reed'
  */
 
 // =============================================================================
-// Types (flat exports — unchanged)
+// Types exported directly from the package.
 // =============================================================================
 
 // State types

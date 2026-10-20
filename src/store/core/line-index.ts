@@ -289,7 +289,7 @@ function bstInsertLine(
     }
   }
 
-  // Phase 2: rebuild bottom-up with path-copied nodes; result is already root-to-leaf.
+  // Phase 2 rebuilds path-copied nodes from the bottom up in root-to-leaf array order.
   const insertPath: InsertionPathEntry<LineIndexNode>[] = Array.from({ length: descent.length });
   let child: LineIndexNode = newNode;
 
@@ -330,7 +330,7 @@ export function lineIndexInsert(
   const insertContext = getInsertBoundaryContext(position, byteLength, readText);
 
   // Boundary merge case (e.g. inserting '\r' before existing '\n').
-  // Structural incremental logic assumes inserted line breaks are self-contained;
+  // Local boundary repair handles CRLF pairs formed across the insertion boundary.
   // cross-boundary CRLF composition requires local boundary repair.
   if (readText && hasCrossBoundaryCRLFMerge(text, insertContext)) {
     const repaired: LineIndexState = reconcileFull(
@@ -1203,7 +1203,7 @@ export function getResidentLineCountFromIndex(state: LineIndexState): ConstCost<
 
 /**
  * Get a line's content range (start offset and length).
- * Requires eager state — calling on lazy state with dirty ranges is a compile error.
+ * Pass an eager state to satisfy the compile-time requirement for resolved offsets.
  * Use `getLineRangePrecise` for state that may have dirty ranges.
  */
 export function getLineRange(
@@ -1263,7 +1263,7 @@ export function getOffsetDeltaForLine(
   lineNumber: number,
 ): LinearCost<number> {
   if (dirtyRanges === "full-rebuild-needed") {
-    // Delta information is lost; caller must reconcile before relying on offsets.
+    // Reconcile before relying on offsets because delta information is lost.
     return $proveCtx($beginCost("O(n)"), 0);
   }
   let delta = 0;
@@ -1291,9 +1291,9 @@ function createDirtyRange(
 }
 
 /**
- * Remap dirty range line numbers after inserting `insertedCount` new lines at `insertionLine+1`.
- * Lines 0..insertionLine keep their indices; lines insertionLine+1..N shift up by insertedCount.
- * Ranges that span the insertion point are split into a before-part and a shifted after-part.
+ * Remap dirty ranges after inserting `insertedCount` lines after `insertionLine`.
+ * Keep indices through `insertionLine` and shift later indices up by `insertedCount`.
+ * Split ranges that cross the insertion point into unchanged and shifted parts.
  */
 function remapDirtyRangesForInsert(
   ranges: DirtyLineRangeList,
@@ -1306,10 +1306,10 @@ function remapDirtyRangesForInsert(
   for (const range of ranges) {
     const { startLine: s, endLine: e, offsetDelta: d } = range;
     if (e < insertionLine + 1) {
-      // Entirely at or before insertionLine — indices unchanged
+      // Keep indices for ranges at or before insertionLine.
       result.push(range);
     } else if (s > insertionLine) {
-      // Entirely after insertionLine — shift both bounds up
+      // Shift both bounds up for ranges after insertionLine.
       result.push(
         Object.freeze({
           startLine: s + insertedCount,
@@ -1319,7 +1319,7 @@ function remapDirtyRangesForInsert(
       );
     } else {
       // Spans the insertion: s <= insertionLine < insertionLine+1 <= e
-      // Before part: s..insertionLine — indices unchanged
+      // Keep indices in the part from s through insertionLine.
       result.push(
         Object.freeze({
           startLine: s,
@@ -1341,9 +1341,9 @@ function remapDirtyRangesForInsert(
 }
 
 /**
- * Remap dirty range line numbers after deleting lines deleteZoneStart..deleteZoneEnd (inclusive).
- * Lines 0..deleteZoneStart-1 keep their indices; lines in the deleted zone are dropped;
- * lines deleteZoneEnd+1..N shift down by (deleteZoneEnd - deleteZoneStart + 1).
+ * Remap dirty ranges after deleting lines deleteZoneStart..deleteZoneEnd, inclusive.
+ * Keep earlier indices, drop entries in the deleted zone, and shift later indices
+ * down by (deleteZoneEnd - deleteZoneStart + 1).
  */
 function remapDirtyRangesForDelete(
   ranges: DirtyLineRangeList,
@@ -1699,7 +1699,7 @@ export function getLineRangePrecise(
 
   // getLineStartOffset uses subtreeByteLength aggregates, which withLineIndexNode
   // keeps current on every tree mutation. The offset it returns is correct in both
-  // clean (eager) and dirty (lazy) states — no dirty-range delta adjustment needed.
+  // clean (eager) and dirty (lazy) states without dirty-range delta adjustments.
   return $prove(
     "O(log n)",
     $checked(() =>
@@ -1736,9 +1736,8 @@ export type { ReconciliationConfig };
  * `getLineStartOffset` (an independent O(log n) tree walk that accumulates byte
  * lengths). Throws an `Error` describing the first mismatch found.
  *
- * This does NOT guarantee correctness for un-sampled lines — it is a probabilistic
- * sanity check for use in tests and debug/dev builds. It is never called by
- * production code paths.
+ * Only sampled lines are checked. Use this diagnostic in tests and development
+ * builds. Production code paths do not call it.
  *
  * @param state  Eager line index state to verify.
  * @param sampleSize  Number of evenly-distributed lines to check. Defaults to 10.

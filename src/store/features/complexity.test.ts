@@ -1,14 +1,12 @@
 /**
- * Deterministic complexity gates.
+ * Deterministic checks for logarithmic tree height.
  *
- * These assert the structural property that the documented `O(log n)` bounds
- * rest on — tree height — instead of measuring elapsed time. They are the
- * checks that would have caught the persistent-deletion defect fixed in v3.2.0:
- * the wall-clock ceilings in `perf.test.ts` had 15x headroom and never noticed a
- * tree running at twice its admissible height.
+ * Assert the red-black height bound that supports documented O(log n)
+ * operations. Timing ceilings in perf.test.ts can miss structural regressions
+ * when they still finish within the allowed time.
  *
- * They live in the ordinary functional suite on purpose. They are fast, they
- * never flap, and unlike a timing ratio they fail for exactly one reason.
+ * Run these checks in the functional suite to detect invalid tree shapes
+ * without depending on machine speed.
  */
 
 import { describe, expect, it } from "vitest";
@@ -83,7 +81,7 @@ describe("piece tree height", { timeout: 30_000 }, () => {
 
   it("grows logarithmically, not linearly, with piece count", () => {
     // A 16x increase in work must not cost more than a handful of extra levels.
-    // A linear structure would add thousands; even a tree that merely lost its
+    // A linear structure would add thousands of levels. Even a tree that lost its
     // balance guarantee roughly doubles in height.
     const small = measurePieceTree(fragment(0x5eed, 1_000, 500).root);
     const large = measurePieceTree(fragment(0x5eed, 16_000, 8_000).root);

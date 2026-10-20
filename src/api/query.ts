@@ -1,5 +1,5 @@
 /**
- * Query namespace — O(1), O(log n), and bounded linear operations.
+ * The query namespace reads document state with cached values and tree lookups.
  * Functions here are read-only selectors over immutable document state.
  * For O(n) traversals see `scan.*`. For rendering utilities see `rendering.*`.
  */
@@ -63,14 +63,14 @@ function getLineStartOffset(state: DocumentState, lineNumber: number) {
 /**
  * Return the byte range of a line. Requires an eager state (all offsets resolved).
  *
- * Pass a `DocumentState<'eager'>` from `doc.reconcileNow()` or an undo/redo
- * operation. The type requires reconciled offsets without a runtime mode check.
+ * Pass a `DocumentState<'eager'>` from `doc.reconcileNow()` or
+ * `doc.getEagerSnapshot()`. The type requires resolved offsets without a runtime check.
  * Returns `null` when the line does not exist.
  *
  * Decision guide:
  *  - Caller has eager state (post-reconcile) → use `getLineRange`
  *  - Caller has unknown state and wants a throw on violation → use `getLineRangeChecked`
- *  - Caller needs best-effort from any state, tolerates null → use `getLineRangePrecise`
+ *  - Caller needs an exact range from eager or lazy state → use `getLineRangePrecise`
  *  - Caller needs to reconcile on demand → call `store.reconcileNow()` first
  */
 function getLineRange(state: DocumentState<"eager">, lineNumber: number) {
@@ -159,9 +159,9 @@ export const query: QueryApi = {
   findLineByNumber: $uncostedFn(findLineByNumber),
   /** @complexity O(h) — byte offset of line start via prefix sum */
   getLineStartOffset: $uncostedFn(getLineStartOffset),
-  /** @complexity O(h) — tree walk; requires eager DocumentState */
+  /** @complexity O(h) tree walk requiring an eager DocumentState */
   getLineRange: $uncostedFn(getLineRange),
-  /** @complexity O(h) — runtime-checked eager range; throws on dirty lazy state */
+  /** @complexity O(h) range lookup with an eager-state assertion that throws on dirty lazy state */
   getLineRangeChecked: $uncostedFn(getLineRangeChecked),
   /** @complexity O(h) — range lookup safe for eager and lazy states */
   getLineRangePrecise: $uncostedFn(getLineRangePrecise),

@@ -1,7 +1,6 @@
 /**
- * Tests for the standalone TransactionManager.
- * Verifies depth tracking, snapshot stack, and emergency reset
- * in isolation — without any store, reducer, or listener involvement.
+ * Test TransactionManager depth tracking, saved snapshots, and emergency reset
+ * without a store, reducer, or listeners.
  */
 
 import { describe, it, expect } from "vitest";

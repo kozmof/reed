@@ -1,14 +1,9 @@
 /**
- * Save lifecycle.
+ * Test the save lifecycle reported by MARK_SAVED.
  *
- * A public `save` event type and `createSaveEvent` factory existed from the
- * start, but nothing in the reducer or store ever caused one: `isDirty` was only
- * ever set to `true`, and no transition returned a document to clean. The event
- * therefore promised a lifecycle Reed did not provide.
- *
- * `MARK_SAVED` closes that gap. Reed still performs no I/O — the caller persists
- * the document and then reports the result — so no event here asserts that bytes
- * reached durable storage, only that the caller said they did.
+ * The caller persists the document before dispatching MARK_SAVED. Reed clears
+ * isDirty and emits save events but performs no I/O. These events report the
+ * caller's successful save rather than verifying durable storage.
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -125,7 +120,7 @@ describe("save events", () => {
 
     store.dispatch(DocumentActions.markSaved(1));
 
-    // A save of a clean document is still a save; there is simply no dirty
+    // Saving a clean document still emits save without a dirty
     // transition to report.
     expect(save).toHaveBeenCalledTimes(1);
     expect(dirty).not.toHaveBeenCalled();

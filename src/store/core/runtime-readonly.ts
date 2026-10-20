@@ -45,9 +45,8 @@ function throwReadonlyUint8ArrayMutation(): never {
  * | `.buffer` (1 KiB) | — | 0.5 us |
  * | `.buffer` (1 MiB) | — | 294 us |
  *
- * `.buffer` is the one to watch: it returns `target.slice().buffer`, a fresh
- * copy on every access, so its cost is linear in buffer size and it is never
- * cached. Reading it once per frame is fine; reading it per piece is not.
+ * Every `.buffer` access copies the entire buffer with `target.slice().buffer`.
+ * This linear cost is not cached. Avoid repeated reads, especially per piece.
  *
  * Internal callers that already hold a trusted reference should go through
  * {@link unwrapReadonlyUint8Array}, which costs ~0.02 us and allocates nothing.

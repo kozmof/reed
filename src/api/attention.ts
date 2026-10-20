@@ -1,5 +1,5 @@
 /**
- * Attention namespace — piece-anchored boundary references into mutable text.
+ * The attention namespace tracks references to text across edits.
  *
  * The attention layer is the third independent Reed layer, alongside the piece
  * table (content) and the line index (navigation). An attention pins to a piece
@@ -39,7 +39,7 @@ import { $uncostedFn } from "../types/cost-doc.js";
 import type { AttentionApi } from "./interfaces.js";
 
 export const attention: AttentionApi = {
-  /** Empty AttentionLayerState — the initial value. */
+  /** Empty attention state to use as the initial value. */
   emptyState: emptyAttentionLayerState,
 
   // Points

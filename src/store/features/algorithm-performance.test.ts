@@ -29,7 +29,7 @@ it.each([1, 120])(
     ).toBe(count * 3000 * 20);
     expect(reads).not.toHaveBeenCalled();
     expect(bytes.mock.calls.length).toBeLessThanOrEqual(count * 2);
-    // Building ~84 MB of fixture text dominates; under v8 coverage on CI it
+    // Building about 84 MB of fixture text dominates the test. Under V8 coverage on CI it
     // exceeds the default 5s even though the estimate itself is near-instant.
   },
   30_000,

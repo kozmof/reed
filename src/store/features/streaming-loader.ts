@@ -1,8 +1,7 @@
 /**
- * StreamingDocumentLoader — high-level wrapper for chunked document streaming.
+ * StreamingDocumentLoader manages the lifecycle of a streamed document.
  *
- * Encapsulates the full chunk lifecycle protocol so callers never have to
- * manually sequence DECLARE_CHUNK_METADATA → LOAD_CHUNK → EVICT_CHUNK:
+ * Declare metadata, load chunks, and evict them in the required order.
  *
  *   1. Construction: declares all chunk metadata in one call.
  *   2. setViewport:  loads the visible range, pins a surrounding window,
@@ -10,7 +9,7 @@
  *
  * Compared to using ChunkManager directly, this removes ordering mistakes and
  * viewport-tracking boilerplate. Use ChunkManager when you need fine-grained
- * control; use StreamingDocumentLoader for the common streaming use case.
+ * control. Use StreamingDocumentLoader for the common streaming use case.
  */
 
 import type { DocumentStore } from "../../types/store.js";
@@ -59,7 +58,7 @@ export interface StreamingDocumentLoader {
    * - Chunks just outside the window are prefetched in the background.
    * - Chunks further away are subject to LRU eviction by the ChunkManager.
    *
-   * Calling setViewport multiple times is safe; each call supersedes the last.
+   * Each setViewport call supersedes the previous call.
    */
   setViewport(startChunkIndex: number, endChunkIndex: number): Promise<void>;
 
@@ -226,7 +225,7 @@ export function createStreamingDocumentLoader(
     // Stop work owned only by older viewport requests.
     manager.cancelPendingOutside(windowChunks);
 
-    // Load viewport chunks (awaited — caller needs them visible).
+    // Wait for viewport chunks to load before returning.
     const viewportChunks: number[] = [];
     for (let i = start; i <= end; i++) viewportChunks.push(i);
     await manager.ensureLoadedMany(viewportChunks);
@@ -234,8 +233,8 @@ export function createStreamingDocumentLoader(
     if (requestId !== latestViewportRequestId) {
       // Each completed fetch temporarily protects its own chunk from eviction so
       // ensureLoaded callers can observe it. Once an entire stale viewport has
-      // completed, trim again without that protection; otherwise its last chunk
-      // can leave the cache above maxLoadedChunks indefinitely.
+      // completed, trim again without that protection to keep its last chunk
+      // from leaving the cache above maxLoadedChunks indefinitely.
       manager.setActiveChunks(latestWindowChunks);
       return;
     }

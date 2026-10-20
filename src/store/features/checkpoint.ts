@@ -1,19 +1,16 @@
 /**
- * Checkpoint capture and restore — serialize a live `DocumentState` and load it
- * back without replaying the edits that produced it.
+ * Capture and restore document state as JSON-safe checkpoints.
  *
- * `getSnapshot()` hands out an in-memory `DocumentState`; a *checkpoint* is that
- * state flattened to JSON-safe data. Capture requires an eager state so every
- * line offset is a resolved number, and restore returns one for the same reason:
- * a checkpoint never carries pending reconciliation work.
+ * `getSnapshot()` returns an in-memory `DocumentState`. A checkpoint stores
+ * that state as JSON-safe data without replaying edits on restore. Capture
+ * requires an eager state, and restore returns one with all line offsets resolved.
  *
- * Trees are captured as flat in-order lists and rebuilt with the balanced
- * bulk-loaders in `core/state.ts`. Topology is therefore not preserved, and
- * nothing needs it to be — attention points anchor to `PieceID`, which is.
+ * Trees are stored as flat in-order lists and rebuilt with the balanced
+ * bulk-loaders in `core/state.ts`. Piece IDs are preserved so attention points
+ * continue to resolve across changes to tree shape.
  *
- * Restore is fail-closed. Every structural invariant a checkpoint could violate
- * is checked before a state is assembled, so a truncated or hand-edited payload
- * raises `CheckpointError` instead of quietly corrupting later edits.
+ * Restore validates structural invariants before assembling a state. Invalid
+ * payloads raise `CheckpointError`.
  */
 
 import type {
@@ -135,7 +132,7 @@ function consumeRestoreBudget(
 }
 
 // =============================================================================
-// Readers — narrow untrusted JSON, one field at a time
+// Read and validate untrusted JSON one field at a time.
 // =============================================================================
 
 function readObject(value: unknown, what: string): Record<string, unknown> {
@@ -173,7 +170,7 @@ function readBoolean(value: unknown, what: string): boolean {
   return value;
 }
 
-/** Non-negative safe integer — the shape of every offset, length, and count. */
+/** Validate a non-negative safe integer for an offset, length, or count. */
 function readCount(value: unknown, what: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     fail("MALFORMED", `${what} must be a non-negative safe integer`);
@@ -228,7 +225,7 @@ function readBytes(value: unknown, what: string, budget: RestoreBudget): Uint8Ar
 
 /**
  * Highest `n` among ids shaped `<prefix><n>`, or -1 when none match.
- * Ids from other sources are opaque and simply do not constrain the allocator.
+ * Ids from other sources are opaque and do not constrain the allocator.
  */
 function maxNumericSuffix(ids: Iterable<string>, prefix: string): number {
   let max = -1;
@@ -869,11 +866,10 @@ function restoreAttention(
 }
 
 /**
- * Cheap structural check that `value` looks like a checkpoint envelope.
+ * Check the format tag, supported version, and required checkpoint sections.
  *
- * Confirms the format tag, a supported version, and the presence of every
- * section — not that the payload is internally consistent. Use it to route a
- * value before restoring; `restoreCheckpoint` does the full validation.
+ * Use this envelope check to route values before restoring them.
+ * `restoreCheckpoint` validates the payload's internal consistency.
  */
 export function isCheckpoint(value: unknown): value is CheckpointEnvelope {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -916,15 +912,13 @@ function validateChunkLineIndex(
 /**
  * Rebuild a document state from a checkpoint.
  *
- * The result is a plain `DocumentState<'eager'>` — pass it to
+ * Pass the returned `DocumentState<'eager'>` to
  * `store.createDocumentStoreFromCheckpoint` for a live store, or read it
  * directly with the `query` / `scan` namespaces.
  *
- * Validation is exhaustive and fail-closed. Anything that would break a
- * documented invariant — a piece reading past its buffer, lines that do not
- * cover the document, an attention anchored to a piece that is not there, an
- * allocator cursor that would reissue a live id — raises `CheckpointError` with
- * a `code` naming the failure.
+ * Invalid pieces, incomplete line coverage, dangling attention anchors, and
+ * allocator cursors that would reuse a live ID raise `CheckpointError`.
+ * Its `code` identifies the failed validation.
  *
  * Use `options` to bound decoded buffers and collection sizes before restoring
  * input from outside the application. Omitted limits remain unrestricted.

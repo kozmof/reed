@@ -1,28 +1,23 @@
 import { IntervalIndex, type Interval } from "./interval-index.js";
 /**
- * Attention Layer — piece-attached boundary reference system for mutable text.
+ * The attention layer tracks references to text across edits.
  *
- * Reed owns three independent layers:
- *   Piece Tree  → content
- *   Line Index  → navigation
- *   Attention   → references   ← this module
+ * Reed has three independent layers:
+ *   Piece Tree → content
+ *   Line Index → navigation
+ *   Attention → references
  *
- * An Attention is a (start: AttentionPoint, end: AttentionPoint) pair where
- * each point is pinned to a piece boundary rather than a document offset.
- * Because the piece's ID is stable across tree rotations and rebalancing,
- * the reference survives those structural changes without any update.
+ * An Attention pairs two AttentionPoints. Each point stores a piece ID and a
+ * byte boundary within that piece. Piece IDs survive tree rotations and
+ * rebalancing, so those changes do not require updates to the points.
  *
- * When an insert causes a piece to split, call `migrateSplits` to heal any
- * AttentionPoints that fell on the right half of the split.
+ * Call `migrateSplits` after an insertion splits a piece. It moves points on
+ * the right half to the new piece ID and adjusts their boundaries.
  *
- * Deletes are different: the split–join delete strategy hands surviving
- * fragments fresh piece IDs that no `SplitRecord` describes, so points on a
- * cut piece cannot be healed by ID rewriting. Use `deleteWithAttention`, which
- * resolves each point against the pre-delete tree and re-anchors it against the
- * new one (trailing points shift left, points inside the deleted span collapse
- * to its start). Resolution is fail-closed everywhere: a point whose piece was
- * cut away (or whose boundary now exceeds its piece) resolves to `null` rather
- * than to a corrupt offset.
+ * Use `deleteWithAttention` for deletions. It resolves affected points against
+ * the old tree and re-anchors them in the new tree. Points after the deleted
+ * span shift left, and points inside it collapse to its start. A missing piece
+ * or a boundary beyond the piece length resolves to `null`.
  */
 
 import { PersistentMap } from "./persistent-map.js";
@@ -74,7 +69,7 @@ export type {
 // Helpers
 // =============================================================================
 
-/** Empty AttentionLayerState — use as the initial value. */
+/** Empty attention state to use as the initial value. */
 export { emptyAttentionLayerState } from "./attention-state.js";
 
 function isValidAttentionBoundary(boundary: number): boolean {
@@ -177,7 +172,7 @@ export function resolvePoint(
  *
  * `start` and `end` boundaries must be non-negative safe integers. The points
  * are otherwise stored as given, and the caller owns the `start <= end`
- * invariant. An inverted or zero-width span simply resolves to an empty range
+ * invariant. An inverted or zero-width span resolves to an empty range
  * (`getTextForAttention` returns "").
  *
  * O(log A) for native layers. External maps are indexed once in O(A log A).
@@ -491,9 +486,10 @@ function queryAttentions(
 }
 
 /**
- * IDs containing offset. A snapshot builds its interval index lazily in
- * O(P + A log A); warm queries visit matching intervals and boundary paths.
- * Ordering the K results to preserve map iteration order costs O(K log K).
+ * Find attention IDs containing the offset.
+ * Building a snapshot's interval index lazily costs O(P + A log A).
+ * Cached queries visit matching intervals and boundary paths.
+ * Sorting K results into map iteration order costs O(K log K).
  */
 export function findAttentionsAt(
   state: AttentionLayerState,
@@ -585,11 +581,11 @@ function migratePoint(
   if (split === undefined) return point;
 
   if (point.boundary <= split.splitOffset) {
-    // Falls in the left half — pieceID is already correct (the left half keeps originalID).
+    // Keep the original pieceID for a point in the left half.
     return point;
   }
 
-  // Falls in the right half — rewrite to the new right piece with adjusted boundary.
+  // Move a point in the right half to its new piece ID and adjust the boundary.
   return Object.freeze({
     pieceID: split.rightID,
     boundary: point.boundary - split.splitOffset,
@@ -604,15 +600,13 @@ export interface InsertWithAttentionResult {
 }
 
 /**
- * Insert `text` at `position` and migrate the Attention Layer in one step.
+ * Insert `text` at `position` and migrate the attention layer together.
  *
- * `pieceTableInsert` followed by `migrateSplits` is a two-step protocol: a
- * forgotten `migrateSplits` silently corrupts any AttentionPoint that fell on
- * the right half of a split. This helper couples the two so callers cannot
- * desync the layers. The Attention Layer stays caller-owned — pass the current
- * `attentionState` in and store the returned one.
+ * Calling `pieceTableInsert` without `migrateSplits` leaves points on the
+ * right half of a split with incorrect piece references. This helper performs
+ * both operations. Pass the current `attentionState` and keep the returned state.
  *
- * Piece-table insertion plus indexed annotation migration.
+ * Cost includes piece-table insertion and indexed annotation migration.
  */
 export function insertWithAttention(
   pieceTableState: PieceTableState,
@@ -636,17 +630,15 @@ export interface DeleteWithAttentionResult {
 }
 
 /**
- * Re-anchor one AttentionPoint across a delete of the clamped span [start, end).
+ * Re-anchor an AttentionPoint after deleting the clamped span [start, end).
  *
- * Points strictly before `start` are unaffected (their piece keeps its ID).
- * Points after `end` shift left by the deleted length. Points inside the span —
- * and points exactly at `start` — collapse to `start`. Collapsing (rather than
- * keeping) the `start`-boundary case is what saves a point anchored at boundary 0
- * of a fully-deleted interior piece: that piece is dropped entirely (no fragment
- * inherits its ID), so leaving the point as-is would dangle it; re-anchoring to
- * `start` keeps it live at the same document position. Already-dangling points
- * (and boundary overflows) are left untouched — they stay dangling rather than
- * re-anchoring to garbage.
+ * Points strictly before `start` keep their piece ID and boundary. Points at
+ * or after `end` shift left by the deleted length. Points inside the span,
+ * including those at `start`, collapse to `start`. Re-anchoring keeps a point
+ * alive even when its original piece was removed entirely.
+ *
+ * Already-dangling points and boundaries beyond their piece length remain
+ * unchanged and continue to resolve to `null`.
  */
 function migratePointForDelete(
   point: AttentionPoint,
@@ -666,11 +658,11 @@ function migratePointForDelete(
   }
 
   const offset = entry.offset + point.boundary;
-  if (offset < start) return point; // strictly before the cut — piece + boundary still valid
+  if (offset < start) return point; // Keep the piece and boundary for a point strictly before the cut.
 
   const newOffset = offset >= end ? offset - deletedLength : start;
   // Re-anchor against the post-delete tree. A null result (empty document) leaves
-  // the old point, which then resolves to null — still fail-closed.
+  // the old point, which continues to resolve to null.
   return createPoint(newRoot, byteOffset(newOffset)) ?? point;
 }
 
@@ -679,15 +671,14 @@ function migratePointForDelete(
  * after the cut. Lower-level hook used both by `deleteWithAttention` and by the
  * store dispatch path (which performs the piece-table delete itself).
  *
- * The split–join delete gives surviving fragments fresh piece IDs that no
- * `SplitRecord` captures, so ID rewriting (as `migrateSplits` does for inserts)
- * cannot heal points on a cut piece. Instead this resolves each point against
- * `oldRoot` and re-anchors it against `newRoot`. `start` and `end` must already
- * be clamped to `[0, oldTotalLength]`; an empty or inverted span is a no-op.
+ * Deletion can change piece IDs without producing `SplitRecord` entries.
+ * Resolve affected points against `oldRoot` and re-anchor them against
+ * `newRoot`. Clamp `start` and `end` to `[0, oldTotalLength]` before calling.
+ * An empty or inverted span is a no-op.
  *
- * Copy-on-write: the input state is returned untouched when no point moves.
+ * Return the original state when no point moves.
  *
- * Visits O(log n + deleted pieces) tree nodes; affected points re-anchor in O(log n).
+ * Visit O(log n + deleted pieces) tree nodes and re-anchor each affected point in O(log n).
  * The reverse attention index is cached per attention state.
  */
 export function migrateDelete(
@@ -756,8 +747,8 @@ export function migrateDelete(
 /**
  * Delete [start, end) and migrate the Attention Layer in one step.
  *
- * The Attention Layer stays caller-owned — pass the current `attentionState` in
- * and store the returned one. Re-anchoring is delegated to `migrateDelete`.
+ * Pass the current `attentionState` and keep the returned state.
+ * `migrateDelete` re-anchors affected points.
  *
  * O(n + A·log n).
  */

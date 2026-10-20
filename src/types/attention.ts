@@ -20,7 +20,7 @@ export type { PieceID, AttentionID } from "./branded.js";
 /**
  * A position anchored to a piece rather than to a document offset.
  * `boundary` is the byte count from the piece's start to this position,
- * i.e. the gap *before* byte `boundary` and *after* byte `boundary - 1`.
+ * i.e. the gap before byte `boundary` and after byte `boundary - 1`.
  * Valid range: 0 (before first byte) to piece.length (after last byte).
  */
 export interface AttentionPoint {

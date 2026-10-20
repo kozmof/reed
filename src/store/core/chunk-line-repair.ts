@@ -16,9 +16,9 @@ export function repairChunkLines(
 ): LineIndexState {
   // Metrics are counted separately on each side of `from` and `to`, so no
   // sequence may cross them. A seam is safe on a non-continuation byte, or on
-  // a continuation byte whose three predecessors are continuation bytes: a
-  // lead claims at most three, so none can reach it. Malformed input can hold
-  // longer continuation runs; stopping inside one after three steps could
+  // a continuation byte preceded by three continuation bytes. A lead byte
+  // claims at most three, so none can reach it. With malformed input,
+  // stopping inside a longer continuation run after three steps could
   // split a sequence that starts before the run.
   let from = Math.max(0, start - 3);
   let to = Math.min(previous.totalLength, end + 3);

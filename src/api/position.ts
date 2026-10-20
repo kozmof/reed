@@ -1,6 +1,4 @@
-/**
- * Position namespace — branded position type constructors, arithmetic, comparison, and constants.
- */
+/** The position namespace constructs, compares, and calculates branded positions. */
 
 import {
   byteOffset,
@@ -34,9 +32,8 @@ import type { DocumentState, SelectionRange } from "../types/state.js";
 /**
  * Build a `SelectionRange` (byte offsets) from character (UTF-16 code unit) offsets.
  *
- * `SET_SELECTION` accepts byte-offset `SelectionRange[]`, which is easy to confuse
- * with char offsets. Use this factory when constructing a selection from user-visible
- * cursor positions and convert character offsets to byte offsets.
+ * `SET_SELECTION` accepts byte offsets. Use this factory when cursor positions
+ * are measured in UTF-16 code units.
  *
  * @param charAnchor - Anchor char offset (where the selection started)
  * @param charHead   - Head char offset (cursor position / end of selection)

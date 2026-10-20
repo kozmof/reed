@@ -134,8 +134,8 @@ export function getPieceBufferRef(piece: PieceNode): BufferReference {
 /**
  * Get the raw buffer (Uint8Array) for a buffer reference.
  * Use this when you need direct buffer access.
- * For 'chunk' references the returned buffer starts at offset 0 of the chunk —
- * callers must use `ref.start` as the offset into the returned slice, not 0.
+ * For 'chunk' references the buffer contains the full chunk. Use `ref.start`
+ * as the offset into it.
  * Prefer getBufferSlice when you only need the bytes covered by the reference.
  */
 export function getBuffer(state: PieceTableState, ref: BufferReference): Uint8Array {
@@ -186,7 +186,7 @@ export function getBufferSlice(state: PieceTableState, ref: BufferReference): Ui
 /**
  * Get the buffer for a piece node directly.
  * Convenience function that combines getPieceBufferRef and getBuffer.
- * For 'chunk' pieces the returned buffer is the full chunk — use piece.start as the offset.
+ * Use `piece.start` as the offset into the full buffer returned for 'chunk' pieces.
  * Prefer getBufferSlice when you need only the bytes covered by the piece.
  */
 export function getPieceBuffer(state: PieceTableState, piece: PieceNode): Uint8Array {
@@ -439,7 +439,7 @@ function bstInsert(
     }
   }
 
-  // Phase 2: rebuild bottom-up in-place — reuse descent to avoid a second allocation.
+  // Phase 2 rebuilds nodes from the bottom up, reusing descent to avoid another allocation.
   // We process i from high to low, reading descent[i] before overwriting it, so there
   // is no aliasing between the read of the original node and the write of the rebuilt one.
   let child: PieceNode = newNode;
@@ -464,7 +464,7 @@ function bstInsert(
  * Split a piece into two pieces at the given offset within the piece.
  * Returns [leftPiece, rightPiece, splitRecord] or [piece, null, null] if at boundary.
  *
- * The left half keeps the original piece's ID; the right half gets a fresh ID.
+ * A split preserves the original piece's ID on the left and creates a fresh ID on the right.
  * `splitRecord` is non-null whenever an actual split took place and is used by
  * the Attention Layer to migrate AttentionPoints on the right half.
  *
@@ -553,7 +553,7 @@ export function splitPiece(
  * (rightID, boundary - splitOffset).
  */
 export interface SplitRecord {
-  /** ID of the piece that was split; the left half retains this same ID. */
+  /** Original piece ID retained by the left half of the split. */
   readonly originalID: PieceID;
   /** ID of the new right half (fresh ID). */
   readonly rightID: PieceID;
@@ -623,7 +623,7 @@ export function pieceTableInsert(
   const location: LogCost<PieceLocation | null> =
     findPieceAtPosition(state.root, position) ?? $proveCtx($beginCost("O(log n)"), null);
 
-  // Capture any split that occurs — set from within the $andThen callback.
+  // Capture the split reported by the $andThen callback.
   let capturedSplit: SplitRecord | null = null;
 
   return $prove(
@@ -769,7 +769,7 @@ function insertWithSplit(
   let newRoot = rbInsertPiece(replaceResult, insertPos, bufferType, start, length, insertedID);
 
   // Insert the right part after the new piece, preserving its full identity
-  // (including chunkIndex for 'chunk' pieces — rbInsertPiece cannot be used here).
+  // (including chunkIndex for 'chunk' pieces, which rbInsertPiece does not support here).
   if (rightPart !== null) {
     const rightPos = insertPos + length;
     newRoot = rbReInsertPiece(newRoot, rightPos, rightPart);
@@ -817,7 +817,7 @@ function replacePieceInTree(
 
 /**
  * Create a child-less copy of `node` with new `start` and `length`.
- * Color is a placeholder ("black") — joinBalanced always overrides it.
+ * joinBalanced overrides the placeholder color ("black").
  *
  * `id` defaults to a fresh ID. Pass `node.id` when the fragment represents a
  * surviving portion of the original piece (so AttentionPoints keep tracking it).
@@ -839,12 +839,11 @@ function makePiece(
  * `[offset, subtreeLength)` in document order.
  *
  * When `offset` falls in the middle of a piece that piece is cut into two
- * child-less pieces; each half is then reassembled with `joinBalanced`, which
+ * child-less pieces. Reassemble each half with `joinBalanced`, which
  * grafts at a node of matching black height and repairs on the way back up.
  *
- * Nodes reconstructed unchanged keep their original piece ID so AttentionPoints
- * continue to resolve; only a piece genuinely cut in half mints a new ID, for
- * its right fragment.
+ * Preserve IDs for pieces reconstructed unchanged so AttentionPoints still resolve.
+ * Cutting a piece creates a new ID only for its right fragment.
  *
  * Complexity: O(log n) per call (each level of the recursion makes one
  * joinBalanced call whose cost is proportional to the height difference,
@@ -864,24 +863,24 @@ function splitAt(
   const pieceEnd = pieceStart + node.length;
 
   if (offset <= pieceStart) {
-    // Split falls in the left subtree; rebuild right part as join(lr, this-piece, right).
-    // This node is reconstructed unchanged — preserve its ID so AttentionPoints survive.
+    // Rebuild the right part as join(lr, this-piece, right) after splitting the left subtree.
+    // Preserve the unchanged piece ID so AttentionPoints survive.
     const [ll, lr] = splitAt(node.left, offset, allocatePieceID);
     const key = makePiece(node, node.start, byteLength(node.length), node.id);
     return [ll, joinBalanced(lr, key, node.right, withPiece)];
   }
 
   if (offset >= pieceEnd) {
-    // Split falls in the right subtree; rebuild left part as join(left, this-piece, rl).
-    // This node is reconstructed unchanged — preserve its ID so AttentionPoints survive.
+    // Rebuild the left part as join(left, this-piece, rl) after splitting the right subtree.
+    // Preserve the unchanged piece ID so AttentionPoints survive.
     const [rl, rr] = splitAt(node.right, offset - pieceEnd, allocatePieceID);
     const key = makePiece(node, node.start, byteLength(node.length), node.id);
     return [joinBalanced(node.left, key, rl, withPiece), rr];
   }
 
-  // Split falls within this piece — cut it into two child-less halves.
+  // Cut this piece into two child-less halves at the split offset.
   // Left half inherits the original ID (same convention as insertWithSplit).
-  // Right half gets a fresh ID; callers that track pieces must handle this new ID.
+  // Track the fresh ID assigned to the right half when following piece references.
   const off = offset - pieceStart;
   const lKey = makePiece(node, node.start, byteLength(off), node.id);
   const rKey = makePiece(
@@ -910,13 +909,10 @@ function splitAt(
  * costs expected O(log P + D) for bounded-length, well-distributed IDs.
  * Unindexed trees pay no index-maintenance cost.
  *
- * Every structural step preserves the full red-black contract. joinTrees takes
- * the minimum of the right tree as its join key and discharges the black
- * deficit that removing it creates before either rank is read; joinBalanced
- * grafts by black height. Earlier revisions repaired only red-red violations
- * here and recoloured the root to finish, which left black-height deficits in
- * the tree — text and aggregates stayed correct, so only tree-shape assertions
- * caught it (see piece-table-rb.test.ts).
+ * Every structural step preserves the red-black invariants. `joinTrees` uses
+ * the minimum of the right tree as its join key and repairs the black deficit
+ * caused by removing it before reading either rank. `joinBalanced` joins
+ * subtrees by black height. See piece-table-rb.test.ts for shape assertions.
  */
 export function pieceTableDelete(
   state: PieceTableState,
@@ -1065,7 +1061,7 @@ export function getLength(state: PieceTableState): ConstCost<number> {
  * Get a specific line by line number (0-indexed).
  * Returns the line content including the trailing newline if present.
  *
- * Note: This scans the document to find line boundaries — O(n).
+ * Finding line boundaries requires an O(n) document scan.
  * For line-index based line access with DocumentState, use `getLineContent()` from rendering.ts.
  */
 export function getLineLinearScan(state: PieceTableState, lineNumber: number): LinearCost<string> {
@@ -1095,7 +1091,7 @@ export function getLineLinearScan(state: PieceTableState, lineNumber: number): L
  * Handles all three newline conventions:
  *   LF   (0x0a)       — Unix
  *   CR   (0x0d)       — classic Mac
- *   CRLF (0x0d 0x0a)  — Windows; the pair counts as a single line break.
+ *   CRLF (0x0d 0x0a)  — Windows (one line break per pair).
  *
  * A pending CR is deferred until the next byte is seen so that CRLF pairs
  * spanning piece boundaries are handled correctly.
@@ -1220,7 +1216,7 @@ export interface BufferStats {
  * Useful for deciding when to compact.
  *
  * O(1) via subtreeAddLength maintained on every PieceNode by
- * createPieceNode/withPieceNode — no tree traversal needed.
+ * createPieceNode/withPieceNode, without traversing the tree.
  */
 export function getBufferStats(state: PieceTableState): ConstCost<BufferStats> {
   const addBufferUsed = state.root?.subtreeAddLength ?? 0;

@@ -106,7 +106,7 @@ describe("resolvePoint", () => {
     // Point anchored to the original "Hello " piece at boundary 3 ("lo ")
     const ptHello = createPoint(s0.root, byteOffset(3));
     expect(ptHello).not.toBeNull();
-    // After insert, the piece still starts at 0; boundary 3 → offset 3
+    // Boundary 3 still resolves to offset 3 because the piece starts at 0.
     const resolved = resolvePoint(s1.root, ptHello!);
     expect(resolved).toBe(3);
   });
@@ -220,7 +220,7 @@ describe("resolveAttention", () => {
     const pt3 = createPoint(s0.root, byteOffset(3))!;
     const [layer0, id] = createAttention(emptyAttentionLayerState, pt1, pt3);
 
-    // Insert at end — does not affect pieces B..D
+    // Append without changing pieces B..D.
     const { state: s1 } = insert(s0, 5, "XY");
 
     const resolved = resolveAttention(s1.root, layer0, id);
@@ -342,7 +342,7 @@ describe("migrateSplits", () => {
     const ptC = createPoint(s0.root, byteOffset(3))!; // boundary=3, points after "C"
     const [l0, id] = createAttention(emptyAttentionLayerState, ptB, ptC);
 
-    // Insert "XY" at offset 4 — splits the piece at boundary 4 inside it
+    // Split the piece at its internal boundary 4 by inserting "XY".
     const { state: s1, splits } = insert(s0, 4, "XY");
     const l1 = migrateSplits(l0, splits);
 
@@ -361,9 +361,9 @@ describe("migrateSplits", () => {
     const ptE = createPoint(s0.root, byteOffset(4))!;
     const [l0, id] = createAttention(emptyAttentionLayerState, ptD, ptE);
 
-    // Insert "XY" at offset 2 — splits the piece at boundary 2 → "AB"(p0), "CDE"(p1)
+    // Insert "XY" at offset 2 to split the piece into "AB" (p0) and "CDE" (p1).
     const { state: s1, splits } = insert(s0, 2, "XY");
-    // s1 = "ABXYCDE" — "CDE" starts at docOffset 4
+    // In s1 = "ABXYCDE", "CDE" starts at document offset 4.
     const l1 = migrateSplits(l0, splits);
 
     const resolved = resolveAttention(s1.root, l1, id);
@@ -453,7 +453,7 @@ describe("insertWithAttention", () => {
     );
 
     expect(insertedByteLength).toBe(2);
-    // s1 = "ABXYCDE" — "CDE" starts at docOffset 4; D at 5, E at 6.
+    // In s1 = "ABXYCDE", "CDE" starts at offset 4, D at 5, and E at 6.
     const resolved = resolveAttention(pieceTableState.root, attentionState, id);
     expect(resolved).not.toBeNull();
     expect(resolved!.startOffset).toBe(5);
@@ -482,7 +482,7 @@ describe("insertWithAttention", () => {
     const pt5 = createPoint(s0.root, byteOffset(5))!;
     const [l0] = createAttention(emptyAttentionLayerState, pt0, pt5);
 
-    // Append at the document end — no piece is split.
+    // Append without splitting a piece.
     const { attentionState } = insertWithAttention(s0, l0, byteOffset(5), "!");
     expect(attentionState).toBe(l0);
   });
@@ -496,7 +496,7 @@ describe("fail-closed resolution", () => {
   it("resolvePoint returns null when boundary exceeds the piece length", () => {
     const state = createPieceTableState("Hello");
     const pt = createPoint(state.root, byteOffset(2))!;
-    // Forge a boundary past the piece end — must fail closed, not return a bogus offset.
+    // Reject a boundary beyond the piece length by resolving it to null.
     const overflow = { pieceID: pt.pieceID, boundary: 999 };
     expect(resolvePoint(state.root, overflow)).toBeNull();
     expect(resolvePoint(state.root, { ...pt, boundary: -1 })).toBeNull();
@@ -518,13 +518,13 @@ describe("fail-closed resolution", () => {
   });
 
   it("a raw delete that cuts the anchored piece dangles (null), never a corrupt offset", () => {
-    // "ABCDE" as a single piece; anchor inside it, then delete a span that cuts it.
+    // Anchor inside the single "ABCDE" piece, then delete a span that cuts it.
     const s0 = createPieceTableState("ABCDE");
     const ptD = createPoint(s0.root, byteOffset(3))!; // boundary 3 within p0
     const ptE = createPoint(s0.root, byteOffset(4))!;
     const [l0, id] = createAttention(emptyAttentionLayerState, ptD, ptE);
 
-    // Raw delete (no migration) — surviving fragments get fresh IDs.
+    // Delete without migrating the attention points.
     const s1 = del(s0, 1, 3); // remove "BC" → "ADE"
     const resolved = resolveAttention(s1.root, l0, id);
     // Without migration the points cannot survive a cut, but they must fail closed.
@@ -551,7 +551,7 @@ describe("deleteWithAttention", () => {
       byteOffset(7),
     );
     expect(deletedByteLength).toBe(5);
-    // "HeWorld!" — "World" now starts at 2, "!" at 7.
+    // In "HeWorld!", "World" starts at 2 and "!" at 7.
     const resolved = resolveAttention(pieceTableState.root, attentionState, id);
     expect(resolved).not.toBeNull();
     expect(resolved!.startOffset).toBe(2);
@@ -565,7 +565,7 @@ describe("deleteWithAttention", () => {
     const ptE = createPoint(s0.root, byteOffset(4))!; // before "E"
     const [l0, id] = createAttention(emptyAttentionLayerState, ptD, ptE);
 
-    // Delete "BC" (1..3) — cuts the single piece; "DE" survives with a fresh ID.
+    // Delete "BC" at [1, 3) and leave "DE" with a fresh ID.
     const { pieceTableState, attentionState } = deleteWithAttention(
       s0,
       l0,
@@ -586,7 +586,7 @@ describe("deleteWithAttention", () => {
     const ptE = createPoint(s0.root, byteOffset(4))!; // before "E", at end of span
     const [l0, id] = createAttention(emptyAttentionLayerState, ptB, ptE);
 
-    // Delete "BCD" (1..4) → "AE". Start (inside) collapses to 1; end (== span end) → 1.
+    // Delete "BCD" at [1, 4) to leave "AE". Both endpoints resolve to 1.
     const { pieceTableState, attentionState } = deleteWithAttention(
       s0,
       l0,
@@ -610,7 +610,7 @@ describe("deleteWithAttention", () => {
     const [l0, id] = createAttention(emptyAttentionLayerState, ptStart, ptEnd);
 
     // Delete the whole "XYZ" span [4,7): the interior piece is dropped entirely,
-    // so its ID vanishes — the start point cannot survive by ID, it must re-anchor.
+    // so its ID vanishes and the start point must be re-anchored.
     const { pieceTableState, attentionState } = deleteWithAttention(
       s1,
       l0,
@@ -649,7 +649,7 @@ describe("deleteWithAttention", () => {
     const ptF = createPoint(s0.root, byteOffset(5))!;
     const [l0, id] = createAttention(emptyAttentionLayerState, ptC, ptF);
 
-    // Delete after the attention; attention offsets unchanged.
+    // Keep attention offsets unchanged when deleting after the span.
     const { pieceTableState, attentionState } = deleteWithAttention(
       s0,
       l0,

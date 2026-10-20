@@ -13,7 +13,7 @@ describe("utf8ByteLength", () => {
   it("counts 2 bytes for Latin-extended characters (U+0080–U+07FF)", () => {
     // 'é' = U+00E9 → 2 UTF-8 bytes
     expect(utf8ByteLength("é")).toBe(2);
-    // 'ñ' = U+00F1 → 2 bytes; 'café' = 4 + 1 extra = 5 bytes total
+    // 'ñ' (U+00F1) uses 2 bytes, so 'café' uses 5 bytes in total.
     expect(utf8ByteLength("café")).toBe(5);
   });
 

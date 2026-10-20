@@ -752,7 +752,7 @@ describe("assertEagerOffsets", () => {
 
   it("should throw for a state with a corrupted documentOffset", () => {
     const state = createLineIndexState("aaa\nbbb\nccc\n");
-    // Find line 0 and corrupt its documentOffset; sample line 0 by checking all lines
+    // Corrupt line 0's documentOffset and include it by sampling all lines.
     const line0 = findLineByNumber(state.root, 0)!;
     Object.freeze({ ...line0, documentOffset: 9999 });
     // Replace root with the corrupted node (root IS line 1 in a balanced tree,
@@ -787,8 +787,8 @@ describe("dirty range remapping — sequential edits", () => {
   // Helper: build a document large enough to always trigger reconcileInPlace
   // (the slow path), which recomputes all documentOffsets from scratch and
   // is immune to the fast-path delta-only limitation.
-  // Threshold = max(256, lineCount * 0.75); with N=400 and a dirty range
-  // covering ~380 lines, totalDirty=380 > max(256, 300)=300 → slow path.
+  // With N=400, the threshold is max(256, lineCount * 0.75) = 300.
+  // A dirty range covering about 380 lines exceeds it and takes the slow path.
   // -------------------------------------------------------------------------
   function makeDoc(lines: number) {
     return createLineIndexState(Array.from({ length: lines }, (_, i) => `L${i}`).join("\n"));
@@ -829,7 +829,7 @@ describe("dirty range remapping — sequential edits", () => {
   });
 
   it("insert entirely after existing dirty range: assertEagerOffsets passes", () => {
-    // Insert at line 10 → dirty range [11, MAX]; then insert at line 380 (after existing dirty range)
+    // Create dirty range [11, MAX] by inserting at line 10, then insert at line 380.
     const base = makeDoc(LARGE);
     const off1 = getLineStartOffset(base.root, 10);
     const s1 = lineIndexInsertLazy(base, byteOffset(off1), "X\n", 1);
@@ -846,7 +846,7 @@ describe("dirty range remapping — sequential edits", () => {
     const base = makeDoc(LARGE);
     const off1 = getLineStartOffset(base.root, 200);
     const s1 = lineIndexInsertLazy(base, byteOffset(off1), "A\n", 1);
-    // dirty range starts at 201; insert exactly at 201 in s1
+    // Insert at the dirty range start, line 201 in s1.
     const off2 = getLineStartOffset(s1.root, 201);
     const s2 = lineIndexInsertLazy(s1, byteOffset(off2), "B\nC\n", 2);
 
@@ -889,7 +889,7 @@ describe("dirty range remapping — sequential edits", () => {
     const base = makeDoc(LARGE);
     const off1 = getLineStartOffset(base.root, 200);
     const s1 = lineIndexInsertLazy(base, byteOffset(off1), "A\n", 1);
-    // dirty range starts at 201; delete lines 198..204 (spans the boundary)
+    // Delete lines 198..204 across the dirty range boundary at 201.
     const delStart = getLineStartOffset(s1.root, 198);
     const delEnd = getLineStartOffset(s1.root, 205);
     // Deleting 7 lines means 7 newlines
@@ -988,7 +988,7 @@ describe("dirty range remapping — sequential edits", () => {
         s1.dirtyRanges.some((r) => r.endLine === Number.MAX_SAFE_INTEGER),
     ).toBe(true);
 
-    // Insert before the dirty range — endLine must remain MAX_SAFE_INTEGER
+    // Keep endLine at MAX_SAFE_INTEGER after inserting before the dirty range.
     const off2 = getLineStartOffset(s1.root, 50);
     const s2 = lineIndexInsertLazy(s1, byteOffset(off2), "B\n", 2);
     expect(
@@ -1009,7 +1009,7 @@ describe("dirty range remapping — sequential edits", () => {
         s1.dirtyRanges.some((r) => r.endLine === Number.MAX_SAFE_INTEGER),
     ).toBe(true);
 
-    // Delete before the dirty range — endLine must remain MAX_SAFE_INTEGER
+    // Keep endLine at MAX_SAFE_INTEGER after deleting before the dirty range.
     const delStart = getLineStartOffset(s1.root, 50);
     const delEnd = getLineStartOffset(s1.root, 51);
     const s2 = lineIndexDeleteLazy(s1, byteOffset(delStart), byteOffset(delEnd), "x\n", 2);
@@ -1028,7 +1028,7 @@ describe("dirty range remapping — sequential edits", () => {
   // -------------------------------------------------------------------------
 
   it("'full-rebuild-needed' is preserved as-is through an insert remap", () => {
-    const base = makeDoc(10); // small doc OK; reconcileFull detects full-rebuild → slow path
+    const base = makeDoc(10); // Use a small document to exercise the full-rebuild path in reconcileFull.
     const manyRanges = Array.from({ length: 40 }, (_, i) =>
       Object.freeze({
         startLine: i * 2,
@@ -1093,7 +1093,7 @@ describe("dirty range remapping — sequential edits", () => {
 
   it("dirty ranges stay correct when inserting into a clean eager state", () => {
     const base = makeDoc(LARGE);
-    // Reconcile immediately — no dirty ranges
+    // Reconcile immediately to clear dirty ranges.
     const eager0 = reconcileFull(lineIndexInsertLazy(base, byteOffset(0), "seed\n", 0), 0);
     expect(eager0.dirtyRanges.length).toBe(0);
 
@@ -1108,8 +1108,8 @@ describe("dirty range remapping — sequential edits", () => {
 // =============================================================================
 // Char-offset queries (surrogate-pair aware)
 //
-// `lineLength`/byte-start offsets are UTF-8 bytes; `charLength`/char-start
-// offsets are UTF-16 code units. They diverge on any line containing a
+// Measure lineLength and byte-start offsets in UTF-8 bytes.
+// Measure charLength and char-start offsets in UTF-16 code units. They diverge on a
 // surrogate pair (e.g. an emoji = 2 UTF-16 units, 4 UTF-8 bytes), so these
 // paths must be exercised with astral-plane content, not just ASCII.
 // =============================================================================
@@ -1196,7 +1196,7 @@ describe("dirty-range utilities", () => {
   it("treats the full-rebuild sentinel as dirty everywhere with no usable delta", () => {
     expect(isLineDirty("full-rebuild-needed", 0)).toBe(true);
     expect(isLineDirty("full-rebuild-needed", 9999)).toBe(true);
-    // Delta information is lost under full-rebuild; callers must reconcile first.
+    // Reconcile before reading cached offsets when full-rebuild has lost delta information.
     expect(getOffsetDeltaForLine("full-rebuild-needed", 3)).toBe(0);
   });
 
@@ -1414,7 +1414,7 @@ describe("offset cache stays exact under randomized viewport reconciliation", ()
     let state: LineIndexState = createLineIndexState("line\n".repeat(40));
     state = lineIndexInsertLazy(state, byteOffset(0), "zz", 1);
 
-    // The dirty range is [1, end]; reconcile a window strictly inside it.
+    // Reconcile a window strictly inside the dirty range [1, end].
     state = reconcileViewport(state, 20, 25, 1);
     for (let line = 20; line <= 25; line++) {
       const node = findLineByNumber(state.root, line);
