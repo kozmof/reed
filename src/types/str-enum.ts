@@ -1,8 +1,7 @@
 /**
- * Utility to create a string enum object { K: K } from a list of string literals.
- * The resulting object and its keyof type serve as a single source of truth for
- * string-keyed discriminated unions, enabling exhaustiveness checks on switch
- * statements that process those unions.
+ * Create a `{ K: K }` object from string literals.
+ * Use its keys as the source of truth for a discriminated union and check
+ * switch statements for missing cases.
  *
  * @example
  * const Colors = strEnum(['red', 'green', 'blue']);

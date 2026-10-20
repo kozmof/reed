@@ -99,7 +99,7 @@ export interface TransactionControl {
   commitTransaction(): void;
 
   /**
-   * Rollback the current transaction level, restoring the snapshot captured at beginTransaction.
+   * Roll back the current transaction level to the snapshot from `beginTransaction`.
    * If this is the outermost rollback, listeners are notified.
    * @throws if called with no active transaction (depth is 0).
    *
@@ -210,12 +210,9 @@ export interface ReadonlyDocumentStore {
 export type DocumentReducer = (state: DocumentState, action: DocumentAction) => DocumentState;
 
 /**
- * Extended store interface that combines state management with event emission.
- * Provides automatic event emission on dispatch for type-safe event handling.
- *
- * Use this when you need to react to specific document changes
- * (content changes, selection changes, history changes) rather than
- * just knowing that "something changed".
+ * Store interface with typed events emitted on dispatch.
+ * Subscribe to content, selection, or history events to receive details about
+ * specific changes.
  */
 export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
   /**

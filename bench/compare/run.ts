@@ -51,7 +51,7 @@ function resolveDist(p: string): string {
 const versions = { base: resolveDist(args.base), head: resolveDist(args.head) } as const;
 type Version = keyof typeof versions;
 
-/** Changes inside ±NOISE are reported as unchanged even if the CI excludes 1. */
+/** Report changes within ±NOISE as unchanged even if the confidence interval excludes 1. */
 const NOISE = 0.05;
 
 const rounds = Number(args.rounds);
@@ -94,7 +94,7 @@ function rng(seed: number): () => number {
   };
 }
 
-/** Percentile bootstrap CI for median(head) / median(base). */
+/** Percentile bootstrap confidence interval for median(head) / median(base). */
 function bootstrapRatio(base: readonly number[], head: readonly number[], iters = 2_000) {
   const r = rng(12345);
   const resampleMedian = (xs: readonly number[]) => {

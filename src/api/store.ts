@@ -178,9 +178,9 @@ function setStoreValue(
  * must be present in `prevState.pieceTable.chunkMap` and absent from
  * `nextState.pieceTable.chunkMap`.
  *
- * Returns false when eviction was silently refused (e.g. user edits overlap the
- * chunk's byte range). Use this instead of comparing `chunkMap.size` so that the
- * check is tied to the specific chunk rather than any incidental size change.
+ * Returns false when eviction was refused, such as when edits overlap the chunk.
+ * Check the specific chunk with this helper. Comparing `chunkMap.size` can
+ * confuse its eviction with another change to the map.
  *
  * @example
  * ```ts

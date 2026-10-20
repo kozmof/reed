@@ -279,9 +279,8 @@ export type CheckpointErrorCode =
  * Thrown by `restoreCheckpoint` / `decodeCheckpoint` when a payload cannot be
  * trusted, and by `createCheckpoint` when capture is not possible.
  *
- * Restore is fail-closed: a checkpoint that would produce a piece table
- * violating the invariants in `docs/invariants.md` is rejected outright rather
- * than loaded into a store where it would corrupt later edits.
+ * Restore rejects checkpoints that violate the piece-table invariants in
+ * `docs/invariants.md`. This prevents invalid state from corrupting later edits.
  */
 export class CheckpointError extends Error {
   readonly code: CheckpointErrorCode;

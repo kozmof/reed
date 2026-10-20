@@ -392,7 +392,7 @@ describe("Editor Use Cases", () => {
         return scheduledCallbacks.length;
       };
       g.cancelIdleCallback = (): void => {
-        // noop for test
+        // Ignore this callback in the test.
       };
 
       try {
@@ -559,14 +559,13 @@ describe("Editor Use Cases", () => {
 
     it("withTransaction calls emergencyReset when fn throws and rollback also fails", () => {
       const store = createDocumentStore({ content: "hello" });
-      // Begin a transaction inside fn, then rollback it so the outer rollback has nothing to pop
+      // Roll back the callback's transaction before throwing to exercise emergency reset.
       expect(() =>
         withTransaction(store, (s) => {
           // Consume the transaction begun by withTransaction by rolling it back inside fn
           s.rollbackTransaction();
           throw new Error("fn error");
-          // Now the outer withTransaction catch will call rollbackTransaction at depth=0,
-          // which throws, triggering emergencyReset (store.ts line 691).
+          // The outer catch attempts rollback at depth 0 and triggers emergencyReset.
         }),
       ).toThrow("fn error");
       // The store remains usable after emergencyReset.

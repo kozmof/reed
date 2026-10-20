@@ -1,8 +1,8 @@
 /**
  * Utilities for generating large document content in performance tests.
  *
- * Content is returned as a plain string so it can be passed directly to
- * createInitialState({ content }) or written to disk via gen-fixture script.
+ * Pass the returned string to `createInitialState({ content })` or write it
+ * to disk with the `gen-fixture.ts` script.
  */
 
 /** Deterministic linear congruential generator shared with store.usecase.test.ts. */

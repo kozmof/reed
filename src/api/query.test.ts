@@ -77,7 +77,7 @@ describe("query selectors", () => {
 
   it("getSelectionHead should return undefined when there are no selection ranges", () => {
     const state = createInitialState({ content: "hello" });
-    // Manipulate selection to be empty
+    // Clear the selection ranges.
     const stateWithEmptySelection = {
       ...state,
       selection: { ranges: [] as unknown as typeof state.selection.ranges, primaryIndex: 0 },

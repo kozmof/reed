@@ -82,8 +82,8 @@ export function countNewlines(text: string): number {
 }
 
 /**
- * Count how many logical line breaks are actually removed by a delete.
- * Uses optional one-char boundary context to correctly handle partial CRLF deletes.
+ * Count the logical line breaks removed by a deletion.
+ * Use optional boundary characters to account for partial CRLF deletions.
  *
  * The context is needed when `lineIndexDelete`/`lineIndexDeleteLazy` is called
  * directly (e.g. in tests or undo/redo) with boundary characters that span a CRLF.

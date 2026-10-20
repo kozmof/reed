@@ -248,8 +248,7 @@ export function rebuildLineIndexFromPieceTableState(state: DocumentState): Docum
 // =============================================================================
 
 /**
- * Compute the expected cursor position after a change.
- * This is used to properly restore selection on redo.
+ * Compute the cursor position to restore when redoing a change.
  */
 function computeSelectionAfterChange(state: DocumentState, change: HistoryChange): SelectionState {
   let newPosition: number;
@@ -297,7 +296,7 @@ function lastHistoryChange(entry: HistoryEntry): HistoryChange | undefined {
  * Coalescing merges consecutive same-type changes within a timeout window
  * into a single undo entry (e.g., typing a word becomes one undo step).
  *
- * Coalescing targets the LAST change in the entry regardless of how many
+ * Coalescing targets the last change in the entry regardless of how many
  * changes it contains (e.g., the tail of a batched transaction). The earlier
  * changes are preserved in the merged entry by historyPush.
  */

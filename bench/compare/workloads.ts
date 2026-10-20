@@ -24,7 +24,7 @@ export interface Workload<F = any> {
   readonly covers: string;
   /** Size parameter values (usually line counts) to sweep. */
   readonly sizes: readonly number[];
-  /** Human-readable meaning of the size parameter. */
+  /** Meaning of the size parameter in reports. */
   readonly unit: string;
   /** Explain an expected output difference between versions. */
   readonly outputMayDiffer?: string;

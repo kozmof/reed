@@ -107,7 +107,7 @@ export function diff(oldText: string, newText: string): QuadCost<DiffResult> {
     suffixLen++;
   }
 
-  // Extract the parts that actually differ
+  // Extract the differing regions.
   const oldMiddle = oldText.slice(prefixLen, oldText.length - suffixLen);
   const newMiddle = newText.slice(prefixLen, newText.length - suffixLen);
 
@@ -563,7 +563,7 @@ export function computeSetValueActionsOptimized(
     start++;
   }
 
-  // Don't split surrogate pairs - if we stopped at a low surrogate that completes a pair, back
+  // Keep surrogate pairs intact. If the boundary falls on a paired low surrogate, back
   // up. A lone low surrogate is already a character on its own, and backing up over it could land
   // inside the pair that precedes it.
   if (
@@ -599,7 +599,7 @@ export function computeSetValueActionsOptimized(
     newEnd++;
   }
 
-  // Now we have the range that differs
+  // The remaining range contains the changed text.
   const deletedText = oldContent.slice(start, oldEnd);
   const insertedText = newContent.slice(start, newEnd);
 

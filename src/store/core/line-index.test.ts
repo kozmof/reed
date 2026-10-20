@@ -754,15 +754,11 @@ describe("assertEagerOffsets", () => {
     // Corrupt line 0's documentOffset and include it by sampling all lines.
     const line0 = findLineByNumber(state.root, 0)!;
     Object.freeze({ ...line0, documentOffset: 9999 });
-    // Replace root with the corrupted node (root IS line 1 in a balanced tree,
-    // so rebuild the tree with line 0 corrupted by creating a state that uses it)
-    // Simpler: directly build the corrupt state via lineIndexInsert and patch it
+    // Create another fixture with a corrupted copy of its first line.
     const base2 = createLineIndexState("X\nY\nZ\n");
     const line0Node = findLineByNumber(base2.root, 0)!;
     Object.freeze({ ...line0Node, documentOffset: 9999 });
-    // Walk down to corrupt line 0's leaf: replace it in a minimal structure
-    // Instead, use withLineIndexState to replace root with a revision where line 0 is bad:
-    // The simplest approach is to test via a 1-line document (root IS line 0)
+    // Put the corrupted node at the root so the diagnostic samples it.
     const oneLineState = createLineIndexState("hello\n");
     const corruptRoot = Object.freeze({ ...oneLineState.root!, documentOffset: 42 });
     const corruptState = { ...oneLineState, root: corruptRoot } as typeof oneLineState;

@@ -16,7 +16,7 @@ trap 'rm -rf "$tmp_dir"' EXIT
 
 mkdir -p "$(dirname "$output")"
 
-# Count tests from vitest's JSON reporter rather than scraping human output.
+# Read test counts from Vitest's JSON report.
 run_suite() {
   local label=$1
   local json=$2

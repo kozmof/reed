@@ -294,7 +294,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
     }
 
     default: {
-      // Exhaustive check - TypeScript will error if we miss an action type
+      // Reject unhandled action types at compile time.
       const exhaustiveCheck: never = action;
       const unknownAction = exhaustiveCheck as unknown as { readonly type?: unknown };
       throw new TypeError(`Unknown document action type: ${String(unknownAction.type)}`);

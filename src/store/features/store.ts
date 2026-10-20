@@ -373,7 +373,7 @@ function createStoreOverState(
    * Commit the current transaction level.
    * Notifies listeners and schedules reconciliation when the outermost transaction completes.
    * On throw (invariant violation) the store calls emergencyReset before rethrowing.
-   * The caller must NOT attempt rollback after a commitTransaction throw.
+   * Do not attempt rollback if `commitTransaction` throws.
    */
   function commitTransaction(): void {
     if (disposed) return;
@@ -392,7 +392,7 @@ function createStoreOverState(
   }
 
   /**
-   * Rollback the current transaction level, restoring the pre-transaction snapshot.
+   * Roll back the current transaction level to its starting snapshot.
    * Notifies listeners when the outermost rollback completes.
    * @throws if called with no active transaction (depth is 0).
    */
@@ -489,8 +489,7 @@ function createStoreOverState(
    * Force immediate reconciliation (blocking).
    * Use sparingly - prefer scheduleReconciliation().
    *
-   * Does NOT increment `state.revision`. Offset resolution is content-neutral:
-   * the document text is unchanged, so no revision increment is warranted.
+   * Preserve `state.revision` because resolving offsets leaves text unchanged.
    * Callers that need to detect whether lines are ready should inspect
    * `lineIndex.rebuildPending`, not compare revision numbers.
    */
@@ -598,7 +597,7 @@ function createStoreOverState(
  * });
  *
  * store.dispatch({ type: 'INSERT', start: byteOffset(5), text: ' World' });
- * // Event fires with affectedRanges: [5, 11]
+ * // Event fires with affectedRanges: [[5, 11]]
  * ```
  *
  * @param config - Optional configuration for the store

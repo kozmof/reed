@@ -60,7 +60,7 @@ function applyDocumentActions(
  * Set the entire document value to new content using a single optimized REPLACE operation.
  * Find the changed region in O(n) time and emit at most one action.
  *
- * For store semantics (single notification and rollback safety), callers should use store.batch().
+ * Use `store.batch()` to notify once and roll back the batch if an action fails.
  *
  * @param state - Current document state
  * @param newContent - The new content to set
@@ -93,7 +93,7 @@ export interface SetValueOptions {
  * Use `strategy: 'diff'` when fine-grained undo history matters.
  * Prefer the default `'fast'` for interactive updates.
  *
- * For store semantics (single notification and rollback safety), callers should use store.batch().
+ * Use `store.batch()` to notify once and roll back the batch if an action fails.
  *
  * @param state - Current document state
  * @param newContent - The new content to set
@@ -118,7 +118,7 @@ export function setValueAuto(
  *
  * Prefer `setValue` for interactive use. Use this when finer diff granularity matters.
  *
- * For store semantics (single notification and rollback safety), callers should use store.batch().
+ * Use `store.batch()` to notify once and roll back the batch if an action fails.
  *
  * @param state - Current document state
  * @param newContent - The new content to set

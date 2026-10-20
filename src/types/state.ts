@@ -306,9 +306,9 @@ export interface LineIndexState<M extends EvaluationMode = EvaluationMode> {
   readonly rebuildPending: M extends "eager" ? false : boolean;
   /**
    * Maximum number of dirty ranges before `mergeDirtyRanges` collapses them
-   * into a full-rebuild sentinel. Defaults to 32. Configurable via
-   * `DocumentStoreConfig.maxDirtyRanges` to give consumers back-pressure control
-   * over background reconciliation frequency.
+   * into a full-rebuild sentinel. Defaults to 32. Set
+   * `DocumentStoreConfig.maxDirtyRanges` to control how often accumulated ranges
+   * require a full rebuild.
    */
   readonly maxDirtyRanges: number;
   /**
@@ -480,9 +480,9 @@ declare const _pstackBrand: unique symbol;
  * Persistent balanced stack with logarithmic push/pop/trimming and automatic
  * structural sharing across snapshots. Empty stack is `null`.
  *
- * The `[_pstackBrand]` symbol is unexported, so external code cannot construct
- * or structurally pattern-match against the non-null branch. Use the exported
- * helpers such as `pstackPush` and `pstackPeek`.
+ * The unexported `[_pstackBrand]` symbol prevents external code from constructing
+ * a compatible node without a type assertion. Use exported helpers such as
+ * `pstackPush` and `pstackPeek` to work with the stack.
  */
 export type PStack<T> = null | (PStackNode<T> & { readonly [_pstackBrand]: never });
 
@@ -670,7 +670,7 @@ export interface DocumentState<M extends EvaluationMode = EvaluationMode> {
    */
   readonly revision: number;
   /**
-   * Counter incremented only by SET_SELECTION.
+   * Counter incremented by each SET_SELECTION action.
    *
    * `revision` also changes for content edits, so use `selectionRevision` to
    * detect SET_SELECTION actions. To skip content recomputation, compare
@@ -758,10 +758,10 @@ export interface DocumentStoreConfigBase {
   /** Timeout in ms for grouping consecutive undo entries (default: 0, disabled) */
   undoGroupTimeout?: number;
   /**
-   * Known total byte length of the file, declared before chunk loading begins. Must be a non-negative safe integer.
-   * When provided alongside `chunkSize`, callers can compute the expected chunk
-   * count and the document length is known upfront even before content arrives.
-   * 0 or omitted means the total size is not yet known.
+   * Total file size in bytes, declared before chunk loading begins.
+   * Must be a non-negative safe integer. Use it with `chunkSize` to compute the
+   * expected chunk count before content arrives.
+   * Zero or omitted means the total size is unknown.
    */
   totalFileSize?: number;
   /**

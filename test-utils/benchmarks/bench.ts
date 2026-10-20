@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * Standalone benchmarks for the Reed document store
+ * Standalone benchmarks for the Reed document store.
  *
  * Measures wall-clock time for the most performance-sensitive operations.
  * Each benchmark prints a summary line and flags regressions against a soft
- * threshold (10× slower than the baseline expectation).
+ * threshold set for that workload.
  *
  * Usage:
  *   npm run bench
@@ -13,12 +13,12 @@
  * Vitest to avoid test infrastructure overhead.
  *
  * Coverage:
- *   1. Large-document initial load (1 MB prose)
- *   2. Sequential inserts — 10 000 single-char inserts into a 1 MB document
- *   3. Mixed line-ending inserts (CRLF into LF document and vice-versa)
- *   4. Rapid undo sequences — 500 consecutive undos
- *   5. Reconciliation threshold — full reconcile after 200 lazy inserts
- *   6. Line-number lookup — O(log n) getLineStartOffset on a 50 000-line doc
+ *   1. Initial load of 10,000 prose lines
+ *   2. Insert 1,000 single characters into a 5,000-line document
+ *   3. Insert 200 CRLF sequences into an LF document
+ *   4. Undo 500 consecutive inserts
+ *   5. Reconcile a 2,000-line document after 200 lazy inserts
+ *   6. Run 10,000 O(log n) line-offset lookups on 50,000 lines
  */
 
 import { performance } from "perf_hooks";

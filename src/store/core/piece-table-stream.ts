@@ -99,10 +99,10 @@ export interface DocumentChunk {
  * @yields DocumentChunk objects
  *
  * @remarks
- * Traverse pieces lazily to avoid allocating an O(n) array upfront.
+ * Traverse pieces lazily to avoid allocating an O(n) array before reading.
  * UTF-8 decoder state is preserved between chunks, so concatenating `content`
- * reconstructs the selected byte range even when a character crosses a byte
- * boundary. A chunk can have empty `content` while the decoder waits for the
+ * reconstructs the selected byte range even when a character spans two output
+ * chunks. A chunk can have empty `content` while the decoder waits for the
  * remaining bytes of a multi-byte character.
  *
  * @example
@@ -165,7 +165,7 @@ function* streamChunks(
   // generator also keeps concurrent streams independent.
   const decoder = new TextDecoder();
 
-  // Process pieces until we reach `end`
+  // Process pieces up to `end`.
   while (currentEntry !== null && documentPosition < end) {
     const { piece } = currentEntry;
 

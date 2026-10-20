@@ -232,7 +232,7 @@ type MaxLabel<L extends CostLabel> = "quad" extends L
         : "const";
 
 /**
- * A value's own *declared* level = the max of its brand's level set, else
+ * A value's declared level is the maximum of its brand's levels, or
  * `const`. A `Costed<L, T>` brand carries `LevelsUpTo<L>` (every level ≤ L for
  * natural widening), so the declared level is the maximum of that set.
  */
@@ -242,7 +242,7 @@ type LabelOf<T> = T extends CostBrand<infer L> ? MaxLabel<L & CostLabel> : "cons
 type Prev = [never, 0, 1, 2, 3, 4, 5, 6];
 
 /**
- * Maximum *declared* cost label found anywhere in a payload, scanned to a
+ * Maximum declared cost label found anywhere in a payload, scanned to a
  * bounded depth. Used by `$lift`/`$proveCtx` to reject hiding an expensive
  * branded value inside an otherwise-cheap payload.
  *
@@ -367,7 +367,7 @@ export function $unsafeDeclare(max: CostInputLabel, value: unknown): unknown {
  *
  * @remarks
  * The `max` label is not enforced at runtime. This function verifies only that
- * the composed plan's type-level cost is ≤ `max` at compile time. Actual
+ * the composed plan's type-level cost is ≤ `max` at compile time.
  * See the module-level note for the limits of cost annotations.
  */
 export function $prove<L extends CostInputLabel, C extends Cost, T>(

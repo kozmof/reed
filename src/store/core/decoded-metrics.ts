@@ -136,7 +136,7 @@ export function summarizePieceRange(
   return visit(state.root, 0);
 }
 
-/** Walk just the intersecting pieces, without collecting the entire tree. */
+/** Walk the intersecting pieces without collecting the entire tree. */
 export function* pieceByteRanges(
   state: PieceTableState,
   start: number,

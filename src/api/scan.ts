@@ -1,14 +1,14 @@
 /**
  * The scan namespace traverses document content in O(n) time.
  *
- * Every function here walks the full document (or a large portion of it).
+ * Functions here walk the full document or a large portion of it.
  * Avoid `scan.*` inside a rendering loop or on every keystroke.
  * Use `query.*` for line lookups, cursor positioning, and bounded range reads.
  * Its selectors use cached values and tree prefix sums. Range reads also depend
  * on the amount of text returned.
  *
- * Appropriate uses of `scan.*`:
- * - One-time export / serialisation of the whole document
+ * Use `scan.*` for these tasks.
+ * - Exporting or serializing the whole document
  * - Background analysis (spell-check, word-count, diff)
  * - Test assertions that need the complete document string
  *

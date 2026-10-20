@@ -1,6 +1,5 @@
 /**
- * Generic Red-Black tree utilities.
- * Provides immutable balancing operations for any R-B tree node type.
+ * Balance immutable red-black trees with shared node utilities.
  */
 
 import type { NodeColor, RBNode } from "../../types/state.js";
@@ -170,8 +169,7 @@ export function fixRedViolations<N extends RBNode<N>>(node: N, withNode: WithNod
 // =============================================================================
 
 /**
- * An entry in the insertion path: a newly-created node and the direction
- * we descended from it to reach the next node in the path.
+ * An insertion-path entry holds a copied node and the direction of its next child.
  */
 export interface InsertionPathEntry<N extends RBNode<N>> {
   node: N;
@@ -182,10 +180,9 @@ export interface InsertionPathEntry<N extends RBNode<N>> {
  * An insertion path ordered root-first (index 0 = root, last index = leaf-parent).
  * This is the ordering required by fixInsertWithPath.
  *
- * bstInsert builds the path leaf-to-root as the recursion unwinds, then calls
- * .reverse() to produce this ordering. The brand makes that contract visible
- * at the type level: passing an unreversed (leaf-to-root) array to
- * fixInsertWithPath is a compile error.
+ * Insertion collects the descent from root to leaf and rebuilds copied nodes
+ * from the bottom up. The path keeps its root-first order. The brand requires
+ * callers to declare that order before passing it to `fixInsertWithPath`.
  */
 export type RootToLeafInsertPath<N extends RBNode<N>> = InsertionPathEntry<N>[] & {
   readonly _pathOrder: "root-to-leaf";
@@ -356,10 +353,10 @@ export interface RepairResult<N extends RBNode<N>> {
 /**
  * Repair a subtree whose left child has lost one black level.
  *
- * The four standard deletion cases, in order: red sibling (rotate to make it
- * black and retry), black sibling with two black children (push the deficit up),
- * near-red nephew (normalise into the far-red shape), far-red nephew (terminal
- * rotation).
+ * Apply the four standard deletion cases in order.
+ * Rotate a red sibling to make it black, then retry. With a black sibling and
+ * two black nephews, push the deficit up. Rotate a near-red nephew into the
+ * far-red shape. Finish a far-red case with a rotation.
  */
 export function repairLeftBlackDeficit<N extends RBNode<N>>(
   parent: N,

@@ -327,9 +327,8 @@ function buildPieceOffsetIndex(root: PieceNode | null): PieceOffsetIndex {
 
 /**
  * Resolve a single point against a prebuilt index.
- * Returns null for a dangling reference: the piece ID is absent, or the boundary
- * exceeds the piece's length (failing closed instead of returning a corrupt
- * offset).
+ * Returns `null` if the piece ID is absent or the boundary exceeds the piece's
+ * length.
  */
 function resolvePointWithIndex(index: PieceOffsetIndex, point: AttentionPoint): ByteOffset | null {
   const entry = index.get(point.pieceID);
@@ -748,7 +747,7 @@ export function migrateDelete(
  * Pass the current `attentionState` and keep the returned state.
  * `migrateDelete` re-anchors affected points.
  *
- * O(n + A·log n).
+ * Cost includes tree deletion and indexed migration of affected annotations.
  */
 export function deleteWithAttention(
   pieceTableState: PieceTableState,

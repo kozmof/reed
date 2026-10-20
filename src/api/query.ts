@@ -131,10 +131,8 @@ function findLineAtCharPosition(state: DocumentState, charPosition: number) {
 }
 
 /**
- * Return the head ByteOffset of the primary selection range.
- * Convenience accessor for reading cursor position after undo/redo without
- * indexing into ranges manually or casting through `as unknown as number`.
- * Returns undefined when the selection has no ranges.
+ * Read the cursor position from the primary selection range after undo or redo.
+ * Return its head as a `ByteOffset`, or `undefined` if there are no ranges.
  */
 function getSelectionHead(state: DocumentState): ByteOffset | undefined {
   return state.selection.ranges[state.selection.primaryIndex]?.head;

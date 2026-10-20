@@ -806,8 +806,8 @@ describe("Multibyte content (kanji + emoji)", () => {
     let inserted = 0;
     let insertedBytes = 0;
     const ms = bench(() => {
-      // Read current state after each insert and use line 0 because offsets shift.
-      // (offset 0) to stay at a guaranteed byte boundary regardless of insertions.
+      // Read the current state after each insert because offsets shift.
+      // Use line 0, which always starts at byte offset 0.
       const targetLine = Math.floor(rng() * Math.min(lineCount, 100));
       // getLineStartOffset on the *current* (lazy) state root still returns the
       // stored offset for unmodified lines near the start of the document.

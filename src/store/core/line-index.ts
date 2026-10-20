@@ -1,7 +1,6 @@
 /**
- * Line Index operations with immutable Red-Black tree.
- * Maintains line positions for O(log n) line lookups.
- * All operations return new tree structures with structural sharing.
+ * Maintain line positions in an immutable red-black tree for O(log n) lookups.
+ * Tree updates share unchanged subtrees with earlier versions.
  *
  * Cost typing policy: use explicit boundaries (`$unsafeDeclare`, `$prove`, `$proveCtx`)
  * for compute regions (see `src/types/cost-doc.ts`).
@@ -535,7 +534,7 @@ function appendLinesStructural(
 
   let newRoot = root;
 
-  // If inserting at end, we need to add to the last line
+  // Add to the last line when inserting at the end.
   if (position >= totalLength) {
     newRoot = addToLastLine(newRoot, textBeforeFirstNewline, firstCharDelta);
   } else {
@@ -923,7 +922,7 @@ export function lineIndexDelete(
   const deleteLength = end - start;
   const deletedNewlines = countDeletedLineBreaks(deletedText, deleteContext);
 
-  // If no newlines deleted, just update line length
+  // Update the line length when no line breaks are deleted.
   if (deletedNewlines === 0) {
     return $proveCtx(
       $beginCost("O(n log n)"),
@@ -1672,8 +1671,8 @@ function removeLinesToEndLazy(
 // =============================================================================
 
 /**
- * Get a line's content range with on-demand precision.
- * If the line is dirty, computes correct offset before returning.
+ * Get a line's exact content range from subtree byte-length sums.
+ * Works with both eager and lazy states without repairing cached offsets.
  */
 export function getLineRangePrecise(
   state: LineIndexState<"eager">,

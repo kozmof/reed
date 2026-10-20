@@ -1,6 +1,6 @@
 /**
- * Piece Table operations with immutable Red-Black tree.
- * All operations return new tree structures with structural sharing.
+ * Store document pieces in an immutable red-black tree.
+ * Tree updates share unchanged subtrees with earlier versions.
  *
  * Cost typing policy: use explicit boundaries (`$unsafeDeclare`, `$prove`, `$proveCtx`)
  * for compute regions (see `src/types/cost-doc.ts`).
@@ -62,10 +62,9 @@ export type { DocumentChunk, StreamOptions } from "./piece-table-stream.js";
 
 /**
  * Validate that a chunk's byte length is consistent with the declared file
- * geometry. A chunk whose length contradicts its declared
- * `ChunkMetadata.byteLength`, exceeds `chunkSize`, or would extend past a known
- * `totalFileSize` all shift every backing-file offset after it and must be
- * rejected. Returns true when the length is acceptable, including when the
+ * geometry. Reject a chunk whose length contradicts
+ * `ChunkMetadata.byteLength`, exceeds `chunkSize`, or extends past a known
+ * `totalFileSize`. These lengths are inconsistent with backing-file offsets. Returns true when the length is acceptable, including when the
  * relevant geometry is unknown (no declared metadata, `totalFileSize === 0`).
  *
  * Assumes the uniform chunk layout used throughout streaming: chunk `i` occupies
@@ -814,7 +813,7 @@ function replacePieceInTree(
 // =============================================================================
 
 /**
- * Create a child-less copy of `node` with new `start` and `length`.
+ * Create a childless copy of `node` with new `start` and `length`.
  * joinBalanced overrides the placeholder color ("black").
  *
  * `id` defaults to a fresh ID. Pass `node.id` when the fragment represents a
@@ -837,7 +836,7 @@ function makePiece(
  * `[offset, subtreeLength)` in document order.
  *
  * When `offset` falls in the middle of a piece that piece is cut into two
- * child-less pieces. Reassemble each half with `joinBalanced`, which
+ * childless pieces. Reassemble each half with `joinBalanced`, which
  * grafts at a node of matching black height and repairs on the way back up.
  *
  * Preserve IDs for pieces reconstructed unchanged so AttentionPoints still resolve.
@@ -876,7 +875,7 @@ function splitAt(
     return [joinBalanced(node.left, key, rl, withPiece), rr];
   }
 
-  // Cut this piece into two child-less halves at the split offset.
+  // Cut this piece into two childless halves at the split offset.
   // Left half inherits the original ID (same convention as insertWithSplit).
   // Track the fresh ID assigned to the right half when following piece references.
   const off = offset - pieceStart;
@@ -1083,8 +1082,8 @@ export function getLineLinearScan(state: PieceTableState, lineNumber: number): L
 
 /**
  * Find the byte offsets for a specific line.
- * Returns {start, end} or null if line doesn't exist.
- * Uses pieceTableInOrder with early exit to avoid collecting all pieces upfront.
+ * Returns `{ start, end }`, or `null` if the line does not exist.
+ * Stops `pieceTableInOrder` at the line end without collecting all pieces.
  *
  * Handles all three newline conventions:
  *   LF   (0x0a)       — Unix
@@ -1201,7 +1200,7 @@ function findLineOffsets(
 export interface BufferStats {
   /** Total bytes in the add buffer */
   addBufferSize: number;
-  /** Bytes actually referenced by pieces */
+  /** Bytes referenced by pieces */
   addBufferUsed: number;
   /** Bytes wasted (allocated but not referenced) */
   addBufferWaste: number;

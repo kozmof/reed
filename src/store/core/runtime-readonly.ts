@@ -34,24 +34,12 @@ function throwReadonlyUint8ArrayMutation(): never {
 /**
  * Wrap `bytes` in a proxy that refuses mutation.
  *
- * The wrapper favours safety over speed, and the difference is large enough to
- * matter in a loop. Measured on Node 25 (per operation):
+ * Each `.buffer` access copies the view's bytes with `target.slice().buffer`.
+ * The copy is not cached. Avoid repeated reads, especially inside piece loops.
  *
- * | Access | Raw | Through the proxy |
- * | --- | --- | --- |
- * | index read | 0.003 us | 0.196 us |
- * | `.length` | 0.006 us | 0.076 us |
- * | `.subarray(0, 64)` | 0.04 us | 0.48–1.1 us |
- * | `.buffer` (1 KiB) | — | 0.5 us |
- * | `.buffer` (1 MiB) | — | 294 us |
- *
- * Every `.buffer` access copies the entire buffer with `target.slice().buffer`.
- * This linear cost is not cached. Avoid repeated reads, especially per piece.
- *
- * Internal callers that already hold a trusted reference should go through
- * {@link unwrapReadonlyUint8Array}, which costs ~0.02 us and allocates nothing.
- * The piece table's read paths already do this. Treat the proxy as the boundary
- * representation handed to consumers, not as the type to traverse bytes with.
+ * Use {@link unwrapReadonlyUint8Array} for internal reads through a trusted
+ * reference. It returns the underlying array without copying or allocating.
+ * Keep the proxy at public boundaries to prevent consumer mutation.
  */
 export function asReadonlyUint8Array(bytes: Uint8Array | ReadonlyUint8Array): ReadonlyUint8Array {
   if (rawBytesByReadonly.has(bytes as ReadonlyUint8Array)) {

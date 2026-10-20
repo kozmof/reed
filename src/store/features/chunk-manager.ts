@@ -50,7 +50,7 @@ export interface ChunkLoader {
 export interface ChunkManagerConfig {
   /**
    * Maximum number of chunks to keep in memory simultaneously.
-   * When exceeded, the LRU-oldest non-pinned chunk is evicted.
+   * When exceeded, evict the least recently used unpinned chunk if possible.
    * Must be >= 1. Default: 8.
    */
   maxLoadedChunks?: number;
@@ -85,8 +85,8 @@ export interface ChunkManager {
   ensureLoadedMany(chunkIndices: readonly number[]): Promise<void>;
 
   /**
-   * Fire a background load for `chunkIndex` without blocking.
-   * Silently no-ops if the chunk is already in memory or already in-flight.
+   * Start a background load for `chunkIndex` without waiting.
+   * Do nothing if the chunk is already loaded or a fetch is in progress.
    */
   prefetch(chunkIndex: number): void;
 
@@ -141,9 +141,9 @@ export function createChunkManager(
     config.maxLoadedChunks !== undefined &&
     (!Number.isInteger(config.maxLoadedChunks) || config.maxLoadedChunks < 1)
   ) {
-    // Reject NaN / Infinity / 0 / negatives / fractionals: a non-integer or
-    // sub-1 cap silently disables LRU eviction (`count > NaN` is always false),
-    // letting memory grow unbounded.
+    // Require a positive integer cap. An invalid cap can
+    // disable LRU eviction and allow unbounded memory growth.
+    // For example, `count > NaN` is always false.
     throw new Error(
       `maxLoadedChunks must be a positive integer: ${String(config.maxLoadedChunks)}`,
     );

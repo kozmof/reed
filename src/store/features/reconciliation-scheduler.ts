@@ -32,9 +32,8 @@ export const MAX_SYNC_RECONCILIATION_STEPS = 100;
 /**
  * Factory for a custom reconciliation scheduler.
  *
- * Prefer this over passing a pre-built scheduler instance: the factory receives
- * the store's live maintenance callbacks, so it can schedule work without
- * circularly capturing the store being constructed.
+ * Use a factory to receive the store's live maintenance callbacks. This lets
+ * the scheduler request work without capturing the store during construction.
  */
 export type ReconciliationSchedulerFactory = (
   options: ReconciliationSchedulerOptions,
@@ -189,7 +188,7 @@ export function createReconciliationScheduler(
   }
 
   // mode === 'idle'
-  // NOTE: `hasPendingWork` and `shouldDefer` are live closures that always
+  // `hasPendingWork` and `shouldDefer` are live closures that always
   // read current store state when invoked rather than capturing it during schedule().
   function scheduleIdle(delay = 200): void {
     if (idleCallbackId !== null) return; // already scheduled

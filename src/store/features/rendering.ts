@@ -596,12 +596,12 @@ export function positionToLineColumn(
 /**
  * Convert line and column to a document byte position.
  *
- * The column is clamped to the length of the line, and a column that lands inside a code point
- * (between the two UTF-16 code units of a surrogate pair) snaps forward to the end of that
- * character, so the returned offset is always a UTF-8 code-point boundary. The snap is always
- * forward and is not reported back, so a caller building a range from two columns can see both
- * ends land on the same offset when they sit inside one character. Snap the leading side backward
- * if the range must include that character.
+ * Clamp the UTF-16 column to the line length. A column inside a surrogate pair
+ * snaps forward to the character's end, preserving UTF-8 code-point boundaries.
+ *
+ * The return value does not report snapping. Two columns inside the same pair
+ * can resolve to the same byte offset. If a range must include that character,
+ * move its leading column to the pair's start before converting.
  */
 export function lineColumnToPosition(
   state: DocumentState,

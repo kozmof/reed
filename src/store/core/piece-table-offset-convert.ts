@@ -11,7 +11,7 @@ import { $beginCost, $proveCtx, type LinearCost } from "../../types/cost-doc.js"
 import { textEncoder } from "./encoding.js";
 
 /**
- * Convert a character offset to byte offset within a given text.
+ * Convert a UTF-16 code-unit offset to a UTF-8 byte offset within `text`.
  *
  * Use this when converting user input (string indices) to piece table positions.
  * The piece table internally uses UTF-8 byte offsets, but JavaScript strings
@@ -53,10 +53,10 @@ export function charToByteOffset(text: string, charOffset: number): LinearCost<n
 }
 
 /**
- * Convert a byte offset to character offset within a given text.
+ * Convert a UTF-8 byte offset to a UTF-16 code-unit offset within `text`.
  *
- * Use this when converting piece table positions to user-visible indices.
- * Returns the character index that corresponds to (or is just before) the given byte offset.
+ * Use this to convert piece-table positions to JavaScript string indices.
+ * An offset inside a UTF-8 sequence resolves to the start of that character.
  *
  * @param text - The text to measure
  * @param byteOffset - Byte offset (UTF-8 bytes)
@@ -90,7 +90,7 @@ export function byteToCharOffset(text: string, byteOffset: number): LinearCost<n
 
     if (bytePos + seqLen > byteOffset) break;
     bytePos += seqLen;
-    // 4-byte UTF-8 sequences map to 2 JS chars (surrogate pairs)
+    // Four-byte UTF-8 sequences map to two UTF-16 code units.
     charPos += seqLen === 4 ? 2 : 1;
   }
 

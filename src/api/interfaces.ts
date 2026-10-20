@@ -57,7 +57,7 @@ import type {
 // Query namespace interfaces
 // =============================================================================
 
-/** Resident and expected line counts for eager and partially-loaded documents. */
+/** Resident and expected line counts for eager and partially loaded documents. */
 export interface LineCountInfo {
   /** Lines represented by the current resident piece/line trees. */
   readonly resident: number;
@@ -70,7 +70,7 @@ export interface LineCountInfo {
 
 /**
  * Contract for the `query.lineIndex` sub-namespace.
- * Low-level selectors operating directly on LineIndexState / LineIndexNode.
+ * Low-level selectors read `LineIndexState` or `LineIndexNode` directly.
  */
 export interface QueryLineIndexApi {
   findLineAtPosition(root: LineIndexNode | null, position: ByteOffset): LineLocation | null;

@@ -2,9 +2,8 @@
 #
 # Guard the public declaration surface.
 #
-# `dist/index.d.ts` and `dist/api/*.d.ts` are what a consumer's type-checker
-# reads. This script fails the build when they expose the internal cost algebra
-# or test helpers.
+# Consumers read `dist/index.d.ts` and `dist/api/*.d.ts` for public types.
+# Fail the build if these declarations expose internal cost types or test helpers.
 #
 # Allow references to `store/core` and `store/features`.
 # The public namespaces are assembled by re-exporting those modules, `files`
@@ -90,7 +89,7 @@ self_test() {
     fi
   done
 
-  # A missing surface must be an error, not a silent pass.
+  # Reject missing public declarations.
   mkdir -p "$tmp/empty"
   if check_dist "$tmp/empty" >/dev/null 2>&1; then
     echo "SELF-TEST FAILED: an empty dist directory was accepted" >&2
