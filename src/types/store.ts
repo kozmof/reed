@@ -1,7 +1,5 @@
 /**
- * DocumentStore interface for the Reed document editor.
- * Works with React's useSyncExternalStore,
- * Redux, Zustand, Vue, Svelte, and vanilla JavaScript.
+ * Store interfaces for reading and editing Reed documents with any UI framework.
  */
 
 import type { DocumentState } from "./state.js";
@@ -22,13 +20,11 @@ export type { Unsubscribe };
 export type StoreListener = () => void;
 
 /**
- * Core framework-agnostic store interface.
- * Compatible with React's useSyncExternalStore, Redux, Zustand, etc.
+ * Core store interface for reading snapshots, subscribing, and dispatching actions.
  */
 export interface DocumentStore {
   /**
-   * Subscribe to state changes.
-   * The listener is called whenever the state changes.
+   * Subscribe a listener to state changes.
    * @param listener - Function to call when state changes
    * @returns Unsubscribe function to remove the listener
    */
@@ -43,8 +39,8 @@ export interface DocumentStore {
   getSnapshot(): DocumentState;
 
   /**
-   * Get server-side snapshot (for SSR/hydration).
-   * Returns the same as getSnapshot() by default.
+   * Get the snapshot for server rendering and hydration.
+   * Reed stores return the same state as getSnapshot().
    * @returns Server-side document state
    */
   getServerSnapshot?: (() => DocumentState) | undefined;
@@ -104,9 +100,8 @@ export interface TransactionControl {
    * @throws if called with no active transaction (depth is 0).
    *
    * Rolling back a nested transaction restores the snapshot from that level.
-   * The enclosing transaction remains open. The outer
-   * transaction continues from the state it had before the inner `beginTransaction` call. To abort
-   * the entire nested sequence, the outer transaction must also call `rollbackTransaction`.
+   * The enclosing transaction stays open with the state from before the inner
+   * `beginTransaction` call. Roll back the outer transaction to abort it too.
    */
   rollbackTransaction(): void;
 }
@@ -114,9 +109,9 @@ export interface TransactionControl {
 /** Store with reconciliation methods, returned by createDocumentStore. */
 export interface ReconcilableDocumentStore extends DocumentStore, TransactionControl {
   /**
-   * Schedule background reconciliation of the line index.
-   * Uses requestIdleCallback when available, falls back to setTimeout.
-   * Does nothing if no reconciliation is pending.
+   * Ask the configured scheduler to reconcile the line index.
+   * The default idle scheduler uses requestIdleCallback when available and
+   * falls back to setTimeout. The "none" preset does no background work.
    */
   scheduleReconciliation(): void;
 
@@ -126,15 +121,14 @@ export interface ReconcilableDocumentStore extends DocumentStore, TransactionCon
    * guaranteeing no dirty ranges remain.
    * A subscriber may edit during notification, so the returned eager snapshot
    * may already be stale. Use isCurrentSnapshot() to check it.
-   * Use sparingly - prefer scheduleReconciliation() for non-critical updates.
+   * Prefer scheduleReconciliation() when updates can wait.
    */
   reconcileNow(): DocumentState<"eager">;
 
   /**
-   * Snapshot-gated synchronous reconciliation.
-   * Returns null when `snapshot` is stale (i.e., a newer dispatch has occurred),
-   * preventing a reconciled mode transition from being applied to an out-of-date view.
-   * Use this when reconciling from an async context where the snapshot may have aged.
+   * Reconcile synchronously if `snapshot` is still current.
+   * Return null if the store has moved to a different snapshot.
+   * Use this after asynchronous work to avoid reconciling a stale view.
    */
   reconcileIfCurrent(snapshot: DocumentState): DocumentState<"eager"> | null;
 
@@ -204,8 +198,7 @@ export interface ReadonlyDocumentStore {
 }
 
 /**
- * Type for the document reducer function.
- * Pure function that produces new state from old state + action.
+ * Pure function that produces a new state from the previous state and an action.
  */
 export type DocumentReducer = (state: DocumentState, action: DocumentAction) => DocumentState;
 

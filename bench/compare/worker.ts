@@ -1,7 +1,7 @@
 /**
  * Runs one workload at one size against one built Reed bundle and prints a
  * single JSON line to stdout. The orchestrator spawns a fresh process per
- * (version, workload, size, round) so JIT and heap state never leak between
+ * (version, workload, size, round) to isolate JIT and heap state between
  * versions.
  *
  * Usage:

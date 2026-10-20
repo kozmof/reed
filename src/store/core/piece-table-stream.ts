@@ -91,8 +91,7 @@ export interface DocumentChunk {
 }
 
 /**
- * Stream document content in chunks for memory-efficient processing of large files.
- * Yields DocumentChunk objects containing text content and metadata.
+ * Stream document text and byte-range metadata as DocumentChunk objects.
  *
  * @param state - The piece table state
  * @param options - Optional streaming configuration
@@ -101,8 +100,8 @@ export interface DocumentChunk {
  * @remarks
  * Traverse pieces lazily to avoid allocating an O(n) array before reading.
  * UTF-8 decoder state is preserved between chunks, so concatenating `content`
- * reconstructs the selected byte range even when a character spans two output
- * chunks. A chunk can have empty `content` while the decoder waits for the
+ * produces the decoded text of the selected byte range even when a character
+ * spans two output chunks. A chunk can have empty `content` while the decoder waits for the
  * remaining bytes of a multi-byte character.
  *
  * @example

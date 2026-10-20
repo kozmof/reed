@@ -283,7 +283,7 @@ export type CostCtx<S, L extends CostLabel, C extends Cost> = {
   readonly __bound: C;
 };
 
-/** A value inserted into a context: carries its origin region `S` and cost `C`. */
+/** A value carrying its origin region `S` and cost `C` within a context. */
 export type RegionCtx<S, C extends Cost, T> = { readonly __region: (s: S) => S } & Ctx<C, T>;
 
 /**

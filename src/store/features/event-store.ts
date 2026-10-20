@@ -39,7 +39,7 @@ export function withEvents(
   const pendingEventLevels: Array<Array<() => void>> = [];
 
   /**
-   * Emit or buffer an event emit function depending on whether a transaction is active.
+   * Buffer event delivery during a transaction. Otherwise, emit immediately.
    */
   function bufferOrEmit(fn: () => void): void {
     if (disposed) return;
@@ -98,9 +98,9 @@ export function withEvents(
       );
     }
 
-    // Attention change events: fire whenever the layer reference changed, whether
-    // from CREATE_ATTENTION / DELETE_ATTENTION or from a content edit re-anchoring
-    // points. Compared by reference (copy-on-write) so unchanged edits cost nothing.
+    // Emit attention-change when CREATE_ATTENTION, DELETE_ATTENTION, or a
+    // content edit changes the attention layer. Structural sharing makes the
+    // reference check O(1).
     if (prevState.attention !== nextState.attention) {
       prepare(
         "attention-change",
@@ -112,9 +112,8 @@ export function withEvents(
       );
     }
 
-    // Save events. Emitted only for an explicit MARK_SAVED, never inferred from
-    // the document merely becoming clean: the event asserts that the caller
-    // reported a successful save, not that Reed wrote anything anywhere.
+    // Emit save only for MARK_SAVED. The event records the caller reporting a
+    // successful save. Reed does not write the document itself.
     if (action.type === "MARK_SAVED") {
       prepare("save", createSaveEvent(nextState));
     }

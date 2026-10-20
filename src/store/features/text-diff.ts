@@ -176,12 +176,12 @@ function myersDiff(
     return [{ type: "delete", text: oldText, oldPos: oldOffset, newPos: newOffset }];
   }
 
-  // For small strings, use simple DP approach (threshold: n*m < 10000 cells)
+  // Use dynamic programming when n*m is less than 10,000 cells.
   if (n * m < 10000) {
     return simpleDiff(oldText, newText, oldOffset, newOffset);
   }
 
-  // At distance d only d + 1 diagonals are reachable: k = -d, -d+2, ..., d.
+  // At distance d, the d + 1 reachable diagonals are k = -d, -d+2, ..., d.
   // Store completed frontiers so backtracking reads the preceding distance.
   const trace: Int32Array[] = [];
   let allocatedBytes = 0;
@@ -218,7 +218,7 @@ function myersDiff(
     }
   }
 
-  // Defensive fallback: the edit graph should always reach (n, m).
+  // Fall back if the search fails to reach (n, m).
   return coarseReplacement(oldText, newText, oldOffset, newOffset);
 }
 

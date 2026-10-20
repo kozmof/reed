@@ -1,6 +1,5 @@
 /**
- * Rendering utilities for virtualized document display.
- * Provides efficient computation of visible lines and viewport management.
+ * Read visible lines, calculate viewport bounds, and convert document positions.
  */
 
 import type { DocumentState, SelectionRange, CharSelectionRange } from "../../types/state.js";
@@ -225,8 +224,7 @@ export const getLineContent: CostFn<"linear", [DocumentState, number], string | 
 };
 
 /**
- * Compute visible lines for rendering.
- * Returns line content and metadata for efficient virtualized rendering.
+ * Read the visible lines and their rendering metadata.
  */
 export function getVisibleLines(
   state: DocumentState,
@@ -513,8 +511,7 @@ export function positionToLineColumn(
   // Use findLineAtPosition to locate the line
   const lineInfo = findLineAtPosition(state.lineIndex.root, position);
   if (lineInfo) {
-    // offsetInLine is the byte offset within the line
-    // We need to convert to character offset
+    // Convert the byte offset within the line to a UTF-16 column.
     const range = getLineRangePrecise(state.lineIndex, lineInfo.lineNumber);
     if (range) {
       return $prove(

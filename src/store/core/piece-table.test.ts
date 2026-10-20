@@ -671,7 +671,7 @@ describe("Piece Table Operations", () => {
   });
 
   describe("RB tree properties after delete (split-join)", () => {
-    // Validates full RB invariants: black root, no red-red, equal black-heights.
+    // Check for a black root, no red-red edges, and equal black heights.
     function validateRB(node: ReturnType<typeof collectPieces>[0] | null): {
       blackHeight: number;
       valid: boolean;

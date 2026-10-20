@@ -24,8 +24,7 @@
 // =============================================================================
 
 /**
- * Unique symbol used for branding types.
- * This symbol is never used at runtime - it only exists for the type system.
+ * Compile-time symbol that distinguishes branded types.
  */
 declare const brand: unique symbol;
 

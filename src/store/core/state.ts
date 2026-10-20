@@ -248,9 +248,8 @@ export function createEmptyPieceTableState(
 /**
  * Create a piece node for 'original' or 'add' buffers. Used internally by piece table operations.
  *
- * All node creation (insert, split, compaction) flows through this function,
- * ensuring subtreeAddLength is always computed correctly from the start.
- * For 'chunk' pieces use createChunkPieceNode instead.
+ * Compute subtree byte lengths from the piece and its children.
+ * Use createChunkPieceNode for chunk pieces.
  *
  * Pass an explicit `id` to preserve identity across splits (left half of a split
  * inherits the original piece's id). Omit to auto-generate a fresh id.
@@ -486,13 +485,13 @@ function createLineIndexFromBytes(
     return createEmptyLineIndexState(maxDirtyRanges);
   }
 
-  // Encode to UTF-8 bytes and scan for line breaks.
+  // Scan the UTF-8 bytes for line breaks.
   // Line lengths and offsets must be in bytes, not UTF-16 code units.
   //
   // charLength is derived directly from the original JS string via a parallel
   // char-position cursor, avoiding O(L) textDecoder.decode calls.
-  // The cursor tracks UTF-16 code units consumed: BMP chars advance by 1,
-  // surrogate pairs (code points > U+FFFF) advance by 2.
+  // The cursor advances by one UTF-16 code unit for BMP characters and two
+  // for code points above U+FFFF.
   const lineStarts: { offset: number; length: number; charLength: number }[] = [];
   let lineStart = 0;
   let lineCharStart = 0; // UTF-16 code unit index of the current line's start in `content`
@@ -518,7 +517,7 @@ function createLineIndexFromBytes(
       lineCharStart = charI;
     } else if (bytes[i - byteStep] === 0x0d) {
       // Count '\r' as one UTF-8 byte.
-      // Handle CRLF: peek ahead
+      // Check for a following LF to handle CRLF.
       if (i < bytes.length && bytes[i] === 0x0a) {
         // Advance past the '\n'
         i++;
@@ -771,12 +770,9 @@ export type PieceNodeUpdates = Partial<
 >;
 
 /**
- * Helper to create modified piece node with structural sharing.
- * Generic over the concrete variant so the discriminant type is preserved.
- *
- * All tree mutations (insert, delete, rotations) flow through this function,
- * so subtreeAddLength is automatically maintained without changes to
- * rbInsertPiece, deleteRange, rotateLeft/rotateRight, or fixup logic.
+ * Create a modified piece node with structural sharing.
+ * Preserve the concrete node type and its buffer discriminant. Recompute
+ * subtreeLength and subtreeAddLength when children or piece length change.
  */
 export function withPieceNode<T extends PieceNode>(node: T, changes: PieceNodeUpdates): T {
   const base = { ...node, ...changes };

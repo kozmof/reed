@@ -100,7 +100,7 @@ describe("resolvePoint", () => {
   });
 
   it("resolves correctly after an insert that does not touch the piece", () => {
-    // Create state with two pieces: insert "World" into "Hello "
+    // Insert "World" into "Hello " to create two pieces.
     const s0 = createPieceTableState("Hello ");
     const { state: s1 } = insert(s0, 6, "World");
     // Point anchored to the original "Hello " piece at boundary 3 ("lo ")
@@ -112,7 +112,7 @@ describe("resolvePoint", () => {
   });
 
   it("gap at split boundary stays at the split point after an insert there", () => {
-    // Insert at the exact gap where ptB is anchored: the gap goes to the LEFT half,
+    // Insert at the gap where ptB is anchored. The gap stays with the left half,
     // so it resolves to offset 1 (before the inserted text), not offset 3 (before B).
     const s0 = createPieceTableState("AB");
     const ptB = createPoint(s0.root, byteOffset(1));
@@ -316,9 +316,9 @@ describe("findAttentionsOverlapping", () => {
     expect(findAttentionsOverlapping(l0, state.root, 5, 10)).toContain(id);
     // Query range [0, 3) overlaps [2, 8)
     expect(findAttentionsOverlapping(l0, state.root, 0, 3)).toContain(id);
-    // Query range [8, 13) does NOT overlap [2, 8) (end exclusive)
+    // Query range [8, 13) does not overlap [2, 8) (end exclusive)
     expect(findAttentionsOverlapping(l0, state.root, 8, 13)).not.toContain(id);
-    // Query range [0, 2) does NOT overlap [2, 8)
+    // Query range [0, 2) does not overlap [2, 8)
     expect(findAttentionsOverlapping(l0, state.root, 0, 2)).not.toContain(id);
   });
 });
@@ -415,7 +415,7 @@ describe("migrateSplits", () => {
 describe("multi-piece coverage", () => {
   it("an Attention spanning multiple pieces resolves to correct byte offsets", () => {
     const s0 = createPieceTableState("ABCDE");
-    // Force multiple pieces: insert "12" at offset 1 → pieces: [A][12][BCDE]
+    // Insert "12" at offset 1 to create pieces [A][12][BCDE].
     const { state: s1 } = insert(s0, 1, "12");
     // s1 document: "A12BCDE" (7 bytes)
 
@@ -444,7 +444,7 @@ describe("insertWithAttention", () => {
     const ptE = createPoint(s0.root, byteOffset(4))!;
     const [l0, id] = createAttention(emptyAttentionLayerState, ptD, ptE);
 
-    // Atomic helper performs the split-causing insert AND the migration.
+    // The helper inserts the text, splits the piece, and migrates the points.
     const { pieceTableState, attentionState, insertedByteLength } = insertWithAttention(
       s0,
       l0,
@@ -601,7 +601,7 @@ describe("deleteWithAttention", () => {
   });
 
   it("re-anchors a boundary-0 point on a fully-deleted interior piece (no dangling)", () => {
-    // Build three pieces: insert "XYZ" into "ABCDEFGH" at offset 4.
+    // Insert "XYZ" into "ABCDEFGH" at offset 4 to create three pieces.
     const s0 = createPieceTableState("ABCDEFGH");
     const { state: s1 } = insert(s0, 4, "XYZ"); // "ABCDXYZEFGH": [ABCD][XYZ][EFGH]
     // Anchor START at offset 4 = boundary 0 of the interior "XYZ" piece.
@@ -609,7 +609,7 @@ describe("deleteWithAttention", () => {
     const ptEnd = createPoint(s1.root, byteOffset(11))!; // document end
     const [l0, id] = createAttention(emptyAttentionLayerState, ptStart, ptEnd);
 
-    // Delete the whole "XYZ" span [4,7): the interior piece is dropped entirely,
+    // Delete the whole "XYZ" span [4,7). This removes the interior piece,
     // so its ID vanishes and the start point must be re-anchored.
     const { pieceTableState, attentionState } = deleteWithAttention(
       s1,
@@ -669,10 +669,10 @@ describe("migrateDelete", () => {
     const end = createPoint(s0.root, byteOffset(11))!;
     const [layer, id] = createAttention(emptyAttentionLayerState, start, end);
 
-    // Reference path: the coupled helper.
+    // Use the coupled helper as the reference result.
     const coupled = deleteWithAttention(s0, layer, byteOffset(0), byteOffset(6));
 
-    // Manual path: delete the piece table, then migrate with the standalone hook.
+    // Delete from the piece table, then migrate with the standalone hook.
     const newPt = del(s0, 0, 6);
     const migrated = migrateDelete(layer, s0.root, newPt.root, 0, 6);
 

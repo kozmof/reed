@@ -109,7 +109,7 @@ interface PieceNodeBase extends RBNode<PieceNode> {
   readonly _nodeKind: "piece";
   /** Stable identity that survives tree rotations, rebalancing, and offset movement. */
   readonly id: PieceID;
-  /** Start offset in the buffer (for 'chunk': offset within the chunk, not absolute file offset) */
+  /** Start offset within the buffer. Chunk offsets are relative to the chunk. */
   readonly start: ByteOffset;
   /** Length of this piece */
   readonly length: ByteLength;
@@ -157,9 +157,9 @@ export interface PieceTableState {
    * Keeping this in the immutable snapshot makes reducer replay deterministic.
    */
   readonly nextPieceID: number;
-  /** Original buffer: immutable, loaded from file */
+  /** Immutable original-content buffer. */
   readonly originalBuffer: ReadonlyUint8Array;
-  /** Add buffer: append-only growable buffer for user edits */
+  /** Append-only growable buffer for user edits. */
   readonly addBuffer: GrowableBuffer;
   /** Total document length (cached for O(1) access) */
   readonly totalLength: number;
@@ -284,7 +284,7 @@ export type DirtyLineRangeList = readonly DirtyLineRangeEntry[] | "full-rebuild-
 export const END_OF_DOCUMENT = Number.MAX_SAFE_INTEGER;
 export type EndOfDocument = typeof END_OF_DOCUMENT;
 
-/** Evaluation mode for the line index: eager has no dirty ranges, lazy may. */
+/** Line-index mode. Eager indices have no dirty ranges. Lazy indices may have them. */
 export type EvaluationMode = "eager" | "lazy";
 
 /**
@@ -661,11 +661,11 @@ export interface DocumentMetadata {
  */
 export interface DocumentState<M extends EvaluationMode = EvaluationMode> {
   /**
-   * Global state revision. Increments by exactly 1 on every state-changing
-   * action: content edits (INSERT/DELETE/REPLACE/APPLY_REMOTE), SET_SELECTION,
-   * HISTORY_CLEAR, UNDO/REDO, and LOAD_CHUNK/EVICT_CHUNK. Content-neutral ops
-   * (reconciliation, CREATE_ATTENTION/DELETE_ATTENTION, DECLARE_CHUNK_METADATA)
-   * return a new state reference but do NOT increment it. See the "Revision
+   * State revision. Increments by 1 for content edits
+   * (INSERT/DELETE/REPLACE/APPLY_REMOTE), SET_SELECTION,
+   * HISTORY_CLEAR, UNDO/REDO, and LOAD_CHUNK/EVICT_CHUNK when they change state.
+   * Reconciliation, CREATE_ATTENTION/DELETE_ATTENTION, and DECLARE_CHUNK_METADATA
+   * can return a new state reference without incrementing the revision. See the "Revision
    * semantics" section in docs/invariants.md for the full contract.
    */
   readonly revision: number;
@@ -777,8 +777,8 @@ export interface DocumentStoreConfigBase {
 /**
  * Configuration options for creating a document store.
  *
- * Choose either `reconcileMode` or `scheduler`. Providing both is a compile error. Use `reconcileMode` for the built-in
- * presets or `scheduler` to supply a custom scheduler factory. Pre-built
- * scheduler instances remain supported for backward compatibility.
+ * Choose either `reconcileMode` or `scheduler`. Providing both is a compile error.
+ * Use `reconcileMode` for the built-in presets or `scheduler` for a custom factory.
+ * Pre-built scheduler instances remain supported for backward compatibility.
  */
 export type DocumentStoreConfig = DocumentStoreConfigBase & ReconcileOptions;

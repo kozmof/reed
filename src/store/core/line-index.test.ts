@@ -773,13 +773,13 @@ describe("assertEagerOffsets", () => {
 //
 // These helpers are internal (not exported), so all assertions are made via
 // the public lazy-insert / lazy-delete + reconcileFull + assertEagerOffsets
-// pipeline.  The key invariant: after any sequence of lazy edits followed by
-// reconcileFull, assertEagerOffsets must not throw.
+// pipeline. After any sequence of lazy edits, reconcileFull must produce a
+// state that passes assertEagerOffsets.
 // ---------------------------------------------------------------------------
 
 describe("dirty range remapping — sequential edits", () => {
   // -------------------------------------------------------------------------
-  // Helper: build a document large enough to always trigger reconcileInPlace
+  // Build a document large enough to trigger reconcileInPlace
   // (the slow path), which recomputes all documentOffsets from scratch and
   // is immune to the fast-path delta-only limitation.
   // With N=400, the threshold is max(256, lineCount * 0.75) = 300.

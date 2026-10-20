@@ -11,7 +11,7 @@ import { DocumentActions } from "./actions.js";
 import { byteOffset } from "../../types/branded.js";
 import type { DocumentState } from "../../types/state.js";
 
-// Helper: create distinct states for snapshot testing
+// Create distinct states for snapshot tests.
 function makeState(content: string = ""): DocumentState {
   return createInitialState({ content });
 }

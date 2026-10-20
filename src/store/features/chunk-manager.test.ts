@@ -107,7 +107,7 @@ describe("ChunkManager.ensureLoaded", () => {
     const manager = createChunkManager(store, loader);
 
     await expect(manager.ensureLoaded(0)).rejects.toThrow("network error");
-    // Chunk must NOT be in the store
+    // Check that the chunk is absent from the store.
     expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
     manager.dispose();
   });
@@ -403,7 +403,7 @@ describe("ChunkManager.dispose", () => {
     resolveLoad(makeBytes("aaaabbbb")); // now finish the fetch
 
     await promise; // resolves (no rejection)
-    // Chunk must NOT have been dispatched into the store
+    // Check that the chunk was not dispatched into the store.
     expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
   });
 

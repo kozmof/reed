@@ -44,7 +44,7 @@ import {
 } from "./reconciliation-scheduler.js";
 
 // Automatically compact the add buffer when more than this fraction of allocated bytes
-// are unreferenced waste AND the buffer exceeds AUTO_COMPACT_MIN_BYTES.
+// are unreferenced and the buffer exceeds AUTO_COMPACT_MIN_BYTES.
 // Checked after each mutation in the idle callback, alongside reconciliation.
 const AUTO_COMPACT_WASTE_RATIO = 0.5;
 const AUTO_COMPACT_MIN_BYTES = 16384; // 16 KB
@@ -337,8 +337,8 @@ function createStoreOverState(
    * @param action - Action to dispatch
    * @returns New state after applying the action
    *
-   * Notify listeners synchronously when a non-transaction dispatch changes state. During an active transaction notifications are
-   * suppressed and delivered as a single call on outermost commit or outermost rollback.
+   * Notify listeners synchronously when dispatch changes state outside a transaction.
+   * During a transaction, defer notification until the outermost commit or rollback.
    */
   function dispatch(action: DocumentAction): DocumentState {
     if (disposed) return state;
@@ -487,7 +487,7 @@ function createStoreOverState(
 
   /**
    * Force immediate reconciliation (blocking).
-   * Use sparingly - prefer scheduleReconciliation().
+   * Prefer scheduleReconciliation() when updates can wait.
    *
    * Preserve `state.revision` because resolving offsets leaves text unchanged.
    * Callers that need to detect whether lines are ready should inspect
@@ -499,9 +499,8 @@ function createStoreOverState(
   }
 
   /**
-   * Snapshot-gated synchronous reconciliation.
-   * Returns null when `snapshot` is stale (a newer dispatch has occurred),
-   * preventing a reconciled state from being applied to an out-of-date view.
+   * Reconcile synchronously if `snapshot` is still current.
+   * Return null if the store has moved to a different snapshot.
    */
   function reconcileIfCurrent(snapshot: DocumentState): DocumentState<"eager"> | null {
     if (!isCurrentSnapshot(snapshot)) return null;
@@ -581,6 +580,8 @@ function createStoreOverState(
  * - 'content-change': On INSERT, DELETE, REPLACE, APPLY_REMOTE
  * - 'selection-change': On SET_SELECTION
  * - 'history-change': On UNDO, REDO
+ * - 'attention-change': When the attention layer changes
+ * - 'save': On MARK_SAVED
  * - 'dirty-change': When isDirty state changes
  *
  * Buffer transaction events at each nesting depth. Flush them in order

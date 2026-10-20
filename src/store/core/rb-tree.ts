@@ -212,7 +212,7 @@ function fixInsertViolation<N extends RBNode<N>>(
     return { fixed: node, propagate: false };
   }
 
-  // Both children red: color flip (uncle-red case in standard RB insertion)
+  // Flip colors when both children are red (the uncle-red insertion case).
   if (leftRed && rightRed) {
     return {
       fixed: withNode(node, {
@@ -247,7 +247,7 @@ export function fixInsertWithPath<N extends RBNode<N>>(
     // The loop guard guarantees this entry exists. Keep its reference so
     // mutations update the shared path entry.
     const entry = insertPath[i]!;
-    // Sync: if the child below was modified, update this node's reference to it
+    // Update this node's child reference if the child was modified.
     if (i < insertPath.length - 1) {
       const childBelow = insertPath[i + 1]!.node;
       const dir = entry.direction;
@@ -517,9 +517,9 @@ function joinRight<N extends RBNode<N>>(
     return withNode(key, { left, right, color: "red" });
   }
 
-  // Reachable only while blackHeight(left) > rh or left is red, both of which
-  // imply left is non-null: a null left is black with black height 1, and
-  // blackHeight(left) >= rh holds by construction.
+  // This branch requires blackHeight(left) > rh or a red left child.
+  // A null child is black with black height 1, and blackHeight(left) >= rh
+  // holds by construction, so left must be non-null.
   const node = left as N;
   const rebuilt = withNode(node, {
     right: joinRight(node.right, key, right, rh, withNode),
@@ -593,7 +593,7 @@ export function joinBalanced<N extends RBNode<N>>(
     return isRed(joined) && isRed(joined.left) ? withNode(joined, { color: "black" }) : joined;
   }
 
-  // Equal black heights: a red root keeps both sides' black height intact,
+  // With equal black heights, a red root preserves both sides' black height,
   // unless a child is already red, in which case the root must be black.
   return withNode(key, {
     left,

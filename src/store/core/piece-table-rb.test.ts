@@ -89,7 +89,7 @@ describe("piece table red-black contract", () => {
   // insert/delete programs that violated red-black invariants.
   describe("minimal reproducers", () => {
     it("keeps the red property through a prefix delete", () => {
-      // Never reaches removeMinimum: joinTrees returns `right` directly.
+      // joinTrees returns `right` without calling removeMinimum.
       runSequence([insert(0, "ab"), insert(1, "ab"), insert(2, "ab"), remove(0, 1)], "prefix/red");
     });
 
@@ -101,7 +101,7 @@ describe("piece table red-black contract", () => {
     });
 
     it("keeps the red property through a suffix delete", () => {
-      // Never reaches removeMinimum: joinTrees returns `left` directly.
+      // joinTrees returns `left` without calling removeMinimum.
       runSequence(
         [insert(0, "ab"), insert(0, "ab"), insert(0, "ab"), insert(1, "ab"), remove(5, 8)],
         "suffix/red",

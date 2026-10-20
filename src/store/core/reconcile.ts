@@ -53,10 +53,9 @@ export function mergeDirtyRanges(
     : [...ranges];
   const merged: DirtyLineRangeEntry[] = [];
   let i = 0;
-  // Loop invariant: `current` is the "in-flight" range that has NOT yet been
-  // pushed to `merged`. It is set to null only in the e1===e2 branch when the
-  // input is exhausted mid-loop. The post-loop push checks for null to avoid
-  // a double push.
+  // `current` holds the range that has not yet been pushed to `merged`.
+  // The e1===e2 branch sets it to null when the input is exhausted mid-loop.
+  // The final push checks for null to avoid adding the range twice.
   let current: DirtyLineRangeEntry | null = sorted[0]!;
 
   while (i < sorted.length - 1) {
@@ -402,8 +401,8 @@ export function reconcileFull(
     return $proveCtx($beginCost("O(n log n)"), toEagerLineIndexState(state, revision, { root }));
   }
 
-  // Slow path: triggered either by a sentinel (delta information lost) or when
-  // totalDirty > threshold (non-sentinel ranges covering most of the document).
+  // Use the full tree walk when the sentinel indicates lost delta information
+  // or totalDirty exceeds the threshold.
   // Both cases use the O(n) in-place tree walk because it is cheaper than the
   // O(K log n + totalDirty) incremental path when the dirty region is large.
   //

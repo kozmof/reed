@@ -333,8 +333,8 @@ function buildPieceOffsetIndex(root: PieceNode | null): PieceOffsetIndex {
 function resolvePointWithIndex(index: PieceOffsetIndex, point: AttentionPoint): ByteOffset | null {
   const entry = index.get(point.pieceID);
   if (entry === undefined) return null;
-  // Fail closed on a corrupt boundary in either direction: a negative boundary
-  // would produce an offset before the piece, an over-length one past it.
+  // Reject boundaries outside the piece. Negative boundaries would resolve
+  // before the piece, and boundaries beyond its length would resolve after it.
   if (!isValidAttentionBoundary(point.boundary) || point.boundary > entry.length) return null;
   return byteOffset(entry.offset + point.boundary);
 }
@@ -589,7 +589,7 @@ function migratePoint(
   });
 }
 
-/** Result of an attention-aware insert: both layers advanced together. */
+/** Piece table and attention layer returned by an attention-aware insert. */
 export interface InsertWithAttentionResult {
   readonly pieceTableState: PieceTableState;
   readonly attentionState: AttentionLayerState;
@@ -619,7 +619,7 @@ export function insertWithAttention(
   });
 }
 
-/** Result of an attention-aware delete: both layers advanced together. */
+/** Piece table and attention layer returned by an attention-aware delete. */
 export interface DeleteWithAttentionResult {
   readonly pieceTableState: PieceTableState;
   readonly attentionState: AttentionLayerState;
@@ -651,7 +651,7 @@ function migratePointForDelete(
     !isValidAttentionBoundary(point.boundary) ||
     point.boundary > entry.length
   ) {
-    return point; // dangling: leave as-is
+    return point; // Leave dangling points unchanged.
   }
 
   const offset = entry.offset + point.boundary;

@@ -41,7 +41,7 @@ export type CheckpointPiece =
   | readonly [id: string, buffer: "o" | "a", start: number, length: number]
   | readonly [id: string, buffer: "c", start: number, length: number, chunkIndex: number];
 
-/** One chunk buffer: its index plus base64-encoded bytes. */
+/** A chunk index and its base64-encoded bytes. */
 export type CheckpointChunk = readonly [chunkIndex: number, bytes: string];
 
 /** One pre-declared chunk metadata record. */
@@ -148,7 +148,7 @@ export interface CheckpointMetadata {
   readonly lastSaved?: number;
 }
 
-/** One attention: its id, then the piece/boundary pair for each endpoint. */
+/** An attention ID and the piece/boundary pair for each endpoint. */
 export type CheckpointAttention = readonly [
   id: string,
   startPieceID: string,

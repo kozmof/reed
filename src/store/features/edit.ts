@@ -187,7 +187,7 @@ export const eagerStrategy: LineIndexStrategy = {
   delete: (li, pos, end, text, ctx) => liDelete(li, pos, end, text, ctx),
 };
 
-/** Lazy strategy: records dirty ranges for background reconciliation (used by edits and history replay). */
+/** Record dirty ranges for background reconciliation during edits and history replay. */
 export function lazyStrategy(revision: number): LineIndexStrategy {
   return {
     insert: (li, pos, text, readText) => liInsertLazy(li, pos, text, revision, readText),
@@ -314,12 +314,12 @@ function canCoalesce(
 
   switch (newChange.type) {
     case "insert":
-      // Contiguous typing: new insert starts where last insert ended
+      // Coalesce typing when the new insert starts where the last insert ended.
       return newChange.position === last.position + last.byteLength;
     case "delete": {
-      // Backspace: new delete ends where last delete starts
+      // Coalesce backspaces when the new delete ends where the last delete starts.
       if (newChange.position + newChange.byteLength === last.position) return true;
-      // Forward delete: same position as last delete
+      // Coalesce forward deletes at the same position.
       if (newChange.position === last.position) return true;
       return false;
     }
@@ -335,7 +335,7 @@ function canCoalesce(
 function coalesceChanges(existing: HistoryChange, incoming: HistoryChange): HistoryChange {
   switch (incoming.type) {
     case "insert": {
-      // Append: concatenate text, keep earlier position
+      // Append the text and keep the earlier position.
       return Object.freeze({
         type: "insert" as const,
         position: existing.position,
@@ -345,7 +345,7 @@ function coalesceChanges(existing: HistoryChange, incoming: HistoryChange): Hist
     }
     case "delete": {
       if (incoming.position + incoming.byteLength === existing.position) {
-        // Backspace: prepend text, use earlier position
+        // Prepend backspaced text and use the earlier position.
         return Object.freeze({
           type: "delete" as const,
           position: incoming.position,
@@ -353,7 +353,7 @@ function coalesceChanges(existing: HistoryChange, incoming: HistoryChange): Hist
           byteLength: byteLength(existing.byteLength + incoming.byteLength),
         });
       }
-      // Forward delete: append text, keep position
+      // Append forward-deleted text and keep the position.
       return Object.freeze({
         type: "delete" as const,
         position: existing.position,

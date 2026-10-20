@@ -748,10 +748,8 @@ function insertWithSplit(
   insertedID: PieceID,
   rightID: PieceID,
 ): [PieceNode, SplitRecord] {
-  // We need to:
-  // 1. Replace the found piece with its left part
-  // 2. Insert the new piece
-  // 3. Insert the right part of the split
+  // Replace the found piece with its left part, then insert the new piece
+  // and the right part of the split.
 
   const [leftPart, rightPart, splitRecord] = splitPiece(
     location.node,
@@ -1326,7 +1324,7 @@ function rebuildTreeWithNewOffsets(
 
   const newLeft = rebuildTreeWithNewOffsets(node.left, addOffsets, counter);
 
-  // Process this node (in-order: left subtree done, now self)
+  // Process this node after its left subtree.
   let updatedNode: PieceNode = node;
   if (node.bufferType === "add") {
     const entry = addOffsets[counter.index++];

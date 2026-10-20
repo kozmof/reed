@@ -267,7 +267,7 @@ describe("ReconciliationScheduler", () => {
           workCount++;
           pendingUnits--;
           if (workCount === 1) {
-            // Re-entrant call must not recurse: the running guard records the
+            // The running guard prevents recursion by recording the
             // request instead of executing performWork synchronously here.
             reentrantRunningFlag = scheduler.isRunning;
             pendingUnits++; // a listener flips pending work back on

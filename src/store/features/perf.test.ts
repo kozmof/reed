@@ -99,9 +99,8 @@ function expectPendingRepair(lineIndex: LineIndexState, label: string): void {
  *
  * `reconcileRange` refuses the `'full-rebuild-needed'` sentinel outright, so a
  * window benchmark that reaches it silently measures nothing. The sentinel is
- * reachable here rather than hypothetical: every `setViewport` splits a dirty
- * range into left/right remainders, so a long enough loop grows the range count
- * past `maxDirtyRanges` and collapses it.
+ * reachable because viewport repairs can split dirty ranges into left and right
+ * remainders. Repeated repairs can push the count past `maxDirtyRanges`.
  */
 function expectRepairableWindow(lineIndex: LineIndexState, label: string): void {
   const ranges = lineIndex.dirtyRanges;
@@ -140,7 +139,7 @@ describe("Load: createInitialState", () => {
       state = createInitialState({ content: content_sm });
     });
     assertPerf(`createInitialState (${LINES_SM.toLocaleString()} lines)`, ms, 100);
-    // Sanity: line count matches
+    // Check that the line count matches.
     expect(state!.lineIndex.lineCount).toBe(LINES_SM);
   });
 
@@ -392,9 +391,8 @@ describe("Edits via store.dispatch", () => {
     expect(store.getSnapshot().pieceTable.totalLength).toBe(content_lg.length - ITERS);
   });
 
-  // Fragmentation is the workload the repaired deletion path exercises hardest:
-  // scattered inserts maximise piece count, and interior deletes then drive the
-  // split/join machinery over a deep tree.
+  // Scattered inserts create many pieces. Interior deletes then exercise
+  // splitting and joining over a deep tree.
   it("2 000 interior deletes over a heavily fragmented tree", () => {
     const INSERTS = 4_000;
     const DELETES = 2_000;
@@ -471,7 +469,7 @@ describe("Reconciliation", () => {
       const start = Math.floor(rng() * (lineCount - WINDOW));
       store.setViewport(start, start + WINDOW);
     }, ITERS);
-    // Cold: the first call dominates the total, so this measures the store path
+    // The first call dominates the total, so this measures the store path
     // end to end (listener notification, scheduled reconciliation) rather than
     // steady-state repair cost. See the reconcileViewport benchmark below.
     assertPerf(`setViewport cold (${WINDOW} lines) × ${ITERS}`, ms, 250, ITERS);
@@ -488,10 +486,9 @@ describe("Reconciliation", () => {
     expectRepairableWindow(dirty, "reconcileViewport");
 
     const rng = makeDeterministicRng(500);
-    // `dirty` is immutable and reused, so every iteration starts from the same
-    // pending repair: no range consumption, no dirty-range cap collapse, and no
-    // dispatch cost inside the timed loop. Driving the store instead would let
-    // the window repairs eat the dirty ranges and decay into timing no-ops.
+    // Reuse the immutable `dirty` state so every iteration repairs the same
+    // pending ranges without dispatch overhead. Store dispatches would consume
+    // the ranges or collapse them at the cap, leaving no work to measure.
     const ms = bench(
       () => {
         const start = Math.floor(rng() * (dirty.lineCount - WINDOW));
@@ -729,7 +726,7 @@ describe("Multibyte content (kanji + emoji)", () => {
     );
     assertPerf(`getCharStartOffset UTF-16 (multibyte)`, ms, 100, ITERS);
 
-    // Sanity: for multibyte content, char offsets must differ from byte offsets
+    // Check that UTF-16 offsets differ from byte offsets for multibyte content.
     const byteOff = getLineStartOffset(root, LINES_MB - 1);
     const charOff = getCharStartOffset(root, LINES_MB - 1);
     expect(charOff).toBeLessThan(byteOff);
@@ -809,7 +806,7 @@ describe("Multibyte content (kanji + emoji)", () => {
       // Read the current state after each insert because offsets shift.
       // Use line 0, which always starts at byte offset 0.
       const targetLine = Math.floor(rng() * Math.min(lineCount, 100));
-      // getLineStartOffset on the *current* (lazy) state root still returns the
+      // getLineStartOffset on the current lazy state root still returns the
       // stored offset for unmodified lines near the start of the document.
       const off = getLineStartOffset(store.getSnapshot().lineIndex.root, targetLine);
       const tokenIndex = inserted++ % tokens.length;
