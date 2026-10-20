@@ -77,7 +77,7 @@ Transaction behavior:
 - complete asynchronous work before calling `withTransaction` because work already started by a callback cannot be cancelled
 - event-store transactions buffer events by nesting depth and flush on outermost commit
 
-Important current behavior:
+History boundaries:
 
 - `batch()` is a notification boundary, not a history-collapsing boundary.
 - Each action still contributes history unless coalesced.
@@ -93,4 +93,4 @@ Important current behavior:
 - `attention-change` when attention records are created, deleted, or migrated
 - `dirty-change`
 
-`save` event type exists in the event system but is not auto-triggered by reducer/store actions.
+`MARK_SAVED` emits `save` after the caller reports a successful save. See [the save lifecycle](05-public-api.md#31-save-lifecycle) for ordering and transaction behavior.

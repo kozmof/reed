@@ -6,7 +6,7 @@ Reed validates actions and isolates failures at store boundaries. This document 
 
 ### 1.1 Input validation in reducer
 
-- Edit positions are validated/clamped to document bounds.
+- Edit positions are clamped to document bounds. Positions that split UTF-8 code points throw `RangeError`.
 - Invalid ranges (`start > end`) become no-op edits.
 - The trusted reducer treats non-finite positions as `0`. Unknown external input
   should go through `store.dispatchValidated()`, which rejects non-finite and
@@ -62,8 +62,8 @@ The following error domains are not implemented:
 
 ## 4. Recommendation for Next Iteration
 
-As new capabilities are added, keep the same strategy:
+Apply the same rules to new capabilities.
 
-- fail-soft at boundary points,
-- keep reducer/store deterministic,
-- isolate observer faults from core state transitions.
+- Reject invalid external input before dispatch.
+- Keep reducer transitions deterministic.
+- Isolate observer failures from committed state changes.

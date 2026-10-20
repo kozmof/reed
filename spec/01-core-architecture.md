@@ -62,7 +62,7 @@ Notes:
 
 `INSERT` / `DELETE` / `REPLACE` flow:
 
-1. Validate/clamp positions in reducer.
+1. Clamp positions to document bounds and reject positions that split UTF-8 code points.
 2. Update piece table.
 3. Update line index via lazy strategy for normal editing.
 4. Force line-index rebuild for CRLF boundary-sensitive delete cases.
@@ -71,11 +71,11 @@ Notes:
 
 ### 3.2 Undo/redo
 
-`UNDO` / `REDO` reconcile line index to eager before replay and then apply inverse/forward history changes.
+`UNDO` and `REDO` replay inverse or forward changes through the lazy edit pipeline. Aggregate-based queries remain accurate. Reconcile explicitly when cached node offsets are needed.
 
 ### 3.3 Remote edits
 
-`APPLY_REMOTE` sends insert/delete changes through the same untracked structural edit path as local edits. That path updates the piece table, lazy line index, and attention layer together. Remote edits then mark the document dirty and increment the revision without pushing history.
+`APPLY_REMOTE` sends insert/delete changes through the same untracked structural edit path as local edits. That path updates the piece table, lazy line index, and attention layer together. Effective remote edits mark the document dirty, increment the revision, and clear local undo and redo history because stored offsets are not rebased.
 
 ## 4. Store Runtime
 
@@ -91,7 +91,7 @@ Notes:
 
 `store.withTransaction(store, fn)` provides scoped transaction execution with rollback safety.
 
-Transaction control actions (`TRANSACTION_START/COMMIT/ROLLBACK`) are handled at store level, not reducer level.
+The store handles transaction control actions (`TRANSACTION_START/COMMIT/ROLLBACK`).
 
 `store.createDocumentStoreWithEvents()` wraps the base store with typed event emission.
 

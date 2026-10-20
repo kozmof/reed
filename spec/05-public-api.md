@@ -82,7 +82,7 @@ Wraps the base store and adds:
 Returns a `ReconcilableDocumentStore` whose state comes from a checkpoint. Throws
 `CheckpointError` before creating anything when the payload is not restorable.
 
-`store.createDocumentStoreWithEventsFromCheckpoint(checkpoint, config?)` is the event-store
+`store.createDocumentStoreWithEventsFromCheckpoint(checkpoint, config?, restoreOptions?)` is the event-store
 counterpart. Restoring emits no events.
 
 Config is `DocumentStoreRuntimeConfig`, which accepts only `logger` and either
@@ -129,12 +129,12 @@ Modes: `'idle'`, `'sync'`, `'none'`.
 - `store.DocumentActions`
 - `store.serializeAction` / `store.deserializeAction`
 - `store.unsafe.documentReducer`
-- immutable state factories/builders
-- piece-table and line-index core mutation helpers
-- reconciliation helpers (`reconcileRange`, `reconcileFull`, `reconcileViewport`)
+- `store.didEvict(prevState, nextState, chunkIndex)`
+- `store.unsafe.*` state factories, builders, and core mutation helpers
+- `store.unsafe.*` reconciliation helpers (`reconcileRange`, `reconcileFull`, `reconcileViewport`)
 - action validators/guards (`isDocumentAction`, `validateAction`, etc.)
 
-Note: `createChunkManager`, `createStreamingDocumentLoader`, and `createReconciliationScheduler` are flat runtime exports from `src/index.ts`/`src/store/index.ts`, not members of the `store` namespace object in `src/api/store.ts`.
+Import `createChunkManager`, `createStreamingDocumentLoader`, and `createReconciliationScheduler` directly from the package. These functions are flat runtime exports.
 
 ## 3. Event Semantics
 
@@ -158,12 +158,13 @@ Auto-emitted by `store.createDocumentStoreWithEvents`:
 
 ### 3.1 Save lifecycle
 
-Reed performs no I/O. The caller persists the document and then reports the
-result:
+Persist the document, then dispatch `MARK_SAVED` to report success. Reed performs no I/O.
 
 ```ts
-await writeFile(path, query.getText(state.pieceTable, ...));
-store.dispatch(DocumentActions.markSaved());
+import { store, scan } from "@kozmof/reed";
+
+await writeFile(path, scan.getValue(doc.getSnapshot().pieceTable));
+doc.dispatch(store.DocumentActions.markSaved());
 ```
 
 `MARK_SAVED` clears `metadata.isDirty` and stamps `metadata.lastSaved`.
@@ -227,7 +228,7 @@ Traversal namespace for O(n) operations:
 
 ### 4.4 Attention namespace (`attention`)
 
-Piece-anchored boundary references (the third Reed layer). State is immutable and caller-owned:
+The `attention` namespace manages piece-anchored references with immutable, caller-owned state. Store actions also maintain `DocumentState.attention` automatically.
 
 - `attention.emptyState`: initial `AttentionLayerState`
 - points: `createPoint`, `resolvePoint`
@@ -243,8 +244,8 @@ See [10-attention.md](10-attention.md) for the full design and migration semanti
 Capture a `DocumentState<'eager'>` as JSON-safe data and load it back:
 
 - `checkpoint.create(state, options?)`: state to `DocumentCheckpoint`
-- `checkpoint.restore(checkpoint)`: `DocumentCheckpoint` to `DocumentState<'eager'>`
-- `checkpoint.encode(state, options?)` / `checkpoint.decode(json)`: the same round trip through a string
+- `checkpoint.restore(checkpoint, restoreOptions?)`: `DocumentCheckpoint` to `DocumentState<'eager'>`
+- `checkpoint.encode(state, options?)` / `checkpoint.decode(json, restoreOptions?)`: the same round trip through a string
 - `checkpoint.isCheckpoint(value)`: envelope guard, not full validation
 
 Options (`CheckpointOptions`): `mode` (`'exact'` default, `'normalized'`), `compact` (default true).
@@ -259,7 +260,8 @@ See [11-checkpoint.md](11-checkpoint.md) for the wire format and validation cont
 - `diff.setValue(state, newContent, options?)` returns a new `DocumentState`.
 - `diff.computeSetValueActions*` helpers return action lists/diff metadata.
 
-Important behavior:
+Choose the helper for the state you own.
 
-- `setValue` operates on `DocumentState`, not directly on a store instance.
-- For listener/event/transaction semantics, dispatch actions through store methods.
+- `store.setValue(doc, newContent, options?)` updates a live store with notifications, events, and transaction rollback.
+- `diff.setValue(state, newContent, options?)` returns a detached state.
+- Both helpers default to one changed range. Pass `{ strategy: "diff" }` for finer edit ranges.

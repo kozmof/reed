@@ -62,7 +62,7 @@ Implemented in:
 - `src/store/features/events.ts`
 - `src/store/features/rendering.ts`
 
-Includes diff/setValue helpers, typed event emitter/store wrapper, and viewport/line selection utilities.
+Provides diff and `setValue` helpers, a typed event emitter, an event-store wrapper, and viewport selectors.
 
 ### 1.6 Public query/scan/history/diff layers
 
@@ -89,13 +89,13 @@ Implemented:
 Fully implemented:
 
 - Action types and creators: `LOAD_CHUNK`, `EVICT_CHUNK`, `DECLARE_CHUNK_METADATA`
-- Reducer handles both load and evict paths (byte decode, piece-table surgery, line-index update)
+- Reducer handles both load and evict paths (byte decode, piece-table updates, line-index update)
 - `createChunkManager` runtime: async loading, in-flight deduplication, LRU eviction, chunk pinning
 - `createStreamingDocumentLoader` runtime: metadata declaration, viewport loading, pinned/prefetched windows
 - `chunkSize`, `totalFileSize` in config
 
 ### 2.3 Attention layer
 
-Implemented in `src/store/core/attention.ts` and tested in `src/store/core/attention.test.ts`. The layer provides piece-anchored boundary references that survive RB-tree rebalancing and edit migration. Exposed publicly via the `attention` namespace (`src/api/attention.ts`).
+Implemented in `src/store/core/attention.ts` and tested in `src/store/core/attention.test.ts`. The layer provides piece-anchored boundary references that survive red-black tree rebalancing and migrate across edits. Available through the `attention` namespace (`src/api/attention.ts`).
 
 See [10-attention.md](10-attention.md) for the full design, API, and migration semantics.

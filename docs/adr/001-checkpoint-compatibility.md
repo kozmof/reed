@@ -25,16 +25,14 @@ The following measurements use unedited 4 KiB chunks.
 |              32 |      131,072 |          176,874 |  1.35 |
 |              64 |      262,144 |          353,162 |  1.35 |
 
-Growth is linear in chunks viewed. A long read-only browse of a large file
-produces a large checkpoint describing a document the user never edited.
+Payload size grows with resident chunks. Browsing a file can increase checkpoint size even without edits if those chunks remain loaded.
 
 ## Decision 1 — Migration policy (accepted, implemented)
 
 `minimumSupportedVersion()` derives the supported source window by walking
-backwards through the registered migration steps. With the registry empty it equals `CHECKPOINT_VERSION`, and it
-widens automatically as steps are appended.
+backward through the registered migration steps. An empty registry supports only `CHECKPOINT_VERSION`. Adding steps extends the supported range.
 
-Stepwise registry. Migrations are single-version (`v1 -> v2 -> v3`), never
+Migrations advance one version at a time (`v1 -> v2 -> v3`), never
 direct jumps. Each step is written once, against the format immediately
 preceding it, and is exercised by every later upgrade. A direct `v1 -> v3` step
 would have to be rewritten each time the format moves again.
@@ -88,7 +86,7 @@ following requirements.
    conditional on runtime configuration for the first time.
 
 Until those are settled, v1 remains the only format, and the migration dispatch
-above exists so that answering them later is an append, not a redesign.
+above exists to support a future format through an additional migration step.
 
 ## Consequences
 

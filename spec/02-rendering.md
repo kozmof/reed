@@ -36,14 +36,14 @@ Implemented utilities:
 ### 2.3 Height estimation
 
 - Supports fixed-height mode and estimated wrapped-height mode.
-- Wrapped mode uses either full scan for small documents or sampled extrapolation for large documents.
+- Wrapped mode scans small documents and estimates large documents from sampled lines.
 - Unloaded lines contribute one base-height row because their wrap length is unknown.
 
 ### 2.4 Position conversion
 
 - Byte offset and line/column conversions use the resident line tree and bounded piece-table reads.
 - A byte position inside a UTF-8 sequence returns `null` for position lookup or throws `RangeError` for selection conversion.
-- In the other direction, a column inside a code point resolves to the end of that character, so `lineColumnToPosition` always returns a code-point boundary. The snap is forward, so a caret UI that wants the start of the character snaps on its own side.
+- In the other direction, a column inside a code point resolves to the end of that character, so `lineColumnToPosition` always returns a code-point boundary. Apply a separate backward snap if the caret should sit before that character.
 - Character and byte selection conversion handles UTF-8 and UTF-16 differences through helper conversions.
 
 ## 3. Complexity Model in Code

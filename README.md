@@ -4,6 +4,8 @@ Reed is a fast, immutable text processor for building editors. It uses a piece t
 
 ## Installation
 
+Install Reed with your package manager.
+
 ```bash
 npm install @kozmof/reed
 # or
@@ -45,7 +47,7 @@ Reed's runtime is organized into namespaces.
 | `attention.*`  | Piece-anchored references that survive edits                      |
 | `checkpoint.*` | Saving a document state as JSON-safe data and loading it back     |
 
-Types are exported flat and can be imported directly.
+Import types directly from the package.
 
 ```ts
 import type { DocumentState, InsertAction, ByteOffset } from "@kozmof/reed";
@@ -82,7 +84,7 @@ unsubscribe();
 
 ## Editing the document
 
-All mutations go through `dispatch` with an action from `store.DocumentActions`. Offsets are byte offsets, built with `position.byteOffset(...)`.
+Dispatch actions from `store.DocumentActions` to edit a document. Construct byte offsets with `position.byteOffset(...)`.
 
 Store actions for edits, selections, and attentions, plus bounded public text reads, require UTF-8 code-point boundaries. Use `query.isUtf8Boundary(state.pieceTable, offset)` when converting raw byte positions from outside Reed. Positions produced by `rendering.lineColumnToPosition` and `rendering.charOffsetsToSelection` are already on boundaries, so the check is for offsets that arrive from elsewhere. Invalid reads and state changes throw `RangeError`. Low-level caller-owned attention helpers accept trusted positions, so validate those offsets first.
 
@@ -105,9 +107,11 @@ doc.dispatch(DocumentActions.replace(byteOffset(0), byteOffset(5), "Howdy"));
 doc.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(3), head: byteOffset(3) }]));
 ```
 
-`dispatch` returns the resulting `DocumentState`, so reads can be chained off the return value.
+`dispatch` returns the resulting `DocumentState`. Use that state for subsequent reads.
 
 ### Undo / redo
+
+Dispatch undo and redo actions, and query history to update your controls.
 
 ```ts
 import { store, history } from "@kozmof/reed";
@@ -141,6 +145,8 @@ store.setValue(doc, "completely new content", { strategy: "diff" });
 
 ### Fast reads: `query` (O(1) / O(log n))
 
+Use selectors for line lookups and bounded text reads. Reading text also costs time proportional to the bytes returned.
+
 ```ts
 import { query, position } from "@kozmof/reed";
 
@@ -157,6 +163,8 @@ query.getText(state.pieceTable, position.byteOffset(0), position.byteOffset(5));
 ```
 
 ### Full reads: `scan` (O(n))
+
+Read the whole document or stream it in chunks.
 
 ```ts
 import { scan } from "@kozmof/reed";
@@ -214,7 +222,7 @@ doc.dispatch(store.DocumentActions.insert(position.byteOffset(0), "hi"));
 
 ## Tracking references with attention
 
-The `attention` namespace anchors references to piece boundaries instead of document offsets, so a reference keeps pointing at the same text across edits elsewhere in the document. State is immutable and caller-owned. Pass the current `AttentionLayerState` into each operation and store the result, starting from `attention.emptyState`.
+The `attention` namespace anchors references to piece boundaries instead of document offsets, so a reference keeps pointing at the same text across edits elsewhere in the document. Store actions migrate `DocumentState.attention` automatically. For direct piece-table operations, keep a separate immutable `AttentionLayerState` and pass the returned state into the next operation.
 
 ```ts
 import { store, scan, position, attention } from "@kozmof/reed";
@@ -238,7 +246,7 @@ scan.getValue(pt); // ">> hello world"
 attention.getTextForAttention(pt, att, id); // "world"
 ```
 
-Use `insertWithAttention` / `deleteWithAttention` to keep the piece table and attention layer in sync. Resolution is fail-closed. A reference whose text was deleted resolves to `null` rather than to a wrong offset. See [spec/10-attention.md](spec/10-attention.md) for the full model.
+Use `insertWithAttention` / `deleteWithAttention` to keep the piece table and attention layer in sync. Resolution is fail-closed. A dangling reference resolves to `null`. Delete helpers re-anchor affected endpoints at the deletion boundary. See [spec/10-attention.md](spec/10-attention.md) for the full model.
 
 ## Working with large files
 
@@ -279,9 +287,7 @@ See [spec/03-loading-and-history.md](spec/03-loading-and-history.md) for the chu
 
 ## Saving and restoring state
 
-`getSnapshot()` hands you the current in-memory state. To persist one, use the `checkpoint`
-namespace. It turns a state into JSON-safe data and loads it back without replaying the edits
-that produced it.
+Use the `checkpoint` namespace to persist an eager document state as JSON-safe data. Restore it without replaying the edits that produced it.
 
 ```ts
 import { store, checkpoint, scan } from "@kozmof/reed";
@@ -300,9 +306,7 @@ A checkpoint carries the whole document state, including undo history, selection
 references, and loaded chunks. Editing continues from where it left off, so undo still walks
 back through edits made before the save.
 
-It does not carry store runtime. The restored store has no subscribers, no open transaction,
-and a new reconciliation scheduler, so re-subscribe and rebuild any `ChunkManager` after
-restoring.
+Store runtime starts fresh after restore. Re-subscribe and rebuild any `ChunkManager`. The restored store starts with a new reconciliation scheduler and no open transaction.
 
 Restore is fail-closed. A truncated or hand-edited payload raises `CheckpointError` with a
 `code` naming the problem. Add resource limits when the payload comes from outside your
@@ -338,12 +342,14 @@ contract.
 
 ## Design Overview
 
-1. Deterministic, pure reducers: every transition is a pure function of `(state, action)`.
-2. Immutable state with structural sharing: snapshots are safe to hold, compare by reference, and diff.
-3. Byte-accurate text model: explicit byte/char conversion utilities and no hidden encoding assumptions.
-4. Stratified complexity: `query` (fast lookups) and `scan` (full traversals) are separate namespaces so cost is visible at the call site.
+1. Pure reducers compute each transition from `(state, action)`.
+2. Immutable snapshots share unchanged structure and support reference comparisons.
+3. Explicit conversion utilities distinguish UTF-8 byte offsets from UTF-16 character offsets.
+4. Separate `query` and `scan` namespaces make lookup and traversal costs visible at the call site.
 
 ## Development
+
+Install dependencies, then run the commands needed for your change.
 
 ```bash
 pnpm install

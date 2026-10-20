@@ -20,7 +20,7 @@ concatenating the byte ranges each piece points to.
 Bytes are appended in edit order. Piece offsets keep the same meaning across
 segments and snapshot branches.
 
-Every insertion appends to the end, regardless of where in the document it appears:
+The following edits append bytes in edit order, regardless of their document positions.
 
 ```
 Edit sequence:
@@ -43,7 +43,7 @@ Because every edit appends, `addBuffer` ends up as a concatenation of all insert
 text in edit order, with no delimiters or alignment between them. Each `AddPieceNode`
 in the tree holds a `(start, length)` window that picks out exactly its own chunk.
 
-Extended example with five edits at scattered document positions:
+The following example shows the buffer after five edits at different document positions.
 
 ```
 Edit 1: insert "Line1\n"   at doc offset 0
@@ -60,8 +60,7 @@ addBuffer logical bytes (edit order):
   offset 21 : L i n e 8 \n          ← Edit 5  (6 bytes)
 ```
 
-The corresponding `AddPieceNode`s point into those ranges, wherever they sit in the
-RB-tree:
+Each range can be referenced by an `AddPieceNode`. Splits may divide a range between several nodes.
 
 ```
 AddPieceNode { start: 0,  length: 6 }  → "Line1\n"
@@ -75,10 +74,10 @@ The tree's in-order traversal visits these nodes in document order (which may be
 entirely different from the 0 → 6 → 12 → 18 → 21 physical order above) and emits the
 correct document text.
 
-A mid-piece insertion (§3) can also slice an existing add-buffer chunk. For example, if
-Edit 4 lands inside the "Line1\n" piece at offset 4, `splitPiece` leaves two
+A mid-piece insertion (§3) can also slice an existing add-buffer chunk. For a separate example, suppose
+an insertion lands inside the "Line1\n" piece at offset 4, `splitPiece` leaves two
 `AddPieceNode`s pointing to the original chunk plus one new node pointing to the "fix"
-bytes. All reference the same `addBuffer`, and no data is copied:
+bytes. The following pieces share `addBuffer` without copying existing bytes.
 
 ```
 addBuffer (unchanged):
@@ -243,7 +242,7 @@ For large documents, loading the entire content upfront is impractical. The chun
 allows the document to be populated incrementally. The backing store sends fixed-size
 byte arrays one at a time, and each arrives as a `LOAD_CHUNK` action. Chunks that have
 already been scrolled past can be evicted (`EVICT_CHUNK`) to free memory, and
-re-loaded on demand when that region is visited again.
+reloaded on demand when that region is visited again.
 
 `originalBuffer` cannot support this lifecycle because it is a single immutable
 `Uint8Array` loaded all at once. There is no way to release part of it, and its piece
@@ -312,15 +311,17 @@ former chunk pieces.
 
 ## 6. Complexity Summary
 
-| Operation                | Complexity                               |
-| ------------------------ | ---------------------------------------- |
-| Insert at boundary       | O(log n)                                 |
-| Insert in middle (split) | O(log n)                                 |
-| Delete within one piece  | O(log n)                                 |
-| Delete across k pieces   | O(k + log n)                             |
-| Read full document       | O(n)                                     |
-| Position lookup          | O(log n) via `subtreeLength` augment     |
-| Snapshot (undo entry)    | O(1) structural sharing                  |
-| Load chunk (first load)  | O(log n)                                 |
-| Load chunk (re-load)     | O(log n)                                 |
-| Evict chunk              | O(k + log n), k = nodes in evicted chunk |
+Here, n is the piece count. Insert costs below cover tree updates. Encoding and appending m inserted bytes adds O(m) work. Chunk operations also update the line index. A boundary-sensitive edit can require a full line-index rebuild.
+
+| Operation                | Complexity                                                      |
+| ------------------------ | --------------------------------------------------------------- |
+| Insert at boundary       | O(log n)                                                        |
+| Insert in middle (split) | O(log n)                                                        |
+| Delete within one piece  | O(log n)                                                        |
+| Delete across k pieces   | O(k + log n)                                                    |
+| Read full document       | O(n + B), B = bytes returned                                    |
+| Position lookup          | O(log n) via `subtreeLength` augment                            |
+| Snapshot (undo entry)    | O(1) structural sharing                                         |
+| Load chunk (first load)  | O(log n)                                                        |
+| Load chunk (re-load)     | O(n) insertion-position search plus tree updates                |
+| Evict chunk              | Range and attention checks plus deletion and line-index updates |

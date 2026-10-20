@@ -5,7 +5,7 @@ run the same workloads through the public API.
 
 ## Run it
 
-Build both commits, then pass their output directories to the comparison command.
+Use Node 22.18 or later for native TypeScript type stripping. Build both commits, then pass their checkout directories or bundle paths to the comparison command.
 
 ```bash
 # 1. Build both commits. Each export shares this checkout's node_modules.
@@ -20,20 +20,21 @@ pnpm bench:compare --base /tmp/reed-base --head /tmp/reed-head \
   --rounds 2 --samples 3 --sizes small --only undo-redo,attention-query
 ```
 
-Requires Node 22.18 or later (native TypeScript type stripping).
-
 Options:
 
-| Flag        | Default  | Meaning                                                                     |
-| ----------- | -------- | --------------------------------------------------------------------------- |
-| `--rounds`  | 5        | Worker processes per version per cell, alternating base/head order          |
-| `--samples` | 10       | Timed samples per process                                                   |
-| `--warmup`  | 2        | Untimed samples per process. Skipped once a sample exceeds 1 s              |
-| `--budget`  | 20000    | Per-process time budget in ms. Sampling stops after 3 samples once exceeded |
-| `--sizes`   | `all`    | `small` runs only each workload's first size                                |
-| `--only`    | all      | Comma-separated workload names                                              |
-| `--cpu`     | none     | Pin workers to this core with `taskset`                                     |
-| `--out`     | `report` | Output directory                                                            |
+| Flag               | Default  | Meaning                                                                     |
+| ------------------ | -------- | --------------------------------------------------------------------------- |
+| `--rounds`         | 5        | Worker processes per version per cell, alternating base/head order          |
+| `--samples`        | 10       | Timed samples per process                                                   |
+| `--warmup`         | 2        | Untimed samples per process. Skipped once a sample exceeds 1 s              |
+| `--budget`         | 20000    | Per-process time budget in ms. Sampling stops after 3 samples once exceeded |
+| `--sizes`          | `all`    | `small` runs only each workload's first size                                |
+| `--only`           | all      | Comma-separated workload names                                              |
+| `--cpu`            | none     | Pin workers to this core with `taskset`                                     |
+| `--out`            | `report` | Output directory                                                            |
+| `--worker-timeout` | 900000   | Maximum time per worker process in ms                                       |
+
+`prepare.sh` replaces its output directory and shares this checkout's `node_modules`. Use a disposable output path. The requested commit must have the same `pnpm-lock.yaml` as `HEAD`, and installed dependencies must match that lockfile.
 
 ## Method
 
@@ -52,5 +53,4 @@ Options:
 ## Adding a workload
 
 Add an entry to `workloads.ts`. Use only the `R` module object, never `src/`
-imports, so the workload runs against any build. Keep mutation inside the
-fixture returned by `prepare`, and return a checksum from `run`.
+imports, so the workload runs against any build. Keep mutations inside the fixture returned by `prepare`. Return a checksum from `run`.

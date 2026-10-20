@@ -52,12 +52,11 @@ upward. `joinTrees` discharges the deficit from removing its join key before
 either subtree's rank is read, and `joinBalanced` grafts at a node of matching
 black height. Only the final root is normalised to black.
 
-`fixRedViolations` is not a general repair: it handles neither a black
-deficit nor a red uncle. Before v3.2.0 the deletion path used it alone and
+Use `fixRedViolations` only for its supported graft shape. It cannot repair a black deficit or a red uncle. Before v3.2.0 the deletion path used it alone and
 recoloured the root to finish, which left the tree with red-red edges and
 uneven black height after ordinary interior, prefix and suffix deletes. Document
 text and the `subtreeLength` / `subtreeAddLength` aggregates stayed correct
-throughout, so only tree-shape assertions detected it; measured height reached
+throughout. Tree-shape assertions detected the failure when measured height reached
 roughly twice the red-black bound under delete-heavy fragmentation.
 `src/store/core/piece-table-rb.test.ts` pins the contract, and
 `assertPieceTableInvariants(..., strictRedBlack = true)` additionally checks
@@ -144,9 +143,7 @@ covers.
 
 #### Eager offset maintenance
 
-`eagerStrategy` is used by undo and redo. Newline-free changes update the edited
-line and shift every later cached offset in the same transition. This costs O(n)
-in the number of downstream lines and preserves the eager-state contract.
+`eagerStrategy` updates cached offsets synchronously. Newline-free changes update the edited line and shift every later cached offset. This costs O(n) in downstream lines. Store edits, undo, and redo use the lazy pipeline instead.
 
 ### 2.4 `documentOffset` in Lazy Mode
 
@@ -187,9 +184,8 @@ insert/delete.
 
 ### 3.2 `lastReconciledRevision` Monotonicity
 
-`state.lastReconciledRevision` is set to `state.revision` at the time of
-reconciliation. It never decreases. A stale revision indicates that subsequent
-edits have made the line index dirty again.
+`state.lineIndex.lastReconciledRevision` is set to `state.revision` at the time of
+reconciliation. It never decreases during forward edits and reconciliation. Rollback can restore an earlier snapshot. A later document revision can reflect selection or metadata changes without making the line index dirty.
 
 ### 3.3 Dirty Range Merge Rules
 
@@ -205,9 +201,7 @@ edits have made the line index dirty again.
 ### 3.4 Sentinel Means Full Rebuild Required
 
 When `dirtyRanges === "full-rebuild-needed"`, the individual `offsetDelta`
-values have been discarded. Only `reconcileFull` (slow path:
-`reconcileInPlace`) can recover from this state. Incremental range
-reconciliation leaves the sentinel unchanged.
+values have been discarded. Use `reconcileFull` to repair the whole index. The store calls it through `reconcileInPlace`. Incremental range reconciliation leaves the sentinel unchanged.
 
 ### 3.5 `reconcileRange` Is Idempotent on Non-Overlapping Windows
 
@@ -259,23 +253,21 @@ This section is the single source of truth for the three monotonic counters on
 ### 5.1 `revision` — global state revision
 
 `state.revision` is a global state revision, not a content version. It
-increments by exactly 1 on every state-changing action:
+increments by exactly 1 for the following actions when they change state.
 
 - content edits — `INSERT`, `DELETE`, `REPLACE`, `APPLY_REMOTE`
 - `SET_SELECTION`
 - `HISTORY_CLEAR`, `UNDO`, `REDO`
+- `MARK_SAVED`
 - `LOAD_CHUNK`, `EVICT_CHUNK`
 
 Because it moves on selection and history actions too, `revision` alone cannot
 tell you that content changed. To detect a content change, compare piece-table
-reference identity: `state.pieceTable === prev.pieceTable` (O(1) via structural
-sharing) holds whenever content is unchanged.
+reference identity in O(1). An unchanged piece-table reference means the text is unchanged. A changed reference can also reflect maintenance such as compaction.
 
 ### 5.2 Content-neutral operations MUST NOT increment `revision`
 
-Some operations produce a new immutable state reference (so subscribers fire) but
-are content-neutral and MUST NOT increment `revision`, so they are never
-misread as content edits:
+The following operations can produce a new immutable state reference and notify subscribers without incrementing `revision`.
 
 - reconciliation (`reconcileNow` / `getEagerSnapshot`) — resolves line offsets
   in place, leaving the visible text unchanged
@@ -283,8 +275,7 @@ misread as content edits:
   layer only
 - `DECLARE_CHUNK_METADATA` — registers line counts for unloaded chunks
 
-Canonical wording for such operations: "content-neutral: produces a new immutable
-state reference but MUST NOT increment `revision`."
+Describe these operations as producing a new immutable state reference without incrementing `revision`.
 
 ### 5.3 `selectionRevision`
 
@@ -295,9 +286,8 @@ not move it. It strictly tracks `SET_SELECTION` dispatches.
 
 Set to `state.revision` at reconciliation time, the revision before reconcile
 rather than after, because reconciliation does not increment `revision`. It never
-decreases.
-Compare `lineIndex.lastReconciledRevision < state.revision` to detect a stale
-index.
+decreases during forward edits and reconciliation. Rollback can restore an earlier snapshot.
+A lower `lastReconciledRevision` means the document revision has advanced. Check `query.isReconciledState(state)` to determine whether line-index work remains.
 
 ---
 

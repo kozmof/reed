@@ -2,7 +2,7 @@
 
 ## Scope
 
-Reed provides a text engine and state runtime for building editors.
+Reed stores and edits text for editor applications. This specification describes the implemented API and its constraints.
 
 - immutable `DocumentState` snapshots
 - piece table + line index data structures
@@ -24,13 +24,13 @@ Reed provides a text engine and state runtime for building editors.
 
 | Document                                                             | Domain        | Current Focus                                                               |
 | -------------------------------------------------------------------- | ------------- | --------------------------------------------------------------------------- |
-| [spec/01-core-architecture.md](spec/01-core-architecture.md)         | Core          | Piece table + line index architecture, reducer/store model, known core gaps |
+| [spec/01-core-architecture.md](spec/01-core-architecture.md)         | Core          | Piece table, line index, reducer, and store model                           |
 | [spec/02-rendering.md](spec/02-rendering.md)                         | Rendering     | Selector-level viewport/line utilities                                      |
 | [spec/03-loading-and-history.md](spec/03-loading-and-history.md)     | Data          | Streaming read support, history model, chunk loading runtime                |
 | [spec/04-collaboration.md](spec/04-collaboration.md)                 | Collaboration | `APPLY_REMOTE` remote-change primitives and their event semantics           |
 | [spec/05-public-api.md](spec/05-public-api.md)                       | API           | Actual exported API surface from `src/index.ts`                             |
 | [spec/06-testing.md](spec/06-testing.md)                             | Quality       | Current test suites, latest verified run, and coverage gaps                 |
-| [spec/07-error-handling.md](spec/07-error-handling.md)               | Reliability   | Implemented fail-soft behavior and known semantic gaps                      |
+| [spec/07-error-handling.md](spec/07-error-handling.md)               | Reliability   | Input validation, failure isolation, and known limits                       |
 | [spec/08-implementation.md](spec/08-implementation.md)               | Status        | Implemented subsystems, subsystem notes, and near-term priorities           |
 | [spec/09-piece-table-internals.md](spec/09-piece-table-internals.md) | Internals     | Add-buffer, chunk-buffer, and piece-table lifecycle details                 |
 | [spec/10-attention.md](spec/10-attention.md)                         | References    | Piece-anchored attention layer: points, spans, and edit migration           |
@@ -39,14 +39,14 @@ Reed provides a text engine and state runtime for building editors.
 ## Current API Snapshot
 
 - Entry point: `src/index.ts`
-- Store factories: `createDocumentStore`, `createDocumentStoreWithEvents`
+- Store factories: `store.createDocumentStore`, `store.createDocumentStoreWithEvents`
 - Chunk runtime: `createChunkManager`, `createStreamingDocumentLoader`
 - Reconciliation runtime: `createReconciliationScheduler`
 - Action creators: `DocumentActions`
 - Read layers: `query.*`, `scan.*`
 - Reference layer: `attention.*` (piece-anchored references)
 - Persistence layer: `checkpoint.*` plus `createDocumentStoreFromCheckpoint`
-- Write helpers: `documentReducer`, `setValue`, diff-based action computation
+- Write helpers: `store.setValue`, `diff.setValue`, `store.unsafe.documentReducer`, diff-based action computation
 
 ## Verification Snapshot
 
@@ -54,4 +54,4 @@ Reed provides a text engine and state runtime for building editors.
 results, and per-suite coverage. Verification counts live there so they cannot
 drift between status documents.
 
-See domain files under `/spec` for implementation-level details and constraints.
+See [spec/](spec/) for implementation details and constraints.

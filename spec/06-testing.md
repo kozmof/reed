@@ -24,6 +24,8 @@ Functional suites (`pnpm test`):
 - `src/store/core/streaming.test.ts`: `getValueStream` behavior
 - `src/store/core/rb-tree.test.ts`: shared Red-Black tree invariants
 - `src/store/core/attention.test.ts`: attention layer (piece-anchored boundary references) operations
+- `src/store/features/checkpoint-migrate.test.ts`: migration routing and unsupported-version handling
+- `src/store/core/growable-buffer.test.ts`: segmented buffer growth and snapshot isolation
 - `src/store/core/encoding.test.ts`: UTF-8 byte-length and surrogate-pair helpers
 - `src/store/core/runtime-readonly.test.ts`: readonly wrapper helpers for buffers/maps
 - `src/store/features/transaction.test.ts`: transaction manager behavior
@@ -75,13 +77,12 @@ asserts strict red-black balance on the bulk-loaded piece tree.
 
 ## 4. Coverage Boundaries
 
-Current gaps relative to roadmap/spec ambitions:
+Streaming coverage and its limits:
 
 - `createStreamingDocumentLoader` directly covers viewport validation, stale-request cache trimming, multi-chunk viewport transitions, and boundary eviction/reload
 - the performance suite enforces a 500 ms local-processing budget for a 100-chunk viewport, while end-to-end I/O latency remains loader- and product-specific
 
-The randomized high-scale streaming stress suite (`chunk-stress.test.ts`) closes the
-previously-acknowledged gap. It drives long seeded sequences of viewport-driven
+The randomized streaming stress suite (`chunk-stress.test.ts`) drives long seeded sequences of viewport-driven
 load/evict/reload through `createStreamingDocumentLoader` over ASCII LF and CRLF
 content (chunk boundaries deliberately split `\r\n` pairs) and, after every step,
 reads the actual resident chunk set and asserts the assembled text, total byte
@@ -102,15 +103,15 @@ lookups remain O(log n).
 
 Strict red-black validation now also runs on live edit sequences, not only
 on checkpoint-restored trees. Until v3.2.0 the model-based suite checked tree
-shape strictly only at `model-based.test.ts:222`, against a bulk-built restored
+shape strictly only against a bulk-built restored
 tree, so a piece tree that lost its balance guarantee through ordinary deletes
-passed the entire suite — text and aggregates stayed correct. Every live model
+passed despite incorrect balance because text and aggregates stayed correct. Every live model
 loop now passes `strictRedBlack = true`, and `assertPieceTableInvariants`
 additionally checks `height <= 2*log2(n + 1)`.
 
 Timing and complexity are gated separately. `perf.test.ts` holds
-catastrophic-failure ceilings with roughly an order of magnitude of headroom;
-`complexity.test.ts` holds deterministic structural bounds and runs in the
+timing ceilings with roughly an order of magnitude of headroom.
+`complexity.test.ts` checks deterministic structural bounds and runs in the
 ordinary functional suite.
 
 ## 5. Guidance for Spec-Driven Testing

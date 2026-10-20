@@ -16,11 +16,11 @@ The module is fully implemented and covered by `src/store/core/attention.test.ts
 
 It is public via the `attention` namespace on `src/index.ts` (`import { attention } from "@kozmof/reed"`). Attention layer types (`AttentionPoint`, `Attention`, `AttentionLayerState`, `ResolvedRange`, `InsertWithAttentionResult`, `DeleteWithAttentionResult`, `PieceID`, `AttentionID`) are exported flat. The function names in §4 are members of the `attention` namespace, and `emptyAttentionLayerState` is exposed as `attention.emptyState`.
 
-The layer is also wired into the store: `DocumentState` carries an `attention` field that the dispatch path migrates automatically, with `CREATE_ATTENTION` / `DELETE_ATTENTION` actions and an `attention-change` event (see §8).
+Store actions migrate the `DocumentState.attention` field automatically. Use `CREATE_ATTENTION` and `DELETE_ATTENTION` actions to manage references and `attention-change` to observe changes (see §8).
 
 ## 2. Core Idea
 
-An offset into a document is invalidated by every edit before it. An attention point instead pins to a piece boundary:
+An offset into a document is invalidated by every edit before it. An attention point identifies a boundary within a piece.
 
 - `AttentionPoint = { pieceID, boundary }`
 - `boundary` is the byte count from the piece's start to the point, the gap before byte `boundary` and after byte `boundary - 1`. Valid range: `0` (before the first byte) to `piece.length` (after the last byte).
@@ -82,7 +82,7 @@ builds a fresh index on the next query. Edits do not build the index themselves.
 - `deleteWithAttention(pieceTableState, attentionState, start, end): DeleteWithAttentionResult` — delete and re-anchor both layers in one step.
 - `migrateSplits(state, splits): state` — lower-level hook that migrates points after a raw `pieceTableInsert` (see §5.1).
 
-The Attention Layer stays caller-owned. Pass the current `attentionState` in, and store the returned one.
+For direct use of these helpers, pass the current `attentionState` and keep the returned state.
 
 ## 5. Migration Across Edits
 
@@ -103,7 +103,7 @@ After indexing, migration costs `O((S + C) log A)` for `S` splits and `C` candid
 
 ### 5.2 Delete (re-anchoring)
 
-The split–join delete strategy hands surviving fragments fresh piece IDs that no `SplitRecord` describes, so ID rewriting cannot heal points on a cut piece. `deleteWithAttention` instead resolves each point against the pre-delete tree and re-anchors it against the post-delete tree:
+The split–join delete strategy hands surviving fragments fresh piece IDs that no `SplitRecord` describes, so ID rewriting cannot heal points on a cut piece. `deleteWithAttention` migrates affected points according to their position in the deleted range.
 
 - points strictly before `start` — unaffected.
 - points at or after `end` — shift left by the deleted length.
@@ -115,14 +115,16 @@ Migration visits only cut pieces and their attached annotations. Each affected p
 
 ## 6. Fail-Closed Resolution
 
-Resolution never returns a silently-wrong offset. A point resolves to `null` when:
+Resolution rejects dangling points. A point resolves to `null` in either case below.
 
 - its `pieceID` is no longer in the tree, or
 - its `boundary` is negative, non-integer, unsafe, or exceeds the piece's current length (e.g. the piece was cut by a delete).
 
-Already-dangling points are left untouched by delete migration. They stay dangling rather than re-anchoring to garbage.
+Delete migration leaves already-dangling points unresolved.
 
 ## 7. Example
+
+Track a span while inserting text earlier in a caller-owned piece table.
 
 ```ts
 import { store, scan, position, attention } from "@kozmof/reed";
@@ -162,7 +164,7 @@ loaded reference from becoming dangling after eviction and reload.
 - `CREATE_ATTENTION { start, end }` — anchor a span by document byte offsets (actions use offsets so callers do not need piece identities). The reducer converts offsets to points against the current tree, and an empty tree is a no-op. The minted `AttentionID` is deterministic (`a{attention.nextID}` of the pre-dispatch state), so read it from the post-dispatch snapshot's `attention` layer.
 - `DELETE_ATTENTION { id }` — remove an attention, treating unknown IDs as a no-op.
 
-Both are content-neutral. They produce a new immutable state reference (so subscribers fire) but MUST NOT increment `revision`, so they are never misread as content edits, mirroring reconciliation. (See the "Revision semantics" contract in [docs/invariants.md](../docs/invariants.md).) Create them via `store.createAttention(start, end)` / `store.deleteAttention(id)` (the `DocumentActions` factory), and they round-trip through `serializeAction` / `deserializeAction`.
+Both are content-neutral. They produce a new immutable state reference (so subscribers fire) but MUST NOT increment `revision`, so they are never misread as content edits, mirroring reconciliation. (See the "Revision semantics" contract in [docs/invariants.md](../docs/invariants.md).) Create them with `store.DocumentActions.createAttention(start, end)` and `store.DocumentActions.deleteAttention(id)`. Both round-trip through `store.serializeAction` and `store.deserializeAction`.
 
 ### 8.3 Event emission
 

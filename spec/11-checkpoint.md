@@ -36,7 +36,7 @@ Everything in `DocumentState`, which is `revision`, `selectionRevision`, `pieceT
 ### 2.2 What is not captured
 
 Store runtime belongs to a store instance rather than to its state, and always starts fresh
-on restore:
+on restore.
 
 - subscriber list
 - transaction depth and the snapshots held per level
@@ -51,9 +51,9 @@ open transaction, so that state becomes its committed baseline.
 ## 3. Format
 
 The envelope is `{ format: 'reed-checkpoint', version: 1, mode, ... }`. Restore rejects an
-unknown `format` and every version other than `1`. No version migration exists yet.
+unknown `format` and unsupported versions. A migration registry routes supported older versions before validation. The registry is currently empty, so only version `1` is supported. See [the migration policy](../docs/adr/001-checkpoint-compatibility.md#decision-1--migration-policy-accepted-implemented).
 
-Byte buffers are base64. Both trees are stored as flat in-order lists.
+Byte buffers are base64. Both trees are stored as flat in-order lists. The following example illustrates the wire shape. Its placeholder buffers and abbreviated lists are not a restorable payload.
 
 ```jsonc
 {
@@ -191,6 +191,8 @@ revision, so its offsets may legitimately point past the end of the current docu
 
 ## 6. API
 
+Capture an eager state, then restore either a state or a live store.
+
 ```ts
 checkpoint.create(state, options?)   // DocumentState<'eager'> -> DocumentCheckpoint
 checkpoint.restore(checkpoint, restoreOptions?) // unknown -> DocumentState<'eager'>
@@ -226,14 +228,12 @@ own first dispatch produces.
 Normalized capture builds one piece-offset index and resolves every attention against it. The
 attention step is O(P + A), where P is the piece count and A is the attention count.
 
-Capture cost is dominated by base64 encoding the buffers. Measured on a 50,000-line document,
-capture runs in roughly 70 ms and restore in roughly 25 ms.
+Capture includes base64 encoding of the buffers. Measure capture and restore with representative content and history on your target runtime.
 
 ## 8. Known limits
 
 - Chunked capture inlines every loaded chunk buffer. A policy for checkpointing an unloaded
   skeleton needs the eviction-refusal path from `chunk-actions.ts`, because a chunk with
   overlapping user edits cannot be dropped.
-- The format has one version. `VERSION_UNSUPPORTED` reserves the forward-compatibility path,
-  but no migration between versions exists yet.
+- Version `1` is the only supported format. Migration routing is implemented, but the registry has no upgrade steps yet.
 - `normalized` capture is unavailable for chunked documents.
