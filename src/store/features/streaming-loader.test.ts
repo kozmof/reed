@@ -271,6 +271,33 @@ describe("StreamingDocumentLoader", () => {
     store.dispose();
   });
 
+  it("keeps the viewport usable after a background prefetch fails", async () => {
+    const store = createDocumentStore({ chunkSize: 1 });
+    const loadChunk = vi.fn(async (chunkIndex: number) => {
+      if (chunkIndex === 1) throw new Error("prefetch failed");
+      return new Uint8Array([65 + chunkIndex]);
+    });
+    const loader = createStreamingDocumentLoader(
+      store,
+      { loadChunk },
+      Array.from({ length: 3 }, (_, chunkIndex) => ({
+        chunkIndex,
+        byteLength: 1,
+        lineCount: 0,
+      })),
+      { prefetchWindowSize: 1 },
+    );
+
+    await expect(loader.setViewport(0, 0)).resolves.toBeUndefined();
+    await vi.waitFor(() => expect(loadChunk).toHaveBeenCalledWith(1, expect.any(AbortSignal)));
+    await expect(loader.setViewport(2, 2)).resolves.toBeUndefined();
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([0, 2]);
+    expect(getValue(store.getSnapshot().pieceTable)).toBe("AC");
+
+    loader.dispose();
+    store.dispose();
+  });
+
   it("rejects metadata that contradicts known file geometry", () => {
     const store = createDocumentStore({ chunkSize: 4, totalFileSize: 6 });
     const chunkLoader = {
