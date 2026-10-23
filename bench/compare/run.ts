@@ -173,7 +173,7 @@ for (const w of selected) {
       }
       process.stderr.write(` ${summarize(cell).line}\n`);
     } catch (err) {
-      cell.error = err instanceof Error ? err.message.split("\n")[0] : String(err);
+      cell.error = err instanceof Error ? (err.message.split("\n")[0] ?? err.message) : String(err);
       process.stderr.write(` ERROR ${cell.error}\n`);
     }
   }
@@ -305,6 +305,30 @@ for (const { cell, s } of rows) {
   md.push(
     `| ${cell.workload} | ${cell.size.toLocaleString("en-US")} | ${fmtMs(s.baseMs)} | ${fmtMs(s.headMs)} | ${fmtRatio(s.ratio)} | ${s.ci.lo.toFixed(2)}–${s.ci.hi.toFixed(2)} | ${s.verdict} | ${fmtBytes(s.baseAlloc)} → ${fmtBytes(s.headAlloc)} | ${fmtBytes(s.baseRetained)} → ${fmtBytes(s.headRetained)} | ${s.output} |`,
   );
+}
+const measured = rows.filter(
+  ({ cell, s }) => s && cell.raw.base.some((r) => Object.keys(r.metrics).length),
+);
+if (measured.length) {
+  md.push(
+    "",
+    "## Additional measurements",
+    "",
+    "Medians use the same timed samples as the main table. Counters and phase timings are excluded from output checksums. These rows do not apply the main table's confidence threshold.",
+    "",
+    "| Workload | Size | Metric | Base | Head |",
+    "|---|---:|---|---:|---:|",
+  );
+  for (const { cell } of measured) {
+    const names = new Set(cell.raw.base.flatMap((r) => Object.keys(r.metrics)));
+    for (const name of names) {
+      const base = median(cell.raw.base.flatMap((r) => r.metrics[name] ?? []));
+      const head = median(cell.raw.head.flatMap((r) => r.metrics[name] ?? []));
+      md.push(
+        `| ${cell.workload} | ${cell.size.toLocaleString("en-US")} | ${name} | ${base.toFixed(3)} | ${head.toFixed(3)} |`,
+      );
+    }
+  }
 }
 md.push("", "## Workloads", "");
 for (const w of selected) {

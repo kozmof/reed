@@ -28,6 +28,8 @@ export interface WorkerResult {
   /** Heap growth during `run` before collection, an allocation proxy. */
   allocatedBytes: number[];
   checksum: string;
+  /** Optional workload-specific measurements, collected outside the timed interval. */
+  metrics: Record<string, number[]>;
 }
 
 const MIN_SAMPLES = 3;
@@ -62,6 +64,7 @@ const result: WorkerResult = {
   retainedBytes: [],
   allocatedBytes: [],
   checksum: "",
+  metrics: {},
 };
 
 // Keeps the latest output alive until its retained size is measured.
@@ -93,6 +96,10 @@ for (let i = 0; i < warmup + samples; i++) {
     result.times.push(elapsed);
     result.allocatedBytes.push(Math.max(0, peak - before));
     result.retainedBytes.push(after - before);
+    for (const [name, value] of Object.entries(workload.metrics?.(fixture) ?? {})) {
+      if (!Number.isFinite(value)) throw new Error(`invalid metric ${name}: ${value}`);
+      (result.metrics[name] ??= []).push(value);
+    }
   }
   workload.cleanup?.(fixture);
 }

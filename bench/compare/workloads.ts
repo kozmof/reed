@@ -31,6 +31,8 @@ export interface Workload<F = any> {
   prepare(R: ReedModule, size: number): F;
   run(R: ReedModule, fixture: F, size: number): Checksum | Promise<Checksum>;
   cleanup?(fixture: F): void;
+  /** Additional counters or timings, collected outside the timed interval. */
+  metrics?(fixture: F): Record<string, number>;
 }
 
 // -----------------------------------------------------------------------------
@@ -484,6 +486,215 @@ export const workloads: readonly Workload[] = [
       // In 2.0.0, getLineCount counted resident lines before getResidentLineCount was added.
       const resident = R.query.getResidentLineCount ?? R.query.getLineCount;
       return `${st.pieceTable.chunkMap.size}:${resident(st)}`;
+    },
+    cleanup: (f) => f.s.dispose(),
+  },
+  {
+    name: "chunk-slow-fetch",
+    covers: "59520f7 progressive batches and bounded fetch concurrency",
+    sizes: [8, 32],
+    unit: "chunks of 128 bytes (one fetch delayed by 40 ms)",
+    prepare(R, n) {
+      const s = R.store.createDocumentStore({ chunkSize: 128, reconcileMode: "none" });
+      const chunks = Array.from({ length: n }, (_, i) =>
+        new TextEncoder().encode(String.fromCharCode(65 + (i % 26)).repeat(127) + "\n"),
+      );
+      const metrics = {
+        "first readable (ms)": 0,
+        "total load (ms)": 0,
+        "peak concurrent fetches": 0,
+        notifications: 0,
+      };
+      let active = 0;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const manager = R.createChunkManager(
+        s,
+        {
+          async loadChunk(index) {
+            active++;
+            metrics["peak concurrent fetches"] = Math.max(
+              metrics["peak concurrent fetches"],
+              active,
+            );
+            try {
+              if (index === n - 1)
+                await new Promise<void>((resolve) => {
+                  timer = setTimeout(resolve, 40);
+                });
+              else await Promise.resolve();
+              return chunks[index]!;
+            } finally {
+              active--;
+            }
+          },
+        },
+        { maxLoadedChunks: n },
+      );
+      return { s, manager, metrics, clearTimer: () => clearTimeout(timer) };
+    },
+    async run(R, f, n) {
+      const start = performance.now();
+      let firstReadable = false;
+      const unsubscribe = f.s.subscribe(() => {
+        f.metrics.notifications++;
+        if (!firstReadable && f.s.getSnapshot().pieceTable.chunkMap.has(0)) {
+          const text = R.query.getText(f.s.getSnapshot().pieceTable, off(0), off(1));
+          if (text !== "A") throw new Error("fast chunk was not readable");
+          f.metrics["first readable (ms)"] = performance.now() - start;
+          firstReadable = true;
+        }
+      });
+      try {
+        await f.manager.ensureLoadedMany(Array.from({ length: n }, (_, i) => i));
+        f.metrics["total load (ms)"] = performance.now() - start;
+        if (!firstReadable || f.s.getSnapshot().pieceTable.chunkMap.size !== n)
+          throw new Error("batch did not load every chunk");
+        return () => docChecksum(R, f.s.getSnapshot());
+      } finally {
+        unsubscribe();
+      }
+    },
+    metrics: (f) => f.metrics,
+    cleanup(f) {
+      f.clearTimer();
+      f.manager.dispose();
+      f.s.dispose();
+    },
+  },
+  {
+    name: "viewport-prefetch",
+    covers: "59520f7 batched viewport prefetch notifications",
+    sizes: [4, 16],
+    unit: "prefetched chunks per viewport side (one visible chunk, 128-byte chunks)",
+    prepare(R, n) {
+      const total = 2 * n + 1;
+      const s = R.store.createDocumentStore({ chunkSize: 128, reconcileMode: "none" });
+      const chunks = Array.from({ length: total }, (_, i) =>
+        new TextEncoder().encode(String.fromCharCode(65 + (i % 26)).repeat(127) + "\n"),
+      );
+      const loader = R.createStreamingDocumentLoader(
+        s,
+        { loadChunk: async (index) => chunks[index]! },
+        chunks.map((data, chunkIndex) => ({ chunkIndex, byteLength: data.length, lineCount: 1 })),
+        { prefetchWindowSize: n, chunkManagerConfig: { maxLoadedChunks: total } },
+      );
+      return {
+        s,
+        loader,
+        metrics: { notifications: 0, "viewport ready (ms)": 0, "total load (ms)": 0 },
+      };
+    },
+    async run(R, f, n) {
+      const start = performance.now();
+      let loaded!: () => void;
+      const done = new Promise<void>((resolve) => {
+        loaded = resolve;
+      });
+      const unsubscribe = f.s.subscribe(() => {
+        f.metrics.notifications++;
+        if (f.s.getSnapshot().pieceTable.chunkMap.size === 2 * n + 1) loaded();
+      });
+      try {
+        await f.loader.setViewport(n, n);
+        f.metrics["viewport ready (ms)"] = performance.now() - start;
+        await done;
+        f.metrics["total load (ms)"] = performance.now() - start;
+        return () => docChecksum(R, f.s.getSnapshot());
+      } finally {
+        unsubscribe();
+      }
+    },
+    metrics: (f) => f.metrics,
+    cleanup(f) {
+      f.loader.dispose();
+      f.s.dispose();
+    },
+  },
+  {
+    name: "chunk-column-cache-edits",
+    covers: "59520f7 lazy line offset cache migration and compaction",
+    sizes: [64, 512],
+    unit: "cached chunk-backed Unicode lines (128 edits with distant column queries)",
+    prepare(R, n) {
+      const line = "漢😀x".repeat(2048) + "\n";
+      const bytes = new TextEncoder().encode(line.repeat(n));
+      const s = R.store.createDocumentStore({ chunkSize: bytes.length, reconcileMode: "none" });
+      s.dispatch(R.store.DocumentActions.loadChunk(0, bytes));
+      for (let i = 0; i < n; i++) {
+        if (R.rendering.lineColumnToPosition(s.getSnapshot(), i, 6000) === null)
+          throw new Error("cache warm-up could not locate line");
+      }
+      return s;
+    },
+    run(R, s, n) {
+      let acc = 0;
+      for (let i = 0; i < 128; i++) {
+        s.dispatch(R.store.DocumentActions.insert(off(0), "x", undefined, i * 1e7));
+        const state = s.getSnapshot();
+        const line = n - 1 - (i % 8);
+        const position = R.rendering.lineColumnToPosition(state, line, 6000);
+        if (position === null) throw new Error("edited line could not be located");
+        const expected = line * (2048 * 8 + 1) + i + 1 + 12000;
+        if (position !== expected) throw new Error("cached column offset is incorrect");
+        acc += position;
+        const converted = R.rendering.positionToLineColumn(state, position);
+        if (converted?.line !== line || converted.column !== 6000)
+          throw new Error("cached column round trip is incorrect");
+      }
+      return () => acc + ":" + docChecksum(R, s.getSnapshot());
+    },
+    cleanup: (s) => s.dispose(),
+  },
+  {
+    name: "chunk-fragmented-evict-reload",
+    covers: "59520f7 subtree chunk summaries and shared attention endpoint index",
+    sizes: [256, 1024],
+    unit: "64-byte chunks (2 eviction/reload cycles with edits and attention pins)",
+    prepare(R, n) {
+      const chunk = new TextEncoder().encode("1234567\n".repeat(8));
+      const s = R.store.createDocumentStore({
+        chunkSize: 64,
+        totalFileSize: n * 64,
+        reconcileMode: "none",
+      });
+      s.dispatch(
+        R.store.DocumentActions.loadChunks(
+          Array.from({ length: n }, (_, chunkIndex) => ({ chunkIndex, data: chunk })),
+        ),
+      );
+      // One quarter of chunks are pinned by attentions, another quarter by edits.
+      for (let i = 0; i < n; i += 4)
+        for (let j = 0; j < 4; j++)
+          s.dispatch(
+            R.store.DocumentActions.createAttention(
+              off(i * 64 + j * 2 + 1),
+              off(i * 64 + j * 2 + 2),
+            ),
+          );
+      // Descending offsets keep every insertion inside its intended chunk.
+      for (let i = n - 3; i >= 0; i -= 4)
+        for (let j = 4; j >= 1; j--)
+          s.dispatch(R.store.DocumentActions.insert(off(i * 64 + j * 8), "x", undefined, 0));
+      return { s, chunk };
+    },
+    run(R, { s, chunk }, n) {
+      for (let cycle = 0; cycle < 2; cycle++) {
+        for (let i = 0; i < n; i++) s.dispatch(R.store.DocumentActions.evictChunk(i));
+        if (s.getSnapshot().pieceTable.chunkMap.size !== n / 2)
+          throw new Error("eviction did not preserve exactly the pinned chunks");
+        // Reverse reload order exercises insertion into the middle of the tree.
+        for (let i = n - 1; i >= 0; i--)
+          if (i % 4 >= 2) s.dispatch(R.store.DocumentActions.loadChunk(i, chunk));
+        if (s.getSnapshot().pieceTable.chunkMap.size !== n)
+          throw new Error("reload did not restore all chunks");
+      }
+      return () => {
+        const state = s.getSnapshot();
+        for (const id of state.attention.attentions.keys())
+          if (R.attention.resolveAttention(state.pieceTable.root, state.attention, id) === null)
+            throw new Error("eviction left a dangling attention");
+        return docChecksum(R, state) + ":" + state.attention.attentions.size;
+      };
     },
     cleanup: (f) => f.s.dispose(),
   },

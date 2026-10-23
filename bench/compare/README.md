@@ -54,3 +54,37 @@ Options:
 
 Add an entry to `workloads.ts`. Use only the `R` module object, never `src/`
 imports, so the workload runs against any build. Keep mutations inside the fixture returned by `prepare`. Return a checksum from `run`.
+
+## Targeted streaming and cache workloads
+
+Compare commit `59520f7` with its parent using the workloads added for its streaming
+and cache changes. Build both refs with `prepare.sh`, then select these workloads.
+
+```bash
+pnpm bench:compare --base /tmp/reed-base --head /tmp/reed-head \
+  --only chunk-slow-fetch,viewport-prefetch,chunk-column-cache-edits,chunk-fragmented-evict-reload
+```
+
+| Workload                        | Scenario                                                                                                        | Measurements                                                                  |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `chunk-slow-fetch`              | Load 8 or 32 chunks with one fetch delayed by 40 ms                                                             | First readable chunk, total load time, peak concurrent fetches, notifications |
+| `viewport-prefetch`             | Load one viewport chunk and prefetch 4 or 16 chunks on each side                                                | Viewport readiness, total load time, notifications                            |
+| `chunk-column-cache-edits`      | Warm column indexes on 64 or 512 chunk-backed Unicode lines, then perform 128 edits with distant column queries | Elapsed time, heap growth, retained heap                                      |
+| `chunk-fragmented-evict-reload` | Evict and reload 256 or 1,024 chunks twice, with one quarter pinned by attentions and another quarter by edits  | Elapsed time, heap growth, retained heap                                      |
+
+The cache workload includes enough edits to exercise periodic cache compaction.
+The eviction workload includes refused evictions and reloads chunks in reverse
+order to exercise insertion between existing pieces. Both workloads check their
+results and compare document checksums across versions.
+
+The asynchronous workloads report phase timings and counters in an additional
+table. The main timing still covers the complete operation. Notification counts
+and timings are excluded from checksums so versions can differ in scheduling
+while producing the same document. The additional table shows medians without
+confidence intervals. Use its timings as measurements from this controlled
+scenario. The fetch delay does not model a particular storage service.
+
+To add another measurement, define `metrics(fixture)` on a workload and return a
+record of finite numbers. Include the unit in each timing's name, such as
+`first readable (ms)`. The worker collects metrics after timing and heap sampling,
+and stores one value per timed sample in the JSON report.
