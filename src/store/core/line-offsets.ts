@@ -19,6 +19,8 @@ interface LineCheckpoints {
 interface CheckpointCache {
   lines: Map<number, LineCheckpoints>;
   points: number;
+  source?: { cache: CheckpointCache; start: number; end: number; insertedLength: number };
+  depth?: number;
 }
 const indexes = new WeakMap<PieceTableState, CheckpointCache>();
 // Budget retained checkpoint nodes rather than lines. A viewport containing
@@ -43,7 +45,77 @@ function remember(cache: CheckpointCache, start: number, entry: LineCheckpoints)
   }
 }
 
-/** Retain safe decoder checkpoints without copying a long line's checkpoint array. */
+function transformEntry(
+  lineStart: number,
+  entry: LineCheckpoints,
+  start: number,
+  end: number,
+  insertedLength: number,
+): [number, LineCheckpoints] | null {
+  const delta = insertedLength - (end - start);
+  if (entry.end <= start) return [lineStart, entry];
+  if (lineStart > end) return [lineStart + delta, { ...entry, end: entry.end + delta }];
+  if (lineStart > start) return null;
+  let lo = 0,
+    hi = entry.length - 1;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (entry.points.get(String(mid))!.byte <= start - lineStart) lo = mid;
+    else hi = mid - 1;
+  }
+  return [lineStart, { ...entry, length: lo + 1, end: Math.max(start, entry.end + delta) }];
+}
+
+function inheritedEntry(cache: CheckpointCache, start: number): LineCheckpoints | undefined {
+  const local = cache.lines.get(start);
+  if (local) return local;
+  const source = cache.source;
+  if (!source) return undefined;
+  const delta = source.insertedLength - (source.end - source.start);
+  const oldStart = start <= source.start ? start : start - delta;
+  // Starts inside inserted text cannot identify an unchanged old line.
+  if (start > source.start && oldStart <= source.end) return undefined;
+  const old = inheritedEntry(source.cache, oldStart);
+  if (!old) return undefined;
+  const transformed = transformEntry(
+    oldStart,
+    old,
+    source.start,
+    source.end,
+    source.insertedLength,
+  );
+  if (!transformed || transformed[0] !== start) return undefined;
+  remember(cache, start, transformed[1]);
+  return transformed[1];
+}
+
+function materialize(cache: CheckpointCache): void {
+  type Migration = NonNullable<CheckpointCache["source"]>;
+  function collect(origin: CheckpointCache, migrations: Migration[]): void {
+    for (const [start, entry] of origin.lines) {
+      let transformed: [number, LineCheckpoints] | null = [start, entry];
+      for (const migration of migrations) {
+        transformed = transformEntry(
+          transformed[0],
+          transformed[1],
+          migration.start,
+          migration.end,
+          migration.insertedLength,
+        );
+        if (!transformed) break;
+      }
+      if (transformed && !cache.lines.has(transformed[0])) remember(cache, ...transformed);
+    }
+    // Prefer the nearest snapshot's scanned checkpoints. Populate only the
+    // destination, avoiding full copies through every intermediate snapshot.
+    if (origin.source) collect(origin.source.cache, [origin.source, ...migrations]);
+  }
+  if (cache.source) collect(cache.source.cache, [cache.source]);
+  delete cache.source;
+  cache.depth = 0;
+}
+
+/** Defer cache migration until a line is queried; periodically compact the chain. */
 export function carryLineOffsetIndexes(
   previous: PieceTableState,
   next: PieceTableState,
@@ -53,28 +125,15 @@ export function carryLineOffsetIndexes(
 ): void {
   const cache = indexes.get(previous);
   if (!cache) return;
-  const carried: CheckpointCache = { lines: new Map(), points: 0 };
-  const delta = insertedLength - (end - start);
-  for (const [lineStart, entry] of cache.lines) {
-    if (entry.end <= start) remember(carried, lineStart, entry);
-    else if (lineStart > end)
-      remember(carried, lineStart + delta, { ...entry, end: entry.end + delta });
-    else if (lineStart <= start) {
-      let lo = 0,
-        hi = entry.length - 1;
-      while (lo < hi) {
-        const mid = Math.ceil((lo + hi) / 2);
-        if (entry.points.get(String(mid))!.byte <= start - lineStart) lo = mid;
-        else hi = mid - 1;
-      }
-      remember(carried, lineStart, {
-        ...entry,
-        length: lo + 1,
-        end: Math.max(start, entry.end + delta),
-      });
-    }
-  }
-  indexes.set(next, carried);
+  // Bound lookup depth and retained cache ancestry. Bulk migration is amortized
+  // across edits instead of charging every keystroke for all scrolled lines.
+  if ((cache.depth ?? 0) >= 16) materialize(cache);
+  indexes.set(next, {
+    lines: new Map(),
+    points: 0,
+    source: { cache, start, end, insertedLength },
+    depth: (cache.depth ?? 0) + 1,
+  });
 }
 const BLOCK_BYTES = 4096;
 
@@ -91,7 +150,7 @@ function locate(
     cache = { lines: new Map(), points: 0 };
     indexes.set(state, cache);
   }
-  let entry = cache.lines.get(start);
+  let entry = inheritedEntry(cache, start);
   if (!entry) {
     entry = {
       points: PersistentMap.empty<string, Checkpoint>().with("0", { byte: 0, char: 0 }),

@@ -54,6 +54,8 @@ export interface ChunkManagerConfig {
    * Must be >= 1. Default: 8.
    */
   maxLoadedChunks?: number;
+  /** Maximum simultaneous fetches within ensureLoadedMany. Default: 8. */
+  maxConcurrentFetches?: number;
   /**
    * Fetch strategy for concurrent ensureLoaded calls on different chunks.
    * - 'parallel'  — fire all fetches concurrently (default, lower latency)
@@ -79,8 +81,9 @@ export interface ChunkManager {
   ensureLoaded(chunkIndex: number): Promise<void>;
 
   /**
-   * Ensure several chunks are loaded, committing newly fetched bytes in one
-   * reducer transition so derived indexes are rebuilt once.
+   * Ensure several chunks are loaded with bounded concurrency. Completions in
+   * the same turn share a transition; slow fetches do not hold up others.
+   * Successful chunks remain loaded if another fetch in the batch fails.
    */
   ensureLoadedMany(chunkIndices: readonly number[]): Promise<void>;
 
@@ -157,6 +160,13 @@ export function createChunkManager(
       `fetchStrategy must be 'parallel' or 'queue': ${String(config.fetchStrategy)}`,
     );
   }
+  if (
+    config.maxConcurrentFetches !== undefined &&
+    (!Number.isInteger(config.maxConcurrentFetches) || config.maxConcurrentFetches < 1)
+  ) {
+    throw new RangeError("maxConcurrentFetches must be a positive integer");
+  }
+  const maxConcurrentFetches = config.maxConcurrentFetches ?? 8;
   const maxLoadedChunks = config.maxLoadedChunks ?? 8;
   const fetchStrategy = config.fetchStrategy ?? "parallel";
   const logger = config.logger;
@@ -168,8 +178,8 @@ export function createChunkManager(
   // Cooperative cancellation for loaders that honor AbortSignal.
   const abortControllers = new Map<number, AbortController>();
 
-  // LRU order: index 0 is least recently used, last index is most recently used.
-  const lruOrder: number[] = [];
+  // Set iteration runs from least to most recently used.
+  const lruOrder = new Set<number>();
 
   // Pinned chunks: never evicted.
   let activeChunks = new Set<number>();
@@ -215,14 +225,12 @@ export function createChunkManager(
   // ── LRU helpers ───────────────────────────────────────────────────────────
 
   function lruTouch(chunkIndex: number): void {
-    const pos = lruOrder.indexOf(chunkIndex);
-    if (pos !== -1) lruOrder.splice(pos, 1);
-    lruOrder.push(chunkIndex);
+    lruOrder.delete(chunkIndex);
+    lruOrder.add(chunkIndex);
   }
 
   function lruRemove(chunkIndex: number): void {
-    const pos = lruOrder.indexOf(chunkIndex);
-    if (pos !== -1) lruOrder.splice(pos, 1);
+    lruOrder.delete(chunkIndex);
   }
 
   // ── Eviction ──────────────────────────────────────────────────────────────
@@ -232,8 +240,8 @@ export function createChunkManager(
     const snapshot = store.getSnapshot();
     let loadedCount = snapshot.pieceTable.chunkMap.size;
 
-    for (let i = 0; i < lruOrder.length && loadedCount > maxLoadedChunks; i++) {
-      const candidate = lruOrder[i]!; // i < lruOrder.length by the loop guard
+    for (const candidate of lruOrder) {
+      if (loadedCount <= maxLoadedChunks) break;
       // Skip pinned chunks.
       if (activeChunks.has(candidate)) continue;
       // Keep the just-loaded chunk resident for the ensureLoaded()/prefetch caller.
@@ -247,7 +255,6 @@ export function createChunkManager(
       // Skip chunks no longer in memory (evicted by another path).
       if (!snapshot.pieceTable.chunkMap.has(candidate)) {
         lruRemove(candidate);
-        i--; // re-examine this index after splice
         continue;
       }
 
@@ -256,7 +263,6 @@ export function createChunkManager(
       if (!store.getSnapshot().pieceTable.chunkMap.has(candidate)) {
         // Eviction succeeded.
         lruRemove(candidate);
-        i--; // re-examine after splice
         loadedCount--;
       }
       // If eviction was refused (user edits overlap the chunk's byte range),
@@ -443,36 +449,53 @@ export function createChunkManager(
 
     let batchPromise!: Promise<void>;
     batchPromise = (async () => {
-      const results = await Promise.allSettled(
-        fresh.map((chunkIndex) => fetchOne(chunkIndex, controllers.get(chunkIndex)!)),
-      );
-      const failure = results.find(
-        (result): result is PromiseRejectedResult => result.status === "rejected",
-      );
-      if (failure !== undefined) throw failure.reason;
-      if (disposed) return;
-      const fetched = results.map((result) =>
-        result.status === "fulfilled" ? result.value : null,
-      );
-      const chunks = fresh.flatMap((chunkIndex, index) => {
-        const data = fetched[index];
-        return data === null || data === undefined || controllers.get(chunkIndex)!.signal.aborted
-          ? []
-          : [{ chunkIndex, data }];
-      });
-      if (chunks.length === 0) return;
-
-      store.dispatch(DocumentActions.loadChunks(chunks));
-      const after = store.getSnapshot();
-      for (const { chunkIndex } of chunks) {
-        if (!after.pieceTable.chunkMap.has(chunkIndex)) {
-          throw new Error(
-            `Chunk ${chunkIndex} was fetched but the store did not retain it after LOAD_CHUNKS dispatch`,
+      // Coalesce completions without waiting for a slow sibling. Workers bound
+      // outstanding I/O and completed buffers waiting for dispatch.
+      let ready: Array<{ chunkIndex: number; data: Uint8Array }> = [];
+      let commit: Promise<void> | undefined;
+      const protectedChunks = new Set(fresh);
+      function enqueue(chunkIndex: number, data: Uint8Array): Promise<void> {
+        ready.push({ chunkIndex, data });
+        return (commit ??= Promise.resolve().then(() => {
+          const chunks = ready.filter(
+            (chunk) => !controllers.get(chunk.chunkIndex)!.signal.aborted,
           );
-        }
-        lruTouch(chunkIndex);
+          ready = [];
+          commit = undefined;
+          if (disposed || chunks.length === 0) return;
+          store.dispatch(DocumentActions.loadChunks(chunks));
+          const after = store.getSnapshot();
+          for (const chunk of chunks) {
+            if (!after.pieceTable.chunkMap.has(chunk.chunkIndex)) {
+              throw new Error(
+                `Chunk ${chunk.chunkIndex} was fetched but the store did not retain it after LOAD_CHUNKS dispatch`,
+              );
+            }
+            lruTouch(chunk.chunkIndex);
+          }
+          evictIfOverLimit(protectedChunks);
+        }));
       }
-      evictIfOverLimit(new Set(chunks.map((chunk) => chunk.chunkIndex)));
+      let cursor = 0;
+      const results = await Promise.allSettled(
+        Array.from({ length: Math.min(maxConcurrentFetches, fresh.length) }, async () => {
+          let failed = false;
+          let failure: unknown;
+          while (cursor < fresh.length) {
+            const chunkIndex = fresh[cursor++]!;
+            try {
+              const data = await fetchOne(chunkIndex, controllers.get(chunkIndex)!);
+              if (data !== null) await enqueue(chunkIndex, data);
+            } catch (error) {
+              if (!failed) failure = error;
+              failed = true;
+            }
+          }
+          if (failed) throw failure;
+        }),
+      );
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
     })().finally(() => {
       for (const chunkIndex of fresh) {
         if (inFlight.get(chunkIndex) === batchPromise) inFlight.delete(chunkIndex);
@@ -527,7 +550,7 @@ export function createChunkManager(
     }
     abortControllers.clear();
     inFlight.clear();
-    lruOrder.length = 0;
+    lruOrder.clear();
     activeChunks.clear();
   }
 

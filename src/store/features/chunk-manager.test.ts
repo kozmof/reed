@@ -500,3 +500,65 @@ describe("ChunkManager chunk integrity", () => {
     manager.dispose();
   });
 });
+
+it("commits fast batch results while a slow chunk remains pending", async () => {
+  const store = makeStore();
+  let finishSlow!: (bytes: Uint8Array) => void;
+  const manager = createChunkManager(store, {
+    loadChunk: async (index) =>
+      index === 0
+        ? makeBytes("aaaabbbb")
+        : new Promise<Uint8Array>((resolve) => {
+            finishSlow = resolve;
+          }),
+  });
+  let settled = false;
+  const pending = manager.ensureLoadedMany([0, 1]).then(() => {
+    settled = true;
+  });
+  await vi.waitFor(() => expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(true));
+  expect(settled).toBe(false);
+  finishSlow(makeBytes("ccccdddd"));
+  await pending;
+  expect(store.getSnapshot().pieceTable.chunkMap.has(1)).toBe(true);
+  manager.dispose();
+  store.dispose();
+});
+
+it("bounds batch fetch concurrency and continues after individual failures", async () => {
+  const store = makeStore();
+  const resolvers = new Map<number, (bytes: Uint8Array) => void>();
+  const loadChunk = vi.fn(
+    (index: number) =>
+      new Promise<Uint8Array>((resolve, reject) => {
+        if (index === 0) reject(new Error("fetch failed"));
+        else resolvers.set(index, resolve);
+      }),
+  );
+  const manager = createChunkManager(store, { loadChunk }, { maxConcurrentFetches: 2 });
+  const pending = manager.ensureLoadedMany([0, 1, 2, 3]);
+  const rejected = expect(pending).rejects.toThrow("fetch failed");
+  expect(loadChunk).toHaveBeenCalledTimes(2);
+  await vi.waitFor(() => expect(resolvers.has(2)).toBe(true));
+  expect(loadChunk).toHaveBeenCalledTimes(3);
+  resolvers.get(1)!(makeBytes("ccccdddd"));
+  await vi.waitFor(() => expect(resolvers.has(3)).toBe(true));
+  expect(loadChunk).toHaveBeenCalledTimes(4);
+  resolvers.get(2)!(makeBytes("eeeeffff"));
+  resolvers.get(3)!(makeBytes("gggghhhh"));
+  await rejected;
+  expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2, 3]);
+  manager.dispose();
+  store.dispose();
+});
+
+it.each([0, -1, NaN, 1.5, Infinity])(
+  "rejects invalid fetch concurrency %s",
+  (maxConcurrentFetches) => {
+    const store = makeStore();
+    expect(() => createChunkManager(store, makeLoader({}), { maxConcurrentFetches })).toThrow(
+      "maxConcurrentFetches must be a positive integer",
+    );
+    store.dispose();
+  },
+);

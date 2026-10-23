@@ -157,3 +157,37 @@ it("evicts the least recently queried lines when the checkpoint budget fills", a
   query(1);
   expect(reads).toHaveBeenCalled();
 });
+
+it("preserves lazy column indexes across edit chains, compaction, and snapshot branches", async () => {
+  const { documentReducer } = await import("../features/reducer.js");
+  const { DocumentActions } = await import("../features/actions.js");
+  const pieces = await import("./piece-table.js");
+  const line = "漢😀x".repeat(4000) + "\n";
+  const bytes = new TextEncoder().encode(line.repeat(4));
+  const original = documentReducer(
+    createInitialState({ chunkSize: bytes.length }),
+    DocumentActions.loadChunk(0, bytes),
+  );
+  const width = new TextEncoder().encode(line).length;
+  const column = 12000;
+  for (let i = 0; i < 4; i++)
+    expect(lineCharToByte(original.pieceTable, i * width, (i + 1) * width, column)).toBe(
+      i * width + 24000,
+    );
+  let state = original;
+  for (let i = 0; i < 40; i++)
+    state = documentReducer(state, DocumentActions.insert(byteOffset(0), "x"));
+  const reads = vi.spyOn(pieces, "getText");
+  expect(lineCharToByte(state.pieceTable, 3 * width + 40, 4 * width + 40, column)).toBe(
+    3 * width + 24040,
+  );
+  expect(
+    reads.mock.calls.reduce((total, [, start, end]) => total + end - start, 0),
+  ).toBeLessThanOrEqual(4096);
+  expect(lineCharToByte(original.pieceTable, 3 * width, 4 * width, column)).toBe(3 * width + 24000);
+  const branch = documentReducer(
+    original,
+    DocumentActions.delete(byteOffset(width), byteOffset(2 * width)),
+  );
+  expect(lineCharToByte(branch.pieceTable, 2 * width, 3 * width, column)).toBe(2 * width + 24000);
+});

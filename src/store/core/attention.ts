@@ -261,6 +261,11 @@ function buildAttentionIDsByPiece(state: AttentionLayerState): AttentionIDsByPie
   return index;
 }
 
+/** Reuse the incrementally maintained endpoint index for chunk eviction. */
+export function hasAttentionForPiece(state: AttentionLayerState, id: PieceID): boolean {
+  return buildAttentionIDsByPiece(state).has(id);
+}
+
 const persistentAttentionCache = new WeakMap<
   AttentionLayerState,
   PersistentMap<AttentionID, Attention>

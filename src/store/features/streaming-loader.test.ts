@@ -328,3 +328,21 @@ describe("StreamingDocumentLoader", () => {
     store.dispose();
   });
 });
+
+it("batches adjacent prefetch completions into one store notification", async () => {
+  const store = createDocumentStore({ chunkSize: 1 });
+  const loader = createStreamingDocumentLoader(
+    store,
+    { loadChunk: async (index) => new Uint8Array([65 + index]) },
+    Array.from({ length: 5 }, (_, chunkIndex) => ({ chunkIndex, byteLength: 1, lineCount: 0 })),
+    { prefetchWindowSize: 2 },
+  );
+  const notify = vi.fn();
+  const unsubscribe = store.subscribe(notify);
+  await loader.setViewport(2, 2);
+  await vi.waitFor(() => expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(5));
+  expect(notify).toHaveBeenCalledTimes(2);
+  unsubscribe();
+  loader.dispose();
+  store.dispose();
+});

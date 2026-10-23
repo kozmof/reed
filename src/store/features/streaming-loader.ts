@@ -240,8 +240,10 @@ export function createStreamingDocumentLoader(
     }
 
     // Prefetch window chunks outside the viewport in the background.
-    for (let i = windowStart; i < start; i++) manager.prefetch(i);
-    for (let i = end + 1; i <= windowEnd; i++) manager.prefetch(i);
+    const prefetchChunks: number[] = [];
+    for (let i = windowStart; i < start; i++) prefetchChunks.push(i);
+    for (let i = end + 1; i <= windowEnd; i++) prefetchChunks.push(i);
+    void manager.ensureLoadedMany(prefetchChunks).catch(() => {});
   }
 
   function dispose(): void {

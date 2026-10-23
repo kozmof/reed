@@ -15,30 +15,74 @@ import type {
   LoadChunksAction,
 } from "../../types/actions.js";
 import { isValidChunkMetadata } from "../../types/actions.js";
-import type { ByteOffset, PieceID } from "../../types/branded.js";
+import type { ByteOffset } from "../../types/branded.js";
 import { byteOffset, pieceID } from "../../types/branded.js";
 import { withUnloadedLineCounts, withState } from "../core/state.js";
 import {
   insertChunkPieceAt,
   isChunkByteLengthValid,
-  pieceTableInOrder,
   pieceTableDelete,
 } from "../core/piece-table.js";
+import { hasAttentionForPiece } from "../core/attention.js";
 import { repairChunkLines } from "../core/chunk-line-repair.js";
 import { summarizeBytes } from "../core/decoded-metrics.js";
 import { PersistentMap, PersistentSet } from "../core/persistent-map.js";
 import { asReadonlyMap, asReadonlySet, asReadonlyUint8Array } from "../core/runtime-readonly.js";
 
+interface ChunkSummary {
+  min: number;
+  max: number;
+  hasAdd: boolean;
+}
+const chunkSummaries = new WeakMap<PieceNode, ChunkSummary>();
+const emptySummary: ChunkSummary = { min: Infinity, max: -Infinity, hasAdd: false };
+
+// Immutable subtrees share their summaries across edits and viewport changes.
+function summarizeChunks(root: PieceNode | null): ChunkSummary {
+  if (!root) return emptySummary;
+  const cached = chunkSummaries.get(root);
+  if (cached) return cached;
+  const left = summarizeChunks(root.left),
+    right = summarizeChunks(root.right);
+  const chunk = root.bufferType === "chunk" ? root.chunkIndex : undefined;
+  const summary = {
+    min: Math.min(left.min, right.min, chunk ?? Infinity),
+    max: Math.max(left.max, right.max, chunk ?? -Infinity),
+    hasAdd: left.hasAdd || right.hasAdd || root.bufferType === "add",
+  };
+  chunkSummaries.set(root, summary);
+  return summary;
+}
+
+function visitChunk(
+  root: PieceNode | null,
+  chunkIndex: number,
+  visit: (node: PieceNode, offset: number) => boolean | void,
+  offset = 0,
+): boolean {
+  if (!root) return false;
+  const summary = summarizeChunks(root);
+  if (chunkIndex < summary.min || chunkIndex > summary.max) return false;
+  const ownStart = offset + (root.left?.subtreeLength ?? 0);
+  return (
+    visitChunk(root.left, chunkIndex, visit, offset) ||
+    (root.bufferType === "chunk" &&
+      root.chunkIndex === chunkIndex &&
+      visit(root, ownStart) === true) ||
+    visitChunk(root.right, chunkIndex, visit, ownStart + root.length)
+  );
+}
+
 function findReloadInsertionPos(root: PieceNode | null, targetChunkIndex: number): number {
-  if (root === null) return 0;
-  let result = root.subtreeLength;
-  pieceTableInOrder(root, (node, pieceStart) => {
-    if (node.bufferType === "chunk" && node.chunkIndex > targetChunkIndex) {
-      result = pieceStart;
-      return true;
-    }
-  });
-  return result;
+  function find(node: PieceNode | null, offset: number): number | null {
+    if (!node || summarizeChunks(node).max <= targetChunkIndex) return null;
+    const ownStart = offset + (node.left?.subtreeLength ?? 0);
+    const left = find(node.left, offset);
+    if (left !== null) return left;
+    if (node.bufferType === "chunk" && node.chunkIndex > targetChunkIndex) return ownStart;
+    return find(node.right, ownStart + node.length);
+  }
+  return find(root, 0) ?? root?.subtreeLength ?? 0;
 }
 
 function findPristineChunkRange(
@@ -46,94 +90,48 @@ function findPristineChunkRange(
   chunkIndex: number,
   chunkByteLength: number,
 ): { start: ByteOffset; end: ByteOffset } | null {
-  if (root === null) return null;
-
-  let rangeStart = -1;
-  let rangeEnd = -1;
-  let expectedChunkOffset = 0;
-  let started = false;
-  let complete = false;
-  let invalid = false;
-
-  pieceTableInOrder(root, (node, pieceStart) => {
-    const isTarget = node.bufferType === "chunk" && node.chunkIndex === chunkIndex;
-    if (!started) {
-      if (!isTarget) return;
-      started = true;
-      rangeStart = pieceStart;
-    } else if (complete) {
-      if (isTarget) {
-        invalid = true;
-        return true;
-      }
-      return;
-    }
-
-    if (!isTarget) {
-      invalid = true;
+  let start = -1,
+    end = -1,
+    expectedChunkOffset = 0;
+  const invalid = visitChunk(root, chunkIndex, (node, offset) => {
+    if (start < 0) start = offset;
+    else if (offset !== end) return true;
+    if (node.start !== expectedChunkOffset || expectedChunkOffset + node.length > chunkByteLength)
       return true;
-    }
-    if (node.start !== expectedChunkOffset || expectedChunkOffset + node.length > chunkByteLength) {
-      invalid = true;
-      return true;
-    }
-
     expectedChunkOffset += node.length;
-    rangeEnd = pieceStart + node.length;
-    complete = expectedChunkOffset === chunkByteLength;
+    end = offset + node.length;
   });
-
-  return invalid || !started || !complete || expectedChunkOffset !== chunkByteLength
+  return invalid || start < 0 || expectedChunkOffset !== chunkByteLength
     ? null
-    : { start: byteOffset(rangeStart), end: byteOffset(rangeEnd) };
+    : { start: byteOffset(start), end: byteOffset(end) };
 }
 
 function hasAddPieceTouchingRange(
   root: PieceNode | null,
   rangeStart: ByteOffset,
   rangeEnd: ByteOffset,
+  offset = 0,
 ): boolean {
-  let found = false;
-  pieceTableInOrder(root, (node, pieceStart) => {
-    if (
-      node.bufferType === "add" &&
-      pieceStart <= rangeEnd &&
-      pieceStart + node.length >= rangeStart
-    ) {
-      found = true;
-      return true;
-    }
-  });
-  return found;
+  if (
+    !root ||
+    offset > rangeEnd ||
+    offset + root.subtreeLength < rangeStart ||
+    !summarizeChunks(root).hasAdd
+  )
+    return false;
+  const ownStart = offset + (root.left?.subtreeLength ?? 0);
+  return (
+    (root.bufferType === "add" && ownStart <= rangeEnd && ownStart + root.length >= rangeStart) ||
+    hasAddPieceTouchingRange(root.left, rangeStart, rangeEnd, offset) ||
+    hasAddPieceTouchingRange(root.right, rangeStart, rangeEnd, ownStart + root.length)
+  );
 }
 
-/**
- * Return true when removing `chunkIndex` would delete a piece identity used by
- * an attention point. Offsets before/after other chunks resolve through the
- * current tree automatically. Removing an anchored piece could leave a
- * dangling point, so eviction is refused as it is for overlapping user edits.
- */
 function hasAttentionAnchoredToChunk(state: DocumentState, chunkIndex: number): boolean {
   if (state.attention.attentions.size === 0) return false;
-
-  const anchoredPieceIDs = new Set<PieceID>();
-  for (const attention of state.attention.attentions.values()) {
-    anchoredPieceIDs.add(attention.start.pieceID);
-    anchoredPieceIDs.add(attention.end.pieceID);
-  }
-
-  let found = false;
-  pieceTableInOrder(state.pieceTable.root, (node) => {
-    if (
-      node.bufferType === "chunk" &&
-      node.chunkIndex === chunkIndex &&
-      anchoredPieceIDs.has(node.id)
-    ) {
-      found = true;
-      return true;
-    }
-  });
-  return found;
+  return visitChunk(state.pieceTable.root, chunkIndex, (node) =>
+    hasAttentionForPiece(state.attention, node.id),
+  );
 }
 
 export function declareChunkMetadata(
