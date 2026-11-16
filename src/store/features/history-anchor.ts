@@ -8,7 +8,6 @@
 
 import type {
   HistoryAnchor,
-  HistoryChange,
   HistoryEntry,
   HistorySelectionRange,
   HistorySelectionState,
@@ -17,10 +16,17 @@ import type {
   SelectionState,
 } from "../../types/state.js";
 import type { NonEmptyReadonlyArray } from "../../types/utils.js";
-import { pstackFromArray, pstackToArray } from "../../types/state.js";
+import { pstackFindNewestIndex, pstackSize, pstackTrimToSize } from "../../types/state.js";
 import type { ByteOffset } from "../../types/branded.js";
 import { byteOffset } from "../../types/branded.js";
-import { gapKey, toAnchoredOffset, toResidentOffset } from "../core/chunk-anchor.js";
+import {
+  gapKey,
+  keySpan,
+  loadedLengthAtOrBelow,
+  toAnchoredOffset,
+  toResidentOffset,
+} from "../core/chunk-anchor.js";
+import { someHistoryChange } from "./history-entry.js";
 
 /** Anchor resident `offset` using placement key `key`. */
 export function anchorAt(pieceTable: PieceTableState, key: number, offset: number): HistoryAnchor {
@@ -55,17 +61,23 @@ export function anchorSelection(
 }
 
 /**
- * Resolve a history selection to resident offsets, clamped to the document.
- * Selections are not guarded against eviction, so a cursor that pointed inside
- * an evicted chunk resolves to a nearby position rather than failing.
+ * Resolve a history selection to resident offsets.
+ *
+ * Selections do not block eviction, so a cursor may have pointed inside a chunk
+ * that is no longer loaded. Its resident offset would then land in whatever
+ * follows that chunk. Each position is instead clamped to the span of gaps that
+ * share its placement key, which puts it where the evicted chunk was, as
+ * `evictChunk` does for the live selection.
  */
 export function resolveSelection(
   pieceTable: PieceTableState,
   selection: HistorySelectionState,
 ): SelectionState {
-  const max = pieceTable.totalLength;
-  const clamp = (key: number, anchored: number) =>
-    byteOffset(Math.max(0, Math.min(toResidentOffset(pieceTable, key, anchored), max)));
+  const clamp = (key: number, anchored: number) => {
+    const { start, end } = keySpan(pieceTable.root, key);
+    const offset = toResidentOffset(pieceTable, key, anchored);
+    return byteOffset(Math.max(start, Math.min(offset, end)));
+  };
   return Object.freeze({
     ranges: Object.freeze(
       selection.ranges.map((range) =>
@@ -84,47 +96,16 @@ export function resolveSelection(
 // =============================================================================
 
 /**
- * True when a change in `entry` points strictly inside chunk `chunkIndex`,
- * whose resident span is [start, end).
+ * Apply the history eviction policy before evicting `chunkIndex`, whose
+ * resident span is [start, end).
  *
- * Positions inside a chunk carry the key `chunkIndex - 1`. After eviction the
- * chunk's bytes are gone, so such a position can no longer be resolved. The
- * chunk's boundaries are fine: they stay meaningful without its bytes.
- */
-function entryPointsInsideChunk(
-  pieceTable: PieceTableState,
-  entry: HistoryEntry,
-  chunkIndex: number,
-  start: number,
-  end: number,
-): boolean {
-  return entry.changes.some((change: HistoryChange) => {
-    if (change.afterChunk !== chunkIndex - 1) return false;
-    const offset = residentOffset(pieceTable, change);
-    return offset > start && offset < end;
-  });
-}
-
-/**
- * Index of the newest entry (stack order: oldest first) that points inside the
- * chunk, or -1. Entries at or below that index can only be replayed after it,
- * so dropping it means dropping all of them.
- */
-function newestEntryInsideChunk(
-  pieceTable: PieceTableState,
-  entries: readonly HistoryEntry[],
-  chunkIndex: number,
-  start: number,
-  end: number,
-): number {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    if (entryPointsInsideChunk(pieceTable, entries[i]!, chunkIndex, start, end)) return i;
-  }
-  return -1;
-}
-
-/**
- * Apply the history eviction policy before evicting `chunkIndex`.
+ * A change points strictly inside the chunk when it carries the key
+ * `chunkIndex - 1` and resolves inside (start, end). After eviction the chunk's
+ * bytes are gone, so such a position can no longer be resolved. The chunk's
+ * boundaries are fine: they stay meaningful without its bytes.
+ *
+ * Entries older than the newest such entry can only be replayed after it, so
+ * dropping it means dropping all of them.
  *
  * Returns the history to keep, or `null` when the eviction must be refused
  * (policy `"pin"` with history pointing inside the chunk). Returns the same
@@ -138,15 +119,29 @@ export function historyForEviction(
   end: number,
 ): HistoryState | null {
   if (history.undoStack === null && history.redoStack === null) return history;
-  const undo = pstackToArray(history.undoStack);
-  const redo = pstackToArray(history.redoStack);
-  const undoCut = newestEntryInsideChunk(pieceTable, undo, chunkIndex, start, end);
-  const redoCut = newestEntryInsideChunk(pieceTable, redo, chunkIndex, start, end);
+  // Every candidate change shares one key, so compare anchored positions
+  // against the chunk span shifted once, instead of resolving each change.
+  const key = chunkIndex - 1;
+  const shift = loadedLengthAtOrBelow(pieceTable, key);
+  const low = start - shift;
+  const high = end - shift;
+  const pointsInside = (entry: HistoryEntry): boolean =>
+    someHistoryChange(
+      entry,
+      (change) => change.afterChunk === key && change.position > low && change.position < high,
+    );
+
+  const undoCut = pstackFindNewestIndex(history.undoStack, pointsInside);
+  if (undoCut >= 0 && history.evictionPolicy === "pin") return null;
+  const redoCut = pstackFindNewestIndex(history.redoStack, pointsInside);
   if (undoCut < 0 && redoCut < 0) return history;
   if (history.evictionPolicy === "pin") return null;
+  // Keep only the entries newer than the cut. The split shares structure.
+  const keepNewerThan = (stack: HistoryState["undoStack"], cut: number) =>
+    cut < 0 ? stack : pstackTrimToSize(stack, pstackSize(stack) - cut - 1);
   return Object.freeze({
     ...history,
-    undoStack: undoCut < 0 ? history.undoStack : pstackFromArray(undo.slice(undoCut + 1)),
-    redoStack: redoCut < 0 ? history.redoStack : pstackFromArray(redo.slice(redoCut + 1)),
+    undoStack: keepNewerThan(history.undoStack, undoCut),
+    redoStack: keepNewerThan(history.redoStack, redoCut),
   });
 }

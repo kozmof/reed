@@ -49,6 +49,7 @@ import {
 import { utf8ByteLength } from "../core/encoding.js";
 import { NO_CHUNK, gapKey, hasUnloadedChunkBetween, placementRuns } from "../core/chunk-anchor.js";
 import { anchorAt, anchorSelection, residentOffset } from "./history-anchor.js";
+import { coalescedTails, lastHistoryChange } from "./history-entry.js";
 
 // =============================================================================
 // Position Validation
@@ -274,19 +275,6 @@ function computeSelectionAfterChange(
   );
 }
 
-// Coalesced entries share their original changes until a consumer requests the array.
-const coalescedTails = new WeakMap<
-  HistoryEntry,
-  {
-    base: readonly HistoryChange[];
-    tail: HistoryChange;
-  }
->();
-
-function lastHistoryChange(entry: HistoryEntry): HistoryChange | undefined {
-  return coalescedTails.get(entry)?.tail ?? entry.changes[entry.changes.length - 1];
-}
-
 /**
  * Check if a new change can be coalesced with the last history entry.
  * Coalescing merges consecutive same-type changes within a timeout window
@@ -446,13 +434,16 @@ export function makeReplaceChange(
  * Push changes to the history stack as one entry.
  * A single change may coalesce with the previous entry if within the coalesce
  * timeout. `state` is the document after the changes. `selectionBefore`
- * defaults to the selection of `state`, anchored against it.
+ * defaults to the selection of `state`, anchored against it. It is only
+ * called when a new entry is created: a coalesced entry keeps the selection of
+ * the entry it extends.
  */
 export function historyPush(
   state: DocumentState,
   changeOrChanges: HistoryChange | NonEmptyReadonlyArray<HistoryChange>,
   now: number,
-  selectionBefore: HistorySelectionState = anchorSelection(state.pieceTable, state.selection),
+  selectionBefore: () => HistorySelectionState = () =>
+    anchorSelection(state.pieceTable, state.selection),
 ): DocumentState {
   const history = state.history;
   const changes: NonEmptyReadonlyArray<HistoryChange> = Array.isArray(changeOrChanges)
@@ -498,7 +489,7 @@ export function historyPush(
 
   const entry: HistoryEntry = Object.freeze({
     changes: Object.freeze([...changes]),
-    selectionBefore,
+    selectionBefore: selectionBefore(),
     selectionAfter,
     timestamp: now,
   });
@@ -835,11 +826,12 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   );
   // Timestamp-less hand-written actions remain deterministic. Normal callers use
   // DocumentActions, which captures wall-clock time before reduction.
+  const selectionBeforeEdit = newState.selection;
   newState = historyPush(
     newState,
     changes as unknown as NonEmptyReadonlyArray<HistoryChange>,
     op.timestamp ?? state.revision,
-    anchorSelection(pieceTable, newState.selection),
+    () => anchorSelection(pieceTable, selectionBeforeEdit),
   );
 
   // Mark as dirty and increment revision

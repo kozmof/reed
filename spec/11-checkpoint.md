@@ -57,6 +57,7 @@ Version 2 adds chunk placement keys and anchored history positions:
 
 - An add piece tuple may carry a fifth element, its placement key (`afterChunk`). It is omitted when the key is `-1`.
 - A history change tuple ends with its placement key, omitted when `-1`. Its position is an anchored position and may be negative.
+- Restore checks every history placement key against the loaded chunks: it must be at most `nextExpectedChunk - 1`, so `-1` without chunking. An anchored position with key `K` must be at least `-(K + 1) * chunkSize`, so positions with key `-1` are non-negative.
 - A history selection range is `[anchor, head]` or `[anchor, head, anchorAfterChunk, headAfterChunk]`.
 - `history.evictionPolicy` is `'pin'` or `'drop'`. Restore treats a missing value as `'pin'`.
 
@@ -193,7 +194,7 @@ string code units. Omitted limits remain unrestricted for backward compatibility
 | `LINE_INDEX_MISMATCH`    | Line lengths do not cover the document                            |
 | `ID_COLLISION`           | A duplicate id, or an allocator cursor that would reissue one     |
 | `SELECTION_OUT_OF_RANGE` | A selection offset past the document, or no ranges at all         |
-| `HISTORY_INVALID`        | Bad limit, bad coalesce timeout, or a stack deeper than its limit |
+| `HISTORY_INVALID`        | Bad limit, bad coalesce timeout, a stack deeper than its limit, or a history placement key naming a chunk that has not been loaded |
 | `ATTENTION_DANGLING`     | An attention names an unknown piece or an out-of-range boundary   |
 | `CHUNKED_NORMALIZE`      | `normalized` capture requested for a chunked document             |
 | `RESOURCE_LIMIT`         | A configured restore resource limit was exceeded                  |

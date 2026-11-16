@@ -77,6 +77,13 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
 
   // Chunk index of each chunk piece, or null for other pieces.
   const chunkOf = pieces.map((piece) => (piece[1] === "c" && isInt(piece[4]) ? piece[4] : null));
+  // Chunk index of the nearest chunk piece after each piece, filled in one
+  // reverse pass so each add piece finds it in O(1).
+  const nextChunkAfter: (number | null)[] = Array.from({ length: pieces.length });
+  for (let i = pieces.length - 1, next: number | null = null; i >= 0; i--) {
+    nextChunkAfter[i] = next;
+    next = chunkOf[i] ?? next;
+  }
   const keys: number[] = [];
   const migratedPieces: WireTuple[] = [];
   let previousChunk = -1;
@@ -88,9 +95,7 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
       keys.push(chunk - 1);
       migratedPieces.push(piece);
     } else if (piece[1] === "a") {
-      let nextChunk: number | null = null;
-      for (let j = i + 1; j < pieces.length && nextChunk === null; j++)
-        nextChunk = chunkOf[j] ?? null;
+      const nextChunk = nextChunkAfter[i];
       // Inside a chunk (the same chunk continues after it), the chunk is not
       // wholly before the piece.
       const key =
@@ -132,8 +137,20 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
       }
     }
   }
-  const loadedAtOrBelow = (key: number): number =>
-    chunkLengths.reduce((sum, [index, length]) => (index <= key ? sum + length : sum), 0);
+  // Prefix sums over chunks sorted by index, so each anchor costs O(log C).
+  chunkLengths.sort((a, b) => a[0] - b[0]);
+  const lengthPrefix = [0];
+  for (const [, length] of chunkLengths) lengthPrefix.push(lengthPrefix.at(-1)! + length);
+  const loadedAtOrBelow = (key: number): number => {
+    let lo = 0;
+    let hi = chunkLengths.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (chunkLengths[mid]![0] <= key) lo = mid + 1;
+      else hi = mid;
+    }
+    return lengthPrefix[lo]!;
+  };
   const anchor = (offset: unknown): [unknown, number] => {
     if (!isInt(offset)) return [offset, -1];
     const key = gapKey(offset);

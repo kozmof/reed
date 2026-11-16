@@ -91,6 +91,34 @@ export function gapKey(root: PieceNode | null, offset: number): number {
   return keyAfterPiece(lastPiece(root)!);
 }
 
+/** Total length of the pieces whose placement key is at most `key`. O(log n). */
+function lengthWithKeyAtMost(root: PieceNode | null, key: number): number {
+  // Keys never decrease in document order, so the pieces with key <= `key`
+  // form a prefix of the document.
+  let node = root;
+  let length = 0;
+  while (node !== null) {
+    if (pieceKey(node) <= key) {
+      length += (node.left?.subtreeLength ?? 0) + node.length;
+      node = node.right;
+    } else {
+      node = node.left;
+    }
+  }
+  return length;
+}
+
+/**
+ * Resident span [start, end] of the gaps whose key is `key`.
+ *
+ * Every resident position recorded with key `key` lies in this span. A position
+ * that resolves outside it pointed into a chunk that has since been evicted;
+ * clamping it to the span puts it where that chunk was. O(log n).
+ */
+export function keySpan(root: PieceNode | null, key: number): { start: number; end: number } {
+  return { start: lengthWithKeyAtMost(root, key - 1), end: lengthWithKeyAtMost(root, key) };
+}
+
 // =============================================================================
 // Loaded-chunk prefix sums
 // =============================================================================
@@ -185,6 +213,8 @@ export interface KeyRun {
 export function placementRuns(pieceTable: PieceTableState, start: number, end: number): KeyRun[] {
   const runs: KeyRun[] = [];
   if (end <= start) return runs;
+  // Before any chunk has loaded, every key is NO_CHUNK and nothing can split.
+  if (pieceTable.nextExpectedChunk === 0) return [{ start, end, key: NO_CHUNK }];
   let runStart = start;
   const firstKey = byteKey(pieceTable.root, start);
   let runKey = firstKey;

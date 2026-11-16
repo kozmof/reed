@@ -700,35 +700,26 @@ function restoreLineIndex(
 }
 
 /**
- * @param maxOffset - Upper bound for offsets, or `null` to accept any offset.
- *   History entries describe older revisions, so their selections may point past
- *   the end of the current document and are only checked structurally.
+ * Read a selection's ranges and primary index. `readRange` validates one range
+ * tuple; the empty-selection and primary-index rules are shared by live and
+ * history selections.
  */
-function restoreSelection(
+function restoreSelectionShape<R>(
   raw: unknown,
   what: string,
-  maxOffset: number | null,
   budget: RestoreBudget,
-): SelectionState {
+  readRange: (tuple: readonly unknown[], rangeWhat: string) => R,
+): { ranges: NonEmptyReadonlyArray<R>; primaryIndex: number } {
   const source = readObject(raw, what);
   const rawRanges = readArray(source.ranges, `${what}.ranges`, budget);
   if (rawRanges.length === 0) {
     fail("SELECTION_OUT_OF_RANGE", `${what}.ranges is empty: a selection always has one range`);
   }
 
-  const ranges: SelectionRange[] = [];
+  const ranges: R[] = [];
   for (let i = 0; i < rawRanges.length; i++) {
     const rangeWhat = `${what}.ranges[${i}]`;
-    const tuple = readArray(rawRanges[i], rangeWhat, budget);
-    const anchor = readCount(tuple[0], `${rangeWhat}[0]`);
-    const head = readCount(tuple[1], `${rangeWhat}[1]`);
-    if (maxOffset !== null && (anchor > maxOffset || head > maxOffset)) {
-      fail(
-        "SELECTION_OUT_OF_RANGE",
-        `${rangeWhat} spans [${anchor}, ${head}] but the document holds ${maxOffset} bytes`,
-      );
-    }
-    ranges.push(Object.freeze({ anchor: byteOffset(anchor), head: byteOffset(head) }));
+    ranges.push(Object.freeze(readRange(readArray(rawRanges[i], rangeWhat, budget), rangeWhat)));
   }
 
   const primaryIndex = readCount(source.primaryIndex, `${what}.primaryIndex`);
@@ -739,28 +730,99 @@ function restoreSelection(
     );
   }
 
-  return Object.freeze({
-    ranges: Object.freeze(ranges) as NonEmptyReadonlyArray<SelectionRange>,
+  return {
+    ranges: Object.freeze(ranges) as unknown as NonEmptyReadonlyArray<R>,
     primaryIndex,
-  });
+  };
 }
 
-function restoreHistoryChange(raw: unknown, what: string, budget: RestoreBudget): HistoryChange {
+/** Restore the live selection. Every offset must lie within the document. */
+function restoreSelection(
+  raw: unknown,
+  what: string,
+  maxOffset: number,
+  budget: RestoreBudget,
+): SelectionState {
+  return Object.freeze(
+    restoreSelectionShape(raw, what, budget, (tuple, rangeWhat): SelectionRange => {
+      const anchor = readCount(tuple[0], `${rangeWhat}[0]`);
+      const head = readCount(tuple[1], `${rangeWhat}[1]`);
+      if (anchor > maxOffset || head > maxOffset) {
+        fail(
+          "SELECTION_OUT_OF_RANGE",
+          `${rangeWhat} spans [${anchor}, ${head}] but the document holds ${maxOffset} bytes`,
+        );
+      }
+      return { anchor: byteOffset(anchor), head: byteOffset(head) };
+    }),
+  );
+}
+
+/**
+ * Limits for anchored history positions, derived from the restored piece table.
+ *
+ * A placement key can only name a chunk that has been loaded, so it is at most
+ * `nextExpectedChunk - 1` (always `-1` without chunking). An anchored position
+ * subtracts the lengths of loaded chunks at or below its key from a
+ * non-negative resident offset, so it is at least `-(key + 1) * chunkSize`
+ * (at least `0` for key `-1`).
+ */
+interface AnchorBounds {
+  readonly maxKey: number;
+  readonly chunkSize: number;
+}
+
+function anchorBounds(pieceTable: PieceTableState): AnchorBounds {
+  return { maxKey: pieceTable.nextExpectedChunk - 1, chunkSize: pieceTable.chunkSize };
+}
+
+/** Read and validate one anchored history position and its placement key. */
+function readAnchor(
+  rawPosition: unknown,
+  rawKey: unknown,
+  positionWhat: string,
+  keyWhat: string,
+  bounds: AnchorBounds,
+): { position: number; afterChunk: number } {
+  const afterChunk = readPlacementKey(rawKey, keyWhat);
+  if (afterChunk > bounds.maxKey) {
+    fail(
+      "HISTORY_INVALID",
+      `${keyWhat} is placement key ${afterChunk} but only chunks up to ${bounds.maxKey} have been loaded`,
+    );
+  }
+  const minPosition = Math.max(-(afterChunk + 1) * bounds.chunkSize, Number.MIN_SAFE_INTEGER);
+  return { position: readInteger(rawPosition, positionWhat, minPosition), afterChunk };
+}
+
+function restoreHistoryChange(
+  raw: unknown,
+  what: string,
+  bounds: AnchorBounds,
+  budget: RestoreBudget,
+): HistoryChange {
   const tuple = readArray(raw, what, budget);
   const kind = readEnum(tuple[0], ["i", "d", "r"] as const, `${what}[0]`, budget);
-  // Anchored positions may be negative (see HistoryAnchor).
-  const position = readInteger(tuple[1], `${what}[1]`);
   const text = readString(tuple[2], `${what}[2]`, budget);
   // Derive byte lengths from text so an incorrect stored length cannot
   // shift the offsets computed during undo.
   const textLength = byteLength(utf8ByteLength(text));
+  // Anchored positions may be negative (see HistoryAnchor). The placement key
+  // follows the text fields, so its index depends on the change kind.
+  const keyIndex = kind === "r" ? 4 : 3;
+  const anchor = readAnchor(
+    tuple[1],
+    tuple[keyIndex],
+    `${what}[1]`,
+    `${what}[${keyIndex}]`,
+    bounds,
+  );
 
   if (kind === "r") {
     const oldText = readString(tuple[3], `${what}[3]`, budget);
     return Object.freeze({
       type: "replace",
-      position,
-      afterChunk: readPlacementKey(tuple[4], `${what}[4]`),
+      ...anchor,
       text,
       byteLength: textLength,
       oldText,
@@ -769,8 +831,7 @@ function restoreHistoryChange(raw: unknown, what: string, budget: RestoreBudget)
   }
   return Object.freeze({
     type: kind === "i" ? "insert" : "delete",
-    position,
-    afterChunk: readPlacementKey(tuple[3], `${what}[3]`),
+    ...anchor,
     text,
     byteLength: textLength,
   });
@@ -780,44 +841,33 @@ function restoreHistoryChange(raw: unknown, what: string, budget: RestoreBudget)
 function restoreHistorySelection(
   raw: unknown,
   what: string,
+  bounds: AnchorBounds,
   budget: RestoreBudget,
 ): HistorySelectionState {
-  const source = readObject(raw, what);
-  const rawRanges = readArray(source.ranges, `${what}.ranges`, budget);
-  if (rawRanges.length === 0) {
-    fail("SELECTION_OUT_OF_RANGE", `${what}.ranges is empty: a selection always has one range`);
-  }
-  const ranges: HistorySelectionRange[] = [];
-  for (let i = 0; i < rawRanges.length; i++) {
-    const rangeWhat = `${what}.ranges[${i}]`;
-    const tuple = readArray(rawRanges[i], rangeWhat, budget);
-    ranges.push(
-      Object.freeze({
-        anchor: readInteger(tuple[0], `${rangeWhat}[0]`),
-        head: readInteger(tuple[1], `${rangeWhat}[1]`),
-        anchorAfterChunk: readPlacementKey(tuple[2], `${rangeWhat}[2]`),
-        headAfterChunk: readPlacementKey(tuple[3], `${rangeWhat}[3]`),
-      }),
-    );
-  }
-  const primaryIndex = readCount(source.primaryIndex, `${what}.primaryIndex`);
-  if (primaryIndex >= ranges.length) {
-    fail(
-      "SELECTION_OUT_OF_RANGE",
-      `${what}.primaryIndex is ${primaryIndex} but only ${ranges.length} ranges are present`,
-    );
-  }
-  return Object.freeze({
-    ranges: Object.freeze(ranges) as unknown as NonEmptyReadonlyArray<HistorySelectionRange>,
-    primaryIndex,
-  });
+  return Object.freeze(
+    restoreSelectionShape(raw, what, budget, (tuple, rangeWhat): HistorySelectionRange => {
+      const anchor = readAnchor(tuple[0], tuple[2], `${rangeWhat}[0]`, `${rangeWhat}[2]`, bounds);
+      const head = readAnchor(tuple[1], tuple[3], `${rangeWhat}[1]`, `${rangeWhat}[3]`, bounds);
+      return {
+        anchor: anchor.position,
+        head: head.position,
+        anchorAfterChunk: anchor.afterChunk,
+        headAfterChunk: head.afterChunk,
+      };
+    }),
+  );
 }
 
-function restoreHistoryEntry(raw: unknown, what: string, budget: RestoreBudget): HistoryEntry {
+function restoreHistoryEntry(
+  raw: unknown,
+  what: string,
+  bounds: AnchorBounds,
+  budget: RestoreBudget,
+): HistoryEntry {
   const source = readObject(raw, what);
   const rawChanges = readArray(source.changes, `${what}.changes`, budget);
   const changes = rawChanges.map((change, i) =>
-    restoreHistoryChange(change, `${what}.changes[${i}]`, budget),
+    restoreHistoryChange(change, `${what}.changes[${i}]`, bounds, budget),
   );
 
   return Object.freeze({
@@ -825,19 +875,26 @@ function restoreHistoryEntry(raw: unknown, what: string, budget: RestoreBudget):
     selectionBefore: restoreHistorySelection(
       source.selectionBefore,
       `${what}.selectionBefore`,
+      bounds,
       budget,
     ),
     selectionAfter: restoreHistorySelection(
       source.selectionAfter,
       `${what}.selectionAfter`,
+      bounds,
       budget,
     ),
     timestamp: readFiniteNumber(source.timestamp, `${what}.timestamp`),
   });
 }
 
-function restoreHistory(raw: unknown, budget: RestoreBudget): HistoryState {
+function restoreHistory(
+  raw: unknown,
+  pieceTable: PieceTableState,
+  budget: RestoreBudget,
+): HistoryState {
   const { limits } = budget;
+  const bounds = anchorBounds(pieceTable);
   const source = readObject(raw, "history");
   const limit = readCount(source.limit, "history.limit");
   if (limit < 1) {
@@ -864,7 +921,9 @@ function restoreHistory(raw: unknown, budget: RestoreBudget): HistoryState {
         `${what} holds ${rawEntries.length} entries, past the declared limit of ${limit}`,
       );
     }
-    return rawEntries.map((entry, i) => restoreHistoryEntry(entry, `${what}[${i}]`, budget));
+    return rawEntries.map((entry, i) =>
+      restoreHistoryEntry(entry, `${what}[${i}]`, bounds, budget),
+    );
   };
 
   return Object.freeze({
@@ -975,6 +1034,7 @@ export function isCheckpoint(value: unknown): value is CheckpointEnvelope {
   // Accept every version restore can migrate forward.
   if (
     typeof candidate.version !== "number" ||
+    !Number.isInteger(candidate.version) ||
     candidate.version < minimumSupportedVersion() ||
     candidate.version > CHECKPOINT_VERSION
   ) {
@@ -1062,7 +1122,7 @@ export function restoreCheckpoint(
     pieceTable,
     lineIndex,
     selection: restoreSelection(migrated.selection, "selection", pieceTable.totalLength, budget),
-    history: restoreHistory(migrated.history, budget),
+    history: restoreHistory(migrated.history, pieceTable, budget),
     metadata: restoreMetadata(migrated.metadata, budget),
     attention: restoreAttention(migrated.attention, lengthByID, budget),
   });

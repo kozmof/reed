@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { createDocumentStore } from "./store.js";
+import { createDocumentStore, createDocumentStoreWithEvents } from "./store.js";
 import { DocumentActions } from "./actions.js";
 import { documentReducer } from "./reducer.js";
 import { createCheckpoint, restoreCheckpoint } from "./checkpoint.js";
@@ -454,4 +454,135 @@ describe("randomized edits, loads, evictions, undo and redo", () => {
       }
     });
   }
+});
+
+describe("history selections that pointed into an evicted chunk", () => {
+  it("lands where the evicted chunk was, not inside the chunk after it", () => {
+    const s = makeStore(3);
+    load(s, 0);
+    load(s, 1);
+    load(s, 2);
+    // Cursor inside chunk 1 (offset 12), then an edit inside chunk 2.
+    const inside = byteOffset(12);
+    s.dispatch(DocumentActions.insert(byteOffset(20), "X", [{ anchor: inside, head: inside }]));
+    // History changes only touch chunk 2, so chunk 1 can be evicted.
+    s.dispatch(DocumentActions.evictChunk(1));
+    expect(text(s)).toBe("AAAAAAA\nCCCCXCCC\n");
+
+    s.dispatch(DocumentActions.undo());
+    expect(text(s)).toBe("AAAAAAA\nCCCCCCC\n");
+    // Offset 12 would now be inside chunk 2. The cursor collapses to offset 8,
+    // where chunk 1 was, as the live selection does on eviction.
+    expect(cursor(s)).toEqual({ anchor: 8, head: 8 });
+  });
+});
+
+describe("events for chunk loads and evictions", () => {
+  function makeEventStore(policy: HistoryEvictionPolicy) {
+    return createDocumentStoreWithEvents({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 2,
+      reconcileMode: "none",
+      historyEvictionPolicy: policy,
+    });
+  }
+
+  it("emits selection-change when a load or eviction moves the selection", () => {
+    const s = makeEventStore("pin");
+    s.dispatch(DocumentActions.loadChunk(1, enc(CHUNK1)));
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(2), head: byteOffset(2) }]));
+    const heads: number[] = [];
+    s.addEventListener("selection-change", ({ nextState }) =>
+      heads.push(nextState.selection.ranges[0].head),
+    );
+
+    s.dispatch(DocumentActions.loadChunk(0, enc(CHUNK0)));
+    s.dispatch(DocumentActions.evictChunk(0));
+    expect(heads).toEqual([10, 2]);
+  });
+
+  it("does not emit selection-change when the selection stays put", () => {
+    const s = makeEventStore("pin");
+    let fired = 0;
+    s.addEventListener("selection-change", () => fired++);
+    // The cursor sits at 0, before chunk 0, so loading does not move it.
+    s.dispatch(DocumentActions.loadChunk(0, enc(CHUNK0)));
+    expect(fired).toBe(0);
+  });
+
+  it("emits history-change with direction 'drop' when eviction discards entries", () => {
+    const s = makeEventStore("drop");
+    s.dispatch(DocumentActions.loadChunk(0, enc(CHUNK0)));
+    s.dispatch(DocumentActions.loadChunk(1, enc(CHUNK1)));
+    s.dispatch(DocumentActions.insert(byteOffset(2), "X"));
+    s.dispatch(DocumentActions.undo());
+    const directions: string[] = [];
+    s.addEventListener("history-change", ({ direction, nextState }) => {
+      directions.push(direction);
+      expect(getRedoCount(nextState)).toBe(0);
+    });
+
+    s.dispatch(DocumentActions.evictChunk(0));
+    expect(directions).toEqual(["drop"]);
+  });
+
+  it("does not emit history-change when eviction keeps every entry", () => {
+    const s = makeEventStore("drop");
+    s.dispatch(DocumentActions.loadChunk(0, enc(CHUNK0)));
+    s.dispatch(DocumentActions.loadChunk(1, enc(CHUNK1)));
+    s.dispatch(DocumentActions.insert(byteOffset(10), "X"));
+    let fired = 0;
+    s.addEventListener("history-change", () => fired++);
+    s.dispatch(DocumentActions.evictChunk(0));
+    expect(text(s as unknown as Store)).toBe("BBXBBBBB\n");
+    expect(fired).toBe(0);
+  });
+});
+
+describe("checkpoint restore validates history anchors", () => {
+  type Wire = Record<string, any>;
+  const editUndo = (checkpoint: Wire, edit: (entry: Wire) => void): Wire => {
+    const copy = JSON.parse(JSON.stringify(checkpoint));
+    edit(copy.history.undo[0]);
+    return copy;
+  };
+
+  it("rejects placement keys and negative positions in an unchunked document", () => {
+    const s = createDocumentStore({ content: "hello" });
+    s.dispatch(DocumentActions.insert(byteOffset(0), "x"));
+    const checkpoint = createCheckpoint(s.getEagerSnapshot());
+    expect(() => restoreCheckpoint(checkpoint)).not.toThrow();
+
+    const keyed = editUndo(checkpoint, (entry) => (entry.changes[0] = ["i", 0, "x", 5]));
+    expect(() => restoreCheckpoint(keyed)).toThrow(/placement key 5/);
+    const negative = editUndo(checkpoint, (entry) => (entry.changes[0] = ["i", -10, "x"]));
+    expect(() => restoreCheckpoint(negative)).toThrow(/at least 0/);
+    const keyedSelection = editUndo(
+      checkpoint,
+      (entry) => (entry.selectionBefore.ranges[0] = [0, 0, 3, 3]),
+    );
+    expect(() => restoreCheckpoint(keyedSelection)).toThrow(/placement key 3/);
+    const negativeSelection = editUndo(
+      checkpoint,
+      (entry) => (entry.selectionAfter.ranges[0] = [-1, 0]),
+    );
+    expect(() => restoreCheckpoint(negativeSelection)).toThrow(/at least 0/);
+  });
+
+  it("bounds keys by the loaded chunks and positions by the chunks before them", () => {
+    const s = makeStore();
+    load(s, 1);
+    s.dispatch(DocumentActions.insert(byteOffset(2), "X")); // key 0, inside chunk 1
+    const checkpoint = createCheckpoint(s.reconcileNow());
+    expect(checkpoint.history.undo[0]!.changes[0]).toEqual(["i", 2, "X", 0]);
+
+    // nextExpectedChunk is 2, so key 1 is fine and key 2 is not.
+    const atKey = (key: number, position = 2) =>
+      editUndo(checkpoint, (entry) => (entry.changes[0] = ["i", position, "X", key]));
+    expect(() => restoreCheckpoint(atKey(1))).not.toThrow();
+    expect(() => restoreCheckpoint(atKey(2))).toThrow(/placement key 2/);
+    // Key 0 can subtract at most one chunk (8 bytes).
+    expect(() => restoreCheckpoint(atKey(0, -8))).not.toThrow();
+    expect(() => restoreCheckpoint(atKey(0, -9))).toThrow(/at least -8/);
+  });
 });

@@ -13,7 +13,10 @@
 export const CHECKPOINT_FORMAT = "reed-checkpoint";
 export type CheckpointFormat = typeof CHECKPOINT_FORMAT;
 
-/** Current checkpoint format version. This build supports version 1 only. */
+/**
+ * Current checkpoint format version. Restore also accepts version 1, which it
+ * migrates forward (see `checkpoint-migrate.ts`).
+ */
 export const CHECKPOINT_VERSION = 2;
 
 /**

@@ -44,7 +44,8 @@ export interface ContentChangeEvent extends DocumentEvent {
 }
 
 /**
- * Fired when selection changes.
+ * Fired when selection changes: on SET_SELECTION, and when LOAD_CHUNK,
+ * LOAD_CHUNKS, or EVICT_CHUNK moves the selection.
  */
 export interface SelectionChangeEvent extends DocumentEvent {
   readonly type: "selection-change";
@@ -53,7 +54,8 @@ export interface SelectionChangeEvent extends DocumentEvent {
 }
 
 /**
- * Fired when undo/redo occurs.
+ * Fired when undo/redo occurs, and when EVICT_CHUNK discards history entries
+ * under the `"drop"` eviction policy (`direction: "drop"`).
  *
  * `nextState.selection` holds the cursor position that Reed restored from
  * the history entry. Subscribe to this event once to keep application cursor
@@ -74,7 +76,8 @@ export interface SelectionChangeEvent extends DocumentEvent {
  */
 export interface HistoryChangeEvent extends DocumentEvent {
   readonly type: "history-change";
-  readonly direction: "undo" | "redo";
+  /** `"drop"` when EVICT_CHUNK discarded history entries. */
+  readonly direction: "undo" | "redo" | "drop";
   readonly prevState: DocumentState;
   readonly nextState: DocumentState;
 }
@@ -330,7 +333,7 @@ export function createSelectionChangeEvent(
  * Create a history change event.
  */
 export function createHistoryChangeEvent(
-  direction: "undo" | "redo",
+  direction: HistoryChangeEvent["direction"],
   prevState: DocumentState,
   nextState: DocumentState,
 ): HistoryChangeEvent {

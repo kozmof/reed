@@ -1,0 +1,40 @@
+/**
+ * Read access to history entries that may be coalesced.
+ *
+ * A coalesced entry shares its earlier changes with the entry it replaced and
+ * builds its `changes` array only when a consumer reads it. These helpers read
+ * such entries without forcing that array into existence.
+ */
+
+import type { HistoryChange, HistoryEntry } from "../../types/state.js";
+
+/**
+ * Coalesced entries, keyed to the change list they extend: every change of
+ * `base` except the last, followed by `tail`.
+ */
+export const coalescedTails = new WeakMap<
+  HistoryEntry,
+  {
+    base: readonly HistoryChange[];
+    tail: HistoryChange;
+  }
+>();
+
+/** The change applied last in `entry`, or undefined for an empty entry. */
+export function lastHistoryChange(entry: HistoryEntry): HistoryChange | undefined {
+  return coalescedTails.get(entry)?.tail ?? entry.changes[entry.changes.length - 1];
+}
+
+/** True when some change of `entry` matches `predicate`. */
+export function someHistoryChange(
+  entry: HistoryEntry,
+  predicate: (change: HistoryChange) => boolean,
+): boolean {
+  const coalesced = coalescedTails.get(entry);
+  if (coalesced === undefined) return entry.changes.some(predicate);
+  const { base, tail } = coalesced;
+  for (let i = 0; i < base.length - 1; i++) {
+    if (predicate(base[i]!)) return true;
+  }
+  return predicate(tail);
+}

@@ -121,8 +121,8 @@ History boundaries:
 `store.createDocumentStoreWithEvents` emits:
 
 - `content-change` for local text edits and `APPLY_REMOTE`
-- `selection-change`
-- `history-change`
+- `selection-change`, including when a chunk load or eviction moves the selection
+- `history-change` for undo and redo, and with direction `'drop'` when eviction discards entries
 - `attention-change` when attention records are created, deleted, or migrated
 - `dirty-change`
 

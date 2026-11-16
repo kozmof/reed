@@ -557,6 +557,12 @@ describe("isCheckpoint", () => {
     (checkpoint as { version: number }).version = 99;
     expect(isCheckpoint(checkpoint)).toBe(false);
   });
+
+  it("rejects a fractional version between supported versions", () => {
+    const checkpoint = clone(createCheckpoint(createDocumentStore().getEagerSnapshot()));
+    (checkpoint as { version: number }).version = 1.5;
+    expect(isCheckpoint(checkpoint)).toBe(false);
+  });
 });
 
 describe("restoring into a live store", () => {

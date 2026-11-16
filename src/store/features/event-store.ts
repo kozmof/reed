@@ -85,17 +85,29 @@ export function withEvents(
       );
     }
 
+    // Chunk loads shift the selection, and evictions shift or collapse it.
+    const isChunkAction =
+      action.type === "LOAD_CHUNK" ||
+      action.type === "LOAD_CHUNKS" ||
+      action.type === "EVICT_CHUNK";
+
     // Selection change events
-    if (action.type === "SET_SELECTION") {
+    if (
+      action.type === "SET_SELECTION" ||
+      (isChunkAction && prevState.selection !== nextState.selection)
+    ) {
       prepare("selection-change", createSelectionChangeEvent(prevState, nextState));
     }
 
-    // History change events
+    // History change events. EVICT_CHUNK changes history only under the
+    // "drop" eviction policy, when it discards entries.
     if (action.type === "UNDO" || action.type === "REDO") {
       prepare(
         "history-change",
         createHistoryChangeEvent(action.type === "UNDO" ? "undo" : "redo", prevState, nextState),
       );
+    } else if (action.type === "EVICT_CHUNK" && prevState.history !== nextState.history) {
+      prepare("history-change", createHistoryChangeEvent("drop", prevState, nextState));
     }
 
     // Emit attention-change when CREATE_ATTENTION, DELETE_ATTENTION, or a
