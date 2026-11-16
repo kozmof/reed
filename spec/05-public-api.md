@@ -86,9 +86,10 @@ Returns a `ReconcilableDocumentStore` whose state comes from a checkpoint. Throw
 `store.createDocumentStoreWithEventsFromCheckpoint(checkpoint, config?, restoreOptions?)` is the event-store
 counterpart. Restoring emits no events.
 
-Config is `DocumentStoreRuntimeConfig`, which accepts only `logger` and either
-`reconcileMode` or `scheduler`. State-bearing options come from the checkpoint, and passing
-one throws.
+Config is `DocumentStoreRestoreConfig`, which accepts `logger`, either `reconcileMode` or
+`scheduler`, and `historyEvictionPolicy`. The policy, when given, replaces the one in the
+checkpoint; a version 1 checkpoint stores none and otherwise restores with `'pin'`. Other
+state-bearing options come from the checkpoint, and passing one throws.
 
 ### 2.4 Flat `createChunkManager(store, loader, config?)`
 

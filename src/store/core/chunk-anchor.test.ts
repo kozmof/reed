@@ -1,53 +1,7 @@
 import { describe, expect, it } from "vitest";
-import {
-  NO_CHUNK,
-  flatGapKey,
-  gapKey,
-  hasUnloadedChunkBetween,
-  loadedLengthAtOrBelow,
-  pieceKey,
-} from "./chunk-anchor.js";
+import { hasUnloadedChunkBetween, loadedLengthAtOrBelow } from "./chunk-anchor.js";
 import { createDocumentStore } from "../features/store.js";
 import { DocumentActions } from "../features/actions.js";
-import { byteOffset } from "../../types/branded.js";
-import type { PieceNode } from "../../types/state.js";
-
-function inOrder(node: PieceNode | null, out: PieceNode[] = []): PieceNode[] {
-  if (node === null) return out;
-  inOrder(node.left, out);
-  out.push(node);
-  inOrder(node.right, out);
-  return out;
-}
-
-describe("flatGapKey", () => {
-  it("is NO_CHUNK for an empty list", () => {
-    expect(flatGapKey([])(0, "before")).toBe(NO_CHUNK);
-    expect(flatGapKey([])(0, "after")).toBe(NO_CHUNK);
-  });
-
-  it("agrees with gapKey on the piece tree at every offset", () => {
-    const enc = (s: string) => new TextEncoder().encode(s);
-    const s = createDocumentStore({ chunkSize: 4, totalFileSize: 16, reconcileMode: "none" });
-    s.dispatch(DocumentActions.loadChunk(0, enc("aaaa")));
-    s.dispatch(DocumentActions.loadChunk(2, enc("cccc")));
-    s.dispatch(DocumentActions.insert(byteOffset(4), "XY"));
-    s.dispatch(DocumentActions.insert(byteOffset(9), "Z"));
-    const { root, totalLength } = s.getSnapshot().pieceTable;
-    const lookup = flatGapKey(
-      inOrder(root).map((piece) => ({
-        length: piece.length,
-        key: pieceKey(piece),
-        chunkIndex: piece.bufferType === "chunk" ? piece.chunkIndex : null,
-      })),
-    );
-    for (let offset = 0; offset <= totalLength; offset++) {
-      for (const side of ["before", "after"] as const) {
-        expect(lookup(offset, side), `offset ${offset} ${side}`).toBe(gapKey(root, offset, side));
-      }
-    }
-  });
-});
 
 describe("loaded-chunk lengths", () => {
   it("match a direct sum through random loads and evictions", () => {

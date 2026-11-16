@@ -292,6 +292,11 @@ Describe these operations as producing a new immutable state reference without i
 Increments only on `SET_SELECTION`. Inline selections carried by a content edit do
 not move it. It strictly tracks `SET_SELECTION` dispatches.
 
+The selection itself also moves on edits, `UNDO`/`REDO`, and chunk loads and
+evictions, none of which move `selectionRevision`. Detect any selection change by
+identity: `state.selection !== prev.selection`. Actions that leave the selection in
+place keep the same object.
+
 ### 5.4 `lineIndex.lastReconciledRevision`
 
 Set to `state.revision` at reconciliation time, the revision before reconcile

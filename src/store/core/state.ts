@@ -63,6 +63,12 @@ const DEFAULT_CONFIG: Required<Omit<DocumentStoreConfigBase, "logger">> & {
   normalizeInsertedLineEndings: false,
 };
 
+export function assertValidHistoryEvictionPolicy(policy: unknown): void {
+  if (policy !== undefined && policy !== "pin" && policy !== "drop") {
+    throw new Error(`historyEvictionPolicy must be 'pin' or 'drop': ${String(policy)}`);
+  }
+}
+
 export function assertValidDocumentStoreRuntimeConfig(config: DocumentStoreRuntimeConfig): void {
   if (config.scheduler !== undefined && config.reconcileMode !== undefined) {
     throw new Error(
@@ -127,15 +133,7 @@ function assertValidDocumentStoreConfig(config: DocumentStoreConfig): void {
   ) {
     throw new Error("undoGroupTimeout must be a non-negative number");
   }
-  if (
-    config.historyEvictionPolicy !== undefined &&
-    config.historyEvictionPolicy !== "pin" &&
-    config.historyEvictionPolicy !== "drop"
-  ) {
-    throw new Error(
-      `historyEvictionPolicy must be 'pin' or 'drop': ${String(config.historyEvictionPolicy)}`,
-    );
-  }
+  assertValidHistoryEvictionPolicy(config.historyEvictionPolicy);
   if (
     config.maxDirtyRanges !== undefined &&
     (!Number.isInteger(config.maxDirtyRanges) || config.maxDirtyRanges < 1)

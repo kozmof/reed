@@ -230,8 +230,10 @@ migrates), and non-null object sections. It narrows to
 `restore` for full validation. Restore entry points accept `unknown` input and check
 line boundaries and UTF-16 lengths against the resident document bytes.
 
-The store entry points accept `DocumentStoreRuntimeConfig`, which is `logger` plus
-`reconcileMode` or `scheduler`. Content, history limit, line ending, chunk size, and the other
+The store entry points accept `DocumentStoreRestoreConfig`, which is `logger` plus
+`reconcileMode` or `scheduler`, and optionally `historyEvictionPolicy`. The policy only
+decides what a later `EVICT_CHUNK` does, so it may change on restore: when given, it replaces
+`history.evictionPolicy`. Content, history limit, line ending, chunk size, and the other
 state-bearing options come from the checkpoint. Passing one throws rather than being ignored.
 
 Restoring into an event store emits nothing. The first event a subscriber sees is the one their

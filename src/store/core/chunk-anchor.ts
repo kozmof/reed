@@ -109,59 +109,6 @@ export function gapKey(root: PieceNode | null, offset: number, side: GapSide): n
   return Math.min(keyAfterPiece(before), pieceKey(after));
 }
 
-/** One piece of an in-order piece list, for callers without a piece tree. */
-export interface FlatPiece {
-  readonly length: number;
-  /** Placement key of the piece's bytes (see `pieceKey`). */
-  readonly key: number;
-  /** Chunk of a chunk piece, or null for other pieces. */
-  readonly chunkIndex: number | null;
-}
-
-/**
- * `gapKey` over an in-order piece list instead of a piece tree, with the same
- * rules. The v1 checkpoint migration uses it on wire data, before any tree
- * exists. Building the lookup is O(n), and each call is O(log n).
- */
-export function flatGapKey(
-  pieces: readonly FlatPiece[],
-): (offset: number, side: GapSide) => number {
-  const starts: number[] = [];
-  const keys: number[] = [];
-  // As in `keyAfterPiece`: after a chunk piece, that whole chunk lies before.
-  const keysAfter: number[] = [];
-  let total = 0;
-  for (const piece of pieces) {
-    if (piece.length <= 0) continue;
-    starts.push(total);
-    keys.push(piece.key);
-    keysAfter.push(piece.chunkIndex ?? piece.key);
-    total += piece.length;
-  }
-  // Index of the piece holding byte `offset`: the last piece starting at or
-  // before it.
-  const pieceAt = (offset: number): number => {
-    let lo = 0;
-    let hi = starts.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >>> 1;
-      if (starts[mid]! <= offset) lo = mid;
-      else hi = mid - 1;
-    }
-    return lo;
-  };
-  return (offset, side) => {
-    if (starts.length === 0) return NO_CHUNK;
-    if (offset <= 0) return keys[0]!;
-    if (offset >= total) return keysAfter[keysAfter.length - 1]!;
-    const after = pieceAt(offset);
-    if (side === "after") return keys[after]!;
-    const before = pieceAt(offset - 1);
-    if (before === after) return keys[after]!;
-    return Math.min(keysAfter[before]!, keys[after]!);
-  };
-}
-
 /** Total length of the pieces whose placement key is at most `key`. O(log n). */
 function lengthWithKeyAtMost(root: PieceNode | null, key: number): number {
   // Keys never decrease in document order, so the pieces with key <= `key`

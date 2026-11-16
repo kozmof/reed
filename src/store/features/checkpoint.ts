@@ -856,10 +856,12 @@ function restoreHistoryChange(
     `${what}[${keyIndex}]`,
     bounds,
   );
-  // Raw bytes follow the key. A null `bytes` only holds the place of `oldBytes`.
+  // Raw bytes follow the key. A null `bytes` only holds the place of a
+  // replace's `oldBytes`, so null is accepted nowhere else.
   const readRawBytes = (index: number): { bytes: ReadonlyUint8Array } | undefined => {
     const value = tuple[index];
-    if (value === undefined || (value === null && index === keyIndex + 1)) return undefined;
+    if (value === undefined) return undefined;
+    if (value === null && kind === "r" && index === keyIndex + 1) return undefined;
     return {
       bytes: asReadonlyUint8Array(readBytes(value, `${what}[${index}]`, budget)),
     };

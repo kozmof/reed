@@ -58,6 +58,7 @@ export type {
   DocumentStoreConfigBase,
   DocumentStoreConfig,
   DocumentStoreRuntimeConfig,
+  DocumentStoreRestoreConfig,
   ReedLogger,
   ChunkMetadata,
 } from "./types/index.js";

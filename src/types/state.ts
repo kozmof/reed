@@ -749,12 +749,19 @@ export interface DocumentState<M extends EvaluationMode = EvaluationMode> {
    */
   readonly revision: number;
   /**
-   * Counter incremented by each SET_SELECTION action.
+   * Counter incremented by each SET_SELECTION action, and by nothing else.
    *
    * `revision` also changes for content edits, so use `selectionRevision` to
    * detect SET_SELECTION actions. To skip content recomputation, compare
    * `state.pieceTable === prev.pieceTable`. Structural sharing makes this an
    * O(1) identity check, including across selection-only changes.
+   *
+   * Other actions move the selection without changing this counter: edits,
+   * UNDO and REDO, and LOAD_CHUNK, LOAD_CHUNKS, or EVICT_CHUNK, which shift
+   * offsets after the loaded or evicted chunk. To redraw the caret on every
+   * selection change, compare `state.selection !== prev.selection` (or listen
+   * for 'selection-change'). An action that leaves the selection in place
+   * keeps the same selection object.
    */
   readonly selectionRevision: number;
   /** Piece table containing the document content */
@@ -794,11 +801,21 @@ export type ReconcileOptions = ReconcileModeConfig | CustomSchedulerConfig;
 /**
  * Runtime settings for diagnostics and reconciliation scheduling.
  *
- * `createDocumentStoreFromCheckpoint` accepts these settings and restores
- * state settings, such as content, history limit, line ending, and chunk size,
- * from the checkpoint.
+ * `createDocumentStoreFromCheckpoint` accepts these settings (see
+ * `DocumentStoreRestoreConfig`) and restores state settings, such as content,
+ * history limit, line ending, and chunk size, from the checkpoint.
  */
 export type DocumentStoreRuntimeConfig = { logger?: ReedLogger } & ReconcileOptions;
+
+/**
+ * Settings `createDocumentStoreFromCheckpoint` accepts: the runtime settings,
+ * plus `historyEvictionPolicy`, which replaces the policy stored in the
+ * checkpoint. The policy only decides what a later EVICT_CHUNK does, so it can
+ * change on restore. A version 1 checkpoint stores none and restores with
+ * `"pin"` unless this is set.
+ */
+export type DocumentStoreRestoreConfig = DocumentStoreRuntimeConfig &
+  Pick<DocumentStoreConfigBase, "historyEvictionPolicy">;
 
 export interface ReedLogger {
   warn?(message: string, ...args: readonly unknown[]): void;

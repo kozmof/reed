@@ -4,7 +4,12 @@
  * Route text edits to `edit.ts` and undo/redo to `history.ts`.
  */
 
-import type { DocumentState, SelectionRange, NonEmptyReadonlyArray } from "../../types/state.js";
+import type {
+  DocumentState,
+  SelectionRange,
+  SelectionState,
+  NonEmptyReadonlyArray,
+} from "../../types/state.js";
 import type { DocumentAction } from "../../types/actions.js";
 import { byteOffset } from "../../types/branded.js";
 import { withState } from "../core/state.js";
@@ -17,6 +22,7 @@ import {
   applyUntrackedEdit,
 } from "./edit.js";
 import { historyUndo, historyRedo } from "./history.js";
+import { carryLiveAnchors } from "./history-anchor.js";
 import { createPoint, createAttention, deleteAttention } from "../core/attention.js";
 import { declareChunkMetadata, evictChunk, loadChunk, loadChunks } from "./chunk-actions.js";
 
@@ -59,19 +65,20 @@ function setSelection(state: DocumentState, ranges: readonly SelectionRange[]): 
   if (ranges.length === 0) {
     throw new Error("SET_SELECTION: ranges must be non-empty");
   }
-  return withState(state, {
-    selection: Object.freeze({
-      ranges: Object.freeze(
-        ranges.map((r) =>
-          Object.freeze({
-            anchor: validateBoundaryPosition(state, r.anchor, "selection anchor"),
-            head: validateBoundaryPosition(state, r.head, "selection head"),
-          }),
-        ),
-      ) as NonEmptyReadonlyArray<SelectionRange>,
-      primaryIndex: 0,
-    }),
+  const selection: SelectionState = Object.freeze({
+    ranges: Object.freeze(
+      ranges.map((r) =>
+        Object.freeze({
+          anchor: validateBoundaryPosition(state, r.anchor, "selection anchor"),
+          head: validateBoundaryPosition(state, r.head, "selection head"),
+        }),
+      ),
+    ) as NonEmptyReadonlyArray<SelectionRange>,
+    primaryIndex: 0,
   });
+  // Keep the side of an unloaded chunk each unmoved endpoint is on.
+  carryLiveAnchors(state.pieceTable, state.selection, selection);
+  return withState(state, { selection });
 }
 
 // =============================================================================

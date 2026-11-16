@@ -48,9 +48,15 @@ import {
   repairLineIndexWindow,
 } from "../core/line-index.js";
 import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
-import { utf8ByteLength } from "../core/encoding.js";
+import { textEncoder, utf8ByteLength } from "../core/encoding.js";
 import { NO_CHUNK, gapKey, hasUnloadedChunkBetween, placementRuns } from "../core/chunk-anchor.js";
-import { anchorAt, anchorSelection, anchoredCursor, residentOffset } from "./history-anchor.js";
+import {
+  anchorAt,
+  anchorSelection,
+  anchoredCursor,
+  liveKeyAt,
+  residentOffset,
+} from "./history-anchor.js";
 import { coalescedTails, lastHistoryChange } from "./history-entry.js";
 
 // =============================================================================
@@ -369,6 +375,35 @@ function coalesceChanges(
         `coalesceChanges called with uncoalesceable change type: ${(incoming as HistoryChange).type}`,
       );
   }
+}
+
+/**
+ * The bytes in `[start, end)` when `text`, their decoding, does not encode back
+ * to them, else undefined.
+ *
+ * Decoding changes bytes only by replacing malformed sequences with U+FFFD or
+ * dropping a leading byte order mark. Dropping a BOM shortens the text, so text
+ * of the right length with no U+FFFD is exact without comparing bytes. A
+ * replacement can keep the length (three malformed bytes become one 3-byte
+ * U+FFFD), so text containing U+FFFD is compared byte for byte.
+ */
+function rawBytesUnlessExact(
+  pieceTable: PieceTableState,
+  text: string,
+  start: number,
+  end: number,
+): ReadonlyUint8Array | undefined {
+  const length = end - start;
+  if (utf8ByteLength(text) === length && !text.includes("�")) return undefined;
+  const raw = getBytes(pieceTable, byteOffset(start), byteOffset(end));
+  if (raw.length === length && bytesEqual(raw, textEncoder.encode(text))) return undefined;
+  return asReadonlyUint8Array(raw);
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 // =============================================================================
@@ -761,13 +796,17 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   // unloaded chunk when re-inserted. Usually there is a single run.
   const runs = op.kind === "insert" ? [] : placementRuns(pieceTable, op.position, op.deleteEnd);
   // Inserted text takes the key of the text it replaces, or the gap's key.
-  // Without chunks every key is NO_CHUNK, so skip the tree lookup.
+  // Without chunks every key is NO_CHUNK, so skip the tree lookup. With every
+  // chunk evicted the document is empty and the gap says nothing about where
+  // in the file the text goes, so take the key of the cursor carried there.
   const insertKey =
     runs.length > 0
       ? runs[0]!.key
       : pieceTable.nextExpectedChunk === 0
         ? NO_CHUNK
-        : gapKey(pieceTable.root, op.position, "before");
+        : pieceTable.root === null
+          ? (liveKeyAt(pieceTable, state.selection, op.position) ?? NO_CHUNK)
+          : gapKey(pieceTable.root, op.position, "before");
   let newState = applyUntrackedEdit(
     state,
     op.kind === "delete" ? op : { ...op, afterChunk: insertKey },
@@ -802,9 +841,9 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   // Deleted text as undo re-inserts it. Decoding replaces malformed bytes with
   // U+FFFD and drops a leading byte order mark, so the text can encode to
   // different bytes than were deleted. Bytes at the edge of an unloaded chunk
-  // are often an incomplete character. When the lengths differ, history keeps
-  // the exact bytes, so undo restores the document byte for byte and every
-  // recorded position stays valid.
+  // are often an incomplete character. When the text does not encode back to
+  // the deleted bytes, history keeps the exact bytes, so undo restores the
+  // document byte for byte and every recorded position stays valid.
   // Runs are empty for an insert. A single run is the whole deleted range.
   const deletedText = op.kind === "insert" ? "" : op.deletedText;
   const deleted = runs.map((run): { text: string; length: number; bytes?: ReadonlyUint8Array } => {
@@ -813,15 +852,8 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
         ? deletedText
         : getTextRange(state, byteOffset(run.start), byteOffset(run.end));
     const length = run.end - run.start;
-    return utf8ByteLength(text) === length
-      ? { text, length }
-      : {
-          text,
-          length,
-          bytes: asReadonlyUint8Array(
-            getBytes(pieceTable, byteOffset(run.start), byteOffset(run.end)),
-          ),
-        };
+    const bytes = rawBytesUnlessExact(pieceTable, text, run.start, run.end);
+    return bytes === undefined ? { text, length } : { text, length, bytes };
   });
   // Each run except the first becomes its own delete, ordered right to left so
   // every position is valid when its change is applied. Undo applies them in

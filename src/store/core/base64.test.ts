@@ -57,4 +57,13 @@ describe("base64DecodedLength", () => {
       expect(decodeBase64(encoded).length).toBe(length);
     }
   });
+
+  it("counts only complete quartets and their padding for an unaligned length", () => {
+    // Padding in a trailing incomplete group does not shorten the result.
+    expect(base64DecodedLength("AAAAA=")).toBe(3);
+    expect(base64DecodedLength("AAAAAA=")).toBe(3);
+    expect(base64DecodedLength("AA=")).toBe(0);
+    expect(base64DecodedLength("AAA=A")).toBe(2);
+    expect(base64DecodedLength("AA==AA")).toBe(1);
+  });
 });

@@ -8,7 +8,11 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { createDocumentStore, createDocumentStoreWithEvents } from "./store.js";
+import {
+  createDocumentStore,
+  createDocumentStoreFromCheckpoint,
+  createDocumentStoreWithEvents,
+} from "./store.js";
 import { DocumentActions } from "./actions.js";
 import { documentReducer } from "./reducer.js";
 import { createCheckpoint, restoreCheckpoint } from "./checkpoint.js";
@@ -854,5 +858,110 @@ describe("review regressions", () => {
     s.dispatch(DocumentActions.redo());
     expect(text(s)).toBe("AAAAAABBBBBBB\nCCCCC\n");
     expect(cursor(s)).toEqual({ anchor: 6, head: 6 });
+  });
+});
+
+describe("fourth review regressions", () => {
+  it("keeps deleted bytes whose decoding has the same length but different bytes", () => {
+    // Chunk 0 ends with the first three bytes of a four-byte emoji. With chunk
+    // 1 not loaded they decode to one U+FFFD, which is also three bytes.
+    const s = createDocumentStore({
+      chunkSize: 8,
+      totalFileSize: 16,
+      reconcileMode: "none",
+      undoGroupTimeout: 60_000,
+    });
+    const chunk0 = new Uint8Array([0x41, 0x42, 0x43, 0x44, 0x45, 0xf0, 0x9f, 0x98]);
+    const chunk1 = new Uint8Array([0x80, ...enc("FGHIJK\n")]);
+    s.dispatch(DocumentActions.loadChunk(0, chunk0));
+    s.dispatch(DocumentActions.delete(byteOffset(5), byteOffset(8)));
+    const [change] = s.getSnapshot().history.undoStack!.value.changes;
+    expect(change!.type).toBe("delete");
+    expect([...(change as { bytes?: Iterable<number> }).bytes!]).toEqual([0xf0, 0x9f, 0x98]);
+
+    // A backspace right before it would coalesce, but raw bytes keep it apart.
+    s.dispatch(DocumentActions.delete(byteOffset(4), byteOffset(5)));
+    expect(getUndoCount(s.getSnapshot())).toBe(2);
+
+    s.dispatch(DocumentActions.undo());
+    s.dispatch(DocumentActions.undo());
+    expect(bytesOf(s)).toEqual([...chunk0]);
+    s.dispatch(DocumentActions.loadChunk(1, chunk1));
+    expect(text(s)).toBe("ABCDE😀FGHIJK\n");
+  });
+
+  it("stores no bytes for deleted text that does contain U+FFFD but encodes back exactly", () => {
+    const s = createDocumentStore({ content: "a�b", reconcileMode: "none" });
+    s.dispatch(DocumentActions.delete(byteOffset(1), byteOffset(4)));
+    const [change] = s.getSnapshot().history.undoStack!.value.changes;
+    expect(change).not.toHaveProperty("bytes");
+  });
+
+  it("keeps a cursor's side of an evicted chunk when the selection is set again in place", () => {
+    const s = makeStore(4);
+    for (let i = 0; i < 4; i++) load(s, i);
+    // The start of chunk 3.
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(24), head: byteOffset(24) }]));
+    s.dispatch(DocumentActions.evictChunk(2));
+    expect(cursor(s)).toEqual({ anchor: 16, head: 16 });
+    // An editor view echoing the same selection back.
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(16), head: byteOffset(16) }]));
+    load(s, 2);
+    expect(cursor(s)).toEqual({ anchor: 24, head: 24 });
+  });
+
+  it("places text typed with every chunk evicted where the cursor was", () => {
+    const s = makeStore(4);
+    for (let i = 0; i < 4; i++) load(s, i);
+    // The end of the file.
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(32), head: byteOffset(32) }]));
+    for (let i = 0; i < 4; i++) s.dispatch(DocumentActions.evictChunk(i));
+    expect(s.getSnapshot().pieceTable.root).toBeNull();
+    s.dispatch(DocumentActions.insert(byteOffset(0), "X"));
+    for (let i = 0; i < 4; i++) load(s, i);
+    expect(text(s)).toBe(CHUNKS.join("") + "X");
+    s.dispatch(DocumentActions.undo());
+    expect(text(s)).toBe(CHUNKS.join(""));
+  });
+
+  it("rejects a null bytes element outside a replace change", () => {
+    const s = makeStore();
+    load(s, 1);
+    s.dispatch(DocumentActions.delete(byteOffset(2), byteOffset(3)));
+    const checkpoint = JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow())));
+    expect(checkpoint.history.undo[0].changes[0]).toEqual(["d", 2, "B", 0]);
+    checkpoint.history.undo[0].changes[0] = ["d", 2, "B", 0, null];
+    expect(() => restoreCheckpoint(checkpoint)).toThrow(
+      expect.objectContaining({ code: "MALFORMED" }),
+    );
+  });
+
+  it("restores a checkpoint with the eviction policy given at restore", () => {
+    const s = makeStore();
+    load(s, 1);
+    // History points inside chunk 1, which is pristine again.
+    s.dispatch(DocumentActions.insert(byteOffset(2), "X"));
+    s.dispatch(DocumentActions.delete(byteOffset(2), byteOffset(3)));
+    const v2 = JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow())));
+    // Version 1 stored no eviction policy.
+    const { evictionPolicy: _, ...history } = v2.history;
+    const v1 = { ...v2, version: 1, history };
+
+    const pinned = createDocumentStoreFromCheckpoint(v1);
+    expect(pinned.getSnapshot().history.evictionPolicy).toBe("pin");
+    pinned.dispatch(DocumentActions.evictChunk(1));
+    expect(pinned.getSnapshot().pieceTable.chunkMap.has(1)).toBe(true);
+    const restored = createDocumentStoreFromCheckpoint(v1, { historyEvictionPolicy: "drop" });
+    expect(restored.getSnapshot().history.evictionPolicy).toBe("drop");
+    // The policy takes effect: chunk 1 evicts and the entries are dropped.
+    restored.dispatch(DocumentActions.evictChunk(1));
+    expect(restored.getSnapshot().pieceTable.chunkMap.has(1)).toBe(false);
+    expect(getUndoCount(restored.getSnapshot())).toBe(0);
+
+    expect(() =>
+      createDocumentStoreFromCheckpoint(v2, {
+        historyEvictionPolicy: "keep" as unknown as HistoryEvictionPolicy,
+      }),
+    ).toThrow(/historyEvictionPolicy/);
   });
 });

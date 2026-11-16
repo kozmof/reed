@@ -15,6 +15,7 @@ import {
 import type {
   DocumentState,
   DocumentStoreConfig,
+  DocumentStoreRestoreConfig,
   DocumentStoreRuntimeConfig,
 } from "../../types/state.js";
 import type { CheckpointRestoreOptions } from "../../types/checkpoint.js";
@@ -28,6 +29,7 @@ import type {
 } from "../../types/store.js";
 import {
   assertValidDocumentStoreRuntimeConfig,
+  assertValidHistoryEvictionPolicy,
   createInitialState,
   withState,
 } from "../core/state.js";
@@ -624,18 +626,17 @@ const STATE_BEARING_CONFIG_KEYS = [
   "lineEnding",
   "normalizeInsertedLineEndings",
   "undoGroupTimeout",
-  "historyEvictionPolicy",
   "totalFileSize",
   "maxDirtyRanges",
 ] as const;
 
-function assertRuntimeOnlyConfig(config: DocumentStoreRuntimeConfig): void {
+function assertRuntimeOnlyConfig(config: DocumentStoreRestoreConfig): void {
   const offending = STATE_BEARING_CONFIG_KEYS.filter(
     (key) => (config as Record<string, unknown>)[key] !== undefined,
   );
   if (offending.length > 0) {
     throw new Error(
-      `createDocumentStoreFromCheckpoint: ${offending.join(", ")} describe${offending.length === 1 ? "s" : ""} state and come${offending.length === 1 ? "s" : ""} from the checkpoint; only logger and reconcileMode/scheduler may be configured`,
+      `createDocumentStoreFromCheckpoint: ${offending.join(", ")} describe${offending.length === 1 ? "s" : ""} state and come${offending.length === 1 ? "s" : ""} from the checkpoint; only logger, reconcileMode/scheduler, and historyEvictionPolicy may be configured`,
     );
   }
 }
@@ -648,7 +649,8 @@ function assertRuntimeOnlyConfig(config: DocumentStoreRuntimeConfig): void {
  *
  * Only runtime configuration is accepted. Content, history limit, line ending,
  * chunk size, and the rest of the state-bearing options come from the
- * checkpoint. The new store starts with empty listener and transaction state
+ * checkpoint. `historyEvictionPolicy` is the exception: when given, it replaces
+ * the checkpoint's policy (see `DocumentStoreRestoreConfig`). The new store starts with empty listener and transaction state
  * and a fresh reconciliation scheduler. A caller restoring a
  * chunked document rebuilds its `ChunkManager` as well.
  *
@@ -667,12 +669,21 @@ function assertRuntimeOnlyConfig(config: DocumentStoreRuntimeConfig): void {
  */
 export function createDocumentStoreFromCheckpoint(
   checkpoint: unknown,
-  config: DocumentStoreRuntimeConfig = {},
+  config: DocumentStoreRestoreConfig = {},
   restoreOptions: CheckpointRestoreOptions = {},
 ): ReconcilableDocumentStore {
   assertValidDocumentStoreRuntimeConfig(config);
+  assertValidHistoryEvictionPolicy(config.historyEvictionPolicy);
   assertRuntimeOnlyConfig(config);
-  return createStoreOverState(restoreCheckpoint(checkpoint, restoreOptions), config);
+  const restored = restoreCheckpoint(checkpoint, restoreOptions);
+  const policy = config.historyEvictionPolicy;
+  const state =
+    policy === undefined || policy === restored.history.evictionPolicy
+      ? restored
+      : withState(restored, {
+          history: Object.freeze({ ...restored.history, evictionPolicy: policy }),
+        });
+  return createStoreOverState(state, config);
 }
 
 /**
@@ -689,7 +700,7 @@ export function createDocumentStoreFromCheckpoint(
  */
 export function createDocumentStoreWithEventsFromCheckpoint(
   checkpoint: unknown,
-  config: DocumentStoreRuntimeConfig = {},
+  config: DocumentStoreRestoreConfig = {},
   restoreOptions: CheckpointRestoreOptions = {},
 ): DocumentStoreWithEvents {
   return withEvents(

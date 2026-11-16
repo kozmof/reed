@@ -40,6 +40,7 @@ export type {
   DocumentStoreConfigBase,
   DocumentStoreConfig,
   DocumentStoreRuntimeConfig,
+  DocumentStoreRestoreConfig,
   ReedLogger,
   ChunkMetadata,
 } from "./state.js";

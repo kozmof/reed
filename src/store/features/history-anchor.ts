@@ -88,29 +88,38 @@ function anchorUnchunked(selection: SelectionState): HistorySelectionState {
  * A cursor takes the key text typed there receives, so it stays next to that
  * text. A range's start stays with the content after it and its end with the
  * content before it, so a chunk that loads at either edge lands outside the
- * range (see `GapSide`).
+ * range (see `GapSide`). A selection carried across a chunk load or eviction
+ * keeps the anchors it was carried with, which know the side of a gap next to
+ * an unloaded chunk.
  */
 export function anchorSelection(
   pieceTable: PieceTableState,
   selection: SelectionState,
 ): HistorySelectionState {
   if (pieceTable.nextExpectedChunk === 0) return anchorUnchunked(selection);
+  const cached = liveAnchors.get(selection);
+  if (cached !== undefined && isLiveRoot(cached, pieceTable.root)) return cached.anchored;
+  return freezeSelection(
+    selection.ranges.map((range) => anchorRange(pieceTable, range)),
+    selection.primaryIndex,
+  );
+}
+
+/** Anchor one live range (see `anchorSelection`). */
+function anchorRange(pieceTable: PieceTableState, range: SelectionRange): HistorySelectionRange {
   const root = pieceTable.root;
-  const ranges = selection.ranges.map((range): HistorySelectionRange => {
-    const collapsed = range.head === range.anchor;
-    const anchorSide = collapsed || range.anchor > range.head ? "before" : "after";
-    const anchorKey = gapKey(root, range.anchor, anchorSide);
-    const headKey = collapsed
-      ? anchorKey
-      : gapKey(root, range.head, anchorSide === "before" ? "after" : "before");
-    return Object.freeze({
-      anchor: toAnchoredOffset(pieceTable, anchorKey, range.anchor),
-      head: toAnchoredOffset(pieceTable, headKey, range.head),
-      anchorAfterChunk: anchorKey,
-      headAfterChunk: headKey,
-    });
+  const collapsed = range.head === range.anchor;
+  const anchorSide = collapsed || range.anchor > range.head ? "before" : "after";
+  const anchorKey = gapKey(root, range.anchor, anchorSide);
+  const headKey = collapsed
+    ? anchorKey
+    : gapKey(root, range.head, anchorSide === "before" ? "after" : "before");
+  return Object.freeze({
+    anchor: toAnchoredOffset(pieceTable, anchorKey, range.anchor),
+    head: toAnchoredOffset(pieceTable, headKey, range.head),
+    anchorAfterChunk: anchorKey,
+    headAfterChunk: headKey,
   });
-  return freezeSelection(ranges, selection.primaryIndex);
 }
 
 /** A history selection holding one cursor at anchored `position` with key `key`. */
@@ -141,6 +150,19 @@ export function resolveSelection(
   pieceTable: PieceTableState,
   selection: HistorySelectionState,
 ): SelectionState {
+  // Before any chunk loads, every key is NO_CHUNK, whose span is the whole
+  // document, and an anchored position is its offset.
+  if (pieceTable.nextExpectedChunk === 0) {
+    const total = pieceTable.totalLength;
+    const within = (offset: number) => byteOffset(Math.max(0, Math.min(offset, total)));
+    return freezeSelection(
+      selection.ranges.map(
+        (range): SelectionRange =>
+          Object.freeze({ anchor: within(range.anchor), head: within(range.head) }),
+      ),
+      selection.primaryIndex,
+    );
+  }
   const clamp = (key: number, anchored: number) => {
     const { start, end } = keySpan(pieceTable.root, key);
     const offset = toResidentOffset(pieceTable, key, anchored);
@@ -202,11 +224,7 @@ export function carrySelectionAcrossChunks(
   after: PieceTableState,
   selection: SelectionState,
 ): SelectionState {
-  const cached = liveAnchors.get(selection);
-  const anchored =
-    cached !== undefined && isLiveRoot(cached, before.root)
-      ? cached.anchored
-      : anchorSelection(before, selection);
+  const anchored = anchorSelection(before, selection);
   const resolved = resolveSelection(after, anchored);
   const unchanged = resolved.ranges.every(
     (range, i) =>
@@ -230,6 +248,71 @@ export function carrySelectionAcrossChunks(
     anchored: reanchored,
   });
   return result;
+}
+
+/**
+ * Placement key the live selection holds for resident `offset`, when a cursor
+ * or range endpoint carried across a chunk load or eviction sits there, else
+ * undefined.
+ *
+ * When every chunk has been evicted the document is empty, and this key is the
+ * only record of where in the file the cursor was. Text typed there takes it.
+ */
+export function liveKeyAt(
+  pieceTable: PieceTableState,
+  selection: SelectionState,
+  offset: number,
+): number | undefined {
+  const cached = liveAnchors.get(selection);
+  if (cached === undefined || !isLiveRoot(cached, pieceTable.root)) return undefined;
+  const keyOf = (i: number): number | undefined => {
+    const range = selection.ranges[i];
+    const anchored = cached.anchored.ranges[i];
+    if (range === undefined || anchored === undefined) return undefined;
+    if (range.head === offset) return anchored.headAfterChunk;
+    if (range.anchor === offset) return anchored.anchorAfterChunk;
+    return undefined;
+  };
+  // The primary range first: it is the one an edit usually comes from.
+  let key = keyOf(selection.primaryIndex);
+  for (let i = 0; key === undefined && i < selection.ranges.length; i++) key = keyOf(i);
+  return key;
+}
+
+/**
+ * Keep the live anchors of `previous` for `next`, a selection that replaces it
+ * without changing the document.
+ *
+ * Next to an unloaded chunk, a resident offset cannot say which side of the
+ * chunk a cursor is on, and only the anchors from the last load or eviction
+ * know. An editor that echoes the selection back would otherwise lose that
+ * side. Each range of `next` equal to the range at the same index in
+ * `previous` keeps its anchors. Other ranges are anchored as usual: a range
+ * that changed shape takes the sides its new shape calls for (see `GapSide`).
+ */
+export function carryLiveAnchors(
+  pieceTable: PieceTableState,
+  previous: SelectionState,
+  next: SelectionState,
+): void {
+  if (pieceTable.nextExpectedChunk === 0 || previous === next) return;
+  const cached = liveAnchors.get(previous);
+  if (cached === undefined || !isLiveRoot(cached, pieceTable.root)) return;
+  let kept = false;
+  const ranges = next.ranges.map((range, i): HistorySelectionRange => {
+    const old = previous.ranges[i];
+    const oldAnchored = cached.anchored.ranges[i];
+    if (oldAnchored === undefined || old?.anchor !== range.anchor || old.head !== range.head) {
+      return anchorRange(pieceTable, range);
+    }
+    kept = true;
+    return oldAnchored;
+  });
+  if (!kept) return;
+  liveAnchors.set(next, {
+    root: cached.root,
+    anchored: freezeSelection(ranges, next.primaryIndex),
+  });
 }
 
 // =============================================================================

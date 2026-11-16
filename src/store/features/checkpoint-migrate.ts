@@ -22,7 +22,10 @@
 import { CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
 import { base64DecodedLength } from "../core/base64.js";
 import type { GapSide } from "../core/chunk-anchor.js";
-import { buildLoadedPrefix, flatGapKey, prefixLengthAtOrBelow } from "../core/chunk-anchor.js";
+import { buildLoadedPrefix, gapKey, prefixLengthAtOrBelow } from "../core/chunk-anchor.js";
+import type { PieceDescriptor } from "../core/state.js";
+import { buildPieceTree } from "../core/state.js";
+import { byteLength, byteOffset, pieceID } from "../../types/branded.js";
 
 /** Raw, unvalidated checkpoint wire data. */
 export type CheckpointWireData = Record<string, unknown>;
@@ -105,13 +108,35 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
     }
   }
 
-  const gapKey = flatGapKey(
-    pieces.map((piece, i) => ({
-      length: isInt(piece[3]) ? piece[3] : 0,
-      key: keys[i]!,
-      chunkIndex: chunkOf[i] ?? null,
-    })),
-  );
+  // A piece tree with the derived keys, so anchoring uses the same `gapKey`
+  // as live edits. Only lengths and keys matter here: a piece that is not a
+  // chunk piece stands in as an add piece carrying its key. Empty and
+  // malformed lengths are left out, as no byte lies in them.
+  const PLACEHOLDER_ID = pieceID("v1-migration");
+  const descriptors: PieceDescriptor[] = [];
+  for (let i = 0; i < pieces.length; i++) {
+    const length = pieces[i]![3];
+    if (!isInt(length) || length <= 0) continue;
+    const chunkIndex = chunkOf[i];
+    descriptors.push(
+      chunkIndex !== null && chunkIndex !== undefined
+        ? {
+            id: PLACEHOLDER_ID,
+            bufferType: "chunk",
+            chunkIndex,
+            start: byteOffset(0),
+            length: byteLength(length),
+          }
+        : {
+            id: PLACEHOLDER_ID,
+            bufferType: "add",
+            afterChunk: keys[i]!,
+            start: byteOffset(0),
+            length: byteLength(length),
+          },
+    );
+  }
+  const root = buildPieceTree(descriptors);
 
   const chunkLengths: [number, number][] = [];
   if (Array.isArray(table.chunks)) {
@@ -129,7 +154,7 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
   // Version 1 kept text next to the content before it, as `"before"` does.
   const anchor = (offset: unknown, side: GapSide = "before"): [unknown, number] => {
     if (!isInt(offset)) return [offset, -1];
-    const key = gapKey(offset, side);
+    const key = gapKey(root, offset, side);
     return [offset - prefixLengthAtOrBelow(loaded, key), key];
   };
 
