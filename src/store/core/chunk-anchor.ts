@@ -39,16 +39,11 @@ export function pieceKey(piece: PieceNode): number {
 }
 
 /**
- * Key just after the last byte of a piece with key `key`, when nothing follows
- * it. `chunkIndex` is the chunk of a chunk piece and null otherwise: after a
+ * Key just after the last byte of `piece`, when nothing follows it. After a
  * chunk piece, that whole chunk lies before the position.
  */
-function endGapKey(key: number, chunkIndex: number | null): number {
-  return chunkIndex ?? key;
-}
-
 function keyAfterPiece(piece: PieceNode): number {
-  return endGapKey(pieceKey(piece), piece.bufferType === "chunk" ? piece.chunkIndex : null);
+  return piece.bufferType === "chunk" ? piece.chunkIndex : pieceKey(piece);
 }
 
 /** The piece holding resident byte `offset`, or null when `offset` is out of range. */
@@ -120,7 +115,8 @@ export function flatGapKey(pieces: readonly FlatPiece[]): (offset: number) => nu
     starts.push(total);
     keys.push(piece.key);
     total += piece.length;
-    endKey = endGapKey(piece.key, piece.chunkIndex);
+    // As in `keyAfterPiece`: after a chunk piece, that whole chunk lies before.
+    endKey = piece.chunkIndex ?? piece.key;
   }
   return (offset) => {
     if (offset >= total) return endKey;

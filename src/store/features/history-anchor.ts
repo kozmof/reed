@@ -8,11 +8,13 @@
 
 import type {
   HistoryAnchor,
+  HistoryChange,
   HistoryEntry,
   HistorySelectionRange,
   HistorySelectionState,
   HistoryState,
   PieceTableState,
+  SelectionRange,
   SelectionState,
 } from "../../types/state.js";
 import type { NonEmptyReadonlyArray } from "../../types/utils.js";
@@ -23,11 +25,14 @@ import {
   NO_CHUNK,
   gapKey,
   keySpan,
-  loadedLengthAtOrBelow,
   toAnchoredOffset,
   toResidentOffset,
 } from "../core/chunk-anchor.js";
-import { forEachHistoryChange, someHistoryChange } from "./history-entry.js";
+import {
+  forEachHistoryChange,
+  someHistoryChange,
+  someHistoryChangeBackward,
+} from "./history-entry.js";
 
 /** Anchor resident `offset` using placement key `key`. */
 export function anchorAt(pieceTable: PieceTableState, key: number, offset: number): HistoryAnchor {
@@ -39,6 +44,20 @@ export function residentOffset(pieceTable: PieceTableState, anchor: HistoryAncho
   return byteOffset(toResidentOffset(pieceTable, anchor.afterChunk, anchor.position));
 }
 
+/**
+ * Freeze already-frozen `ranges` into a selection. `ranges` comes from mapping
+ * a non-empty selection, so it is non-empty.
+ */
+function freezeSelection<R extends SelectionRange | HistorySelectionRange>(
+  ranges: readonly R[],
+  primaryIndex: number,
+): { readonly ranges: NonEmptyReadonlyArray<R>; readonly primaryIndex: number } {
+  return Object.freeze({
+    ranges: Object.freeze(ranges) as unknown as NonEmptyReadonlyArray<R>,
+    primaryIndex,
+  });
+}
+
 // Before any chunk loads, every key is NO_CHUNK and an anchored position equals
 // its offset, so the anchored form depends only on the selection. Selections
 // are immutable, so cache it per selection object and share it across edits.
@@ -47,19 +66,18 @@ const unchunkedCache = new WeakMap<SelectionState, HistorySelectionState>();
 function anchorUnchunked(selection: SelectionState): HistorySelectionState {
   const cached = unchunkedCache.get(selection);
   if (cached !== undefined) return cached;
-  const ranges = selection.ranges.map(
-    (range): HistorySelectionRange =>
-      Object.freeze({
-        anchor: range.anchor,
-        head: range.head,
-        anchorAfterChunk: NO_CHUNK,
-        headAfterChunk: NO_CHUNK,
-      }),
+  const anchored = freezeSelection(
+    selection.ranges.map(
+      (range): HistorySelectionRange =>
+        Object.freeze({
+          anchor: range.anchor,
+          head: range.head,
+          anchorAfterChunk: NO_CHUNK,
+          headAfterChunk: NO_CHUNK,
+        }),
+    ),
+    selection.primaryIndex,
   );
-  const anchored: HistorySelectionState = Object.freeze({
-    ranges: Object.freeze(ranges) as unknown as NonEmptyReadonlyArray<HistorySelectionRange>,
-    primaryIndex: selection.primaryIndex,
-  });
   unchunkedCache.set(selection, anchored);
   return anchored;
 }
@@ -92,25 +110,22 @@ export function anchorSelection(
       headAfterChunk: headKey,
     });
   });
-  return Object.freeze({
-    ranges: Object.freeze(ranges) as unknown as NonEmptyReadonlyArray<HistorySelectionRange>,
-    primaryIndex: selection.primaryIndex,
-  });
+  return freezeSelection(ranges, selection.primaryIndex);
 }
 
 /** A history selection holding one cursor at anchored `position` with key `key`. */
 export function anchoredCursor(key: number, position: number): HistorySelectionState {
-  return Object.freeze({
-    ranges: Object.freeze([
+  return freezeSelection(
+    [
       Object.freeze({
         anchor: position,
         head: position,
         anchorAfterChunk: key,
         headAfterChunk: key,
       }),
-    ]) as unknown as NonEmptyReadonlyArray<HistorySelectionRange>,
-    primaryIndex: 0,
-  });
+    ],
+    0,
+  );
 }
 
 /**
@@ -131,17 +146,16 @@ export function resolveSelection(
     const offset = toResidentOffset(pieceTable, key, anchored);
     return byteOffset(Math.max(start, Math.min(offset, end)));
   };
-  return Object.freeze({
-    ranges: Object.freeze(
-      selection.ranges.map((range) =>
+  return freezeSelection(
+    selection.ranges.map(
+      (range): SelectionRange =>
         Object.freeze({
           anchor: clamp(range.anchorAfterChunk, range.anchor),
           head: clamp(range.headAfterChunk, range.head),
         }),
-      ),
-    ) as unknown as SelectionState["ranges"],
-    primaryIndex: selection.primaryIndex,
-  });
+    ),
+    selection.primaryIndex,
+  );
 }
 
 // =============================================================================
@@ -149,13 +163,17 @@ export function resolveSelection(
 // =============================================================================
 
 /**
- * Anchored form of a live selection, valid while the piece tree is `root`. A
- * gap next to an unloaded chunk has two sides, and its resident offset cannot
- * say which one the cursor is on. Keeping the anchor from the last load or
- * eviction keeps the cursor on its side when the chunk loads again.
+ * Anchored form of a live selection, valid while the piece tree is the one
+ * `root` refers to. A gap next to an unloaded chunk has two sides, and its
+ * resident offset cannot say which one the cursor is on. Keeping the anchor
+ * from the last load or eviction keeps the cursor on its side when the chunk
+ * loads again.
+ *
+ * `root` is weak so that a selection that outlives many edits does not keep an
+ * old piece tree alive. It is null for an empty document.
  */
 interface LiveAnchors {
-  readonly root: PieceTableState["root"];
+  readonly root: WeakRef<NonNullable<PieceTableState["root"]>> | null;
   readonly anchored: HistorySelectionState;
 }
 
@@ -164,6 +182,10 @@ interface LiveAnchors {
 // selection change replaces the selection. The piece table object itself is
 // copied on each state update, so it cannot serve as the key.
 const liveAnchors = new WeakMap<SelectionState, LiveAnchors>();
+
+function isLiveRoot(cached: LiveAnchors, root: PieceTableState["root"]): boolean {
+  return cached.root === null ? root === null : cached.root.deref() === root;
+}
 
 /**
  * Move the live selection from `before` to `after`, two documents that differ
@@ -182,7 +204,7 @@ export function carrySelectionAcrossChunks(
 ): SelectionState {
   const cached = liveAnchors.get(selection);
   const anchored =
-    cached !== undefined && cached.root === before.root
+    cached !== undefined && isLiveRoot(cached, before.root)
       ? cached.anchored
       : anchorSelection(before, selection);
   const resolved = resolveSelection(after, anchored);
@@ -192,19 +214,21 @@ export function carrySelectionAcrossChunks(
   );
   const result = unchanged ? selection : resolved;
   // Re-anchor with the same keys, so a clamped offset records where it is now.
-  const reanchored: HistorySelectionState = Object.freeze({
-    ranges: Object.freeze(
-      anchored.ranges.map((range, i) =>
+  const reanchored = freezeSelection(
+    anchored.ranges.map(
+      (range, i): HistorySelectionRange =>
         Object.freeze({
           ...range,
           anchor: toAnchoredOffset(after, range.anchorAfterChunk, result.ranges[i]!.anchor),
           head: toAnchoredOffset(after, range.headAfterChunk, result.ranges[i]!.head),
         }),
-      ),
-    ) as unknown as NonEmptyReadonlyArray<HistorySelectionRange>,
-    primaryIndex: anchored.primaryIndex,
+    ),
+    anchored.primaryIndex,
+  );
+  liveAnchors.set(result, {
+    root: after.root === null ? null : new WeakRef(after.root),
+    anchored: reanchored,
   });
-  liveAnchors.set(result, { root: after.root, anchored: reanchored });
   return result;
 }
 
@@ -212,125 +236,143 @@ export function carrySelectionAcrossChunks(
 // Eviction guard
 // =============================================================================
 
-interface HistoryCuts {
-  /** Stack index of the newest undo entry pointing inside the span, or -1. */
-  readonly undoCut: number;
-  /** Stack index of the newest redo entry pointing inside the span, or -1. */
-  readonly redoCut: number;
+/**
+ * Key range and length change of some history changes, for skipping whole
+ * stack subtrees. `delta` is the net number of bytes the changes add when
+ * applied forward.
+ */
+interface ChangeSummary {
+  readonly minKey: number;
+  readonly maxKey: number;
+  readonly delta: number;
 }
-
-/** Per placement key, the lowest and highest anchored position of some changes. */
-type KeyBounds = ReadonlyMap<number, readonly [low: number, high: number]>;
 
 type StackNode = NonNullable<HistoryState["undoStack"]>;
 
-const EMPTY_BOUNDS: KeyBounds = new Map();
-const entryBoundsCache = new WeakMap<HistoryEntry, KeyBounds>();
+const EMPTY_SUMMARY: ChangeSummary = { minKey: Infinity, maxKey: -Infinity, delta: 0 };
+const entrySummaryCache = new WeakMap<HistoryEntry, ChangeSummary>();
 // Stack nodes are shared between successive stacks, so a push or pop computes
-// bounds only for the O(log H) nodes it creates.
-const nodeBoundsCache = new WeakMap<StackNode, KeyBounds>();
+// summaries only for the O(log H) nodes it creates, each in O(1).
+const nodeSummaryCache = new WeakMap<StackNode, ChangeSummary>();
 
-function entryBounds(entry: HistoryEntry): KeyBounds {
-  let bounds = entryBoundsCache.get(entry);
-  if (bounds !== undefined) return bounds;
-  const map = new Map<number, readonly [number, number]>();
-  forEachHistoryChange(entry, (change) => {
-    const current = map.get(change.afterChunk);
-    map.set(
-      change.afterChunk,
-      current === undefined
-        ? [change.position, change.position]
-        : [Math.min(current[0], change.position), Math.max(current[1], change.position)],
-    );
-  });
-  bounds = map;
-  entryBoundsCache.set(entry, bounds);
-  return bounds;
-}
-
-function mergeBounds(target: Map<number, readonly [number, number]>, source: KeyBounds): void {
-  for (const [key, [low, high]] of source) {
-    const current = target.get(key);
-    target.set(
-      key,
-      current === undefined ? [low, high] : [Math.min(current[0], low), Math.max(current[1], high)],
-    );
+/** Bytes `change` adds to the document when applied forward. */
+function changeDelta(change: HistoryChange): number {
+  switch (change.type) {
+    case "insert":
+      return change.byteLength;
+    case "delete":
+      return -change.byteLength;
+    case "replace":
+      return change.byteLength - change.oldByteLength;
   }
 }
 
-/** Bounds of every change in the subtree rooted at `node`. */
-function nodeBounds(node: StackNode | null): KeyBounds {
-  if (node === null) return EMPTY_BOUNDS;
-  let bounds = nodeBoundsCache.get(node);
-  if (bounds !== undefined) return bounds;
-  const own = entryBounds(node.value);
-  if (node.left === null && node.right === null) {
-    bounds = own;
-  } else {
-    const map = new Map(nodeBounds(node.left));
-    mergeBounds(map, own);
-    mergeBounds(map, nodeBounds(node.right));
-    bounds = map;
-  }
-  nodeBoundsCache.set(node, bounds);
-  return bounds;
-}
-
-/**
- * Stack index (oldest first) of the newest entry in the subtree with a change
- * keyed `key` strictly inside (low, high), or -1. Subtrees whose bounds for
- * `key` miss the span are skipped, so a stack with nothing inside the span
- * costs O(1) once its bounds are known.
- */
-function newestInside(
-  node: StackNode | null,
-  firstIndex: number,
-  key: number,
-  low: number,
-  high: number,
-): number {
-  if (node === null) return -1;
-  const bounds = nodeBounds(node).get(key);
-  if (bounds === undefined || bounds[0] >= high || bounds[1] <= low) return -1;
-  const ownIndex = firstIndex + (node.left?.size ?? 0);
-  const right = newestInside(node.right, ownIndex + 1, key, low, high);
-  if (right >= 0) return right;
-  const own = entryBounds(node.value).get(key);
-  if (
-    own !== undefined &&
-    own[0] < high &&
-    own[1] > low &&
-    someHistoryChange(
-      node.value,
-      (change) => change.afterChunk === key && change.position > low && change.position < high,
-    )
-  ) {
-    return ownIndex;
-  }
-  return newestInside(node.left, firstIndex, key, low, high);
-}
-
-/**
- * Find the newest entries of each stack with a change keyed `key` whose
- * anchored position lies strictly inside (low, high).
- */
-function historyCuts(history: HistoryState, key: number, low: number, high: number): HistoryCuts {
+function combineSummaries(a: ChangeSummary, b: ChangeSummary): ChangeSummary {
   return {
-    undoCut: newestInside(history.undoStack, 0, key, low, high),
-    redoCut: newestInside(history.redoStack, 0, key, low, high),
+    minKey: Math.min(a.minKey, b.minKey),
+    maxKey: Math.max(a.maxKey, b.maxKey),
+    delta: a.delta + b.delta,
   };
 }
 
+function entrySummary(entry: HistoryEntry): ChangeSummary {
+  let summary = entrySummaryCache.get(entry);
+  if (summary !== undefined) return summary;
+  let minKey = Infinity;
+  let maxKey = -Infinity;
+  let delta = 0;
+  forEachHistoryChange(entry, (change) => {
+    minKey = Math.min(minKey, change.afterChunk);
+    maxKey = Math.max(maxKey, change.afterChunk);
+    delta += changeDelta(change);
+  });
+  summary = { minKey, maxKey, delta };
+  entrySummaryCache.set(entry, summary);
+  return summary;
+}
+
+/** Summary of every change in the subtree rooted at `node`. */
+function nodeSummary(node: StackNode | null): ChangeSummary {
+  if (node === null) return EMPTY_SUMMARY;
+  let summary = nodeSummaryCache.get(node);
+  if (summary !== undefined) return summary;
+  summary = combineSummaries(
+    combineSummaries(nodeSummary(node.left), entrySummary(node.value)),
+    nodeSummary(node.right),
+  );
+  nodeSummaryCache.set(node, summary);
+  return summary;
+}
+
 /**
- * Apply the history eviction policy before evicting `chunkIndex`, whose
- * resident span is [start, end).
+ * The chunk being evicted, followed back through one history stack. `start` is
+ * the anchored position, with key `key`, of the chunk's first byte in the
+ * document the next visited change applies to. `direction` is -1 on the undo
+ * stack, whose changes are undone, and 1 on the redo stack.
+ */
+interface ChunkTrack {
+  readonly key: number;
+  readonly direction: 1 | -1;
+  start: number;
+}
+
+/**
+ * True when `change` points inside the tracked chunk in the document it
+ * applies to. Otherwise moves the chunk's start past the change.
  *
- * A change points strictly inside the chunk when it carries the key
- * `chunkIndex - 1` and resolves inside (start, end). After eviction the chunk's
- * bytes are gone, so such a position can no longer be resolved. The chunk's
- * boundaries are fine: they stay meaningful without its bytes.
+ * A change keyed below `key` lies wholly before the chunk, and one keyed above
+ * it wholly after. A change keyed `key` lies before the chunk when its position
+ * is at or before the chunk's start. Past that start it resolves by counting
+ * the chunk's bytes, which eviction removes.
+ */
+function changeInsideChunk(change: HistoryChange, track: ChunkTrack): boolean {
+  if (change.afterChunk > track.key) return false;
+  if (change.afterChunk === track.key && change.position > track.start) return true;
+  track.start += track.direction * changeDelta(change);
+  return false;
+}
+
+/**
+ * Stack index (oldest first) of the first entry, in the order the stack is
+ * replayed (newest first), with a change inside the tracked chunk, or -1.
+ * Subtrees whose changes all lie on one side of the chunk are skipped in O(1).
+ */
+function firstInside(node: StackNode | null, firstIndex: number, track: ChunkTrack): number {
+  if (node === null) return -1;
+  const summary = nodeSummary(node);
+  if (summary.minKey > track.key) return -1;
+  if (summary.maxKey < track.key) {
+    track.start += track.direction * summary.delta;
+    return -1;
+  }
+  const ownIndex = firstIndex + (node.left?.size ?? 0);
+  const right = firstInside(node.right, ownIndex + 1, track);
+  if (right >= 0) return right;
+  // Undo applies an entry's changes last to first, and redo first to last.
+  const visit = (change: HistoryChange) => changeInsideChunk(change, track);
+  const inside =
+    track.direction < 0
+      ? someHistoryChangeBackward(node.value, visit)
+      : someHistoryChange(node.value, visit);
+  if (inside) return ownIndex;
+  return firstInside(node.left, firstIndex, track);
+}
+
+/**
+ * Apply the history eviction policy before evicting `chunkIndex`, whose first
+ * resident byte is at `start`.
  *
- * Entries older than the newest such entry can only be replayed after it, so
+ * A change points inside the chunk when it carries the key `chunkIndex - 1`
+ * and lies past the chunk's start in the document it applies to. Such a
+ * position resolves by counting the chunk's bytes, so it cannot be resolved
+ * once they are gone. The chunk's start is fine: it stays meaningful without
+ * the chunk's bytes.
+ *
+ * Each change records its position in the document it applies to, not in the
+ * current one, and edits before the chunk move the chunk. The guard therefore
+ * follows the chunk's start back through each stack, one change at a time.
+ *
+ * Entries older than the first such entry can only be replayed after it, so
  * dropping it means dropping all of them.
  *
  * Returns the history to keep, or `null` when the eviction must be refused
@@ -342,14 +384,14 @@ export function historyForEviction(
   history: HistoryState,
   chunkIndex: number,
   start: number,
-  end: number,
 ): HistoryState | null {
   if (history.undoStack === null && history.redoStack === null) return history;
-  // Every candidate change shares one key, so compare anchored positions
-  // against the chunk span shifted once, instead of resolving each change.
   const key = chunkIndex - 1;
-  const shift = loadedLengthAtOrBelow(pieceTable, key);
-  const { undoCut, redoCut } = historyCuts(history, key, start - shift, end - shift);
+  const anchoredStart = toAnchoredOffset(pieceTable, key, start);
+  const cut = (stack: HistoryState["undoStack"], direction: 1 | -1) =>
+    firstInside(stack, 0, { key, direction, start: anchoredStart });
+  const undoCut = cut(history.undoStack, -1);
+  const redoCut = cut(history.redoStack, 1);
   if (undoCut < 0 && redoCut < 0) return history;
   if (history.evictionPolicy === "pin") return null;
   // Keep only the entries newer than the cut. The split shares structure.

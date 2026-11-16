@@ -207,6 +207,75 @@ describe("eviction while history points inside the chunk", () => {
     expect(text(s)).toBe("BBBBBBB\n");
   });
 
+  // Each entry records positions in the document it applies to. These edit
+  // before the chunk afterwards, so the chunk's current span misjudges them.
+  const editInsideThenMoveChunk = (s: Store) => {
+    load(s, 0);
+    load(s, 1);
+    load(s, 2);
+    s.dispatch(DocumentActions.insert(byteOffset(14), "X")); // inside chunk 1
+    s.dispatch(DocumentActions.delete(byteOffset(14), byteOffset(15))); // chunk 1 pristine again
+    s.dispatch(DocumentActions.insert(byteOffset(3), "LLLLLLLLLL")); // chunk 1 moves to [18, 26)
+  };
+
+  it("refuses eviction when an edit before the chunk moved it after history pointed inside", () => {
+    const s = makeStore(3);
+    editInsideThenMoveChunk(s);
+    const before = s.getSnapshot();
+    s.dispatch(DocumentActions.evictChunk(1));
+    expect(s.getSnapshot()).toBe(before);
+    for (let i = 0; i < 3; i++) s.dispatch(DocumentActions.undo());
+    expect(text(s)).toBe(CHUNKS.slice(0, 3).join(""));
+  });
+
+  it("drops the moved entries under 'drop' and keeps the later ones", () => {
+    const s = makeStore(3, "drop");
+    editInsideThenMoveChunk(s);
+    s.dispatch(DocumentActions.evictChunk(1));
+    expect(getUndoCount(s.getSnapshot())).toBe(1);
+    s.dispatch(DocumentActions.undo());
+    expect(text(s)).toBe("AAAAAAA\nCCCCCCC\n");
+    load(s, 1);
+    expect(text(s)).toBe(CHUNKS.slice(0, 3).join(""));
+  });
+
+  it("refuses eviction when a redo before the chunk moves it under a later redo", () => {
+    const s = makeStore(3);
+    load(s, 0);
+    load(s, 1);
+    load(s, 2);
+    s.dispatch(DocumentActions.insert(byteOffset(3), "LLLLLLLLLL")); // chunk 1 moves to [18, 26)
+    s.dispatch(DocumentActions.insert(byteOffset(24), "X")); // inside chunk 1
+    s.dispatch(DocumentActions.delete(byteOffset(24), byteOffset(25)));
+    for (let i = 0; i < 3; i++) s.dispatch(DocumentActions.undo());
+    // Chunk 1 is back at [8, 16). Redoing the first entry moves it to [18, 26)
+    // again, where the second one points inside it.
+    const before = s.getSnapshot();
+    s.dispatch(DocumentActions.evictChunk(1));
+    expect(s.getSnapshot()).toBe(before);
+    for (let i = 0; i < 3; i++) s.dispatch(DocumentActions.redo());
+    expect(text(s)).toBe("AAALLLLLLLLLLAAAA\nBBBBBBB\nCCCCCCC\n");
+  });
+
+  it("allows eviction when history pointed into text before the chunk that is now gone", () => {
+    for (const policy of ["pin", "drop"] as const) {
+      const s = makeStore(3, policy);
+      load(s, 0);
+      load(s, 1);
+      load(s, 2);
+      s.dispatch(DocumentActions.insert(byteOffset(8), "abc")); // before chunk 1, same key
+      s.dispatch(DocumentActions.insert(byteOffset(9), "Z")); // inside "abc"
+      s.dispatch(DocumentActions.delete(byteOffset(8), byteOffset(12)));
+      s.dispatch(DocumentActions.evictChunk(1));
+      expect(text(s), policy).toBe("AAAAAAA\nCCCCCCC\n");
+      expect(getUndoCount(s.getSnapshot()), policy).toBe(3);
+      for (let i = 0; i < 3; i++) s.dispatch(DocumentActions.undo());
+      expect(text(s), policy).toBe("AAAAAAA\nCCCCCCC\n");
+      load(s, 1);
+      expect(text(s), policy).toBe(CHUNKS.slice(0, 3).join(""));
+    }
+  });
+
   it("rejects an unknown historyEvictionPolicy", () => {
     expect(() =>
       createDocumentStore({ historyEvictionPolicy: "keep" as unknown as HistoryEvictionPolicy }),

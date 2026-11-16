@@ -53,3 +53,27 @@ export function someHistoryChange(
   }
   return predicate(tail);
 }
+
+/**
+ * True when some change of `entry` matches `predicate`, visiting changes last
+ * to first (the order undo applies them) and stopping at the first match.
+ */
+export function someHistoryChangeBackward(
+  entry: HistoryEntry,
+  predicate: (change: HistoryChange) => boolean,
+): boolean {
+  const coalesced = coalescedTails.get(entry);
+  if (coalesced === undefined) {
+    const { changes } = entry;
+    for (let i = changes.length - 1; i >= 0; i--) {
+      if (predicate(changes[i]!)) return true;
+    }
+    return false;
+  }
+  const { base, tail } = coalesced;
+  if (predicate(tail)) return true;
+  for (let i = base.length - 2; i >= 0; i--) {
+    if (predicate(base[i]!)) return true;
+  }
+  return false;
+}

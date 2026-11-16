@@ -88,6 +88,10 @@ A position strictly inside an evicted chunk cannot be resolved after eviction. T
 when an edit inside a chunk is undone, or when inserted text is deleted again, which leaves the
 chunk unedited. `historyEvictionPolicy` decides what `EVICT_CHUNK` does then.
 
+Each entry is checked against the document as it was when that entry applies, not the current
+one. An edit before the chunk moves it, so an older entry inside the chunk can have a position
+outside the chunk's current span, and one outside it can have a position inside that span.
+
 - `'pin'` (default) — refuse the eviction. The chunk stays loaded until those entries leave history.
 - `'drop'` — evict and discard those entries, along with every entry that can only be undone or redone after them.
 
