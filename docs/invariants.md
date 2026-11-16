@@ -69,9 +69,19 @@ nodes with structural sharing and never mutate existing nodes.
 
 ### 1.4 Chunk Piece Ordering
 
-Chunk pieces are ordered by `chunkIndex` in in-order traversal. This ensures
-that `findReloadInsertionPos` (an O(n) walk) can locate the correct insertion
-point for re-loaded chunks.
+Chunk pieces are ordered by `chunkIndex` in in-order traversal.
+
+Every piece has a placement key. Chunks with an index at or below the key lie
+wholly before the piece, and higher chunks lie after it.
+
+- chunk piece of chunk `i` — `i - 1`
+- add piece — its stored `afterChunk`
+- original piece — `-1`
+
+Keys never decrease in document order. `findReloadInsertionPos` places a
+loaded chunk `c` before the first piece whose key is at least `c`. An add
+piece key is always below `nextExpectedChunk`, so a sequential first load can
+append at the end. See `src/store/core/chunk-anchor.ts`.
 
 ### 1.5 UTF-8 boundaries
 

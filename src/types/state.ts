@@ -127,6 +127,14 @@ export interface OriginalPieceNode extends PieceNodeBase {
 /** Piece node backed by the append-only add buffer. */
 export interface AddPieceNode extends PieceNodeBase {
   readonly bufferType: "add";
+  /**
+   * Chunk placement key: every chunk with an index at or below this value lies
+   * wholly before this piece, and every higher chunk lies after it. It records
+   * where the text sits relative to chunks that are not resident, so loading a
+   * chunk places it on the correct side of this text. `-1` means before every
+   * chunk, which is also the value in documents without chunking.
+   */
+  readonly afterChunk: number;
 }
 
 /** Piece node backed by a loaded chunk buffer. */
@@ -378,12 +386,37 @@ export interface SelectionState {
 // =============================================================================
 
 /**
+ * A position recorded in history, stored so that chunk loading and eviction do
+ * not invalidate it.
+ *
+ * Loading or evicting a chunk shifts the resident offset of everything after
+ * it, so history does not store resident offsets. It stores a pair instead:
+ *
+ * - `afterChunk` (K): every chunk with index <= K lies wholly before the
+ *   position, and every higher chunk lies after it.
+ * - `position` (n): the resident offset minus the original byte lengths of the
+ *   currently loaded chunks with index <= K.
+ *
+ * Loading or evicting a chunk `c <= K` changes the resident offset and the
+ * subtracted sum by the same amount. A chunk `c > K` changes neither. The pair
+ * therefore stays valid, and undo/redo convert it back to a resident offset.
+ * Without chunking, `afterChunk` is `-1` and `position` is the plain offset.
+ */
+export interface HistoryAnchor {
+  /**
+   * Anchored position. Equal to the byte offset only in documents without
+   * chunking. Can be negative when a loaded chunk before it was shortened by edits.
+   */
+  readonly position: number;
+  /** Chunk placement key for `position` (`-1` without chunking). */
+  readonly afterChunk: number;
+}
+
+/**
  * A single insert change record for undo/redo.
  */
-export interface HistoryInsertChange {
+export interface HistoryInsertChange extends HistoryAnchor {
   readonly type: "insert";
-  /** Position where the change occurred (byte offset) */
-  readonly position: ByteOffset;
   /** Text that was inserted */
   readonly text: string;
   /** Pre-computed UTF-8 byte length of `text` */
@@ -393,10 +426,8 @@ export interface HistoryInsertChange {
 /**
  * A single delete change record for undo/redo.
  */
-export interface HistoryDeleteChange {
+export interface HistoryDeleteChange extends HistoryAnchor {
   readonly type: "delete";
-  /** Position where the change occurred (byte offset) */
-  readonly position: ByteOffset;
   /** Text that was deleted */
   readonly text: string;
   /** Pre-computed UTF-8 byte length of `text` */
@@ -406,10 +437,8 @@ export interface HistoryDeleteChange {
 /**
  * A single replace change record for undo/redo.
  */
-export interface HistoryReplaceChange {
+export interface HistoryReplaceChange extends HistoryAnchor {
   readonly type: "replace";
-  /** Position where the change occurred (byte offset) */
-  readonly position: ByteOffset;
   /** Text that was inserted */
   readonly text: string;
   /** Pre-computed UTF-8 byte length of `text` */
@@ -424,15 +453,44 @@ export interface HistoryReplaceChange {
 export type HistoryChange = HistoryInsertChange | HistoryDeleteChange | HistoryReplaceChange;
 
 /**
+ * A selection range stored in history. `anchor` and `head` are anchored
+ * positions (see {@link HistoryAnchor}), each with its own placement key.
+ */
+export interface HistorySelectionRange {
+  /** Anchored position where the selection started */
+  readonly anchor: number;
+  /** Anchored position of the cursor */
+  readonly head: number;
+  readonly anchorAfterChunk: number;
+  readonly headAfterChunk: number;
+}
+
+/** A selection stored in history, using anchored positions. */
+export interface HistorySelectionState {
+  readonly ranges: NonEmptyReadonlyArray<HistorySelectionRange>;
+  readonly primaryIndex: number;
+}
+
+/**
+ * What EVICT_CHUNK does when undo or redo history still points inside the chunk.
+ *
+ * - `"pin"`: refuse the eviction. The chunk stays loaded until those entries
+ *   leave history (HISTORY_CLEAR, a new edit clearing redo, or the history limit).
+ * - `"drop"`: evict anyway and discard the entries that point inside the chunk,
+ *   together with every entry that can only be undone or redone after them.
+ */
+export type HistoryEvictionPolicy = "pin" | "drop";
+
+/**
  * A group of changes that form a single undo unit.
  */
 export interface HistoryEntry {
   /** Changes in this entry (applied as a batch) */
   readonly changes: readonly HistoryChange[];
-  /** Selection state before this entry was applied */
-  readonly selectionBefore: SelectionState;
-  /** Selection state after this entry was applied */
-  readonly selectionAfter: SelectionState;
+  /** Selection before this entry was applied, as anchored positions */
+  readonly selectionBefore: HistorySelectionState;
+  /** Selection after this entry was applied, as anchored positions */
+  readonly selectionAfter: HistorySelectionState;
   /** Timestamp when this entry was created */
   readonly timestamp: number;
 }
@@ -627,6 +685,8 @@ export interface HistoryState {
   readonly limit: number;
   /** Timeout in ms for coalescing consecutive same-type changes (0 = disabled) */
   readonly coalesceTimeout: number;
+  /** What EVICT_CHUNK does when history points inside the chunk */
+  readonly evictionPolicy: HistoryEvictionPolicy;
 }
 
 // =============================================================================
@@ -757,6 +817,11 @@ export interface DocumentStoreConfigBase {
   normalizeInsertedLineEndings?: boolean;
   /** Timeout in ms for grouping consecutive undo entries (default: 0, disabled) */
   undoGroupTimeout?: number;
+  /**
+   * What EVICT_CHUNK does when undo or redo history still points inside the
+   * chunk (default: `"pin"`, refuse the eviction). See `HistoryEvictionPolicy`.
+   */
+  historyEvictionPolicy?: HistoryEvictionPolicy;
   /**
    * Total file size in bytes, declared before chunk loading begins.
    * Must be a non-negative safe integer. Use it with `chunkSize` to compute the

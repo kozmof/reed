@@ -1,9 +1,8 @@
 /**
  * Test migration dispatch with synthetic versions.
  *
- * The shipped registry is empty while version 1 is the only format. Inject
- * fixtures to test routing, failure, ordering, and field preservation before
- * a newer format needs a real migration.
+ * Injected fixtures test routing, failure, ordering, and field preservation
+ * independently of the shipped registry, which migrates version 1 to 2.
  */
 
 import { describe, expect, it } from "vitest";
@@ -122,9 +121,10 @@ describe("migrateCheckpointData", () => {
 });
 
 describe("shipped registry", () => {
-  it("is empty while version 1 is the only format", () => {
-    expect(CHECKPOINT_MIGRATIONS).toEqual([]);
-    expect(minimumSupportedVersion()).toBe(CHECKPOINT_VERSION);
+  it("ships the version 1 to 2 step", () => {
+    expect(CHECKPOINT_MIGRATIONS.map(({ from, to }) => [from, to])).toEqual([[1, 2]]);
+    expect(CHECKPOINT_VERSION).toBe(2);
+    expect(minimumSupportedVersion()).toBe(1);
   });
 
   it("rejects an unknown version through the real restore path", () => {

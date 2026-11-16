@@ -7,7 +7,12 @@
  * the chunk lifecycle a focused test boundary.
  */
 
-import type { DocumentState, LineIndexState, PieceNode } from "../../types/state.js";
+import type {
+  DocumentState,
+  LineIndexState,
+  PieceNode,
+  SelectionState,
+} from "../../types/state.js";
 import type {
   DeclareChunkMetadataAction,
   EvictChunkAction,
@@ -24,6 +29,8 @@ import {
   pieceTableDelete,
 } from "../core/piece-table.js";
 import { hasAttentionForPiece } from "../core/attention.js";
+import { pieceKey } from "../core/chunk-anchor.js";
+import { historyForEviction } from "./history-anchor.js";
 import { repairChunkLines } from "../core/chunk-line-repair.js";
 import { summarizeBytes } from "../core/decoded-metrics.js";
 import { PersistentMap, PersistentSet } from "../core/persistent-map.js";
@@ -32,10 +39,17 @@ import { asReadonlyMap, asReadonlySet, asReadonlyUint8Array } from "../core/runt
 interface ChunkSummary {
   min: number;
   max: number;
+  /** Highest placement key in the subtree (see core/chunk-anchor.ts). */
+  maxKey: number;
   hasAdd: boolean;
 }
 const chunkSummaries = new WeakMap<PieceNode, ChunkSummary>();
-const emptySummary: ChunkSummary = { min: Infinity, max: -Infinity, hasAdd: false };
+const emptySummary: ChunkSummary = {
+  min: Infinity,
+  max: -Infinity,
+  maxKey: -Infinity,
+  hasAdd: false,
+};
 
 // Immutable subtrees share their summaries across edits and viewport changes.
 function summarizeChunks(root: PieceNode | null): ChunkSummary {
@@ -48,6 +62,7 @@ function summarizeChunks(root: PieceNode | null): ChunkSummary {
   const summary = {
     min: Math.min(left.min, right.min, chunk ?? Infinity),
     max: Math.max(left.max, right.max, chunk ?? -Infinity),
+    maxKey: Math.max(left.maxKey, right.maxKey, pieceKey(root)),
     hasAdd: left.hasAdd || right.hasAdd || root.bufferType === "add",
   };
   chunkSummaries.set(root, summary);
@@ -73,13 +88,19 @@ function visitChunk(
   );
 }
 
+/**
+ * Resident offset where chunk `targetChunkIndex` belongs: before the first
+ * piece whose placement key is >= the chunk index. That is the first piece of a
+ * higher chunk, or text recorded as lying after the chunk. Keys never decrease
+ * in document order, so everything before that point lies before the chunk.
+ */
 function findReloadInsertionPos(root: PieceNode | null, targetChunkIndex: number): number {
   function find(node: PieceNode | null, offset: number): number | null {
-    if (!node || summarizeChunks(node).max <= targetChunkIndex) return null;
+    if (!node || summarizeChunks(node).maxKey < targetChunkIndex) return null;
     const ownStart = offset + (node.left?.subtreeLength ?? 0);
     const left = find(node.left, offset);
     if (left !== null) return left;
-    if (node.bufferType === "chunk" && node.chunkIndex > targetChunkIndex) return ownStart;
+    if (pieceKey(node) >= targetChunkIndex) return ownStart;
     return find(node.right, ownStart + node.length);
   }
   return find(root, 0) ?? root?.subtreeLength ?? 0;
@@ -132,6 +153,26 @@ function hasAttentionAnchoredToChunk(state: DocumentState, chunkIndex: number): 
   return visitChunk(state.pieceTable.root, chunkIndex, (node) =>
     hasAttentionForPiece(state.attention, node.id),
   );
+}
+
+/** Apply `map` to every selection offset, returning the same object when nothing moves. */
+function mapSelection(
+  selection: SelectionState,
+  map: (offset: ByteOffset) => ByteOffset,
+): SelectionState {
+  let changed = false;
+  const ranges = selection.ranges.map((range) => {
+    const anchor = map(range.anchor);
+    const head = map(range.head);
+    if (anchor === range.anchor && head === range.head) return range;
+    changed = true;
+    return Object.freeze({ anchor, head });
+  });
+  if (!changed) return selection;
+  return Object.freeze({
+    ranges: Object.freeze(ranges) as unknown as SelectionState["ranges"],
+    primaryIndex: selection.primaryIndex,
+  });
 }
 
 export function declareChunkMetadata(
@@ -243,6 +284,7 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
   let pieceTable = state.pieceTable;
   let lineIndex = state.lineIndex;
   let unloadedLineCount = state.lineIndex.unloadedLineCount;
+  let selection = state.selection;
 
   for (const chunk of prepared) {
     const isFirstLoad = !loadedChunks.has(chunk.chunkIndex);
@@ -252,6 +294,14 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
       : byteOffset(findReloadInsertionPos(root, chunk.chunkIndex));
     const id = pieceID(`p${nextPieceID++}`);
     root = insertChunkPieceAt(root, insertionPos, chunk.chunkIndex, chunk.data.length, id);
+    // Keep the cursor on the same text. A gap at the insertion point belongs to
+    // the text after it, except at the end of the document.
+    const lengthBefore = totalLength;
+    selection = mapSelection(selection, (offset) =>
+      offset > insertionPos || (offset === insertionPos && insertionPos < lengthBefore)
+        ? byteOffset(offset + chunk.data.length)
+        : offset,
+    );
     summarizeBytes(chunk.data); // Prepare reusable decoder summaries once during loading.
     chunkMap = chunkMap.with(chunk.chunkIndex, asReadonlyUint8Array(chunk.data));
     loadedChunks = loadedChunks.with(chunk.chunkIndex);
@@ -289,6 +339,7 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
     revision: state.revision + prepared.length,
     pieceTable,
     lineIndex,
+    selection,
   });
 }
 
@@ -302,6 +353,16 @@ export function evictChunk(state: DocumentState, action: EvictChunkAction): Docu
   if (range === null || hasAddPieceTouchingRange(state.pieceTable.root, range.start, range.end)) {
     return state;
   }
+
+  // History positions survive eviction except those strictly inside the chunk.
+  const history = historyForEviction(
+    state.pieceTable,
+    state.history,
+    chunkIndex,
+    range.start,
+    range.end,
+  );
+  if (history === null) return state;
 
   const deleted = pieceTableDelete(state.pieceTable, range.start, range.end);
   const nextChunkMap = PersistentMap.from(state.pieceTable.chunkMap).without(chunkIndex);
@@ -330,9 +391,20 @@ export function evictChunk(state: DocumentState, action: EvictChunkAction): Docu
     );
   }
 
+  const evictedLength = range.end - range.start;
+  const selection = mapSelection(state.selection, (offset) =>
+    offset >= range.end
+      ? byteOffset(offset - evictedLength)
+      : offset > range.start
+        ? range.start
+        : offset,
+  );
+
   return withState(state, {
     revision: nextRevision,
     pieceTable: nextPieceTable,
     lineIndex,
+    selection,
+    history,
   });
 }

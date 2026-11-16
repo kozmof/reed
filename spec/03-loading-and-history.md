@@ -43,6 +43,7 @@ History is immutable and stored in `DocumentState.history`.
 - `redoStack`
 - `limit`
 - `coalesceTimeout`
+- `evictionPolicy` — `'pin'` (default) or `'drop'`, from the `historyEvictionPolicy` config
 
 `HistoryEntry` stores:
 
@@ -56,6 +57,38 @@ History is immutable and stored in `DocumentState.history`.
 - `insert`
 - `delete`
 - `replace`
+
+### 2.1 Positions across chunk loads
+
+Loading or evicting a chunk shifts the resident offset of everything after it. History
+therefore stores each position as an anchor pair (`HistoryAnchor`).
+
+- `afterChunk` — chunks with an index at or below this value lie wholly before the position
+- `position` — the resident offset minus the original lengths of the loaded chunks at or below `afterChunk`
+
+Loads and evictions leave both values valid. Undo and redo convert them back to resident
+offsets. Without chunking, `afterChunk` is `-1` and `position` is the plain byte offset.
+History selections use the same pairs.
+
+A delete that spans a chunk which is not loaded is recorded as several changes in one entry.
+Undo then puts each part back on the correct side of that chunk.
+
+### 2.2 Eviction and history
+
+A position strictly inside an evicted chunk cannot be resolved after eviction. This happens
+when an edit inside a chunk is undone, or when inserted text is deleted again, which leaves the
+chunk unedited. `historyEvictionPolicy` decides what `EVICT_CHUNK` does then.
+
+- `'pin'` (default) — refuse the eviction. The chunk stays loaded until those entries leave history.
+- `'drop'` — evict and discard those entries, along with every entry that can only be undone or redone after them.
+
+Positions on a chunk boundary do not block eviction.
+
+### 2.3 Text next to chunks that are not loaded
+
+New text attaches to the content after it. Text typed just before visible content therefore
+stays with that content when an earlier chunk loads. At the end of the document, text attaches
+to the content before it, so it stays before chunks that stream in later.
 
 ## 3. Undo/Redo and Grouping
 

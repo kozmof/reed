@@ -62,6 +62,7 @@ Supported config fields (`DocumentStoreConfig`):
 - `encoding` — currently only `'utf-8'` is supported
 - `lineEnding`
 - `undoGroupTimeout`
+- `historyEvictionPolicy` — `'pin'` (default) refuses to evict a chunk that history points inside, and `'drop'` evicts it and discards those entries
 - `normalizeInsertedLineEndings` — coerce line endings on `INSERT`/`REPLACE` to match `lineEnding`
 - `totalFileSize` — pre-declared file size used for chunk sizing, and must be a non-negative safe integer
 - `maxDirtyRanges` — dirty-range count threshold before a full line-index rebuild is triggered

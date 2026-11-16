@@ -16,6 +16,7 @@ import type {
   LineIndexNode,
   SelectionState,
   HistoryState,
+  HistoryEvictionPolicy,
   DocumentMetadata,
   ChunkMetadata,
   BufferType,
@@ -55,6 +56,7 @@ const DEFAULT_CONFIG: Required<Omit<DocumentStoreConfigBase, "logger">> & {
   encoding: "utf-8",
   lineEnding: "lf",
   undoGroupTimeout: 0,
+  historyEvictionPolicy: "pin",
   totalFileSize: 0,
   maxDirtyRanges: 32,
   reconcileMode: "idle",
@@ -124,6 +126,15 @@ function assertValidDocumentStoreConfig(config: DocumentStoreConfig): void {
     (!Number.isFinite(config.undoGroupTimeout) || config.undoGroupTimeout < 0)
   ) {
     throw new Error("undoGroupTimeout must be a non-negative number");
+  }
+  if (
+    config.historyEvictionPolicy !== undefined &&
+    config.historyEvictionPolicy !== "pin" &&
+    config.historyEvictionPolicy !== "drop"
+  ) {
+    throw new Error(
+      `historyEvictionPolicy must be 'pin' or 'drop': ${String(config.historyEvictionPolicy)}`,
+    );
   }
   if (
     config.maxDirtyRanges !== undefined &&
@@ -262,13 +273,29 @@ export function createPieceNode(
   left: PieceNode | null = null,
   right: PieceNode | null = null,
   id: PieceID = generatePieceID(),
+  afterChunk: number = -1,
 ): PieceNode {
   const leftLength = left?.subtreeLength ?? 0;
   const rightLength = right?.subtreeLength ?? 0;
-  const selfAddLength = bufferType === "add" ? length : 0;
   const leftAddLength = left?.subtreeAddLength ?? 0;
   const rightAddLength = right?.subtreeAddLength ?? 0;
+  const subtreeLength = length + leftLength + rightLength;
 
+  if (bufferType === "add") {
+    return Object.freeze({
+      _nodeKind: "piece" as const,
+      id,
+      color,
+      left,
+      right,
+      bufferType,
+      afterChunk,
+      start,
+      length,
+      subtreeLength,
+      subtreeAddLength: length + leftAddLength + rightAddLength,
+    });
+  }
   return Object.freeze({
     _nodeKind: "piece" as const,
     id,
@@ -278,8 +305,8 @@ export function createPieceNode(
     bufferType,
     start,
     length,
-    subtreeLength: length + leftLength + rightLength,
-    subtreeAddLength: selfAddLength + leftAddLength + rightAddLength,
+    subtreeLength,
+    subtreeAddLength: leftAddLength + rightAddLength,
   });
 }
 
@@ -333,6 +360,8 @@ export interface PieceDescriptor {
   readonly start: ByteOffset;
   readonly length: ByteLength;
   readonly chunkIndex?: number;
+  /** Placement key for `'add'` pieces (default `-1`). Ignored otherwise. */
+  readonly afterChunk?: number;
 }
 
 /**
@@ -377,7 +406,16 @@ export function buildPieceTree(
         right,
         piece.id,
       )
-    : createPieceNode(piece.bufferType, piece.start, piece.length, color, left, right, piece.id);
+    : createPieceNode(
+        piece.bufferType,
+        piece.start,
+        piece.length,
+        color,
+        left,
+        right,
+        piece.id,
+        piece.afterChunk,
+      );
 }
 
 /** Create a piece table from content loaded eagerly without chunking. */
@@ -626,12 +664,14 @@ export function createInitialSelectionState(): SelectionState {
 export function createInitialHistoryState(
   limit: number = 1000,
   coalesceTimeout: number = 0,
+  evictionPolicy: HistoryEvictionPolicy = "pin",
 ): HistoryState {
   return Object.freeze({
     undoStack: null,
     redoStack: null,
     limit,
     coalesceTimeout,
+    evictionPolicy,
   });
 }
 
@@ -681,7 +721,11 @@ export function createInitialState(config: DocumentStoreConfig = {}): DocumentSt
         : createEmptyPieceTableState(chunkSize, totalFileSize),
     lineIndex: createLineIndexFromBytes(content, bytes, mergedConfig.maxDirtyRanges),
     selection: createInitialSelectionState(),
-    history: createInitialHistoryState(mergedConfig.historyLimit, mergedConfig.undoGroupTimeout),
+    history: createInitialHistoryState(
+      mergedConfig.historyLimit,
+      mergedConfig.undoGroupTimeout,
+      mergedConfig.historyEvictionPolicy,
+    ),
     metadata: createInitialMetadata(config),
     attention: emptyAttentionLayerState,
   });

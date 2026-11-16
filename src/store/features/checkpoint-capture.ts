@@ -8,6 +8,7 @@ import type {
   HistoryState,
   HistoryEntry,
   HistoryChange,
+  HistorySelectionState,
   DocumentMetadata,
   ChunkMetadata,
 } from "../../types/state.js";
@@ -28,6 +29,7 @@ import type {
   CheckpointHistory,
   CheckpointHistoryEntry,
   CheckpointHistoryChange,
+  CheckpointHistorySelection,
   CheckpointMetadata,
   CheckpointAttention,
   CheckpointAttentionLayer,
@@ -56,9 +58,16 @@ function fail(code: CheckpointErrorCode, message: string): never {
 const BUFFER_TAG = { original: "o", add: "a", chunk: "c" } as const;
 
 function capturePiece(piece: PieceNode): CheckpointPiece {
-  return piece.bufferType === "chunk"
-    ? [piece.id, "c", piece.start, piece.length, piece.chunkIndex]
-    : [piece.id, BUFFER_TAG[piece.bufferType], piece.start, piece.length];
+  switch (piece.bufferType) {
+    case "chunk":
+      return [piece.id, "c", piece.start, piece.length, piece.chunkIndex];
+    case "add":
+      return piece.afterChunk === -1
+        ? [piece.id, BUFFER_TAG.add, piece.start, piece.length]
+        : [piece.id, BUFFER_TAG.add, piece.start, piece.length, piece.afterChunk];
+    case "original":
+      return [piece.id, BUFFER_TAG.original, piece.start, piece.length];
+  }
 }
 
 function captureChunks(chunkMap: ReadonlyMap<number, ReadonlyUint8Array>): CheckpointChunk[] {
@@ -114,22 +123,39 @@ function captureSelection(selection: SelectionState): CheckpointSelection {
   };
 }
 
+function captureHistorySelection(selection: HistorySelectionState): CheckpointHistorySelection {
+  return {
+    ranges: selection.ranges.map((range) =>
+      range.anchorAfterChunk === -1 && range.headAfterChunk === -1
+        ? ([range.anchor, range.head] as const)
+        : ([range.anchor, range.head, range.anchorAfterChunk, range.headAfterChunk] as const),
+    ),
+    primaryIndex: selection.primaryIndex,
+  };
+}
+
 function captureHistoryChange(change: HistoryChange): CheckpointHistoryChange {
+  const withKey = change.afterChunk !== -1;
   switch (change.type) {
     case "insert":
-      return ["i", change.position, change.text];
-    case "delete":
-      return ["d", change.position, change.text];
+    case "delete": {
+      const kind = change.type === "insert" ? "i" : "d";
+      return withKey
+        ? [kind, change.position, change.text, change.afterChunk]
+        : [kind, change.position, change.text];
+    }
     case "replace":
-      return ["r", change.position, change.text, change.oldText];
+      return withKey
+        ? ["r", change.position, change.text, change.oldText, change.afterChunk]
+        : ["r", change.position, change.text, change.oldText];
   }
 }
 
 function captureHistoryEntry(entry: HistoryEntry): CheckpointHistoryEntry {
   return {
     changes: entry.changes.map(captureHistoryChange),
-    selectionBefore: captureSelection(entry.selectionBefore),
-    selectionAfter: captureSelection(entry.selectionAfter),
+    selectionBefore: captureHistorySelection(entry.selectionBefore),
+    selectionAfter: captureHistorySelection(entry.selectionAfter),
     timestamp: entry.timestamp,
   };
 }
@@ -138,6 +164,7 @@ function captureHistory(history: HistoryState): CheckpointHistory {
   return {
     limit: history.limit,
     coalesceTimeout: history.coalesceTimeout,
+    evictionPolicy: history.evictionPolicy,
     undo: pstackToArray(history.undoStack).map(captureHistoryEntry),
     redo: pstackToArray(history.redoStack).map(captureHistoryEntry),
   };

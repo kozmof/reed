@@ -265,14 +265,14 @@ export function createChunkManager(
         lruRemove(candidate);
         loadedCount--;
       }
-      // If eviction was refused (user edits overlap the chunk's byte range),
-      // leave the chunk and continue to the next LRU candidate.
+      // If eviction was refused (user edits overlap the chunk's byte range, or
+      // history points inside it), leave the chunk and try the next LRU candidate.
     }
 
     if (loadedCount > maxLoadedChunks) {
       logger?.warn?.(
         `[ChunkManager] eviction pressure: ${loadedCount} chunks loaded but all non-pinned ` +
-          `candidates have overlapping user edits. Memory limit (${maxLoadedChunks}) exceeded.`,
+          `candidates hold user edits or undo history. Memory limit (${maxLoadedChunks}) exceeded.`,
       );
     }
   }

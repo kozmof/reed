@@ -50,15 +50,24 @@ open transaction, so that state becomes its committed baseline.
 
 ## 3. Format
 
-The envelope is `{ format: 'reed-checkpoint', version: 1, mode, ... }`. Restore rejects an
-unknown `format` and unsupported versions. A migration registry routes supported older versions before validation. The registry is currently empty, so only version `1` is supported. See [the migration policy](../docs/adr/001-checkpoint-compatibility.md#decision-1--migration-policy-accepted-implemented).
+The envelope is `{ format: 'reed-checkpoint', version: 2, mode, ... }`. Restore rejects an
+unknown `format` and unsupported versions. A migration registry routes supported older versions before validation. Versions `1` and `2` are supported. See [the migration policy](../docs/adr/001-checkpoint-compatibility.md#decision-1--migration-policy-accepted-implemented).
+
+Version 2 adds chunk placement keys and anchored history positions:
+
+- An add piece tuple may carry a fifth element, its placement key (`afterChunk`). It is omitted when the key is `-1`.
+- A history change tuple ends with its placement key, omitted when `-1`. Its position is an anchored position and may be negative.
+- A history selection range is `[anchor, head]` or `[anchor, head, anchorAfterChunk, headAfterChunk]`.
+- `history.evictionPolicy` is `'pin'` or `'drop'`. Restore treats a missing value as `'pin'`.
+
+The version 1 to 2 step derives the keys from the captured layout. Documents without chunks need no change.
 
 Byte buffers are base64. Both trees are stored as flat in-order lists. The following example illustrates the wire shape. Its placeholder buffers and abbreviated lists are not a restorable payload.
 
 ```jsonc
 {
   "format": "reed-checkpoint",
-  "version": 1,
+  "version": 2,
   "mode": "exact",
   "revision": 42,
   "selectionRevision": 7,
@@ -87,7 +96,13 @@ Byte buffers are base64. Both trees are stored as flat in-order lists. The follo
     ],
   },
   "selection": { "ranges": [[3, 7]], "primaryIndex": 0 },
-  "history": { "limit": 1000, "coalesceTimeout": 0, "undo": [], "redo": [] },
+  "history": {
+    "limit": 1000,
+    "coalesceTimeout": 0,
+    "evictionPolicy": "pin",
+    "undo": [],
+    "redo": [],
+  },
   "metadata": {
     "encoding": "utf-8",
     "lineEnding": "lf",
@@ -141,8 +156,8 @@ constraint on the allocator.
 `normalized` collapses the document to a single original-buffer piece and rebuilds the line
 index from the text. Attentions are resolved to byte ranges at capture and re-created against
 the new piece, so they keep resolving to the same text under their original ids. History
-survives either mode, because a `HistoryChange` records a byte offset and text rather than a
-piece.
+survives either mode, because a `HistoryChange` records an anchored position and text rather
+than a piece.
 
 `normalized` throws `CHUNKED_NORMALIZE` for a chunked document. Flattening a partially-loaded
 file to text would silently drop its unloaded ranges.
@@ -189,6 +204,9 @@ Error messages name the failing field by path, for example
 History selections are checked for shape but not for range. An undo entry describes an older
 revision, so its offsets may legitimately point past the end of the current document.
 
+Placement keys must not decrease in document order. An add piece key must also be below
+`nextExpectedChunk`. Restore reports a violation as `CHUNK_ORDER`.
+
 ## 6. API
 
 Capture an eager state, then restore either a state or a live store.
@@ -204,7 +222,7 @@ store.createDocumentStoreFromCheckpoint(checkpoint, config?, restoreOptions?)
 store.createDocumentStoreWithEventsFromCheckpoint(checkpoint, config?, restoreOptions?)
 ```
 
-`isCheckpoint` checks the format, version, and non-null object sections. It narrows to
+`isCheckpoint` checks the format, a supported version, and non-null object sections. It narrows to
 `CheckpointEnvelope`, whose section contents remain unvalidated. Pass the value to
 `restore` for full validation. Restore entry points accept `unknown` input and check
 line boundaries and UTF-16 lengths against the resident document bytes.
@@ -235,5 +253,5 @@ Capture includes base64 encoding of the buffers. Measure capture and restore wit
 - Chunked capture inlines every loaded chunk buffer. A policy for checkpointing an unloaded
   skeleton needs the eviction-refusal path from `chunk-actions.ts`, because a chunk with
   overlapping user edits cannot be dropped.
-- Version `1` is the only supported format. Migration routing is implemented, but the registry has no upgrade steps yet.
+- The registry has one upgrade step, from version `1` to `2`.
 - `normalized` capture is unavailable for chunked documents.

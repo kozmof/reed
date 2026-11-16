@@ -22,6 +22,8 @@ import type {
   HistoryState,
   HistoryEntry,
   HistoryChange,
+  HistorySelectionRange,
+  HistorySelectionState,
   DocumentMetadata,
   ChunkMetadata,
 } from "../../types/state.js";
@@ -36,7 +38,7 @@ import type {
   CheckpointErrorCode,
 } from "../../types/checkpoint.js";
 import { CHECKPOINT_FORMAT, CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
-import { migrateCheckpointData } from "./checkpoint-migrate.js";
+import { migrateCheckpointData, minimumSupportedVersion } from "./checkpoint-migrate.js";
 import type { PieceDescriptor, LineDescriptor } from "../core/state.js";
 import {
   buildPieceTree,
@@ -178,6 +180,19 @@ function readCount(value: unknown, what: string): number {
   return value;
 }
 
+/** Validate a safe integer no smaller than `min`. */
+function readInteger(value: unknown, what: string, min: number = Number.MIN_SAFE_INTEGER): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min) {
+    fail("MALFORMED", `${what} must be a safe integer of at least ${min}`);
+  }
+  return value;
+}
+
+/** Read an optional chunk placement key (>= -1), defaulting to -1. */
+function readPlacementKey(value: unknown, what: string): number {
+  return value === undefined ? -1 : readInteger(value, what, -1);
+}
+
 function readFiniteNumber(value: unknown, what: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     fail("MALFORMED", `${what} must be a finite number`);
@@ -247,12 +262,24 @@ function restorePieces(
   originalLength: number,
   addLength: number,
   chunkMap: Map<number, Uint8Array>,
+  nextExpectedChunk: number,
   budget: RestoreBudget,
 ): { pieces: PieceDescriptor[]; totalLength: number; lengthByID: Map<PieceID, number> } {
   const pieces: PieceDescriptor[] = [];
   const lengthByID = new Map<PieceID, number>();
   let totalLength = 0;
   let lastChunkIndex = -1;
+  // Placement keys never decrease in document order (see core/chunk-anchor.ts).
+  let lastKey = -1;
+  const checkKey = (key: number, what: string) => {
+    if (key < lastKey) {
+      fail(
+        "CHUNK_ORDER",
+        `${what} has placement key ${key} after ${lastKey}: keys must not decrease in document order`,
+      );
+    }
+    lastKey = key;
+  };
 
   for (let i = 0; i < raw.length; i++) {
     const what = `pieceTable.pieces[${i}]`;
@@ -293,6 +320,7 @@ function restorePieces(
         );
       }
       lastChunkIndex = chunkIndex;
+      checkKey(chunkIndex - 1, what);
       pieces.push({
         id,
         bufferType: "chunk",
@@ -309,7 +337,27 @@ function restorePieces(
           `${what} covers [${start}, ${start + length}) of the ${bufferType} buffer, which holds ${bufferLength} bytes`,
         );
       }
-      pieces.push({ id, bufferType, start: byteOffset(start), length: byteLength(length) });
+      if (tag === "a") {
+        const afterChunk = readPlacementKey(tuple[4], `${what}[4]`);
+        checkKey(afterChunk, what);
+        // Text can only follow chunks that have been loaded. A higher key would
+        // place the next sequentially streamed chunk on the wrong side of it.
+        if (afterChunk >= Math.max(nextExpectedChunk, 0) && afterChunk !== -1) {
+          fail(
+            "CHUNK_ORDER",
+            `${what} has placement key ${afterChunk} but only chunks below ${nextExpectedChunk} have been loaded`,
+          );
+        }
+        pieces.push({
+          id,
+          bufferType,
+          start: byteOffset(start),
+          length: byteLength(length),
+          afterChunk,
+        });
+      } else {
+        pieces.push({ id, bufferType, start: byteOffset(start), length: byteLength(length) });
+      }
     }
 
     lengthByID.set(id, length);
@@ -440,6 +488,7 @@ function restorePieceTable(
     originalBuffer.length,
     addBytes.length,
     chunkMap,
+    nextExpectedChunk,
     budget,
   );
 
@@ -699,7 +748,8 @@ function restoreSelection(
 function restoreHistoryChange(raw: unknown, what: string, budget: RestoreBudget): HistoryChange {
   const tuple = readArray(raw, what, budget);
   const kind = readEnum(tuple[0], ["i", "d", "r"] as const, `${what}[0]`, budget);
-  const position = byteOffset(readCount(tuple[1], `${what}[1]`));
+  // Anchored positions may be negative (see HistoryAnchor).
+  const position = readInteger(tuple[1], `${what}[1]`);
   const text = readString(tuple[2], `${what}[2]`, budget);
   // Derive byte lengths from text so an incorrect stored length cannot
   // shift the offsets computed during undo.
@@ -710,6 +760,7 @@ function restoreHistoryChange(raw: unknown, what: string, budget: RestoreBudget)
     return Object.freeze({
       type: "replace",
       position,
+      afterChunk: readPlacementKey(tuple[4], `${what}[4]`),
       text,
       byteLength: textLength,
       oldText,
@@ -719,8 +770,46 @@ function restoreHistoryChange(raw: unknown, what: string, budget: RestoreBudget)
   return Object.freeze({
     type: kind === "i" ? "insert" : "delete",
     position,
+    afterChunk: readPlacementKey(tuple[3], `${what}[3]`),
     text,
     byteLength: textLength,
+  });
+}
+
+/** Restore a history selection: anchored positions with optional placement keys. */
+function restoreHistorySelection(
+  raw: unknown,
+  what: string,
+  budget: RestoreBudget,
+): HistorySelectionState {
+  const source = readObject(raw, what);
+  const rawRanges = readArray(source.ranges, `${what}.ranges`, budget);
+  if (rawRanges.length === 0) {
+    fail("SELECTION_OUT_OF_RANGE", `${what}.ranges is empty: a selection always has one range`);
+  }
+  const ranges: HistorySelectionRange[] = [];
+  for (let i = 0; i < rawRanges.length; i++) {
+    const rangeWhat = `${what}.ranges[${i}]`;
+    const tuple = readArray(rawRanges[i], rangeWhat, budget);
+    ranges.push(
+      Object.freeze({
+        anchor: readInteger(tuple[0], `${rangeWhat}[0]`),
+        head: readInteger(tuple[1], `${rangeWhat}[1]`),
+        anchorAfterChunk: readPlacementKey(tuple[2], `${rangeWhat}[2]`),
+        headAfterChunk: readPlacementKey(tuple[3], `${rangeWhat}[3]`),
+      }),
+    );
+  }
+  const primaryIndex = readCount(source.primaryIndex, `${what}.primaryIndex`);
+  if (primaryIndex >= ranges.length) {
+    fail(
+      "SELECTION_OUT_OF_RANGE",
+      `${what}.primaryIndex is ${primaryIndex} but only ${ranges.length} ranges are present`,
+    );
+  }
+  return Object.freeze({
+    ranges: Object.freeze(ranges) as unknown as NonEmptyReadonlyArray<HistorySelectionRange>,
+    primaryIndex,
   });
 }
 
@@ -733,13 +822,16 @@ function restoreHistoryEntry(raw: unknown, what: string, budget: RestoreBudget):
 
   return Object.freeze({
     changes: Object.freeze(changes),
-    selectionBefore: restoreSelection(
+    selectionBefore: restoreHistorySelection(
       source.selectionBefore,
       `${what}.selectionBefore`,
-      null,
       budget,
     ),
-    selectionAfter: restoreSelection(source.selectionAfter, `${what}.selectionAfter`, null, budget),
+    selectionAfter: restoreHistorySelection(
+      source.selectionAfter,
+      `${what}.selectionAfter`,
+      budget,
+    ),
     timestamp: readFiniteNumber(source.timestamp, `${what}.timestamp`),
   });
 }
@@ -756,6 +848,11 @@ function restoreHistory(raw: unknown, budget: RestoreBudget): HistoryState {
   if (coalesceTimeout < 0) {
     fail("HISTORY_INVALID", "history.coalesceTimeout must be a non-negative number");
   }
+
+  const evictionPolicy =
+    source.evictionPolicy === undefined
+      ? "pin"
+      : readEnum(source.evictionPolicy, ["pin", "drop"] as const, "history.evictionPolicy", budget);
 
   const rawUndo = readArray(source.undo, "history.undo", budget);
   const rawRedo = readArray(source.redo, "history.redo", budget);
@@ -775,6 +872,7 @@ function restoreHistory(raw: unknown, budget: RestoreBudget): HistoryState {
     redoStack: pstackFromArray(readStack(rawRedo, "history.redo")),
     limit,
     coalesceTimeout,
+    evictionPolicy,
   });
 }
 
@@ -874,7 +972,14 @@ export function isCheckpoint(value: unknown): value is CheckpointEnvelope {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const candidate = value as Record<string, unknown>;
   if (candidate.format !== CHECKPOINT_FORMAT) return false;
-  if (candidate.version !== CHECKPOINT_VERSION) return false;
+  // Accept every version restore can migrate forward.
+  if (
+    typeof candidate.version !== "number" ||
+    candidate.version < minimumSupportedVersion() ||
+    candidate.version > CHECKPOINT_VERSION
+  ) {
+    return false;
+  }
   return ["pieceTable", "lineIndex", "selection", "history", "metadata", "attention"].every(
     (key) => {
       const section = candidate[key];

@@ -32,6 +32,8 @@ Payload size grows with resident chunks. Browsing a file can increase checkpoint
 `minimumSupportedVersion()` derives the supported source window by walking
 backward through the registered migration steps. An empty registry supports only `CHECKPOINT_VERSION`. Adding steps extends the supported range.
 
+Version 2 added the first step. It adds chunk placement keys and anchored history positions, so history survives chunk loads and evictions. `isCheckpoint` accepts every version in the supported range.
+
 Migrations advance one version at a time (`v1 -> v2 -> v3`), never
 direct jumps. Each step is written once, against the format immediately
 preceding it, and is exercised by every later upgrade. A direct `v1 -> v3` step

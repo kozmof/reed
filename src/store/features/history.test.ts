@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { anchorSelection } from "./history-anchor.js";
 import { canUndo, canRedo, getUndoCount, getRedoCount, isHistoryEmpty } from "./history.js";
 import { createInitialState, withState } from "./../core/state.js";
 import { documentReducer } from "./reducer.js";
@@ -41,14 +42,20 @@ describe("canUndo", () => {
       undoStack: pstackFromArray([
         {
           changes: [
-            { type: "insert", position: byteOffset(0), text: "a", byteLength: byteLength(1) },
+            {
+              type: "insert",
+              position: byteOffset(0),
+              afterChunk: -1,
+              text: "a",
+              byteLength: byteLength(1),
+            },
           ],
           selectionBefore: {
-            ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }],
+            ranges: [{ anchor: 0, head: 0, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           selectionAfter: {
-            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            ranges: [{ anchor: 1, head: 1, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           timestamp: Date.now(),
@@ -57,6 +64,7 @@ describe("canUndo", () => {
       redoStack: null,
       limit: 1000,
       coalesceTimeout: 0,
+      evictionPolicy: "pin",
     };
     expect(canUndo(historyState)).toBe(true);
   });
@@ -107,14 +115,20 @@ describe("canRedo", () => {
       redoStack: pstackFromArray([
         {
           changes: [
-            { type: "insert", position: byteOffset(0), text: "a", byteLength: byteLength(1) },
+            {
+              type: "insert",
+              position: byteOffset(0),
+              afterChunk: -1,
+              text: "a",
+              byteLength: byteLength(1),
+            },
           ],
           selectionBefore: {
-            ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }],
+            ranges: [{ anchor: 0, head: 0, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           selectionAfter: {
-            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            ranges: [{ anchor: 1, head: 1, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           timestamp: Date.now(),
@@ -122,6 +136,7 @@ describe("canRedo", () => {
       ]),
       limit: 1000,
       coalesceTimeout: 0,
+      evictionPolicy: "pin",
     };
     expect(canRedo(historyState)).toBe(true);
   });
@@ -164,28 +179,40 @@ describe("getUndoCount", () => {
       undoStack: pstackFromArray([
         {
           changes: [
-            { type: "insert", position: byteOffset(0), text: "a", byteLength: byteLength(1) },
+            {
+              type: "insert",
+              position: byteOffset(0),
+              afterChunk: -1,
+              text: "a",
+              byteLength: byteLength(1),
+            },
           ],
           selectionBefore: {
-            ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }],
+            ranges: [{ anchor: 0, head: 0, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           selectionAfter: {
-            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            ranges: [{ anchor: 1, head: 1, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           timestamp: Date.now(),
         },
         {
           changes: [
-            { type: "insert", position: byteOffset(1), text: "b", byteLength: byteLength(1) },
+            {
+              type: "insert",
+              position: byteOffset(1),
+              afterChunk: -1,
+              text: "b",
+              byteLength: byteLength(1),
+            },
           ],
           selectionBefore: {
-            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            ranges: [{ anchor: 1, head: 1, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           selectionAfter: {
-            ranges: [{ anchor: byteOffset(2), head: byteOffset(2) }],
+            ranges: [{ anchor: 2, head: 2, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           timestamp: Date.now(),
@@ -194,6 +221,7 @@ describe("getUndoCount", () => {
       redoStack: null,
       limit: 1000,
       coalesceTimeout: 0,
+      evictionPolicy: "pin",
     };
     expect(getUndoCount(historyState)).toBe(2);
   });
@@ -240,14 +268,20 @@ describe("getRedoCount", () => {
       redoStack: pstackFromArray([
         {
           changes: [
-            { type: "insert", position: byteOffset(0), text: "a", byteLength: byteLength(1) },
+            {
+              type: "insert",
+              position: byteOffset(0),
+              afterChunk: -1,
+              text: "a",
+              byteLength: byteLength(1),
+            },
           ],
           selectionBefore: {
-            ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }],
+            ranges: [{ anchor: 0, head: 0, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           selectionAfter: {
-            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            ranges: [{ anchor: 1, head: 1, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           timestamp: Date.now(),
@@ -255,6 +289,7 @@ describe("getRedoCount", () => {
       ]),
       limit: 1000,
       coalesceTimeout: 0,
+      evictionPolicy: "pin",
     };
     expect(getRedoCount(historyState)).toBe(1);
   });
@@ -298,6 +333,7 @@ describe("isHistoryEmpty", () => {
       redoStack: null,
       limit: 1000,
       coalesceTimeout: 0,
+      evictionPolicy: "pin",
     };
     expect(isHistoryEmpty(emptyHistory)).toBe(true);
 
@@ -305,14 +341,20 @@ describe("isHistoryEmpty", () => {
       undoStack: pstackFromArray([
         {
           changes: [
-            { type: "insert", position: byteOffset(0), text: "a", byteLength: byteLength(1) },
+            {
+              type: "insert",
+              position: byteOffset(0),
+              afterChunk: -1,
+              text: "a",
+              byteLength: byteLength(1),
+            },
           ],
           selectionBefore: {
-            ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }],
+            ranges: [{ anchor: 0, head: 0, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           selectionAfter: {
-            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            ranges: [{ anchor: 1, head: 1, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           timestamp: Date.now(),
@@ -321,6 +363,7 @@ describe("isHistoryEmpty", () => {
       redoStack: null,
       limit: 1000,
       coalesceTimeout: 0,
+      evictionPolicy: "pin",
     };
     expect(isHistoryEmpty(nonEmptyHistory)).toBe(false);
   });
@@ -691,8 +734,8 @@ describe("Undo coalescing", () => {
     const insertChange = makeInsertChange(byteOffset(0), "X");
     const multiEntry = Object.freeze({
       changes: Object.freeze([deleteChange, insertChange]),
-      selectionBefore: state.selection,
-      selectionAfter: state.selection,
+      selectionBefore: anchorSelection(state.pieceTable, state.selection),
+      selectionAfter: anchorSelection(state.pieceTable, state.selection),
       timestamp: Date.now(),
     });
     state = withState(state, {

@@ -8,6 +8,7 @@ import type { DocumentState, HistoryState } from "../../types/state.js";
 import { pstackSize, pstackPush, pstackPop } from "../../types/state.js";
 import { withState } from "../core/state.js";
 import { applyChange, applyInverseChange } from "./edit.js";
+import { resolveSelection } from "./history-anchor.js";
 
 /**
  * Check if undo is available.
@@ -95,7 +96,7 @@ export function historyUndo(state: DocumentState, _revision: number): DocumentSt
 
   // Restore selection
   newState = withState(newState, {
-    selection: entry.selectionBefore,
+    selection: resolveSelection(newState.pieceTable, entry.selectionBefore),
     metadata: Object.freeze({ ...newState.metadata, isDirty: true }),
   });
 
@@ -133,7 +134,7 @@ export function historyRedo(state: DocumentState, _revision: number): DocumentSt
 
   // Restore selection
   newState = withState(newState, {
-    selection: entry.selectionAfter,
+    selection: resolveSelection(newState.pieceTable, entry.selectionAfter),
     metadata: Object.freeze({ ...newState.metadata, isDirty: true }),
   });
 

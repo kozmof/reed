@@ -19,7 +19,8 @@ import type {
   HistoryInsertChange,
   HistoryDeleteChange,
   HistoryReplaceChange,
-  SelectionState,
+  HistorySelectionState,
+  PieceTableState,
   SelectionRange,
   NonEmptyReadonlyArray,
 } from "../../types/state.js";
@@ -46,6 +47,8 @@ import {
   repairLineIndexWindow,
 } from "../core/line-index.js";
 import { utf8ByteLength } from "../core/encoding.js";
+import { NO_CHUNK, gapKey, hasUnloadedChunkBetween, placementRuns } from "../core/chunk-anchor.js";
+import { anchorAt, anchorSelection, residentOffset } from "./history-anchor.js";
 
 // =============================================================================
 // Position Validation
@@ -104,8 +107,9 @@ export function pieceTableInsert(
   state: DocumentState,
   position: ByteOffset,
   text: string,
+  afterChunk?: number,
 ): { state: DocumentState; insertedByteLength: number; splits: readonly SplitRecord[] } {
-  const result = ptInsert(state.pieceTable, position, text);
+  const result = ptInsert(state.pieceTable, position, text, afterChunk);
   const attention = migrateSplits(state.attention, result.splits);
   const nextState = withState(state, { pieceTable: result.state, attention });
   carryLineOffsetIndexes(
@@ -248,34 +252,26 @@ export function rebuildLineIndexFromPieceTableState(state: DocumentState): Docum
 // =============================================================================
 
 /**
- * Compute the cursor position to restore when redoing a change.
+ * Selection to restore when redoing `change`, anchored against `state`
+ * (the document after the change).
  */
-function computeSelectionAfterChange(state: DocumentState, change: HistoryChange): SelectionState {
-  let newPosition: number;
-
-  switch (change.type) {
-    case "insert":
-      // After insert, cursor should be at end of inserted text
-      newPosition = change.position + change.byteLength;
-      break;
-    case "delete":
-      // After delete, cursor should be at the deletion point
-      newPosition = change.position;
-      break;
-    case "replace":
-      // After replace, cursor should be at end of inserted text
-      newPosition = change.position + change.byteLength;
-      break;
-    default:
-      return state.selection;
-  }
-
-  return Object.freeze({
-    ranges: Object.freeze([
-      Object.freeze({ anchor: byteOffset(newPosition), head: byteOffset(newPosition) }),
-    ] as const),
-    primaryIndex: 0,
-  });
+function computeSelectionAfterChange(
+  state: DocumentState,
+  change: HistoryChange,
+): HistorySelectionState {
+  const start = residentOffset(state.pieceTable, change);
+  // After insert and replace the cursor sits after the inserted text; after a
+  // delete it sits at the deletion point.
+  const position = change.type === "delete" ? start : start + change.byteLength;
+  return anchorSelection(
+    state.pieceTable,
+    Object.freeze({
+      ranges: Object.freeze([
+        Object.freeze({ anchor: byteOffset(position), head: byteOffset(position) }),
+      ] as const),
+      primaryIndex: 0,
+    }),
+  );
 }
 
 // Coalesced entries share their original changes until a consumer requests the array.
@@ -299,8 +295,12 @@ function lastHistoryChange(entry: HistoryEntry): HistoryChange | undefined {
  * Coalescing targets the last change in the entry regardless of how many
  * changes it contains (e.g., the tail of a batched transaction). The earlier
  * changes are preserved in the merged entry by historyPush.
+ *
+ * Positions are compared as resident offsets. Chunks may have been loaded
+ * between the two edits, which changes resident offsets but not anchors.
  */
 function canCoalesce(
+  pieceTable: PieceTableState,
   lastEntry: HistoryEntry,
   newChange: HistoryChange,
   timeout: number,
@@ -311,16 +311,23 @@ function canCoalesce(
   const last = lastHistoryChange(lastEntry);
   if (!last) return false;
   if (last.type !== newChange.type) return false;
+  // A merged change re-inserts its text with one placement key on undo. Keep
+  // changes separate when a chunk that is not loaded lies between their keys.
+  const lowKey = Math.min(last.afterChunk, newChange.afterChunk);
+  const highKey = Math.max(last.afterChunk, newChange.afterChunk);
+  if (hasUnloadedChunkBetween(pieceTable, lowKey, highKey)) return false;
+  const lastPosition = residentOffset(pieceTable, last);
+  const newPosition = residentOffset(pieceTable, newChange);
 
   switch (newChange.type) {
     case "insert":
       // Coalesce typing when the new insert starts where the last insert ended.
-      return newChange.position === last.position + last.byteLength;
+      return newPosition === lastPosition + last.byteLength;
     case "delete": {
       // Coalesce backspaces when the new delete ends where the last delete starts.
-      if (newChange.position + newChange.byteLength === last.position) return true;
+      if (newPosition + newChange.byteLength === lastPosition) return true;
       // Coalesce forward deletes at the same position.
-      if (newChange.position === last.position) return true;
+      if (newPosition === lastPosition) return true;
       return false;
     }
     default:
@@ -332,23 +339,32 @@ function canCoalesce(
  * Merge two changes into a single coalesced change.
  * Assumes canCoalesce() returned true for these changes.
  */
-function coalesceChanges(existing: HistoryChange, incoming: HistoryChange): HistoryChange {
+function coalesceChanges(
+  pieceTable: PieceTableState,
+  existing: HistoryChange,
+  incoming: HistoryChange,
+): HistoryChange {
   switch (incoming.type) {
     case "insert": {
       // Append the text and keep the earlier position.
       return Object.freeze({
         type: "insert" as const,
         position: existing.position,
+        afterChunk: existing.afterChunk,
         text: existing.text + incoming.text,
         byteLength: byteLength(existing.byteLength + incoming.byteLength),
       });
     }
     case "delete": {
-      if (incoming.position + incoming.byteLength === existing.position) {
+      if (
+        residentOffset(pieceTable, incoming) + incoming.byteLength ===
+        residentOffset(pieceTable, existing)
+      ) {
         // Prepend backspaced text and use the earlier position.
         return Object.freeze({
           type: "delete" as const,
           position: incoming.position,
+          afterChunk: incoming.afterChunk,
           text: incoming.text + existing.text,
           byteLength: byteLength(existing.byteLength + incoming.byteLength),
         });
@@ -357,6 +373,7 @@ function coalesceChanges(existing: HistoryChange, incoming: HistoryChange): Hist
       return Object.freeze({
         type: "delete" as const,
         position: existing.position,
+        afterChunk: existing.afterChunk,
         text: existing.text + incoming.text,
         byteLength: byteLength(existing.byteLength + incoming.byteLength),
       });
@@ -377,33 +394,47 @@ function coalesceChanges(existing: HistoryChange, incoming: HistoryChange): Hist
 //   byteLength === textEncoder.encode(text).byteLength
 // Standalone factories derive lengths from text without allocating UTF-8 arrays.
 // applyEdit can instead reuse lengths measured by its structural edit.
+// `position` is an anchored position (see HistoryAnchor). It equals the byte
+// offset when `afterChunk` is -1 and no chunk is loaded.
 
-export function makeInsertChange(position: ByteOffset, text: string): HistoryInsertChange {
+export function makeInsertChange(
+  position: number,
+  text: string,
+  afterChunk: number = NO_CHUNK,
+): HistoryInsertChange {
   return Object.freeze({
     type: "insert" as const,
     position,
+    afterChunk,
     text,
     byteLength: byteLength(utf8ByteLength(text)),
   });
 }
 
-export function makeDeleteChange(position: ByteOffset, text: string): HistoryDeleteChange {
+export function makeDeleteChange(
+  position: number,
+  text: string,
+  afterChunk: number = NO_CHUNK,
+): HistoryDeleteChange {
   return Object.freeze({
     type: "delete" as const,
     position,
+    afterChunk,
     text,
     byteLength: byteLength(utf8ByteLength(text)),
   });
 }
 
 export function makeReplaceChange(
-  position: ByteOffset,
+  position: number,
   text: string,
   oldText: string,
+  afterChunk: number = NO_CHUNK,
 ): HistoryReplaceChange {
   return Object.freeze({
     type: "replace" as const,
     position,
+    afterChunk,
     text,
     byteLength: byteLength(utf8ByteLength(text)),
     oldText,
@@ -412,25 +443,37 @@ export function makeReplaceChange(
 }
 
 /**
- * Push a change to the history stack.
- * May coalesce with the previous entry if within the coalesce timeout.
+ * Push changes to the history stack as one entry.
+ * A single change may coalesce with the previous entry if within the coalesce
+ * timeout. `state` is the document after the changes. `selectionBefore`
+ * defaults to the selection of `state`, anchored against it.
  */
 export function historyPush(
   state: DocumentState,
-  change: HistoryChange,
+  changeOrChanges: HistoryChange | NonEmptyReadonlyArray<HistoryChange>,
   now: number,
+  selectionBefore: HistorySelectionState = anchorSelection(state.pieceTable, state.selection),
 ): DocumentState {
   const history = state.history;
+  const changes: NonEmptyReadonlyArray<HistoryChange> = Array.isArray(changeOrChanges)
+    ? (changeOrChanges as NonEmptyReadonlyArray<HistoryChange>)
+    : [changeOrChanges as HistoryChange];
 
-  // Compute expected selection after the change for proper redo
-  const selectionAfter = computeSelectionAfterChange(state, change);
+  // Compute expected selection after the change for proper redo. The last
+  // change of an entry is the one applied last, so it places the cursor.
+  const selectionAfter = computeSelectionAfterChange(state, changes[changes.length - 1]!);
 
   // Try to coalesce with the last entry
+  const change = changes[0];
   const lastEntry = pstackPeek(history.undoStack);
-  if (lastEntry && canCoalesce(lastEntry, change, history.coalesceTimeout, now)) {
+  if (
+    changes.length === 1 &&
+    lastEntry &&
+    canCoalesce(state.pieceTable, lastEntry, change, history.coalesceTimeout, now)
+  ) {
     // canCoalesce returning true guarantees a non-empty changes list.
     const lastChange = lastHistoryChange(lastEntry)!;
-    const merged = coalesceChanges(lastChange, change);
+    const merged = coalesceChanges(state.pieceTable, lastChange, change);
     const base = coalescedTails.get(lastEntry)?.base ?? lastEntry.changes;
     let materialized: readonly HistoryChange[] | undefined;
     // Preserve the array API while keeping repeated tail updates constant-space.
@@ -454,8 +497,8 @@ export function historyPush(
   }
 
   const entry: HistoryEntry = Object.freeze({
-    changes: Object.freeze([change]),
-    selectionBefore: state.selection,
+    changes: Object.freeze([...changes]),
+    selectionBefore,
     selectionAfter,
     timestamp: now,
   });
@@ -479,7 +522,8 @@ export function historyPush(
 
 /**
  * Invert a history change.
- * insert ↔ delete, replace swaps text/oldText.
+ * insert ↔ delete, replace swaps text/oldText. The anchor is kept: it is the
+ * position of the first affected byte in both directions.
  * This formalizes the duality between applyChange and applyInverseChange.
  */
 export function invertChange(change: HistoryChange): HistoryChange {
@@ -488,6 +532,7 @@ export function invertChange(change: HistoryChange): HistoryChange {
       return Object.freeze({
         type: "delete" as const,
         position: change.position,
+        afterChunk: change.afterChunk,
         text: change.text,
         byteLength: change.byteLength,
       });
@@ -495,6 +540,7 @@ export function invertChange(change: HistoryChange): HistoryChange {
       return Object.freeze({
         type: "insert" as const,
         position: change.position,
+        afterChunk: change.afterChunk,
         text: change.text,
         byteLength: change.byteLength,
       });
@@ -502,6 +548,7 @@ export function invertChange(change: HistoryChange): HistoryChange {
       return Object.freeze({
         type: "replace" as const,
         position: change.position,
+        afterChunk: change.afterChunk,
         text: change.oldText,
         byteLength: change.oldByteLength,
         oldText: change.text,
@@ -510,16 +557,22 @@ export function invertChange(change: HistoryChange): HistoryChange {
   }
 }
 
-/** Replay history through the same lazy structural pipeline as local edits. */
+/**
+ * Replay history through the same lazy structural pipeline as local edits.
+ * The anchored position is resolved against the current chunk layout, and
+ * inserted text gets the recorded placement key.
+ */
 export function applyChange(state: DocumentState, change: HistoryChange): DocumentState {
+  const position = residentOffset(state.pieceTable, change);
   switch (change.type) {
     case "insert":
       return applyUntrackedEdit(
         state,
         {
           kind: "insert",
-          position: change.position,
+          position,
           insertText: change.text,
+          afterChunk: change.afterChunk,
         },
         state.revision + 1,
       );
@@ -528,8 +581,8 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
         state,
         {
           kind: "delete",
-          position: change.position,
-          deleteEnd: byteOffset(change.position + change.byteLength),
+          position,
+          deleteEnd: byteOffset(position + change.byteLength),
           deletedText: change.text,
         },
         state.revision + 1,
@@ -539,10 +592,11 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
         state,
         {
           kind: "replace",
-          position: change.position,
-          deleteEnd: byteOffset(change.position + change.oldByteLength),
+          position,
+          deleteEnd: byteOffset(position + change.oldByteLength),
           deletedText: change.oldText,
           insertText: change.text,
+          afterChunk: change.afterChunk,
         },
         state.revision + 1,
       );
@@ -566,6 +620,8 @@ export type StructuralEditOperation =
       readonly kind: "insert";
       readonly position: ByteOffset;
       readonly insertText: string;
+      /** Placement key for the inserted text. Defaults to the gap's key. */
+      readonly afterChunk?: number | undefined;
     }
   | {
       readonly kind: "delete";
@@ -579,6 +635,8 @@ export type StructuralEditOperation =
       readonly deleteEnd: ByteOffset;
       readonly deletedText: string;
       readonly insertText: string;
+      /** Placement key for the inserted text. Defaults to the gap's key. */
+      readonly afterChunk?: number | undefined;
     };
 
 export type EditOperation = StructuralEditOperation & {
@@ -628,7 +686,7 @@ export function applyUntrackedEdit(
   }
 
   if (op.kind !== "delete" && op.insertText.length > 0) {
-    const result = pieceTableInsert(newState, op.position, op.insertText);
+    const result = pieceTableInsert(newState, op.position, op.insertText, op.afterChunk);
     newState = result.state;
     if (!needsRebuild) {
       const readText = pieceTableReader(newState.pieceTable);
@@ -690,7 +748,17 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
     }
   }
   const nextRevision = state.revision + 1;
-  let newState = applyUntrackedEdit(state, op, nextRevision);
+  const pieceTable = state.pieceTable;
+  // Split deleted text where parts of it would land on different sides of an
+  // unloaded chunk when re-inserted. Usually there is a single run.
+  const runs = op.kind === "insert" ? [] : placementRuns(pieceTable, op.position, op.deleteEnd);
+  // Inserted text takes the key of the text it replaces, or the gap's key.
+  const insertKey = runs.length > 0 ? runs[0]!.key : gapKey(pieceTable.root, op.position);
+  let newState = applyUntrackedEdit(
+    state,
+    op.kind === "delete" ? op : { ...op, afterChunk: insertKey },
+    nextRevision,
+  );
 
   // Apply inline selection so historyPush records the correct selectionBefore.
   // Inline edit selections describe the pre-edit document, so clamp to the original length.
@@ -715,34 +783,64 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   const deletedLength = op.kind === "insert" ? 0 : op.deleteEnd - op.position;
   const insertedLength =
     newState.pieceTable.totalLength - state.pieceTable.totalLength + deletedLength;
-  const historyDeletedLength = op.kind === "insert" ? 0 : utf8ByteLength(op.deletedText);
-  const historyChange: HistoryChange = Object.freeze(
-    op.kind === "replace"
-      ? {
-          type: "replace",
-          position: op.position,
-          text: op.insertText,
-          byteLength: byteLength(insertedLength),
-          oldText: op.deletedText,
-          oldByteLength: byteLength(historyDeletedLength),
-        }
+  // History positions are anchored against the pre-edit document. Edits never
+  // load or evict chunks, so the post-edit chunk layout resolves them the same way.
+  const anchor = anchorAt(pieceTable, insertKey, op.position);
+  // Each run except the first becomes its own delete, ordered right to left so
+  // every position is valid when its change is applied. Undo applies them in
+  // reverse, re-inserting each run with its own key.
+  const changes: HistoryChange[] = [];
+  for (let i = runs.length - 1; i >= 1; i--) {
+    const run = runs[i]!;
+    changes.push(
+      makeDeleteChange(
+        anchorAt(pieceTable, run.key, run.start).position,
+        getTextRange(state, byteOffset(run.start), byteOffset(run.end)),
+        run.key,
+      ),
+    );
+  }
+  const firstDeletedText =
+    runs.length > 1
+      ? getTextRange(state, byteOffset(runs[0]!.start), byteOffset(runs[0]!.end))
       : op.kind === "insert"
+        ? ""
+        : op.deletedText;
+  const historyDeletedLength = utf8ByteLength(firstDeletedText);
+  changes.push(
+    Object.freeze(
+      op.kind === "replace"
         ? {
-            type: "insert",
-            position: op.position,
+            type: "replace" as const,
+            ...anchor,
             text: op.insertText,
             byteLength: byteLength(insertedLength),
+            oldText: firstDeletedText,
+            oldByteLength: byteLength(historyDeletedLength),
           }
-        : {
-            type: "delete",
-            position: op.position,
-            text: op.deletedText,
-            byteLength: byteLength(historyDeletedLength),
-          },
+        : op.kind === "insert"
+          ? {
+              type: "insert" as const,
+              ...anchor,
+              text: op.insertText,
+              byteLength: byteLength(insertedLength),
+            }
+          : {
+              type: "delete" as const,
+              ...anchor,
+              text: firstDeletedText,
+              byteLength: byteLength(historyDeletedLength),
+            },
+    ),
   );
   // Timestamp-less hand-written actions remain deterministic. Normal callers use
   // DocumentActions, which captures wall-clock time before reduction.
-  newState = historyPush(newState, historyChange, op.timestamp ?? state.revision);
+  newState = historyPush(
+    newState,
+    changes as unknown as NonEmptyReadonlyArray<HistoryChange>,
+    op.timestamp ?? state.revision,
+    anchorSelection(pieceTable, newState.selection),
+  );
 
   // Mark as dirty and increment revision
   return withState(newState, {

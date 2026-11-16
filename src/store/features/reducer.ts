@@ -177,6 +177,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
           redoStack: null,
           limit: state.history.limit,
           coalesceTimeout: state.history.coalesceTimeout,
+          evictionPolicy: state.history.evictionPolicy,
         }),
         revision: state.revision + 1,
       });
@@ -242,8 +243,8 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       if (!didApplyChange) {
         return state;
       }
-      // History uses absolute offsets. Remote edits invalidate both stacks
-      // because Reed does not rebase history against remote operations.
+      // History positions are not rebased against remote operations, so remote
+      // edits invalidate both stacks.
       const metadata = newState.metadata.isDirty
         ? newState.metadata
         : Object.freeze({

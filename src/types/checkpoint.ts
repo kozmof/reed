@@ -14,7 +14,7 @@ export const CHECKPOINT_FORMAT = "reed-checkpoint";
 export type CheckpointFormat = typeof CHECKPOINT_FORMAT;
 
 /** Current checkpoint format version. This build supports version 1 only. */
-export const CHECKPOINT_VERSION = 1;
+export const CHECKPOINT_VERSION = 2;
 
 /**
  * Capture fidelity.
@@ -35,10 +35,13 @@ export type CheckpointBufferTag = "o" | "a" | "c";
 
 /**
  * A piece in document order. A chunk piece has a fifth element identifying
- * its chunk, and `start` is a byte offset within that chunk.
+ * its chunk, and `start` is a byte offset within that chunk. An add piece may
+ * have a fifth element holding its chunk placement key (`afterChunk`), omitted
+ * when it is -1.
  */
 export type CheckpointPiece =
-  | readonly [id: string, buffer: "o" | "a", start: number, length: number]
+  | readonly [id: string, buffer: "o", start: number, length: number]
+  | readonly [id: string, buffer: "a", start: number, length: number, afterChunk?: number]
   | readonly [id: string, buffer: "c", start: number, length: number, chunkIndex: number];
 
 /** A chunk index and its base64-encoded bytes. */
@@ -111,19 +114,33 @@ export interface CheckpointSelection {
 /**
  * An undo/redo change tagged `'i'` for insert, `'d'` for delete, or `'r'` for replace.
  * A replace change carries the displaced text as its fourth element.
+ * `position` is an anchored position (see `HistoryAnchor`) and may be negative.
+ * The last element is the placement key `afterChunk`, omitted when it is -1.
  *
  * Restore recomputes byte lengths from text to keep them consistent even
  * when the payload was edited by hand.
  */
 export type CheckpointHistoryChange =
-  | readonly [kind: "i" | "d", position: number, text: string]
-  | readonly [kind: "r", position: number, text: string, oldText: string];
+  | readonly [kind: "i" | "d", position: number, text: string, afterChunk?: number]
+  | readonly [kind: "r", position: number, text: string, oldText: string, afterChunk?: number];
+
+/**
+ * A history selection. Ranges are `[anchor, head]` anchored positions,
+ * followed by both placement keys unless both are -1.
+ */
+export interface CheckpointHistorySelection {
+  readonly ranges: readonly (
+    | readonly [anchor: number, head: number]
+    | readonly [anchor: number, head: number, anchorAfterChunk: number, headAfterChunk: number]
+  )[];
+  readonly primaryIndex: number;
+}
 
 /** Serialized `HistoryEntry`. */
 export interface CheckpointHistoryEntry {
   readonly changes: readonly CheckpointHistoryChange[];
-  readonly selectionBefore: CheckpointSelection;
-  readonly selectionAfter: CheckpointSelection;
+  readonly selectionBefore: CheckpointHistorySelection;
+  readonly selectionAfter: CheckpointHistorySelection;
   readonly timestamp: number;
 }
 
@@ -134,6 +151,8 @@ export interface CheckpointHistoryEntry {
 export interface CheckpointHistory {
   readonly limit: number;
   readonly coalesceTimeout: number;
+  /** History eviction policy. Absent means `"pin"`. */
+  readonly evictionPolicy?: "pin" | "drop";
   readonly undo: readonly CheckpointHistoryEntry[];
   readonly redo: readonly CheckpointHistoryEntry[];
 }

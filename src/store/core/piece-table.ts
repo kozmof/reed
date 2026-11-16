@@ -51,6 +51,7 @@ import {
 } from "./rb-tree.js";
 import { textEncoder, textDecoder } from "./encoding.js";
 import { GrowableBuffer } from "./growable-buffer.js";
+import { NO_CHUNK, gapKey, pieceKey } from "./chunk-anchor.js";
 import { inOrderPieces } from "./piece-table-stream.js";
 
 export { getValueStream, inOrderPieces } from "./piece-table-stream.js";
@@ -389,9 +390,10 @@ export function rbInsertPiece(
   start: ByteOffset,
   length: ByteLength,
   id: PieceID = generatePieceID(),
+  afterChunk: number = NO_CHUNK,
 ): LogCost<PieceNode> {
   // Create the new node (always red initially)
-  const newPiece = createPieceNode(bufferType, start, length, "red", null, null, id);
+  const newPiece = createPieceNode(bufferType, start, length, "red", null, null, id, afterChunk);
 
   if (root === null) {
     // Empty tree - new node becomes black root
@@ -514,6 +516,7 @@ export function splitPiece(
       piece.left,
       null,
       piece.id, // left half inherits the original ID
+      pieceKey(piece),
     );
     rightPiece = createPieceNode(
       piece.bufferType,
@@ -523,6 +526,7 @@ export function splitPiece(
       null,
       piece.right,
       rightID,
+      pieceKey(piece),
     );
   }
 
@@ -582,6 +586,7 @@ export function pieceTableInsert(
   state: PieceTableState,
   position: ByteOffset,
   text: string,
+  afterChunk: number = gapKey(state.root, position),
 ): LinearCost<PieceTableInsertResult> {
   if (text.length === 0)
     return $proveCtx($beginCost("O(n)"), { state, insertedByteLength: 0, splits: [] });
@@ -604,6 +609,7 @@ export function pieceTableInsert(
       null,
       null,
       allocatePieceID(),
+      afterChunk,
     );
     return $proveCtx($beginCost("O(n)"), {
       state: freezePieceTableState({
@@ -639,6 +645,7 @@ export function pieceTableInsert(
                 byteOffset(newAddStart),
                 byteLength(textBytes.length),
                 allocatePieceID(),
+                afterChunk,
               ),
             );
           }
@@ -651,6 +658,7 @@ export function pieceTableInsert(
                 byteOffset(newAddStart),
                 byteLength(textBytes.length),
                 allocatePieceID(),
+                afterChunk,
               ),
             );
           }
@@ -663,6 +671,7 @@ export function pieceTableInsert(
                 byteOffset(newAddStart),
                 byteLength(textBytes.length),
                 allocatePieceID(),
+                afterChunk,
               ),
             );
           }
@@ -674,6 +683,7 @@ export function pieceTableInsert(
             byteLength(textBytes.length),
             allocatePieceID(),
             allocatePieceID(),
+            afterChunk,
           );
           capturedSplit = splitRecord;
           return $lift("O(log n)", splitRoot);
@@ -747,6 +757,7 @@ function insertWithSplit(
   length: ByteLength,
   insertedID: PieceID,
   rightID: PieceID,
+  afterChunk: number,
 ): [PieceNode, SplitRecord] {
   // Replace the found piece with its left part, then insert the new piece
   // and the right part of the split.
@@ -762,7 +773,15 @@ function insertWithSplit(
 
   // Insert the new piece after the left part
   const insertPos = location.pieceStartOffset + leftPart.length;
-  let newRoot = rbInsertPiece(replaceResult, insertPos, bufferType, start, length, insertedID);
+  let newRoot = rbInsertPiece(
+    replaceResult,
+    insertPos,
+    bufferType,
+    start,
+    length,
+    insertedID,
+    afterChunk,
+  );
 
   // Insert the right part after the new piece, preserving its full identity
   // (including chunkIndex for 'chunk' pieces, which rbInsertPiece does not support here).
@@ -825,7 +844,7 @@ function makePiece(
 ): PieceNode {
   return node.bufferType === "chunk"
     ? createChunkPieceNode(node.chunkIndex, start, length, "black", null, null, id)
-    : createPieceNode(node.bufferType, start, length, "black", null, null, id);
+    : createPieceNode(node.bufferType, start, length, "black", null, null, id, pieceKey(node));
 }
 
 /**

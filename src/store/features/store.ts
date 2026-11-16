@@ -623,6 +623,7 @@ const STATE_BEARING_CONFIG_KEYS = [
   "lineEnding",
   "normalizeInsertedLineEndings",
   "undoGroupTimeout",
+  "historyEvictionPolicy",
   "totalFileSize",
   "maxDirtyRanges",
 ] as const;
