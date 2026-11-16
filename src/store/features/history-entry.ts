@@ -25,6 +25,21 @@ export function lastHistoryChange(entry: HistoryEntry): HistoryChange | undefine
   return coalescedTails.get(entry)?.tail ?? entry.changes[entry.changes.length - 1];
 }
 
+/** Call `visit` with every change of `entry`, in order. */
+export function forEachHistoryChange(
+  entry: HistoryEntry,
+  visit: (change: HistoryChange) => void,
+): void {
+  const coalesced = coalescedTails.get(entry);
+  if (coalesced === undefined) {
+    for (const change of entry.changes) visit(change);
+    return;
+  }
+  const { base, tail } = coalesced;
+  for (let i = 0; i < base.length - 1; i++) visit(base[i]!);
+  visit(tail);
+}
+
 /** True when some change of `entry` matches `predicate`. */
 export function someHistoryChange(
   entry: HistoryEntry,

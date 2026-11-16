@@ -7,12 +7,7 @@
  * the chunk lifecycle a focused test boundary.
  */
 
-import type {
-  DocumentState,
-  LineIndexState,
-  PieceNode,
-  SelectionState,
-} from "../../types/state.js";
+import type { DocumentState, LineIndexState, PieceNode } from "../../types/state.js";
 import type {
   DeclareChunkMetadataAction,
   EvictChunkAction,
@@ -30,7 +25,7 @@ import {
 } from "../core/piece-table.js";
 import { hasAttentionForPiece } from "../core/attention.js";
 import { pieceKey } from "../core/chunk-anchor.js";
-import { historyForEviction } from "./history-anchor.js";
+import { carrySelectionAcrossChunks, historyForEviction } from "./history-anchor.js";
 import { repairChunkLines } from "../core/chunk-line-repair.js";
 import { summarizeBytes } from "../core/decoded-metrics.js";
 import { PersistentMap, PersistentSet } from "../core/persistent-map.js";
@@ -155,26 +150,6 @@ function hasAttentionAnchoredToChunk(state: DocumentState, chunkIndex: number): 
   );
 }
 
-/** Apply `map` to every selection offset, returning the same object when nothing moves. */
-function mapSelection(
-  selection: SelectionState,
-  map: (offset: ByteOffset) => ByteOffset,
-): SelectionState {
-  let changed = false;
-  const ranges = selection.ranges.map((range) => {
-    const anchor = map(range.anchor);
-    const head = map(range.head);
-    if (anchor === range.anchor && head === range.head) return range;
-    changed = true;
-    return Object.freeze({ anchor, head });
-  });
-  if (!changed) return selection;
-  return Object.freeze({
-    ranges: Object.freeze(ranges) as unknown as SelectionState["ranges"],
-    primaryIndex: selection.primaryIndex,
-  });
-}
-
 export function declareChunkMetadata(
   state: DocumentState,
   action: DeclareChunkMetadataAction,
@@ -284,7 +259,6 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
   let pieceTable = state.pieceTable;
   let lineIndex = state.lineIndex;
   let unloadedLineCount = state.lineIndex.unloadedLineCount;
-  let selection = state.selection;
 
   for (const chunk of prepared) {
     const isFirstLoad = !loadedChunks.has(chunk.chunkIndex);
@@ -294,14 +268,6 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
       : byteOffset(findReloadInsertionPos(root, chunk.chunkIndex));
     const id = pieceID(`p${nextPieceID++}`);
     root = insertChunkPieceAt(root, insertionPos, chunk.chunkIndex, chunk.data.length, id);
-    // Keep the cursor on the same text. A gap at the insertion point belongs to
-    // the text after it, except at the end of the document.
-    const lengthBefore = totalLength;
-    selection = mapSelection(selection, (offset) =>
-      offset > insertionPos || (offset === insertionPos && insertionPos < lengthBefore)
-        ? byteOffset(offset + chunk.data.length)
-        : offset,
-    );
     summarizeBytes(chunk.data); // Prepare reusable decoder summaries once during loading.
     chunkMap = chunkMap.with(chunk.chunkIndex, asReadonlyUint8Array(chunk.data));
     loadedChunks = loadedChunks.with(chunk.chunkIndex);
@@ -339,7 +305,8 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
     revision: state.revision + prepared.length,
     pieceTable,
     lineIndex,
-    selection,
+    // Keep the cursor on the same text, as history positions are kept.
+    selection: carrySelectionAcrossChunks(state.pieceTable, pieceTable, state.selection),
   });
 }
 
@@ -391,14 +358,8 @@ export function evictChunk(state: DocumentState, action: EvictChunkAction): Docu
     );
   }
 
-  const evictedLength = range.end - range.start;
-  const selection = mapSelection(state.selection, (offset) =>
-    offset >= range.end
-      ? byteOffset(offset - evictedLength)
-      : offset > range.start
-        ? range.start
-        : offset,
-  );
+  // An offset inside the chunk lands where the chunk was.
+  const selection = carrySelectionAcrossChunks(state.pieceTable, nextPieceTable, state.selection);
 
   return withState(state, {
     revision: nextRevision,

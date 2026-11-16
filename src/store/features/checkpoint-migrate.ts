@@ -20,7 +20,8 @@
  */
 
 import { CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
-import { buildLoadedPrefix, endGapKey, prefixLengthAtOrBelow } from "../core/chunk-anchor.js";
+import { base64DecodedLength } from "../core/base64.js";
+import { buildLoadedPrefix, flatGapKey, prefixLengthAtOrBelow } from "../core/chunk-anchor.js";
 
 /** Raw, unvalidated checkpoint wire data. */
 export type CheckpointWireData = Record<string, unknown>;
@@ -46,12 +47,6 @@ type WireTuple = readonly unknown[];
 const isTuple = (value: unknown): value is WireTuple => Array.isArray(value);
 const isInt = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value);
-
-function decodedBase64Length(value: unknown): number {
-  if (typeof value !== "string") return 0;
-  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
-  return Math.max(0, Math.floor(value.length / 4) * 3 - padding);
-}
 
 /**
  * Version 2 adds a chunk placement key to add pieces and stores history
@@ -109,32 +104,22 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
     }
   }
 
-  // Resident start of each piece, for locating offsets.
-  const starts: number[] = [];
-  let total = 0;
-  for (const piece of pieces) {
-    starts.push(total);
-    total += isInt(piece[3]) ? piece[3] : 0;
-  }
-  // Same rules as gapKey in core/chunk-anchor.ts, over wire tuples.
-  const endKey = endGapKey(keys[keys.length - 1]!, chunkOf[pieces.length - 1] ?? null);
-  const gapKey = (offset: number): number => {
-    if (offset >= total) return endKey;
-    let lo = 0;
-    let hi = starts.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >>> 1;
-      if (starts[mid]! <= offset) lo = mid;
-      else hi = mid - 1;
-    }
-    return keys[lo]!;
-  };
+  const gapKey = flatGapKey(
+    pieces.map((piece, i) => ({
+      length: isInt(piece[3]) ? piece[3] : 0,
+      key: keys[i]!,
+      chunkIndex: chunkOf[i] ?? null,
+    })),
+  );
 
   const chunkLengths: [number, number][] = [];
   if (Array.isArray(table.chunks)) {
     for (const entry of table.chunks) {
       if (isTuple(entry) && isInt(entry[0])) {
-        chunkLengths.push([entry[0], decodedBase64Length(entry[1])]);
+        chunkLengths.push([
+          entry[0],
+          typeof entry[1] === "string" ? base64DecodedLength(entry[1]) : 0,
+        ]);
       }
     }
   }

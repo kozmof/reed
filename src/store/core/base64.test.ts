@@ -1,7 +1,7 @@
 /** Native and fallback base64 encoding agree with a reference and round-trip. */
 
 import { describe, expect, it } from "vitest";
-import { decodeBase64, encodeBase64 } from "./base64.js";
+import { base64DecodedLength, decodeBase64, encodeBase64 } from "./base64.js";
 
 /** Hide the native encoder on one instance so encodeBase64 takes its fallback. */
 function withoutNative(bytes: Uint8Array): Uint8Array {
@@ -45,6 +45,16 @@ describe.each([
     for (const length of [0, 1, 2, 3, 4, 5, 1_000, 65_537]) {
       const bytes = patterned(length, length);
       expect(Array.from(decodeBase64(encodeBase64(prepare(bytes))))).toEqual(Array.from(bytes));
+    }
+  });
+});
+
+describe("base64DecodedLength", () => {
+  it("matches the decoded length for every padding", () => {
+    for (const length of [0, 1, 2, 3, 4, 5, 64]) {
+      const encoded = encodeBase64(new Uint8Array(length));
+      expect(base64DecodedLength(encoded)).toBe(length);
+      expect(decodeBase64(encoded).length).toBe(length);
     }
   });
 });

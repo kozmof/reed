@@ -42,10 +42,8 @@ export function pieceKey(piece: PieceNode): number {
  * Key just after the last byte of a piece with key `key`, when nothing follows
  * it. `chunkIndex` is the chunk of a chunk piece and null otherwise: after a
  * chunk piece, that whole chunk lies before the position.
- *
- * Shared with the v1 checkpoint migration, which works on wire tuples.
  */
-export function endGapKey(key: number, chunkIndex: number | null): number {
+function endGapKey(key: number, chunkIndex: number | null): number {
   return chunkIndex ?? key;
 }
 
@@ -96,6 +94,46 @@ export function gapKey(root: PieceNode | null, offset: number): number {
   if (root === null) return NO_CHUNK;
   if (offset < root.subtreeLength) return pieceKey(pieceAtByte(root, offset)!);
   return keyAfterPiece(lastPiece(root)!);
+}
+
+/** One piece of an in-order piece list, for callers without a piece tree. */
+export interface FlatPiece {
+  readonly length: number;
+  /** Placement key of the piece's bytes (see `pieceKey`). */
+  readonly key: number;
+  /** Chunk of a chunk piece, or null for other pieces. */
+  readonly chunkIndex: number | null;
+}
+
+/**
+ * `gapKey` over an in-order piece list instead of a piece tree, with the same
+ * rules. The v1 checkpoint migration uses it on wire data, before any tree
+ * exists. Building the lookup is O(n), and each call is O(log n).
+ */
+export function flatGapKey(pieces: readonly FlatPiece[]): (offset: number) => number {
+  const starts: number[] = [];
+  const keys: number[] = [];
+  let total = 0;
+  let endKey = NO_CHUNK;
+  for (const piece of pieces) {
+    if (piece.length <= 0) continue;
+    starts.push(total);
+    keys.push(piece.key);
+    total += piece.length;
+    endKey = endGapKey(piece.key, piece.chunkIndex);
+  }
+  return (offset) => {
+    if (offset >= total) return endKey;
+    // The last piece starting at or before `offset` holds that byte.
+    let lo = 0;
+    let hi = starts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >>> 1;
+      if (starts[mid]! <= offset) lo = mid;
+      else hi = mid - 1;
+    }
+    return keys[lo]!;
+  };
 }
 
 /** Total length of the pieces whose placement key is at most `key`. O(log n). */

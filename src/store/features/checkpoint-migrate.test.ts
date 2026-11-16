@@ -17,6 +17,8 @@ import {
 import { CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
 import { createCheckpoint, restoreCheckpoint } from "./checkpoint.js";
 import { createDocumentStore } from "./store.js";
+import { DocumentActions } from "./actions.js";
+import { byteOffset } from "../../types/branded.js";
 
 /** v1 -> v2: renames a field, to show payload rewriting works. */
 const oneToTwo: CheckpointMigration = {
@@ -151,5 +153,47 @@ describe("shipped registry", () => {
     expect(restored.pieceTable.totalLength).toBe(store.getSnapshot().pieceTable.totalLength);
     expect(restored.lineIndex.lineCount).toBe(store.getSnapshot().lineIndex.lineCount);
     store.dispose();
+  });
+});
+
+describe("restore limits before migration", () => {
+  function v1Checkpoint() {
+    const store = createDocumentStore({ content: "reed" });
+    store.dispatch(DocumentActions.insert(byteOffset(4), "!"));
+    const checkpoint = createCheckpoint(store.reconcileNow());
+    store.dispose();
+    return { ...checkpoint, version: 1 } as Record<string, unknown>;
+  }
+
+  const codeOf = (fn: () => unknown): { code: string; message: string } => {
+    try {
+      fn();
+    } catch (error) {
+      return error as CheckpointError;
+    }
+    throw new Error("expected a CheckpointError");
+  };
+
+  it("rejects too many pieces or history entries in a v1 payload", () => {
+    const checkpoint = v1Checkpoint();
+    expect(codeOf(() => restoreCheckpoint(checkpoint, { maxPieces: 0 })).code).toBe(
+      "RESOURCE_LIMIT",
+    );
+    expect(codeOf(() => restoreCheckpoint(checkpoint, { maxHistoryEntries: 0 })).code).toBe(
+      "RESOURCE_LIMIT",
+    );
+  });
+
+  it("counts the arrays the migration walks before running it", () => {
+    const error = codeOf(() => restoreCheckpoint(v1Checkpoint(), { maxCollectionItems: 0 }));
+    expect(error.code).toBe("RESOURCE_LIMIT");
+    expect(error.message).toContain("checkpoint collection items");
+  });
+
+  it("reports an unsupported version before any limit", () => {
+    const checkpoint = { ...v1Checkpoint(), version: 0 };
+    expect(codeOf(() => restoreCheckpoint(checkpoint, { maxPieces: 0 })).code).toBe(
+      "VERSION_UNSUPPORTED",
+    );
   });
 });

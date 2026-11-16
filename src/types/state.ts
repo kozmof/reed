@@ -643,30 +643,6 @@ export const pstackToArray = <T>(s: PStack<T>): T[] => {
   return arr;
 };
 
-/**
- * Index (oldest first) of the newest value matching `predicate`, or -1.
- * Walks newest to oldest and stops at the first match, without allocating an array.
- */
-export const pstackFindNewestIndex = <T>(
-  s: PStack<T>,
-  predicate: (value: T) => boolean,
-): number => {
-  const stack: NonNullable<PStack<T>>[] = [];
-  let current = s;
-  let index = (s?.size ?? 0) - 1;
-  while (current !== null || stack.length > 0) {
-    while (current !== null) {
-      stack.push(current);
-      current = current.right;
-    }
-    const node = stack.pop()!;
-    if (predicate(node.value)) return index;
-    index--;
-    current = node.left;
-  }
-  return -1;
-};
-
 export const pstackFromArray = <T>(arr: readonly T[]): PStack<T> => {
   function build(start: number, end: number): PStack<T> {
     if (start >= end) return null;

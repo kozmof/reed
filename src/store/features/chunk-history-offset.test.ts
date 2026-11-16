@@ -617,3 +617,75 @@ describe("checkpoint restore validates history anchors", () => {
     expect(() => restoreCheckpoint(checkpoint)).toThrow(/placement key -1 after 0/);
   });
 });
+
+describe("review regressions", () => {
+  it("undoes a split delete whose runs decode to a different length", () => {
+    // Chunk 0 ends with the lead byte of "é" and chunk 1 starts with its
+    // continuation byte. With chunk 1 evicted, 0xC3 is an incomplete character
+    // that decodes to U+FFFD (three bytes), and the delete splits at the hole.
+    const s = createDocumentStore({ chunkSize: 4, totalFileSize: 12, reconcileMode: "none" });
+    const bytes = [
+      new Uint8Array([0x61, 0x62, 0x63, 0xc3]),
+      new Uint8Array([0xa9, 0x66, 0x67, 0x68]),
+      enc("ijkl"),
+    ];
+    for (const [i, data] of bytes.entries()) s.dispatch(DocumentActions.loadChunk(i, data));
+    s.dispatch(DocumentActions.evictChunk(1));
+    expect(text(s)).toBe("abc�ijkl");
+
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(6), head: byteOffset(6) }]));
+    s.dispatch(DocumentActions.delete(byteOffset(2), byteOffset(6)));
+    expect(text(s)).toBe("abkl");
+
+    s.dispatch(DocumentActions.undo());
+    // The incomplete byte comes back as U+FFFD, but nothing lands inside it.
+    expect(text(s)).toBe("abc�ijkl");
+    // The cursor was before "k", which now sits two bytes later.
+    expect(cursor(s)).toEqual({ anchor: 8, head: 8 });
+
+    s.dispatch(DocumentActions.redo());
+    expect(text(s)).toBe("abkl");
+    s.dispatch(DocumentActions.undo());
+    expect(text(s)).toBe("abc�ijkl");
+  });
+
+  it("keeps a selection at a chunk's start there across evict and reload", () => {
+    const s = makeStore(3);
+    load(s, 0);
+    load(s, 1);
+    load(s, 2);
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(8), head: byteOffset(12) }]));
+    s.dispatch(DocumentActions.evictChunk(1));
+    expect(cursor(s)).toEqual({ anchor: 8, head: 8 });
+    load(s, 1);
+    expect(cursor(s)).toEqual({ anchor: 8, head: 8 });
+    // The same holds over repeated cycles.
+    s.dispatch(DocumentActions.evictChunk(1));
+    load(s, 1);
+    expect(cursor(s)).toEqual({ anchor: 8, head: 8 });
+  });
+
+  it("keeps a cursor at a chunk's end there across evict and reload", () => {
+    const s = makeStore(3);
+    load(s, 0);
+    load(s, 1);
+    load(s, 2);
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(16), head: byteOffset(16) }]));
+    s.dispatch(DocumentActions.evictChunk(1));
+    expect(cursor(s)).toEqual({ anchor: 8, head: 8 });
+    load(s, 1);
+    expect(cursor(s)).toEqual({ anchor: 16, head: 16 });
+  });
+
+  it("places the redo cursor at the replayed edit after a chunk loads beside it", () => {
+    const s = makeStore(3);
+    load(s, 0);
+    load(s, 2);
+    s.dispatch(DocumentActions.delete(byteOffset(6), byteOffset(10)));
+    load(s, 1);
+    s.dispatch(DocumentActions.undo());
+    s.dispatch(DocumentActions.redo());
+    expect(text(s)).toBe("AAAAAABBBBBBB\nCCCCC\n");
+    expect(cursor(s)).toEqual({ anchor: 6, head: 6 });
+  });
+});

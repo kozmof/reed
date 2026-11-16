@@ -73,6 +73,15 @@ History selections use the same pairs.
 A delete that spans a chunk which is not loaded is recorded as several changes in one entry.
 Undo then puts each part back on the correct side of that chunk.
 
+History records deleted text as decoded strings. Undo restores malformed UTF-8, such as half
+of a character cut off by an unloaded chunk, as U+FFFD. The restored text can then be longer
+than the bytes it replaces. History accounts for that, so later changes in the entry and the
+restored selection still land on the right text.
+
+The live selection moves the same way on loads and evictions. A cursor inside an evicted chunk
+moves to where the chunk was, and it stays on that side of the chunk when the chunk loads
+again.
+
 ### 2.2 Eviction and history
 
 A position strictly inside an evicted chunk cannot be resolved after eviction. This happens

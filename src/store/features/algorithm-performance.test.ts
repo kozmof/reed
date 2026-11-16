@@ -102,10 +102,11 @@ it("shares a large history prefix across coalescing while preserving snapshot ar
       undoStack: pstackPush(null, entry),
     }),
   });
-  state = historyPush(state, makeInsertChange(byteOffset(1), "y"), 1);
+  const selectionBefore = () => anchorSelection(state.pieceTable, state.selection);
+  state = historyPush(state, [makeInsertChange(byteOffset(1), "y")], 1, selectionBefore);
   const snapshot = state;
   for (let i = 2; i <= 100; i++)
-    state = historyPush(state, makeInsertChange(byteOffset(i), "y"), i);
+    state = historyPush(state, [makeInsertChange(byteOffset(i), "y")], i, selectionBefore);
   expect(reads).toBeLessThan(10);
   const latest = state.history.undoStack!.top.changes;
   expect(latest.length).toBe(10000);

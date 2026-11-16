@@ -48,7 +48,7 @@ import {
 } from "../core/line-index.js";
 import { utf8ByteLength } from "../core/encoding.js";
 import { NO_CHUNK, gapKey, hasUnloadedChunkBetween, placementRuns } from "../core/chunk-anchor.js";
-import { anchorAt, anchorSelection, residentOffset } from "./history-anchor.js";
+import { anchorAt, anchorSelection, anchoredCursor, residentOffset } from "./history-anchor.js";
 import { coalescedTails, lastHistoryChange } from "./history-entry.js";
 
 // =============================================================================
@@ -253,26 +253,17 @@ export function rebuildLineIndexFromPieceTableState(state: DocumentState): Docum
 // =============================================================================
 
 /**
- * Selection to restore when redoing `change`, anchored against `state`
- * (the document after the change).
+ * Selection to restore when redoing `change`: a cursor after the inserted text,
+ * or at the deletion point.
+ *
+ * The cursor takes the change's own placement key. Redo replays the change
+ * with that key, so the cursor stays next to the replayed text even when a
+ * chunk next to it loads in between. The gap's key in the edited document can
+ * name the far side of a chunk that was not loaded when the edit was made.
  */
-function computeSelectionAfterChange(
-  state: DocumentState,
-  change: HistoryChange,
-): HistorySelectionState {
-  const start = residentOffset(state.pieceTable, change);
-  // After insert and replace the cursor sits after the inserted text; after a
-  // delete it sits at the deletion point.
-  const position = change.type === "delete" ? start : start + change.byteLength;
-  return anchorSelection(
-    state.pieceTable,
-    Object.freeze({
-      ranges: Object.freeze([
-        Object.freeze({ anchor: byteOffset(position), head: byteOffset(position) }),
-      ] as const),
-      primaryIndex: 0,
-    }),
-  );
+function selectionAfterChange(change: HistoryChange): HistorySelectionState {
+  const position = change.type === "delete" ? change.position : change.position + change.byteLength;
+  return anchoredCursor(change.afterChunk, position);
 }
 
 /**
@@ -433,26 +424,22 @@ export function makeReplaceChange(
 /**
  * Push changes to the history stack as one entry.
  * A single change may coalesce with the previous entry if within the coalesce
- * timeout. `state` is the document after the changes. `selectionBefore`
- * defaults to the selection of `state`, anchored against it. It is only
- * called when a new entry is created: a coalesced entry keeps the selection of
- * the entry it extends.
+ * timeout. `state` is the document after the changes. `selectionBefore` is
+ * only called when a new entry is created: a coalesced entry keeps the
+ * selection of the entry it extends. It must anchor the selection against the
+ * document before the changes, which `state` no longer holds.
  */
 export function historyPush(
   state: DocumentState,
-  changeOrChanges: HistoryChange | NonEmptyReadonlyArray<HistoryChange>,
+  changes: NonEmptyReadonlyArray<HistoryChange>,
   now: number,
-  selectionBefore: () => HistorySelectionState = () =>
-    anchorSelection(state.pieceTable, state.selection),
+  selectionBefore: () => HistorySelectionState,
 ): DocumentState {
   const history = state.history;
-  const changes: NonEmptyReadonlyArray<HistoryChange> = Array.isArray(changeOrChanges)
-    ? (changeOrChanges as NonEmptyReadonlyArray<HistoryChange>)
-    : [changeOrChanges as HistoryChange];
 
   // Compute expected selection after the change for proper redo. The last
   // change of an entry is the one applied last, so it places the cursor.
-  const selectionAfter = computeSelectionAfterChange(state, changes[changes.length - 1]!);
+  const selectionAfter = selectionAfterChange(changes[changes.length - 1]!);
 
   // Try to coalesce with the last entry
   const change = changes[0];
@@ -744,7 +731,13 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   // unloaded chunk when re-inserted. Usually there is a single run.
   const runs = op.kind === "insert" ? [] : placementRuns(pieceTable, op.position, op.deleteEnd);
   // Inserted text takes the key of the text it replaces, or the gap's key.
-  const insertKey = runs.length > 0 ? runs[0]!.key : gapKey(pieceTable.root, op.position);
+  // Without chunks every key is NO_CHUNK, so skip the tree lookup.
+  const insertKey =
+    runs.length > 0
+      ? runs[0]!.key
+      : pieceTable.nextExpectedChunk === 0
+        ? NO_CHUNK
+        : gapKey(pieceTable.root, op.position);
   let newState = applyUntrackedEdit(
     state,
     op.kind === "delete" ? op : { ...op, afterChunk: insertKey },
@@ -777,6 +770,23 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   // History positions are anchored against the pre-edit document. Edits never
   // load or evict chunks, so the post-edit chunk layout resolves them the same way.
   const anchor = anchorAt(pieceTable, insertKey, op.position);
+  const runTexts = runs.map((run) =>
+    runs.length === 1 && op.kind !== "insert"
+      ? op.deletedText
+      : getTextRange(state, byteOffset(run.start), byteOffset(run.end)),
+  );
+  // Decoding replaces malformed bytes with U+FFFD, so a run's text can encode
+  // to a different length than the bytes it was read from. Bytes at the edge
+  // of an unloaded chunk are often an incomplete character, which is exactly
+  // where runs split. Undo re-inserts the decoded text, so history describes
+  // the document as undo rebuilds it: every position after a run moves by the
+  // run's length difference.
+  const runShifts: number[] = [];
+  let shift = 0;
+  for (let i = 0; i < runs.length; i++) {
+    runShifts.push(shift);
+    shift += utf8ByteLength(runTexts[i]!) - (runs[i]!.end - runs[i]!.start);
+  }
   // Each run except the first becomes its own delete, ordered right to left so
   // every position is valid when its change is applied. Undo applies them in
   // reverse, re-inserting each run with its own key.
@@ -785,18 +795,13 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
     const run = runs[i]!;
     changes.push(
       makeDeleteChange(
-        anchorAt(pieceTable, run.key, run.start).position,
-        getTextRange(state, byteOffset(run.start), byteOffset(run.end)),
+        anchorAt(pieceTable, run.key, run.start).position + runShifts[i]!,
+        runTexts[i]!,
         run.key,
       ),
     );
   }
-  const firstDeletedText =
-    runs.length > 1
-      ? getTextRange(state, byteOffset(runs[0]!.start), byteOffset(runs[0]!.end))
-      : op.kind === "insert"
-        ? ""
-        : op.deletedText;
+  const firstDeletedText = runTexts[0] ?? "";
   const historyDeletedLength = utf8ByteLength(firstDeletedText);
   changes.push(
     Object.freeze(
@@ -827,11 +832,27 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   // Timestamp-less hand-written actions remain deterministic. Normal callers use
   // DocumentActions, which captures wall-clock time before reduction.
   const selectionBeforeEdit = newState.selection;
+  // Selection offsets after a run whose decoded length differs move with it.
+  const shiftOffset =
+    shift === 0
+      ? undefined
+      : (offset: number): number => {
+          let moved = 0;
+          for (let i = 0; i < runs.length; i++) {
+            const run = runs[i]!;
+            if (offset <= run.start) break;
+            const decodedEnd = run.start + utf8ByteLength(runTexts[i]!);
+            // Inside a run, stay within its decoded text.
+            if (offset < run.end) return Math.min(offset, decodedEnd) - offset + runShifts[i]!;
+            moved = runShifts[i + 1] ?? shift;
+          }
+          return moved;
+        };
   newState = historyPush(
     newState,
     changes as unknown as NonEmptyReadonlyArray<HistoryChange>,
     op.timestamp ?? state.revision,
-    () => anchorSelection(pieceTable, selectionBeforeEdit),
+    () => anchorSelection(pieceTable, selectionBeforeEdit, shiftOffset),
   );
 
   // Mark as dirty and increment revision

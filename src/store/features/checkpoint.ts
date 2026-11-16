@@ -38,7 +38,11 @@ import type {
   CheckpointErrorCode,
 } from "../../types/checkpoint.js";
 import { CHECKPOINT_FORMAT, CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
-import { migrateCheckpointData, minimumSupportedVersion } from "./checkpoint-migrate.js";
+import {
+  migrateCheckpointData,
+  migrationPath,
+  minimumSupportedVersion,
+} from "./checkpoint-migrate.js";
 import type { PieceDescriptor, LineDescriptor } from "../core/state.js";
 import {
   buildPieceTree,
@@ -46,7 +50,7 @@ import {
   freezePieceTableState,
   freezeLineIndexState,
 } from "../core/state.js";
-import { decodeBase64 } from "../core/base64.js";
+import { base64DecodedLength, decodeBase64 } from "../core/base64.js";
 import { inOrderPieces } from "../core/piece-table-stream.js";
 import { decodedCharLength, joinDecoded, type DecodedSummary } from "../core/decoded-metrics.js";
 import { utf8ByteLength } from "../core/encoding.js";
@@ -112,6 +116,41 @@ function assertResourceLimit(actual: number, limit: number, what: string): void 
   if (actual > limit) {
     fail("RESOURCE_LIMIT", `${what} ${actual} exceeds the configured limit of ${limit}`);
   }
+}
+
+/**
+ * Check the collections a migration walks before it runs.
+ *
+ * Migration copies, sorts, and searches raw wire data, so untrusted input must
+ * meet the restore limits first. The count here covers only the arrays the
+ * migration walks, which validation counts as well, so it never rejects a
+ * payload that validation would accept. Validation repeats the full check.
+ */
+function assertMigrationLimits(source: Record<string, unknown>, limits: RestoreLimits): void {
+  const length = (value: unknown): number => (Array.isArray(value) ? value.length : 0);
+  const section = (value: unknown): Record<string, unknown> =>
+    typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+  const pieceTable = section(source.pieceTable);
+  const history = section(source.history);
+  assertResourceLimit(length(pieceTable.pieces), limits.maxPieces, "pieceTable.pieces");
+  assertResourceLimit(
+    length(history.undo) + length(history.redo),
+    limits.maxHistoryEntries,
+    "history entries",
+  );
+  // The entry count is bounded above, so this walk is too.
+  let items = length(pieceTable.pieces) + length(pieceTable.chunks);
+  for (const entries of [history.undo, history.redo]) {
+    if (!Array.isArray(entries)) continue;
+    for (const raw of entries) {
+      const entry = section(raw);
+      items +=
+        length(entry.changes) +
+        length(section(entry.selectionBefore).ranges) +
+        length(section(entry.selectionAfter).ranges);
+    }
+  }
+  assertResourceLimit(items, limits.maxCollectionItems, "checkpoint collection items");
 }
 
 function createRestoreBudget(limits: RestoreLimits): RestoreBudget {
@@ -223,9 +262,10 @@ function readOptionalString(
 
 function readBytes(value: unknown, what: string, budget: RestoreBudget): Uint8Array {
   const base64 = readString(value, what, budget);
-  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  // decodeBase64 rejects a length that is not a multiple of four, but the
+  // limit is checked first, so round that case up.
   const decodedLength =
-    base64.length % 4 === 0 ? (base64.length / 4) * 3 - padding : Math.ceil(base64.length / 4) * 3;
+    base64.length % 4 === 0 ? base64DecodedLength(base64) : Math.ceil(base64.length / 4) * 3;
   assertResourceLimit(decodedLength, budget.remainingBufferBytes, `${what} decoded bytes`);
   try {
     const bytes = decodeBase64(base64);
@@ -1117,6 +1157,9 @@ export function restoreCheckpoint(
   const version = readCount(source.version, "checkpoint.version");
   // Migrate older payloads before validating fields against the current
   // format. Raise VERSION_UNSUPPORTED when no migration path exists.
+  if (version !== CHECKPOINT_VERSION && migrationPath(version) !== null) {
+    assertMigrationLimits(source, limits);
+  }
   const migrated =
     version === CHECKPOINT_VERSION ? source : migrateCheckpointData(source, version).data;
   readEnum(migrated.mode, ["exact", "normalized"] as const, "checkpoint.mode", budget);
