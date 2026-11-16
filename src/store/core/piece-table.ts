@@ -581,12 +581,14 @@ export interface PieceTableInsertResult {
 /**
  * Insert text into the piece table at the given position.
  * Returns the new state and the UTF-8 byte length of the inserted text.
+ *
+ * `afterChunk` defaults to the gap key at `position` (see `gapKey`).
  */
 export function pieceTableInsert(
   state: PieceTableState,
   position: ByteOffset,
   text: string,
-  afterChunk: number = gapKey(state.root, position),
+  afterChunk?: number,
 ): LinearCost<PieceTableInsertResult> {
   if (text.length === 0)
     return $proveCtx($beginCost("O(n)"), { state, insertedByteLength: 0, splits: [] });
@@ -609,7 +611,7 @@ export function pieceTableInsert(
       null,
       null,
       allocatePieceID(),
-      afterChunk,
+      afterChunk ?? NO_CHUNK,
     );
     return $proveCtx($beginCost("O(n)"), {
       state: freezePieceTableState({
@@ -626,6 +628,16 @@ export function pieceTableInsert(
 
   const location: LogCost<PieceLocation | null> =
     findPieceAtPosition(state.root, position) ?? $proveCtx($beginCost("O(log n)"), null);
+  // The gap key at `position` is the key of the piece holding that byte, which
+  // the lookup above already found. Only the end of the document needs gapKey.
+  const root = state.root;
+  const keyAt = (resolved: PieceLocation | null): number =>
+    afterChunk ??
+    (state.nextExpectedChunk === 0
+      ? NO_CHUNK
+      : resolved !== null
+        ? pieceKey(resolved.node)
+        : gapKey(root, position));
 
   // Capture the split reported by the $andThen callback.
   let capturedSplit: SplitRecord | null = null;
@@ -636,6 +648,7 @@ export function pieceTableInsert(
       $pipe(
         $from(location),
         $andThen((resolvedLocation) => {
+          const key = keyAt(resolvedLocation);
           if (resolvedLocation === null) {
             return $from(
               rbInsertPiece(
@@ -645,7 +658,7 @@ export function pieceTableInsert(
                 byteOffset(newAddStart),
                 byteLength(textBytes.length),
                 allocatePieceID(),
-                afterChunk,
+                key,
               ),
             );
           }
@@ -658,7 +671,7 @@ export function pieceTableInsert(
                 byteOffset(newAddStart),
                 byteLength(textBytes.length),
                 allocatePieceID(),
-                afterChunk,
+                key,
               ),
             );
           }
@@ -671,7 +684,7 @@ export function pieceTableInsert(
                 byteOffset(newAddStart),
                 byteLength(textBytes.length),
                 allocatePieceID(),
-                afterChunk,
+                key,
               ),
             );
           }
@@ -683,7 +696,7 @@ export function pieceTableInsert(
             byteLength(textBytes.length),
             allocatePieceID(),
             allocatePieceID(),
-            afterChunk,
+            key,
           );
           capturedSplit = splitRecord;
           return $lift("O(log n)", splitRoot);

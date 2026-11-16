@@ -122,7 +122,8 @@ History boundaries:
 
 - `content-change` for local text edits and `APPLY_REMOTE`
 - `selection-change`, including when a chunk load or eviction moves the selection
-- `history-change` for undo and redo, and with direction `'drop'` when eviction discards entries
+- `history-change` for undo and redo
+- `history-drop` when eviction discards entries under the `'drop'` policy
 - `attention-change` when attention records are created, deleted, or migrated
 - `dirty-change`
 

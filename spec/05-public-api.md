@@ -144,6 +144,7 @@ Supported event types:
 - `content-change`
 - `selection-change`
 - `history-change`
+- `history-drop`
 - `attention-change`
 - `save`
 - `dirty-change`
@@ -152,7 +153,8 @@ Auto-emitted by `store.createDocumentStoreWithEvents`:
 
 - `content-change` (`INSERT/DELETE/REPLACE/APPLY_REMOTE`)
 - `selection-change` (`SET_SELECTION`, and `LOAD_CHUNK/LOAD_CHUNKS/EVICT_CHUNK` when they move the selection)
-- `history-change` (`UNDO/REDO`, and `EVICT_CHUNK` with direction `'drop'` when the `'drop'` policy discards entries)
+- `history-change` (`UNDO/REDO`)
+- `history-drop` (`EVICT_CHUNK` when the `'drop'` policy discards entries)
 - `attention-change` (create, delete, or content edits that rewrite stored points)
 - `save` (`MARK_SAVED`)
 - `dirty-change` (when dirty flag changes)

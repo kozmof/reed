@@ -510,29 +510,33 @@ describe("events for chunk loads and evictions", () => {
     expect(fired).toBe(0);
   });
 
-  it("emits history-change with direction 'drop' when eviction discards entries", () => {
+  it("emits history-drop, not history-change, when eviction discards entries", () => {
     const s = makeEventStore("drop");
     s.dispatch(DocumentActions.loadChunk(0, enc(CHUNK0)));
     s.dispatch(DocumentActions.loadChunk(1, enc(CHUNK1)));
     s.dispatch(DocumentActions.insert(byteOffset(2), "X"));
     s.dispatch(DocumentActions.undo());
-    const directions: string[] = [];
-    s.addEventListener("history-change", ({ direction, nextState }) => {
-      directions.push(direction);
+    let drops = 0;
+    let changes = 0;
+    s.addEventListener("history-drop", ({ prevState, nextState }) => {
+      drops++;
+      expect(getRedoCount(prevState)).toBe(1);
       expect(getRedoCount(nextState)).toBe(0);
     });
+    s.addEventListener("history-change", () => changes++);
 
     s.dispatch(DocumentActions.evictChunk(0));
-    expect(directions).toEqual(["drop"]);
+    expect(drops).toBe(1);
+    expect(changes).toBe(0);
   });
 
-  it("does not emit history-change when eviction keeps every entry", () => {
+  it("does not emit history-drop when eviction keeps every entry", () => {
     const s = makeEventStore("drop");
     s.dispatch(DocumentActions.loadChunk(0, enc(CHUNK0)));
     s.dispatch(DocumentActions.loadChunk(1, enc(CHUNK1)));
     s.dispatch(DocumentActions.insert(byteOffset(10), "X"));
     let fired = 0;
-    s.addEventListener("history-change", () => fired++);
+    s.addEventListener("history-drop", () => fired++);
     s.dispatch(DocumentActions.evictChunk(0));
     expect(text(s as unknown as Store)).toBe("BBXBBBBB\n");
     expect(fired).toBe(0);
@@ -584,5 +588,32 @@ describe("checkpoint restore validates history anchors", () => {
     // Key 0 can subtract at most one chunk (8 bytes).
     expect(() => restoreCheckpoint(atKey(0, -8))).not.toThrow();
     expect(() => restoreCheckpoint(atKey(0, -9))).toThrow(/at least -8/);
+  });
+
+  it("rejects a history selection range with one placement key", () => {
+    const s = makeStore();
+    load(s, 1);
+    s.dispatch(DocumentActions.insert(byteOffset(2), "X"));
+    const checkpoint = createCheckpoint(s.reconcileNow());
+    const withRange = (range: unknown[]) =>
+      editUndo(checkpoint, (entry) => (entry.selectionBefore.ranges[0] = range));
+    expect(() => restoreCheckpoint(withRange([2, 2, 0, 0]))).not.toThrow();
+    expect(() => restoreCheckpoint(withRange([2, 2]))).not.toThrow();
+    expect(() => restoreCheckpoint(withRange([2, 2, 0]))).toThrow(/has 3 elements/);
+    expect(() => restoreCheckpoint(withRange([2, 2, 0, 0, 0]))).toThrow(/has 5 elements/);
+  });
+
+  it("rejects original pieces after chunk pieces", () => {
+    const s = makeStore();
+    load(s, 0);
+    load(s, 1);
+    const checkpoint = JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow())));
+    const [first, second] = checkpoint.pieceTable.pieces;
+    expect(first[1]).toBe("c");
+    expect(second[1]).toBe("c");
+    checkpoint.pieceTable.originalBuffer = btoa("o");
+    // Keys would run -1, -1, 0: chunk 0 bytes have key -1 and chunk 1 bytes key 0.
+    checkpoint.pieceTable.pieces = [first, second, ["orig", "o", 0, 1]];
+    expect(() => restoreCheckpoint(checkpoint)).toThrow(/placement key -1 after 0/);
   });
 });

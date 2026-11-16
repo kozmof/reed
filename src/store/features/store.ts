@@ -579,7 +579,8 @@ function createStoreOverState(
  * Events are emitted after state changes:
  * - 'content-change': On INSERT, DELETE, REPLACE, APPLY_REMOTE
  * - 'selection-change': On SET_SELECTION, and when a chunk load or eviction moves the selection
- * - 'history-change': On UNDO, REDO, and EVICT_CHUNK that drops history entries
+ * - 'history-change': On UNDO and REDO
+ * - 'history-drop': On EVICT_CHUNK that drops history entries
  * - 'attention-change': When the attention layer changes
  * - 'save': On MARK_SAVED
  * - 'dirty-change': When isDirty state changes

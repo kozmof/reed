@@ -20,6 +20,7 @@
  */
 
 import { CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
+import { buildLoadedPrefix, endGapKey, prefixLengthAtOrBelow } from "../core/chunk-anchor.js";
 
 /** Raw, unvalidated checkpoint wire data. */
 export type CheckpointWireData = Record<string, unknown>;
@@ -115,8 +116,8 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
     starts.push(total);
     total += isInt(piece[3]) ? piece[3] : 0;
   }
-  const lastChunk = chunkOf[pieces.length - 1];
-  const endKey = lastChunk !== null && lastChunk !== undefined ? lastChunk : keys[keys.length - 1]!;
+  // Same rules as gapKey in core/chunk-anchor.ts, over wire tuples.
+  const endKey = endGapKey(keys[keys.length - 1]!, chunkOf[pieces.length - 1] ?? null);
   const gapKey = (offset: number): number => {
     if (offset >= total) return endKey;
     let lo = 0;
@@ -137,24 +138,12 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
       }
     }
   }
-  // Prefix sums over chunks sorted by index, so each anchor costs O(log C).
-  chunkLengths.sort((a, b) => a[0] - b[0]);
-  const lengthPrefix = [0];
-  for (const [, length] of chunkLengths) lengthPrefix.push(lengthPrefix.at(-1)! + length);
-  const loadedAtOrBelow = (key: number): number => {
-    let lo = 0;
-    let hi = chunkLengths.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (chunkLengths[mid]![0] <= key) lo = mid + 1;
-      else hi = mid;
-    }
-    return lengthPrefix[lo]!;
-  };
+  // Same prefix sums as live anchoring, so each anchor costs O(log C).
+  const loaded = buildLoadedPrefix(chunkLengths);
   const anchor = (offset: unknown): [unknown, number] => {
     if (!isInt(offset)) return [offset, -1];
     const key = gapKey(offset);
-    return [offset - loadedAtOrBelow(key), key];
+    return [offset - prefixLengthAtOrBelow(loaded, key), key];
   };
 
   const migrateSelection = (raw: unknown): unknown => {

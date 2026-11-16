@@ -163,6 +163,7 @@ export type {
   ContentChangeEvent,
   SelectionChangeEvent,
   HistoryChangeEvent,
+  HistoryDropEvent,
   AttentionChangeEvent,
   SaveEvent,
   DirtyChangeEvent,

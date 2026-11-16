@@ -342,7 +342,7 @@ function restorePieces(
         checkKey(afterChunk, what);
         // Text can only follow chunks that have been loaded. A higher key would
         // place the next sequentially streamed chunk on the wrong side of it.
-        if (afterChunk >= Math.max(nextExpectedChunk, 0) && afterChunk !== -1) {
+        if (afterChunk >= nextExpectedChunk) {
           fail(
             "CHUNK_ORDER",
             `${what} has placement key ${afterChunk} but only chunks below ${nextExpectedChunk} have been loaded`,
@@ -356,6 +356,8 @@ function restorePieces(
           afterChunk,
         });
       } else {
+        // Original bytes have key -1, so they cannot follow chunk text.
+        checkKey(-1, what);
         pieces.push({ id, bufferType, start: byteOffset(start), length: byteLength(length) });
       }
     }
@@ -846,6 +848,14 @@ function restoreHistorySelection(
 ): HistorySelectionState {
   return Object.freeze(
     restoreSelectionShape(raw, what, budget, (tuple, rangeWhat): HistorySelectionRange => {
+      // Keys come as a pair or not at all: a lone anchor key would leave the
+      // head unanchored.
+      if (tuple.length !== 2 && tuple.length !== 4) {
+        fail(
+          "MALFORMED",
+          `${rangeWhat} has ${tuple.length} elements: expected [anchor, head] or [anchor, head, anchorAfterChunk, headAfterChunk]`,
+        );
+      }
       const anchor = readAnchor(tuple[0], tuple[2], `${rangeWhat}[0]`, `${rangeWhat}[2]`, bounds);
       const head = readAnchor(tuple[1], tuple[3], `${rangeWhat}[1]`, `${rangeWhat}[3]`, bounds);
       return {

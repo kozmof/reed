@@ -39,11 +39,18 @@ export function pieceKey(piece: PieceNode): number {
 }
 
 /**
- * Key just after the last byte of `piece`, when nothing follows it.
- * After a chunk piece, that whole chunk lies before the position.
+ * Key just after the last byte of a piece with key `key`, when nothing follows
+ * it. `chunkIndex` is the chunk of a chunk piece and null otherwise: after a
+ * chunk piece, that whole chunk lies before the position.
+ *
+ * Shared with the v1 checkpoint migration, which works on wire tuples.
  */
+export function endGapKey(key: number, chunkIndex: number | null): number {
+  return chunkIndex ?? key;
+}
+
 function keyAfterPiece(piece: PieceNode): number {
-  return piece.bufferType === "chunk" ? piece.chunkIndex : pieceKey(piece);
+  return endGapKey(pieceKey(piece), piece.bufferType === "chunk" ? piece.chunkIndex : null);
 }
 
 /** The piece holding resident byte `offset`, or null when `offset` is out of range. */
@@ -123,11 +130,28 @@ export function keySpan(root: PieceNode | null, key: number): { start: number; e
 // Loaded-chunk prefix sums
 // =============================================================================
 
-interface LoadedPrefix {
+export interface LoadedPrefix {
   /** Loaded chunk indices, ascending. */
   readonly indices: readonly number[];
   /** prefix[i] = total original length of indices[0..i). */
   readonly prefix: readonly number[];
+}
+
+/**
+ * Build the prefix table from (chunk index, length) pairs in any order.
+ * Shared with the v1 checkpoint migration, which reads lengths from wire data.
+ */
+export function buildLoadedPrefix(chunks: Iterable<readonly [number, number]>): LoadedPrefix {
+  const sorted = [...chunks].sort((a, b) => a[0] - b[0]);
+  const indices = sorted.map(([index]) => index);
+  const prefix = [0];
+  for (const [, length] of sorted) prefix.push(prefix[prefix.length - 1]! + length);
+  return { indices, prefix };
+}
+
+/** Total length of the chunks in `table` with index <= key. O(log L). */
+export function prefixLengthAtOrBelow(table: LoadedPrefix, key: number): number {
+  return table.prefix[loadedCountAtOrBelow(table, key)]!;
 }
 
 // chunkMap is replaced, never mutated, so each snapshot builds its table once.
@@ -136,11 +160,9 @@ const loadedPrefixCache = new WeakMap<ReadonlyMap<number, ReadonlyUint8Array>, L
 function loadedPrefixTable(chunkMap: ReadonlyMap<number, ReadonlyUint8Array>): LoadedPrefix {
   const cached = loadedPrefixCache.get(chunkMap);
   if (cached) return cached;
-  const indices = [...chunkMap.keys()].sort((a, b) => a - b);
-  const prefix = [0];
-  for (const index of indices)
-    prefix.push(prefix[prefix.length - 1]! + chunkMap.get(index)!.length);
-  const table = { indices, prefix };
+  const table = buildLoadedPrefix(
+    Array.from(chunkMap, ([index, bytes]): [number, number] => [index, bytes.length]),
+  );
   loadedPrefixCache.set(chunkMap, table);
   return table;
 }
@@ -160,8 +182,7 @@ function loadedCountAtOrBelow(table: LoadedPrefix, key: number): number {
 /** Total original length of the loaded chunks with index <= key. O(log L). */
 export function loadedLengthAtOrBelow(pieceTable: PieceTableState, key: number): number {
   if (key < 0 || pieceTable.chunkMap.size === 0) return 0;
-  const table = loadedPrefixTable(pieceTable.chunkMap);
-  return table.prefix[loadedCountAtOrBelow(table, key)]!;
+  return prefixLengthAtOrBelow(loadedPrefixTable(pieceTable.chunkMap), key);
 }
 
 /** True when some chunk with index in (low, high] is not loaded. */
@@ -215,8 +236,13 @@ export function placementRuns(pieceTable: PieceTableState, start: number, end: n
   if (end <= start) return runs;
   // Before any chunk has loaded, every key is NO_CHUNK and nothing can split.
   if (pieceTable.nextExpectedChunk === 0) return [{ start, end, key: NO_CHUNK }];
-  let runStart = start;
   const firstKey = byteKey(pieceTable.root, start);
+  // Keys never decrease, so every split needs an unloaded chunk between the
+  // first and last keys. Without one the range is a single run: O(log n).
+  if (!hasUnloadedChunkBetween(pieceTable, firstKey, byteKey(pieceTable.root, end - 1))) {
+    return [{ start, end, key: firstKey }];
+  }
+  let runStart = start;
   let runKey = firstKey;
   let previousKey = firstKey;
   // In-order walk of the pieces that start inside (start, end). Subtrees that

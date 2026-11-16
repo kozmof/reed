@@ -20,6 +20,7 @@ import { pstackFindNewestIndex, pstackSize, pstackTrimToSize } from "../../types
 import type { ByteOffset } from "../../types/branded.js";
 import { byteOffset } from "../../types/branded.js";
 import {
+  NO_CHUNK,
   gapKey,
   keySpan,
   loadedLengthAtOrBelow,
@@ -38,11 +39,37 @@ export function residentOffset(pieceTable: PieceTableState, anchor: HistoryAncho
   return byteOffset(toResidentOffset(pieceTable, anchor.afterChunk, anchor.position));
 }
 
+// Before any chunk loads, every key is NO_CHUNK and an anchored position equals
+// its offset, so the anchored form depends only on the selection. Selections
+// are immutable, so cache it per selection object and share it across edits.
+const unchunkedCache = new WeakMap<SelectionState, HistorySelectionState>();
+
+function anchorUnchunked(selection: SelectionState): HistorySelectionState {
+  const cached = unchunkedCache.get(selection);
+  if (cached !== undefined) return cached;
+  const ranges = selection.ranges.map(
+    (range): HistorySelectionRange =>
+      Object.freeze({
+        anchor: range.anchor,
+        head: range.head,
+        anchorAfterChunk: NO_CHUNK,
+        headAfterChunk: NO_CHUNK,
+      }),
+  );
+  const anchored: HistorySelectionState = Object.freeze({
+    ranges: Object.freeze(ranges) as unknown as NonEmptyReadonlyArray<HistorySelectionRange>,
+    primaryIndex: selection.primaryIndex,
+  });
+  unchunkedCache.set(selection, anchored);
+  return anchored;
+}
+
 /** Anchor a live selection, giving each gap the key new text would receive there. */
 export function anchorSelection(
   pieceTable: PieceTableState,
   selection: SelectionState,
 ): HistorySelectionState {
+  if (pieceTable.nextExpectedChunk === 0) return anchorUnchunked(selection);
   const root = pieceTable.root;
   const ranges = selection.ranges.map((range): HistorySelectionRange => {
     const anchorKey = gapKey(root, range.anchor);
@@ -95,6 +122,44 @@ export function resolveSelection(
 // Eviction guard
 // =============================================================================
 
+interface HistoryCuts {
+  /** Stack index of the newest undo entry pointing inside the span, or -1. */
+  readonly undoCut: number;
+  /** Stack index of the newest redo entry pointing inside the span, or -1. */
+  readonly redoCut: number;
+}
+
+// ChunkManager retries every refused eviction candidate on each load. History
+// is replaced, never mutated, so the scan for a given chunk span is cached on
+// the history object and a retry costs one map lookup.
+const cutsCache = new WeakMap<HistoryState, Map<string, HistoryCuts>>();
+
+/**
+ * Find the newest entries of each stack with a change keyed `key` whose
+ * anchored position lies strictly inside (low, high).
+ */
+function historyCuts(history: HistoryState, key: number, low: number, high: number): HistoryCuts {
+  let bySpan = cutsCache.get(history);
+  if (bySpan === undefined) {
+    bySpan = new Map();
+    cutsCache.set(history, bySpan);
+  }
+  const span = `${key}:${low}:${high}`;
+  const cached = bySpan.get(span);
+  if (cached !== undefined) return cached;
+  const pointsInside = (entry: HistoryEntry): boolean =>
+    someHistoryChange(
+      entry,
+      (change) => change.afterChunk === key && change.position > low && change.position < high,
+    );
+  const cuts = {
+    undoCut: pstackFindNewestIndex(history.undoStack, pointsInside),
+    redoCut: pstackFindNewestIndex(history.redoStack, pointsInside),
+  };
+  bySpan.set(span, cuts);
+  return cuts;
+}
+
 /**
  * Apply the history eviction policy before evicting `chunkIndex`, whose
  * resident span is [start, end).
@@ -123,17 +188,7 @@ export function historyForEviction(
   // against the chunk span shifted once, instead of resolving each change.
   const key = chunkIndex - 1;
   const shift = loadedLengthAtOrBelow(pieceTable, key);
-  const low = start - shift;
-  const high = end - shift;
-  const pointsInside = (entry: HistoryEntry): boolean =>
-    someHistoryChange(
-      entry,
-      (change) => change.afterChunk === key && change.position > low && change.position < high,
-    );
-
-  const undoCut = pstackFindNewestIndex(history.undoStack, pointsInside);
-  if (undoCut >= 0 && history.evictionPolicy === "pin") return null;
-  const redoCut = pstackFindNewestIndex(history.redoStack, pointsInside);
+  const { undoCut, redoCut } = historyCuts(history, key, start - shift, end - shift);
   if (undoCut < 0 && redoCut < 0) return history;
   if (history.evictionPolicy === "pin") return null;
   // Keep only the entries newer than the cut. The split shares structure.

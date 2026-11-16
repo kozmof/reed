@@ -13,6 +13,7 @@ import {
   createContentChangeEvent,
   createSelectionChangeEvent,
   createHistoryChangeEvent,
+  createHistoryDropEvent,
   createAttentionChangeEvent,
   createDirtyChangeEvent,
   createSaveEvent,
@@ -99,15 +100,15 @@ export function withEvents(
       prepare("selection-change", createSelectionChangeEvent(prevState, nextState));
     }
 
-    // History change events. EVICT_CHUNK changes history only under the
-    // "drop" eviction policy, when it discards entries.
+    // History events. EVICT_CHUNK changes history only under the "drop"
+    // eviction policy, when it discards entries.
     if (action.type === "UNDO" || action.type === "REDO") {
       prepare(
         "history-change",
         createHistoryChangeEvent(action.type === "UNDO" ? "undo" : "redo", prevState, nextState),
       );
     } else if (action.type === "EVICT_CHUNK" && prevState.history !== nextState.history) {
-      prepare("history-change", createHistoryChangeEvent("drop", prevState, nextState));
+      prepare("history-drop", createHistoryDropEvent(prevState, nextState));
     }
 
     // Emit attention-change when CREATE_ATTENTION, DELETE_ATTENTION, or a

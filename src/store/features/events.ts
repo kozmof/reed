@@ -54,8 +54,7 @@ export interface SelectionChangeEvent extends DocumentEvent {
 }
 
 /**
- * Fired when undo/redo occurs, and when EVICT_CHUNK discards history entries
- * under the `"drop"` eviction policy (`direction: "drop"`).
+ * Fired when undo/redo occurs.
  *
  * `nextState.selection` holds the cursor position that Reed restored from
  * the history entry. Subscribe to this event once to keep application cursor
@@ -76,8 +75,18 @@ export interface SelectionChangeEvent extends DocumentEvent {
  */
 export interface HistoryChangeEvent extends DocumentEvent {
   readonly type: "history-change";
-  /** `"drop"` when EVICT_CHUNK discarded history entries. */
-  readonly direction: "undo" | "redo" | "drop";
+  readonly direction: "undo" | "redo";
+  readonly prevState: DocumentState;
+  readonly nextState: DocumentState;
+}
+
+/**
+ * Fired when EVICT_CHUNK discards history entries under the `"drop"` eviction
+ * policy. Nothing is undone or redone and the selection is unchanged by it:
+ * only the undo and redo counts drop.
+ */
+export interface HistoryDropEvent extends DocumentEvent {
+  readonly type: "history-drop";
   readonly prevState: DocumentState;
   readonly nextState: DocumentState;
 }
@@ -125,6 +134,7 @@ export type AnyDocumentEvent =
   | ContentChangeEvent
   | SelectionChangeEvent
   | HistoryChangeEvent
+  | HistoryDropEvent
   | AttentionChangeEvent
   | SaveEvent
   | DirtyChangeEvent;
@@ -136,6 +146,7 @@ export interface DocumentEventMap {
   "content-change": ContentChangeEvent;
   "selection-change": SelectionChangeEvent;
   "history-change": HistoryChangeEvent;
+  "history-drop": HistoryDropEvent;
   "attention-change": AttentionChangeEvent;
   save: SaveEvent;
   "dirty-change": DirtyChangeEvent;
@@ -341,6 +352,21 @@ export function createHistoryChangeEvent(
     type: "history-change" as const,
     timestamp: Date.now(),
     direction,
+    prevState,
+    nextState,
+  });
+}
+
+/**
+ * Create a history drop event.
+ */
+export function createHistoryDropEvent(
+  prevState: DocumentState,
+  nextState: DocumentState,
+): HistoryDropEvent {
+  return Object.freeze({
+    type: "history-drop" as const,
+    timestamp: Date.now(),
     prevState,
     nextState,
   });
