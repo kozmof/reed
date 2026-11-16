@@ -17,12 +17,21 @@ import { DocumentActions } from "./actions.js";
 import { documentReducer } from "./reducer.js";
 import { createCheckpoint, restoreCheckpoint } from "./checkpoint.js";
 import { createInitialState } from "../core/state.js";
-import { byteOffset } from "../../types/branded.js";
+import { byteLength, byteOffset } from "../../types/branded.js";
 import { collectPieces, getBytes, getValue, isUtf8Boundary } from "../core/piece-table.js";
 import { pieceKey } from "../core/chunk-anchor.js";
 import { collectLines, rebuildLineIndex } from "../core/line-index.js";
 import { getUndoCount, getRedoCount } from "./history.js";
-import type { DocumentState, HistoryEvictionPolicy } from "../../types/state.js";
+import type {
+  DocumentState,
+  HistoryChange,
+  HistoryEntry,
+  HistoryEvictionPolicy,
+  HistoryState,
+} from "../../types/state.js";
+import { pstackPush } from "../../types/state.js";
+import { anchoredCursor, historyForEviction } from "./history-anchor.js";
+import { makeDeleteChange, makeInsertChange } from "./edit.js";
 import type { DocumentAction } from "../../types/actions.js";
 import { makeDeterministicRng } from "../../../test-utils/large-content.js";
 
@@ -1428,5 +1437,251 @@ describe("sixth review regressions", () => {
         });
       }
     }
+  });
+});
+
+describe("seventh review regressions", () => {
+  /** Capture and restore a store's document, which validates it in full. */
+  const roundTrip = (s: Store) =>
+    restoreCheckpoint(JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow()))));
+  const charLengths = (state: DocumentState) =>
+    collectLines(state.lineIndex.root).map((line) => line.charLength);
+
+  describe("a delete that starts with U+FEFF", () => {
+    it("keeps the line index in step with the text", () => {
+      const s = createDocumentStore({ content: "a﻿b\ncd", reconcileMode: "none" });
+      s.dispatch(DocumentActions.delete(byteOffset(1), byteOffset(4)));
+      expect(text(s)).toBe("ab\ncd");
+      expect(charLengths(s.reconcileNow())).toEqual([3, 2]);
+      expect(() => roundTrip(s)).not.toThrow();
+      s.dispatch(DocumentActions.undo());
+      expect(text(s)).toBe("a﻿b\ncd");
+      expect(charLengths(s.reconcileNow())).toEqual([4, 2]);
+      expect(() => roundTrip(s)).not.toThrow();
+    });
+
+    it("does so when a replace starts with one", () => {
+      const s = createDocumentStore({ content: "a﻿b\ncd", reconcileMode: "none" });
+      s.dispatch(DocumentActions.replace(byteOffset(1), byteOffset(4), "xy"));
+      expect(text(s)).toBe("axyb\ncd");
+      expect(() => roundTrip(s)).not.toThrow();
+    });
+
+    it("does so at the start of a chunk", () => {
+      const s = makeStore();
+      s.dispatch(DocumentActions.loadChunk(0, enc("﻿AAAA\n")));
+      s.dispatch(DocumentActions.delete(byteOffset(0), byteOffset(3)));
+      expect(() => roundTrip(s)).not.toThrow();
+      s.dispatch(DocumentActions.undo());
+      expect(bytesOf(s)).toEqual([...enc("﻿AAAA\n")]);
+      expect(() => roundTrip(s)).not.toThrow();
+    });
+  });
+
+  it("fires no selection-change for an edit that carries its selection", () => {
+    const s = createDocumentStoreWithEvents({ content: "hello", reconcileMode: "none" });
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(5), head: byteOffset(5) }]));
+    let events = 0;
+    s.addEventListener("selection-change", () => events++);
+    s.dispatch(
+      DocumentActions.insert(byteOffset(5), "!", [{ anchor: byteOffset(5), head: byteOffset(5) }]),
+    );
+    s.dispatch(
+      DocumentActions.insert(byteOffset(6), "?", [{ anchor: byteOffset(2), head: byteOffset(2) }]),
+    );
+    expect(events).toBe(0);
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(7), head: byteOffset(7) }]));
+    expect(events).toBe(1);
+  });
+
+  describe("remote inserts at the local cursor", () => {
+    // The cursor sat at the start of chunk 2. Evicting chunk 1 leaves it at
+    // offset 8, after where chunk 1 was.
+    const cursorAfterEvictedChunk = () => {
+      const s = makeStore(3);
+      for (let i = 0; i < 3; i++) load(s, i);
+      s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(16), head: byteOffset(16) }]));
+      s.dispatch(DocumentActions.evictChunk(1));
+      expect(s.getSnapshot().selection.ranges[0]).toMatchObject({ head: 8, headAfterChunk: 1 });
+      return s;
+    };
+
+    it("find the cursor after earlier changes of the batch move it", () => {
+      const s = cursorAfterEvictedChunk();
+      s.dispatch(
+        DocumentActions.applyRemote([
+          { type: "insert", start: byteOffset(0), text: "Z" },
+          { type: "insert", start: byteOffset(9), text: "Y" },
+        ]),
+      );
+      load(s, 1);
+      expect(text(s)).toBe("ZAAAAAAA\nBBBBBBB\nYCCCCCCC\n");
+    });
+
+    it("find the cursor after a delete earlier in the batch moves it back", () => {
+      const s = cursorAfterEvictedChunk();
+      s.dispatch(
+        DocumentActions.applyRemote([
+          { type: "delete", start: byteOffset(0), length: byteLength(1) },
+          { type: "insert", start: byteOffset(7), text: "Y" },
+        ]),
+      );
+      load(s, 1);
+      expect(text(s)).toBe("AAAAAA\nBBBBBBB\nYCCCCCCC\n");
+    });
+
+    it("keep text typed at the cursor together", () => {
+      const s = cursorAfterEvictedChunk();
+      s.dispatch(
+        DocumentActions.applyRemote([
+          { type: "insert", start: byteOffset(8), text: "X" },
+          { type: "insert", start: byteOffset(8), text: "Y" },
+        ]),
+      );
+      load(s, 1);
+      expect(text(s)).toBe("AAAAAAA\nBBBBBBB\nYXCCCCCCC\n");
+    });
+  });
+
+  describe("eviction guard for a change at the chunk's start", () => {
+    const withStack = (
+      state: DocumentState,
+      stack: "undoStack" | "redoStack",
+      change: HistoryChange,
+    ): HistoryState => {
+      const selection = anchoredCursor(0, 0);
+      const entry: HistoryEntry = Object.freeze({
+        changes: Object.freeze([change]),
+        selectionBefore: selection,
+        selectionAfter: selection,
+        timestamp: 0,
+      });
+      return Object.freeze({ ...state.history, [stack]: pstackPush(null, entry) });
+    };
+    // Chunk 1 starts at resident offset 8, anchored position 0 with key 0.
+    const loaded = () => {
+      const s = makeStore();
+      load(s, 0);
+      load(s, 1);
+      return s.getSnapshot();
+    };
+
+    it("refuses a redo that deletes the chunk's first bytes", () => {
+      const state = loaded();
+      const history = withStack(state, "redoStack", makeDeleteChange(0, "BB", 0));
+      expect(historyForEviction(state.pieceTable, history, 1, 8)).toBeNull();
+    });
+
+    it("refuses an undo that removes the chunk's first bytes", () => {
+      const state = loaded();
+      const history = withStack(state, "undoStack", makeInsertChange(0, "BB", 0));
+      expect(historyForEviction(state.pieceTable, history, 1, 8)).toBeNull();
+    });
+
+    it("refuses a delete keyed to the chunk that reaches into it", () => {
+      const state = loaded();
+      // Starts 2 bytes before the chunk, as text inserted there with key 0 would.
+      const history = withStack(state, "redoStack", makeDeleteChange(-2, "xxBB", 0));
+      expect(historyForEviction(state.pieceTable, history, 1, 8)).toBeNull();
+    });
+
+    it("allows changes at the start that leave the chunk's bytes alone", () => {
+      const state = loaded();
+      for (const [stack, change] of [
+        ["redoStack", makeInsertChange(0, "BB", 0)],
+        ["undoStack", makeDeleteChange(0, "BB", 0)],
+        ["redoStack", makeDeleteChange(-2, "xx", 0)],
+      ] as const) {
+        const history = withStack(state, stack, change);
+        expect(historyForEviction(state.pieceTable, history, 1, 8)).toBe(history);
+      }
+    });
+  });
+
+  it("keeps a cursor's chunk side when the editor reorders the ranges", () => {
+    const s = makeStore(3);
+    for (let i = 0; i < 3; i++) load(s, i);
+    s.dispatch(
+      DocumentActions.setSelection([
+        { anchor: byteOffset(16), head: byteOffset(16) },
+        { anchor: byteOffset(2), head: byteOffset(4) },
+      ]),
+    );
+    s.dispatch(DocumentActions.evictChunk(1));
+    expect(s.getSnapshot().selection.ranges[0]).toMatchObject({ head: 8, headAfterChunk: 1 });
+    // The editor echoes the ranges back in the other order, as plain offsets.
+    s.dispatch(
+      DocumentActions.setSelection([
+        { anchor: byteOffset(2), head: byteOffset(4) },
+        { anchor: byteOffset(8), head: byteOffset(8) },
+      ]),
+    );
+    expect(s.getSnapshot().selection.ranges[1]).toMatchObject({ head: 8, headAfterChunk: 1 });
+    load(s, 1);
+    expect(s.getSnapshot().selection.ranges[1]).toMatchObject({ anchor: 16, head: 16 });
+  });
+
+  it("keeps an endpoint's chunk side when a range turns around", () => {
+    const s = makeStore(3);
+    for (let i = 0; i < 3; i++) load(s, i);
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(4), head: byteOffset(16) }]));
+    s.dispatch(DocumentActions.evictChunk(1));
+    const range = s.getSnapshot().selection.ranges[0]!;
+    expect(range).toMatchObject({ anchor: 4, head: 8 });
+    // The far side of chunk 1, which the document alone would not give a
+    // range end at offset 8.
+    const side = range.headAfterChunk;
+    expect(side).toBe(1);
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(8), head: byteOffset(4) }]));
+    expect(s.getSnapshot().selection.ranges[0]!.anchorAfterChunk).toBe(side);
+    load(s, 1);
+    expect(cursor(s)).toEqual({ anchor: 16, head: 4 });
+  });
+
+  describe("a cursor clamped onto a long run of continuation bytes", () => {
+    const SIZE = 400;
+    const store = (chunks: Uint8Array[]) => {
+      const s = createDocumentStore({
+        chunkSize: SIZE,
+        totalFileSize: SIZE * chunks.length,
+        reconcileMode: "none",
+      });
+      chunks.forEach((chunk, i) => s.dispatch(DocumentActions.loadChunk(i, chunk)));
+      // A cursor inside chunk 1, which then goes.
+      s.dispatch(
+        DocumentActions.setSelection([{ anchor: byteOffset(500), head: byteOffset(500) }]),
+      );
+      s.dispatch(DocumentActions.evictChunk(1));
+      return s;
+    };
+    const fill = (length: number, byte: number) => new Uint8Array(length).fill(byte);
+    const join = (...parts: Uint8Array[]) => {
+      const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+      let at = 0;
+      for (const part of parts) {
+        out.set(part, at);
+        at += part.length;
+      }
+      return out;
+    };
+    const filler = fill(SIZE, 0x42);
+
+    it("moves to the nearer end of the run, here the one before it", () => {
+      const s = store([
+        join(fill(SIZE - 1, 0x41), enc("\n")),
+        filler,
+        join(fill(300, 0x80), fill(SIZE - 300, 0x43)),
+      ]);
+      expect(cursor(s)).toEqual({ anchor: SIZE - 1, head: SIZE - 1 });
+    });
+
+    it("moves to the nearer end of the run, here the one after it", () => {
+      const s = store([
+        join(fill(10, 0x41), fill(SIZE - 10, 0x80)),
+        filler,
+        join(fill(300, 0x80), fill(SIZE - 300, 0x43)),
+      ]);
+      expect(cursor(s)).toEqual({ anchor: SIZE + 300, head: SIZE + 300 });
+    });
   });
 });

@@ -45,8 +45,12 @@ export interface ContentChangeEvent extends DocumentEvent {
 
 /**
  * Fired when selection changes: on SET_SELECTION, and whenever another action
- * replaces the selection, such as UNDO or REDO restoring it, an edit carrying
- * an inline selection, or LOAD_CHUNK, LOAD_CHUNKS, or EVICT_CHUNK moving it.
+ * replaces the selection, such as UNDO or REDO restoring it, or LOAD_CHUNK,
+ * LOAD_CHUNKS, or EVICT_CHUNK moving it.
+ *
+ * INSERT, DELETE, and REPLACE do not fire it, even with an inline selection.
+ * That selection is the one the caller sent and describes the document before
+ * the edit. Place the caret after an edit from 'content-change' instead.
  */
 export interface SelectionChangeEvent extends DocumentEvent {
   readonly type: "selection-change";

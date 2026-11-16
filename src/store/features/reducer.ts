@@ -17,7 +17,12 @@ import {
   applyUntrackedEdit,
 } from "./edit.js";
 import { historyUndo, historyRedo } from "./history.js";
-import { selectionRangesWithKeys } from "./history-anchor.js";
+import {
+  hasStoredKeys,
+  insertionKey,
+  selectionAfterEdit,
+  selectionRangesWithKeys,
+} from "./history-anchor.js";
 import { createPoint, createAttention, deleteAttention } from "../core/attention.js";
 import { declareChunkMetadata, evictChunk, loadChunk, loadChunks } from "./chunk-actions.js";
 
@@ -199,6 +204,9 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       const nextRevision = state.revision + 1;
       let newState = state;
       let didApplyChange = false;
+      // The local selection, with its offsets moved past each change applied so
+      // far, while it stores a placement key a remote insert could take.
+      let keyed: SelectionState | null = hasStoredKeys(state.selection) ? state.selection : null;
       for (const change of action.changes) {
         if (change.type === "insert" && change.text.length > 0) {
           // Normalize line endings on remote inserts the same way local inserts are treated,
@@ -213,11 +221,22 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
             change.start,
             "APPLY_REMOTE insert start",
           );
+          // A remote offset cannot say which side of an unloaded chunk it is
+          // on. Text inserted at the local cursor goes where the cursor is, as
+          // local typing would, which keeps remote text typed into a document
+          // with every chunk evicted where the cursor was in the file.
+          const afterChunk =
+            keyed !== null ? insertionKey(newState.pieceTable, keyed, position) : undefined;
+          const before = newState.pieceTable.totalLength;
           newState = applyUntrackedEdit(
             newState,
-            { kind: "insert", position, insertText },
+            { kind: "insert", position, insertText, afterChunk },
             nextRevision,
           );
+          if (keyed !== null) {
+            const inserted = newState.pieceTable.totalLength - before;
+            keyed = selectionAfterEdit(keyed, position, position, inserted);
+          }
         } else if (change.type === "delete" && change.length > 0) {
           const { start, end, valid } = validateRange(
             change.start,
@@ -234,6 +253,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
             { kind: "delete", position: start, deleteEnd: end, deletedText },
             nextRevision,
           );
+          if (keyed !== null) keyed = selectionAfterEdit(keyed, start, end, 0);
         }
       }
       if (!didApplyChange) {

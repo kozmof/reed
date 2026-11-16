@@ -27,10 +27,11 @@ import {
   gapKey,
   keyFitsAt,
   keySpan,
+  placementKey,
   toAnchoredOffset,
   toResidentOffset,
 } from "../core/chunk-anchor.js";
-import { isUtf8Boundary } from "../core/piece-table.js";
+import { getBytes, isUtf8Boundary } from "../core/piece-table.js";
 import {
   forEachHistoryChange,
   someHistoryChange,
@@ -85,26 +86,11 @@ function endpointSides(anchor: number, head: number): readonly [GapSide, GapSide
 }
 
 /**
- * The placement key of a selection endpoint at resident `offset`: `stored`
- * when it is a key text at `offset` could take, else the key of the gap on
- * `side`. A stored key records the side of an unloaded chunk the endpoint is
- * on, which the offset cannot say (see `SelectionRange.anchorAfterChunk`).
- */
-function endpointKey(
-  pieceTable: PieceTableState,
-  offset: number,
-  stored: number | undefined,
-  side: GapSide,
-): number {
-  if (pieceTable.nextExpectedChunk === 0) return NO_CHUNK;
-  if (stored !== undefined && keyFitsAt(pieceTable, offset, stored)) return stored;
-  return gapKey(pieceTable.root, offset, side);
-}
-
-/**
  * A frozen live range with offsets `anchor` and `head`. Each key is stored
  * only when it fits its offset and differs from the key the document gives
- * that endpoint, so a range carries keys only next to an unloaded chunk.
+ * that endpoint, so a range carries keys only next to an unloaded chunk. A
+ * stored key records the side of an unloaded chunk the endpoint is on, which
+ * the offset cannot say (see `SelectionRange.anchorAfterChunk`).
  */
 export function selectionRange(
   pieceTable: PieceTableState,
@@ -138,8 +124,10 @@ export function selectionRange(
  * Next to an unloaded chunk, only the stored key knows which side of the chunk
  * an endpoint is on. An editor that echoes the selection back as plain offsets
  * would otherwise lose that side. Each range keeps the keys it brings. A range
- * without keys whose offsets equal the range at the same index in `previous`
- * takes that range's keys. Other ranges take the keys their shape calls for.
+ * without keys takes the keys of a range in `previous` with the same offsets,
+ * wherever it sits in the list, so reordering, adding, or removing ranges
+ * keeps them. A range with its anchor and head swapped takes them swapped.
+ * Other ranges take the keys their shape calls for.
  */
 export function selectionRangesWithKeys(
   pieceTable: PieceTableState,
@@ -147,21 +135,67 @@ export function selectionRangesWithKeys(
   ranges: readonly SelectionRange[],
   validate: (offset: number, endpoint: "anchor" | "head") => ByteOffset,
 ): NonEmptyReadonlyArray<SelectionRange> {
+  const findPrevious = previousRangeLookup(pieceTable, previous);
   return Object.freeze(
     ranges.map((range, i) => {
       const anchor = validate(range.anchor, "anchor");
       const head = validate(range.head, "head");
-      const old = previous.ranges[i];
-      const same = old !== undefined && old.anchor === anchor && old.head === head;
+      const old =
+        range.anchorAfterChunk === undefined || range.headAfterChunk === undefined
+          ? findPrevious(i, anchor, head)
+          : undefined;
       return selectionRange(
         pieceTable,
         anchor,
         head,
-        range.anchorAfterChunk ?? (same ? old.anchorAfterChunk : undefined),
-        range.headAfterChunk ?? (same ? old.headAfterChunk : undefined),
+        range.anchorAfterChunk ?? old?.anchorKey,
+        range.headAfterChunk ?? old?.headKey,
       );
     }),
   ) as unknown as NonEmptyReadonlyArray<SelectionRange>;
+}
+
+/** Stored keys of a previous range, oriented to the range that takes them. */
+interface PreviousKeys {
+  readonly anchorKey: number | undefined;
+  readonly headKey: number | undefined;
+}
+
+/**
+ * Look up the keys of the range in `previous` with given offsets: the range at
+ * the same index first, so duplicate ranges pair up in order, then any range
+ * with those offsets, then any with them swapped. Only ranges that store a key
+ * are indexed, and the index is built on the first miss at the same index, so
+ * a selection echoed back unchanged costs O(1) per range.
+ */
+function previousRangeLookup(
+  pieceTable: PieceTableState,
+  previous: SelectionState,
+): (index: number, anchor: number, head: number) => PreviousKeys | undefined {
+  const keysOf = (range: SelectionRange, swapped: boolean): PreviousKeys =>
+    swapped
+      ? { anchorKey: range.headAfterChunk, headKey: range.anchorAfterChunk }
+      : { anchorKey: range.anchorAfterChunk, headKey: range.headAfterChunk };
+  let byOffsets: Map<string, SelectionRange> | undefined;
+  return (index, anchor, head) => {
+    if (pieceTable.nextExpectedChunk === 0) return undefined;
+    const same = previous.ranges[index];
+    if (same !== undefined && same.anchor === anchor && same.head === head) {
+      return keysOf(same, false);
+    }
+    if (byOffsets === undefined) {
+      byOffsets = new Map();
+      for (const range of previous.ranges) {
+        const id = `${range.anchor}:${range.head}`;
+        if (rangeHasKey(range) && !byOffsets.has(id)) byOffsets.set(id, range);
+      }
+    }
+    if (byOffsets.size === 0) return undefined;
+    const direct = byOffsets.get(`${anchor}:${head}`);
+    if (direct !== undefined) return keysOf(direct, false);
+    const swapped = byOffsets.get(`${head}:${anchor}`);
+    return swapped !== undefined ? keysOf(swapped, true) : undefined;
+  };
 }
 
 /**
@@ -191,7 +225,47 @@ export function insertionKey(
   for (let i = 0; key === undefined && i < selection.ranges.length; i++) {
     key = keyOf(selection.ranges[i]);
   }
-  return key ?? gapKey(pieceTable.root, offset, "before");
+  return key ?? placementKey(pieceTable, offset, undefined, "before");
+}
+
+/** True when an endpoint of `range` stores a placement key. */
+function rangeHasKey(range: SelectionRange): boolean {
+  return range.anchorAfterChunk !== undefined || range.headAfterChunk !== undefined;
+}
+
+/** True when an endpoint of `selection` stores a placement key. */
+export function hasStoredKeys(selection: SelectionState): boolean {
+  return selection.ranges.some(rangeHasKey);
+}
+
+/**
+ * `selection` with its offsets moved past an edit that replaced [start, end)
+ * with `inserted` bytes. Stored keys are kept as they are: `insertionKey`
+ * checks each against the edited document before using it.
+ *
+ * An endpoint at `start` stays there, before the inserted text, and one inside
+ * the removed range moves to `start`. APPLY_REMOTE uses this to look up the
+ * local cursor's keys while a batch of changes applies, without moving the
+ * selection the document holds.
+ */
+export function selectionAfterEdit(
+  selection: SelectionState,
+  start: number,
+  end: number,
+  inserted: number,
+): SelectionState {
+  const move = (offset: ByteOffset): ByteOffset =>
+    offset >= end && offset > start
+      ? byteOffset(offset - (end - start) + inserted)
+      : offset > start
+        ? byteOffset(start)
+        : offset;
+  return freezeSelection(
+    selection.ranges.map((range) =>
+      Object.freeze({ ...range, anchor: move(range.anchor), head: move(range.head) }),
+    ),
+    selection.primaryIndex,
+  );
 }
 
 // =============================================================================
@@ -234,8 +308,8 @@ export function anchorSelection(
   return freezeSelection(
     selection.ranges.map((range): HistorySelectionRange => {
       const [anchorSide, headSide] = endpointSides(range.anchor, range.head);
-      const anchorKey = endpointKey(pieceTable, range.anchor, range.anchorAfterChunk, anchorSide);
-      const headKey = endpointKey(pieceTable, range.head, range.headAfterChunk, headSide);
+      const anchorKey = placementKey(pieceTable, range.anchor, range.anchorAfterChunk, anchorSide);
+      const headKey = placementKey(pieceTable, range.head, range.headAfterChunk, headSide);
       return Object.freeze({
         anchor: toAnchoredOffset(pieceTable, anchorKey, range.anchor),
         head: toAnchoredOffset(pieceTable, headKey, range.head),
@@ -262,19 +336,72 @@ export function anchoredCursor(key: number, position: number): HistorySelectionS
   );
 }
 
+/** Bytes a UTF-8 lead byte can own after it. */
+const MAX_CONTINUATION_BYTES = 3;
+/** Bytes read at a time while scanning a long run of continuation bytes. */
+const SCAN_BLOCK = 256;
+
+function isContinuation(byte: number): boolean {
+  return (byte & 0xc0) === 0x80;
+}
+
 /**
- * The first UTF-8 code-point boundary at or after `offset`.
+ * The UTF-8 code-point boundary a position clamped to `offset` moves to.
  *
  * Evicting a chunk can leave the bytes of a character split across its edge
- * behind, as continuation bytes with no lead byte. A position clamped to where
- * the chunk was can land on one, and edits and SET_SELECTION reject such a
- * position. Those bytes belonged to the evicted character, so step past them.
- * The end of the document is always a boundary.
+ * behind, as up to three continuation bytes with no lead byte. A position
+ * clamped to where the chunk was can land on one, and edits and SET_SELECTION
+ * reject such a position. Those bytes belonged to the evicted character, so
+ * step past them. The end of the document is always a boundary.
+ *
+ * A longer run of continuation bytes is malformed text of the document itself,
+ * not leftovers, and no position inside it is a boundary. The position then
+ * moves to the nearer end of the run, the one after it on a tie, so it stays
+ * as close as it can to where the chunk was. The run is read a block at a
+ * time: O(log n) for leftovers, O(k + (k / SCAN_BLOCK) log n) for a run of k.
  */
 function nextBoundary(pieceTable: PieceTableState, offset: number): number {
-  let position = offset;
-  while (!isUtf8Boundary(pieceTable, byteOffset(position))) position++;
-  return position;
+  if (isUtf8Boundary(pieceTable, byteOffset(offset))) return offset;
+  // `offset` is inside the document, on a continuation byte.
+  const total = pieceTable.totalLength;
+  const leftovers = getBytes(
+    pieceTable,
+    byteOffset(offset + 1),
+    byteOffset(offset + 1 + MAX_CONTINUATION_BYTES),
+  );
+  for (let i = 0; i < leftovers.length; i++) {
+    if (!isContinuation(leftovers[i]!)) return offset + 1 + i;
+  }
+  if (offset + 1 + leftovers.length >= total) return total;
+
+  // Scan both ways until the nearer end of the run is known. `ahead` is the
+  // first position not yet read after `offset`, `behind` the first byte read
+  // before it. Every byte read so far is a continuation byte.
+  let ahead = offset + 1 + MAX_CONTINUATION_BYTES;
+  let behind = offset;
+  let after: number | undefined;
+  let before: number | undefined;
+  for (;;) {
+    if (after === undefined) {
+      const block = getBytes(pieceTable, byteOffset(ahead), byteOffset(ahead + SCAN_BLOCK));
+      const i = block.findIndex((byte) => !isContinuation(byte));
+      if (i >= 0) after = ahead + i;
+      else if ((ahead += block.length) >= total) after = total;
+    }
+    if (before === undefined) {
+      const from = Math.max(0, behind - SCAN_BLOCK);
+      const block = getBytes(pieceTable, byteOffset(from), byteOffset(behind));
+      let i = block.length - 1;
+      while (i >= 0 && isContinuation(block[i]!)) i--;
+      if (i >= 0) before = from + i;
+      else if ((behind = from) === 0) before = 0;
+    }
+    // An end not found yet is at least as far as the bytes read on its side.
+    const afterDistance = after !== undefined ? after - offset : ahead - offset;
+    const beforeDistance = before !== undefined ? offset - before : offset - behind + 1;
+    if (after !== undefined && afterDistance <= beforeDistance) return after;
+    if (before !== undefined && beforeDistance < afterDistance) return before;
+  }
 }
 
 /**
@@ -462,14 +589,35 @@ interface ChunkTrack {
  *
  * A change keyed below `key` lies wholly before the chunk, and one keyed above
  * it wholly after. A change keyed `key` lies before the chunk when its position
- * is at or before the chunk's start. Past that start it resolves by counting
- * the chunk's bytes, which eviction removes.
+ * is at or before the chunk's start and it removes nothing from the start on.
+ * Past that start it resolves by counting the chunk's bytes, which eviction
+ * removes. A change that removes bytes from the start on removes the chunk's
+ * own bytes, which only a loaded chunk has.
  */
 function changeInsideChunk(change: HistoryChange, track: ChunkTrack): boolean {
   if (change.afterChunk > track.key) return false;
-  if (change.afterChunk === track.key && change.position > track.start) return true;
+  if (change.afterChunk === track.key) {
+    if (change.position > track.start) return true;
+    const removed = removedLength(change, track.direction);
+    if (removed > 0 && change.position + removed > track.start) return true;
+  }
   track.start += track.direction * changeDelta(change);
   return false;
+}
+
+/**
+ * Bytes `change` removes when replayed in `direction`: when redone, what it
+ * deleted; when undone, what it inserted.
+ */
+function removedLength(change: HistoryChange, direction: 1 | -1): number {
+  switch (change.type) {
+    case "insert":
+      return direction < 0 ? change.byteLength : 0;
+    case "delete":
+      return direction > 0 ? change.byteLength : 0;
+    case "replace":
+      return direction > 0 ? change.oldByteLength : change.byteLength;
+  }
 }
 
 /**

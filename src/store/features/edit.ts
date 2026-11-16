@@ -49,7 +49,7 @@ import {
   repairLineIndexWindow,
 } from "../core/line-index.js";
 import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
-import { encodesTo, textDecoder, utf8ByteLength } from "../core/encoding.js";
+import { contentDecoder, encodesTo, utf8ByteLength } from "../core/encoding.js";
 import { NO_CHUNK, placementRuns } from "../core/chunk-anchor.js";
 import type { KeyRun } from "../core/chunk-anchor.js";
 import {
@@ -160,11 +160,15 @@ export function pieceTableDelete(
 }
 
 /**
- * Get text in a range from the piece table.
- * Used for capturing deleted text for undo.
+ * Get text in a range from the piece table, as the edit pipeline counts it.
+ * Used for capturing deleted text for undo and for the line-index update.
+ *
+ * A U+FEFF at the start of the range is kept (see `contentDecoder`). The line
+ * index counts it as a character, so deleted text without it would leave the
+ * line one character too long, and undo could not restore it from the text.
  */
 export function getTextRange(state: DocumentState, start: ByteOffset, end: ByteOffset): string {
-  return getText(state.pieceTable, start, end);
+  return contentDecoder.decode(getBytes(state.pieceTable, start, end));
 }
 
 // =============================================================================
@@ -286,11 +290,12 @@ function selectionAfterChange(change: HistoryChange): HistorySelectionState {
  * changes it contains (e.g., the tail of a batched transaction). The earlier
  * changes are preserved in the merged entry by historyPush.
  *
- * Positions are compared as resident offsets. Chunks may have been loaded
- * between the two edits, which changes resident offsets but not anchors.
+ * Only changes with the same placement key merge, and two anchored positions
+ * with the same key differ by exactly what their resident offsets differ by,
+ * even when chunks loaded between the edits. So anchored positions compare
+ * directly.
  */
 function canCoalesce(
-  pieceTable: PieceTableState,
   lastEntry: HistoryEntry,
   newChange: HistoryChange,
   timeout: number,
@@ -307,8 +312,8 @@ function canCoalesce(
   // A merged change re-inserts all its text with one placement key, so only
   // changes with the same key merge (see `placementRuns`).
   if (last.afterChunk !== newChange.afterChunk) return false;
-  const lastPosition = residentOffset(pieceTable, last);
-  const newPosition = residentOffset(pieceTable, newChange);
+  const lastPosition = last.position;
+  const newPosition = newChange.position;
 
   switch (newChange.type) {
     case "insert":
@@ -330,11 +335,7 @@ function canCoalesce(
  * Merge two changes into a single coalesced change.
  * Assumes canCoalesce() returned true for these changes.
  */
-function coalesceChanges(
-  pieceTable: PieceTableState,
-  existing: HistoryChange,
-  incoming: HistoryChange,
-): HistoryChange {
+function coalesceChanges(existing: HistoryChange, incoming: HistoryChange): HistoryChange {
   switch (incoming.type) {
     case "insert": {
       // Append the text and keep the earlier position.
@@ -347,10 +348,9 @@ function coalesceChanges(
       });
     }
     case "delete": {
-      if (
-        residentOffset(pieceTable, incoming) + incoming.byteLength ===
-        residentOffset(pieceTable, existing)
-      ) {
+      // canCoalesce() checked that both changes share a placement key, so
+      // their anchored positions compare directly.
+      if (incoming.position + incoming.byteLength === existing.position) {
         // Prepend backspaced text and use the earlier position.
         return Object.freeze({
           type: "delete" as const,
@@ -436,7 +436,7 @@ function deletedRuns(
   const all = getBytes(pieceTable, byteOffset(base), byteOffset(runs[runs.length - 1]!.end));
   return runs.map((run) => {
     const raw = all.subarray(run.start - base, run.end - base);
-    const text = textDecoder.decode(raw);
+    const text = contentDecoder.decode(raw);
     const length = run.end - run.start;
     return isExactDecoding(text, length) || encodesTo(text, raw)
       ? { text, length }
@@ -525,11 +525,11 @@ export function historyPush(
   if (
     changes.length === 1 &&
     lastEntry &&
-    canCoalesce(state.pieceTable, lastEntry, change, history.coalesceTimeout, now)
+    canCoalesce(lastEntry, change, history.coalesceTimeout, now)
   ) {
     // canCoalesce returning true guarantees a non-empty changes list.
     const lastChange = lastHistoryChange(lastEntry)!;
-    const merged = coalesceChanges(state.pieceTable, lastChange, change);
+    const merged = coalesceChanges(lastChange, change);
     const base = coalescedTails.get(lastEntry)?.base ?? lastEntry.changes;
     let materialized: readonly HistoryChange[] | undefined;
     // Preserve the array API while keeping repeated tail updates constant-space.
@@ -653,6 +653,7 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
           afterChunk: change.afterChunk,
         },
         state.revision + 1,
+        true,
       );
     case "delete":
       return applyUntrackedEdit(
@@ -665,6 +666,7 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
           ...(change.bytes !== undefined && { deletedTextInexact: true }),
         },
         state.revision + 1,
+        true,
       );
     case "replace":
       return applyUntrackedEdit(
@@ -680,6 +682,7 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
           afterChunk: change.afterChunk,
         },
         state.revision + 1,
+        true,
       );
   }
 }
@@ -742,11 +745,16 @@ export type EditOperation = StructuralEditOperation & {
  * cannot drift into separate implementations. `revision` is the revision that
  * owns the resulting dirty ranges. The caller commits it after composing any
  * additional structural edits.
+ *
+ * `replay` is true when undo or redo applies a recorded change. Only then can
+ * an edge of the edit cut a character (see `splitsCharacter`): the reducer
+ * checks that every live edge, local or remote, is a code-point boundary.
  */
 export function applyUntrackedEdit(
   state: DocumentState,
   op: StructuralEditOperation,
   revision: number,
+  replay = false,
 ): DocumentState {
   const strategy = lazyStrategy(revision);
   let newState = state;
@@ -763,7 +771,7 @@ export function applyUntrackedEdit(
     (op.kind !== "insert" &&
       (op.deletedTextInexact === true ||
         shouldRebuildLineIndexForDelete(op.deletedText, deleteContext))) ||
-    splitsCharacter(state.pieceTable, op);
+    (replay && splitsCharacter(state.pieceTable, op));
 
   if (op.kind !== "insert") {
     if (needsRebuild) {
@@ -783,12 +791,8 @@ export function applyUntrackedEdit(
 
   const insertContent = insertBytes ?? (op.kind !== "delete" ? op.insertText : "");
   if (op.kind !== "delete" && insertContent.length > 0) {
-    // Without a key from the caller, take the one a cursor there holds (see
-    // `insertionKey`), so remote text typed into an empty document stays
-    // where the cursor was in the file.
-    const afterChunk =
-      op.afterChunk ?? insertionKey(newState.pieceTable, state.selection, op.position);
-    const result = pieceTableInsert(newState, op.position, insertContent, afterChunk);
+    // Without a key from the caller, the text takes the gap's key.
+    const result = pieceTableInsert(newState, op.position, insertContent, op.afterChunk);
     newState = result.state;
     if (!needsRebuild) {
       const readText = pieceTableReader(newState.pieceTable);
@@ -805,11 +809,12 @@ export function applyUntrackedEdit(
   const deleteEnd = op.kind === "insert" ? op.position : op.deleteEnd;
   const insertedLength =
     newState.pieceTable.totalLength - state.pieceTable.totalLength + (deleteEnd - op.position);
-  // The edit can also join characters across its edges in the edited document.
-  // The fast update above is then wrong, so repair from the original index.
+  // A replayed edit can also join characters across its edges in the edited
+  // document. The fast update above is then wrong, so repair from the original
+  // index.
   if (
     needsRebuild ||
-    splitsCharacterAfter(newState.pieceTable, op.position, op.position + insertedLength)
+    (replay && splitsCharacterAfter(newState.pieceTable, op.position, op.position + insertedLength))
   ) {
     const window = codePointWindow(newState.pieceTable, op.position, deleteEnd, insertedLength);
     return withState(newState, {
@@ -984,8 +989,7 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   // load or evict chunks, so the post-edit chunk layout resolves them the same way.
   const anchor = anchorAt(pieceTable, insertKey, op.position);
   // Deleted text as undo re-inserts it. Decoding replaces malformed bytes with
-  // U+FFFD and drops a leading byte order mark, so the text can encode to
-  // different bytes than were deleted. Bytes at the edge of an unloaded chunk
+  // U+FFFD, so the text can encode to different bytes than were deleted. Bytes at the edge of an unloaded chunk
   // are often an incomplete character. When the text does not encode back to
   // the deleted bytes, history keeps the exact bytes, so undo restores the
   // document byte for byte and every recorded position stays valid.

@@ -22,6 +22,7 @@
 
 import type { PieceNode, PieceTableState } from "../../types/state.js";
 import { lastPiece, pieceAt } from "./piece-search.js";
+import { avlHeight, avlPut, avlRemove } from "./persistent-avl.js";
 
 /** Key for positions before every chunk, and for every position without chunking. */
 export const NO_CHUNK = -1;
@@ -123,13 +124,36 @@ export function keySpan(root: PieceNode | null, key: number): { start: number; e
  * True when `key` is a placement key text inserted at resident `offset` could
  * take: every byte before the offset has a key at or below it, every byte after
  * has a key at or above it, and it names no chunk that has never loaded. O(log n).
+ *
+ * This is the one rule for whether a stored key still applies at an offset.
+ * Inserted text, selection endpoints, and history anchors all check keys here.
  */
 export function keyFitsAt(pieceTable: PieceTableState, offset: number, key: number): boolean {
+  // Before any chunk loads, NO_CHUNK is the only key and fits everywhere.
+  if (pieceTable.nextExpectedChunk === 0) {
+    return key === NO_CHUNK && offset >= 0 && offset <= pieceTable.totalLength;
+  }
   if (!Number.isSafeInteger(key) || key < NO_CHUNK || key >= pieceTable.nextExpectedChunk) {
     return false;
   }
   const { start, end } = keySpan(pieceTable.root, key);
   return start <= offset && offset <= end;
+}
+
+/**
+ * The placement key of a position at resident `offset`: `stored` when it fits
+ * there (see `keyFitsAt`), else the key of the gap on `side` (see `gapKey`).
+ * Before any chunk loads, every key is NO_CHUNK. O(log n).
+ */
+export function placementKey(
+  pieceTable: PieceTableState,
+  offset: number,
+  stored: number | undefined,
+  side: GapSide,
+): number {
+  if (pieceTable.nextExpectedChunk === 0) return NO_CHUNK;
+  if (stored !== undefined && keyFitsAt(pieceTable, offset, stored)) return stored;
+  return gapKey(pieceTable.root, offset, side);
 }
 
 // =============================================================================
@@ -183,8 +207,10 @@ export function prefixLengthAtOrBelow(table: LoadedPrefix, key: number): number 
  * table over every loaded chunk.
  */
 interface LoadedNode {
-  readonly index: number;
-  readonly length: number;
+  /** Chunk index. */
+  readonly key: number;
+  /** Original length of the chunk. */
+  readonly value: number;
   readonly left: LoadedNode | null;
   readonly right: LoadedNode | null;
   readonly height: number;
@@ -198,78 +224,21 @@ function loadedNode(
   right: LoadedNode | null,
 ): LoadedNode {
   return {
-    index,
-    length,
+    key: index,
+    value: length,
     left,
     right,
-    height: 1 + Math.max(left?.height ?? 0, right?.height ?? 0),
+    height: avlHeight(left, right),
     sum: length + (left?.sum ?? 0) + (right?.sum ?? 0),
   };
 }
 
-function balanceLoaded(
-  index: number,
-  length: number,
-  left: LoadedNode | null,
-  right: LoadedNode | null,
-): LoadedNode {
-  const lh = left?.height ?? 0;
-  const rh = right?.height ?? 0;
-  if (lh > rh + 1) {
-    const l = left!;
-    if ((l.left?.height ?? 0) >= (l.right?.height ?? 0)) {
-      return loadedNode(l.index, l.length, l.left, loadedNode(index, length, l.right, right));
-    }
-    const m = l.right!;
-    return loadedNode(
-      m.index,
-      m.length,
-      loadedNode(l.index, l.length, l.left, m.left),
-      loadedNode(index, length, m.right, right),
-    );
-  }
-  if (rh > lh + 1) {
-    const r = right!;
-    if ((r.right?.height ?? 0) >= (r.left?.height ?? 0)) {
-      return loadedNode(r.index, r.length, loadedNode(index, length, left, r.left), r.right);
-    }
-    const m = r.left!;
-    return loadedNode(
-      m.index,
-      m.length,
-      loadedNode(index, length, left, m.left),
-      loadedNode(r.index, r.length, m.right, r.right),
-    );
-  }
-  return loadedNode(index, length, left, right);
-}
-
 function putLoaded(node: LoadedNode | null, index: number, length: number): LoadedNode {
-  if (node === null) return loadedNode(index, length, null, null);
-  if (index === node.index) return loadedNode(index, length, node.left, node.right);
-  return index < node.index
-    ? balanceLoaded(node.index, node.length, putLoaded(node.left, index, length), node.right)
-    : balanceLoaded(node.index, node.length, node.left, putLoaded(node.right, index, length));
+  return avlPut<number, number, LoadedNode>(loadedNode, node, index, length);
 }
 
 function removeLoaded(node: LoadedNode | null, index: number): LoadedNode | null {
-  if (node === null) return null;
-  if (index < node.index) {
-    return balanceLoaded(node.index, node.length, removeLoaded(node.left, index), node.right);
-  }
-  if (index > node.index) {
-    return balanceLoaded(node.index, node.length, node.left, removeLoaded(node.right, index));
-  }
-  if (node.left === null) return node.right;
-  if (node.right === null) return node.left;
-  let successor = node.right;
-  while (successor.left !== null) successor = successor.left;
-  return balanceLoaded(
-    successor.index,
-    successor.length,
-    node.left,
-    removeLoaded(node.right, successor.index),
-  );
+  return avlRemove<number, number, LoadedNode>(loadedNode, node, index);
 }
 
 /** Total length of the loaded chunks with index <= key. O(log L). */
@@ -277,8 +246,8 @@ function loadedSumAtOrBelow(root: LoadedNode | null, key: number): number {
   let sum = 0;
   let node = root;
   while (node !== null) {
-    if (node.index <= key) {
-      sum += node.length + (node.left?.sum ?? 0);
+    if (node.key <= key) {
+      sum += node.value + (node.left?.sum ?? 0);
       node = node.right;
     } else {
       node = node.left;

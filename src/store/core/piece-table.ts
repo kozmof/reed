@@ -542,13 +542,6 @@ export interface PieceTableInsertResult {
   splits: readonly SplitRecord[];
 }
 
-/** True when text inserted at `position` can take placement key `key`. */
-function insertKeyFits(state: PieceTableState, position: number, key: number): boolean {
-  // Before any chunk loads, NO_CHUNK is the only key.
-  if (state.nextExpectedChunk === 0) return key === NO_CHUNK;
-  return keyFitsAt(state, position, key);
-}
-
 /**
  * Insert text into the piece table at the given position.
  * Returns the new state and the UTF-8 byte length of the inserted text.
@@ -589,7 +582,7 @@ export function pieceTableInsert(
   const addBuffer = state.addBuffer.append(textBytes);
 
   const givenKey =
-    afterChunk !== undefined && insertKeyFits(state, position, afterChunk) ? afterChunk : undefined;
+    afterChunk !== undefined && keyFitsAt(state, position, afterChunk) ? afterChunk : undefined;
 
   // Handle empty tree
   if (state.root === null) {

@@ -6,6 +6,14 @@
 export const textEncoder = new TextEncoder();
 export const textDecoder = new TextDecoder();
 
+/**
+ * Decodes a range of document bytes the way the document counts them.
+ * Malformed bytes become U+FFFD as with `textDecoder`, but a leading U+FEFF is
+ * kept. The document treats U+FEFF as content wherever it appears, while
+ * `textDecoder` drops it at the start of its input as a byte order mark.
+ */
+export const contentDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
+
 // Rejects malformed input and keeps a leading byte order mark, so it decodes
 // exactly the byte sequences that `textEncoder` produces.
 const exactDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
