@@ -57,6 +57,7 @@ Version 2 adds chunk placement keys and anchored history positions:
 
 - An add piece tuple may carry a fifth element, its placement key (`afterChunk`). It is omitted when the key is `-1`.
 - A history change tuple ends with its placement key, omitted when `-1`. Its position is an anchored position and may be negative.
+- A history change may carry the exact bytes undo restores, as base64 after the placement key: `["i" | "d", position, text, afterChunk, bytes]` or `["r", position, text, oldText, afterChunk, bytes | null, oldBytes]`. They are present only when the text does not encode back to those bytes (malformed UTF-8 or a byte order mark), and the key is then written even when `-1`. Restore takes the byte length from them and counts them toward the decoded-bytes limit.
 - Restore checks every history placement key against the loaded chunks: it must be at most `nextExpectedChunk - 1`, so `-1` without chunking. An anchored position with key `K` must be at least `-(K + 1) * chunkSize`, so positions with key `-1` are non-negative.
 - A history selection range is `[anchor, head]` or `[anchor, head, anchorAfterChunk, headAfterChunk]`.
 - `history.evictionPolicy` is `'pin'` or `'drop'`. Restore treats a missing value as `'pin'`.
@@ -223,8 +224,9 @@ store.createDocumentStoreFromCheckpoint(checkpoint, config?, restoreOptions?)
 store.createDocumentStoreWithEventsFromCheckpoint(checkpoint, config?, restoreOptions?)
 ```
 
-`isCheckpoint` checks the format, a supported version, and non-null object sections. It narrows to
-`CheckpointEnvelope`, whose section contents remain unvalidated. Pass the value to
+`isCheckpoint` checks the format, a supported version (including older versions that restore
+migrates), and non-null object sections. It narrows to
+`CheckpointEnvelope`, whose section contents remain unvalidated and may use an older layout. Pass the value to
 `restore` for full validation. Restore entry points accept `unknown` input and check
 line boundaries and UTF-16 lengths against the resident document bytes.
 

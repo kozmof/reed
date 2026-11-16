@@ -582,18 +582,23 @@ export interface PieceTableInsertResult {
  * Insert text into the piece table at the given position.
  * Returns the new state and the UTF-8 byte length of the inserted text.
  *
- * `afterChunk` defaults to the gap key at `position` (see `gapKey`).
+ * `text` may also be raw bytes, inserted as they are. History replay uses this
+ * to restore deleted bytes that do not survive decoding (see
+ * `HistoryDeleteChange.bytes`).
+ *
+ * `afterChunk` defaults to the gap key at `position` that inserted text takes
+ * (see `gapKey`).
  */
 export function pieceTableInsert(
   state: PieceTableState,
   position: ByteOffset,
-  text: string,
+  text: string | Uint8Array,
   afterChunk?: number,
 ): LinearCost<PieceTableInsertResult> {
   if (text.length === 0)
     return $proveCtx($beginCost("O(n)"), { state, insertedByteLength: 0, splits: [] });
 
-  const textBytes = textEncoder.encode(text);
+  const textBytes = typeof text === "string" ? textEncoder.encode(text) : text;
   let nextPieceID = state.nextPieceID;
   const allocatePieceID = (): PieceID => pieceID(`p${nextPieceID++}`);
 
@@ -628,16 +633,16 @@ export function pieceTableInsert(
 
   const location: LogCost<PieceLocation | null> =
     findPieceAtPosition(state.root, position) ?? $proveCtx($beginCost("O(log n)"), null);
-  // The gap key at `position` is the key of the piece holding that byte, which
-  // the lookup above already found. Only the end of the document needs gapKey.
+  // Inside a piece, the gap key is the key of the piece the lookup above
+  // already found. Only a piece boundary needs gapKey.
   const root = state.root;
   const keyAt = (resolved: PieceLocation | null): number =>
     afterChunk ??
     (state.nextExpectedChunk === 0
       ? NO_CHUNK
-      : resolved !== null
+      : resolved !== null && resolved.offsetInPiece > 0
         ? pieceKey(resolved.node)
-        : gapKey(root, position));
+        : gapKey(root, position, "before"));
 
   // Capture the split reported by the $andThen callback.
   let capturedSplit: SplitRecord | null = null;
@@ -1037,6 +1042,18 @@ export function getText(
   collectBytesInRange(state, state.root, 0, start, actualEnd, result, writeState);
 
   return $proveCtx($beginCost("O(n)"), textDecoder.decode(result.subarray(0, writeState.offset)));
+}
+
+/**
+ * Copy the raw bytes in the range [start, end), clamped to the document.
+ */
+export function getBytes(state: PieceTableState, start: ByteOffset, end: ByteOffset): Uint8Array {
+  const from = Math.max(0, start);
+  const to = Math.min(end, state.totalLength);
+  if (state.root === null || from >= to) return new Uint8Array(0);
+  const result = new Uint8Array(to - from);
+  collectBytesInRange(state, state.root, 0, from, to, result, { offset: 0 });
+  return result;
 }
 
 /**

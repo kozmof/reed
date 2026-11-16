@@ -21,6 +21,7 @@
 
 import { CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
 import { base64DecodedLength } from "../core/base64.js";
+import type { GapSide } from "../core/chunk-anchor.js";
 import { buildLoadedPrefix, flatGapKey, prefixLengthAtOrBelow } from "../core/chunk-anchor.js";
 
 /** Raw, unvalidated checkpoint wire data. */
@@ -125,9 +126,10 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
   }
   // Same prefix sums as live anchoring, so each anchor costs O(log C).
   const loaded = buildLoadedPrefix(chunkLengths);
-  const anchor = (offset: unknown): [unknown, number] => {
+  // Version 1 kept text next to the content before it, as `"before"` does.
+  const anchor = (offset: unknown, side: GapSide = "before"): [unknown, number] => {
     if (!isInt(offset)) return [offset, -1];
-    const key = gapKey(offset);
+    const key = gapKey(offset, side);
     return [offset - prefixLengthAtOrBelow(loaded, key), key];
   };
 
@@ -139,8 +141,12 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
       ...selection,
       ranges: selection.ranges.map((range: unknown) => {
         if (!isTuple(range)) return range;
-        const [anchorPos, anchorKey] = anchor(range[0]);
-        const [headPos, headKey] = anchor(range[1]);
+        // As live selections anchor (see `anchorSelection`): a range's start
+        // stays with the content after it and its end with the content before.
+        const forward = isInt(range[0]) && isInt(range[1]) && range[0] < range[1];
+        const backward = isInt(range[0]) && isInt(range[1]) && range[0] > range[1];
+        const [anchorPos, anchorKey] = anchor(range[0], forward ? "after" : "before");
+        const [headPos, headKey] = anchor(range[1], backward ? "after" : "before");
         return anchorKey === -1 && headKey === -1
           ? [anchorPos, headPos]
           : [anchorPos, headPos, anchorKey, headKey];

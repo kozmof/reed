@@ -118,14 +118,28 @@ export interface CheckpointSelection {
  * An undo/redo change tagged `'i'` for insert, `'d'` for delete, or `'r'` for replace.
  * A replace change carries the displaced text as its fourth element.
  * `position` is an anchored position (see `HistoryAnchor`) and may be negative.
- * The last element is the placement key `afterChunk`, omitted when it is -1.
+ * The placement key `afterChunk` follows the text fields, omitted when it is
+ * -1 and nothing follows it.
  *
- * Restore recomputes byte lengths from text to keep them consistent even
- * when the payload was edited by hand.
+ * The raw bytes of a change (`HistoryChange.bytes` and, for a replace,
+ * `oldBytes`) follow the key as base64 strings, present only when the change
+ * has them. A replace without `bytes` but with `oldBytes` writes `null` for
+ * `bytes`.
+ *
+ * Restore recomputes byte lengths from text, or from raw bytes when present,
+ * to keep them consistent even when the payload was edited by hand.
  */
 export type CheckpointHistoryChange =
-  | readonly [kind: "i" | "d", position: number, text: string, afterChunk?: number]
-  | readonly [kind: "r", position: number, text: string, oldText: string, afterChunk?: number];
+  | readonly [kind: "i" | "d", position: number, text: string, afterChunk?: number, bytes?: string]
+  | readonly [
+      kind: "r",
+      position: number,
+      text: string,
+      oldText: string,
+      afterChunk?: number,
+      bytes?: string | null,
+      oldBytes?: string,
+    ];
 
 /**
  * A history selection. Ranges are `[anchor, head]` anchored positions,
@@ -186,9 +200,17 @@ export interface CheckpointAttentionLayer {
   readonly attentions: readonly CheckpointAttention[];
 }
 
-/** Envelope accepted by isCheckpoint. Section contents have not been validated. */
+/**
+ * Envelope accepted by isCheckpoint. Section contents have not been validated.
+ *
+ * `version` is any version `restoreCheckpoint` accepts, which includes
+ * versions older than `CHECKPOINT_VERSION`. Their sections use that version's
+ * layout, so do not read them as a `DocumentCheckpoint`: pass the value to
+ * `restoreCheckpoint`, which migrates and validates it.
+ */
 export interface CheckpointEnvelope {
   readonly format: CheckpointFormat;
+  /** A supported version, possibly older than `CHECKPOINT_VERSION`. */
   readonly version: number;
   readonly pieceTable: object;
   readonly lineIndex: object;

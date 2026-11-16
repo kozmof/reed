@@ -86,17 +86,10 @@ export function withEvents(
       );
     }
 
-    // Chunk loads shift the selection, and evictions shift or collapse it.
-    const isChunkAction =
-      action.type === "LOAD_CHUNK" ||
-      action.type === "LOAD_CHUNKS" ||
-      action.type === "EVICT_CHUNK";
-
-    // Selection change events
-    if (
-      action.type === "SET_SELECTION" ||
-      (isChunkAction && prevState.selection !== nextState.selection)
-    ) {
+    // Selection change events: every action that replaces the selection, such
+    // as undo and redo restoring it, a chunk load shifting it, or an eviction
+    // collapsing it. Selections are immutable, so the reference check is O(1).
+    if (action.type === "SET_SELECTION" || prevState.selection !== nextState.selection) {
       prepare("selection-change", createSelectionChangeEvent(prevState, nextState));
     }
 

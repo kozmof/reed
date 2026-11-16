@@ -73,10 +73,11 @@ History selections use the same pairs.
 A delete that spans a chunk which is not loaded is recorded as several changes in one entry.
 Undo then puts each part back on the correct side of that chunk.
 
-History records deleted text as decoded strings. Undo restores malformed UTF-8, such as half
-of a character cut off by an unloaded chunk, as U+FFFD. The restored text can then be longer
-than the bytes it replaces. History accounts for that, so later changes in the entry and the
-restored selection still land on the right text.
+History records deleted text as decoded strings. When decoding changed the bytes, so the text
+no longer encodes back to them (malformed UTF-8 such as half of a character cut off by an
+unloaded chunk, or a byte order mark), the change also keeps the exact bytes. Undo re-inserts
+those bytes, so the document comes back byte for byte and every position recorded in older
+entries stays valid. Such changes are never merged with neighbouring edits.
 
 The live selection moves the same way on loads and evictions. A cursor inside an evicted chunk
 moves to where the chunk was, and it stays on that side of the chunk when the chunk loads
@@ -99,9 +100,15 @@ Positions on a chunk boundary do not block eviction.
 
 ### 2.3 Text next to chunks that are not loaded
 
-New text attaches to the content after it. Text typed just before visible content therefore
-stays with that content when an earlier chunk loads. At the end of the document, text attaches
-to the content before it, so it stays before chunks that stream in later.
+New text attaches to the content before it: text typed right after a chunk stays next to that
+chunk when a chunk that was missing after it loads, and text typed at the end of the document
+stays before chunks that stream in later. At the start of the document there is no content
+before, so text typed before visible content stays with that content when an earlier chunk
+loads.
+
+A cursor follows the same rule as text typed there. A selection's start stays with the content
+after it and its end with the content before it, so a chunk that loads at either edge of a
+selection lands outside it rather than being selected.
 
 ## 3. Undo/Redo and Grouping
 
@@ -134,7 +141,7 @@ History boundaries:
 `store.createDocumentStoreWithEvents` emits:
 
 - `content-change` for local text edits and `APPLY_REMOTE`
-- `selection-change`, including when a chunk load or eviction moves the selection
+- `selection-change` whenever an action replaces the selection, including undo, redo, and a chunk load or eviction that moves it
 - `history-change` for undo and redo
 - `history-drop` when eviction discards entries under the `'drop'` policy
 - `attention-change` when attention records are created, deleted, or migrated

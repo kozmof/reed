@@ -152,7 +152,7 @@ Supported event types:
 Auto-emitted by `store.createDocumentStoreWithEvents`:
 
 - `content-change` (`INSERT/DELETE/REPLACE/APPLY_REMOTE`)
-- `selection-change` (`SET_SELECTION`, and `LOAD_CHUNK/LOAD_CHUNKS/EVICT_CHUNK` when they move the selection)
+- `selection-change` (`SET_SELECTION`, and any other action that replaces the selection: `UNDO`/`REDO`, an edit with an inline selection, `LOAD_CHUNK`/`LOAD_CHUNKS`/`EVICT_CHUNK` when they move it)
 - `history-change` (`UNDO/REDO`)
 - `history-drop` (`EVICT_CHUNK` when the `'drop'` policy discards entries)
 - `attention-change` (create, delete, or content edits that rewrite stored points)
@@ -268,3 +268,15 @@ Choose the helper for the state you own.
 - `store.setValue(doc, newContent, options?)` updates a live store with notifications, events, and transaction rollback.
 - `diff.setValue(state, newContent, options?)` returns a detached state.
 - Both helpers default to one changed range. Pass `{ strategy: "diff" }` for finer edit ranges.
+
+## 6. Breaking Changes in 5.0.0
+
+Anchored history positions (chunk-safe undo and redo) change the meaning of exported types:
+
+- `HistoryChange.position` is an anchored position (`HistoryAnchor`), not a `ByteOffset`. In a chunked document it is the resident offset minus the lengths of loaded chunks at or below `afterChunk`, and it can be negative. Resolve it against the current document rather than using it as an offset.
+- `HistoryEntry.selectionBefore` and `selectionAfter` are `HistorySelectionState` (anchored positions with placement keys), not `SelectionState`.
+- `HistoryChange` gains `afterChunk`, and may carry `bytes` (and `oldBytes` on a replace) when its decoded text does not encode back to the bytes it stands for.
+- `AddPieceNode` gains `afterChunk`.
+- `HistoryState` gains `evictionPolicy`.
+- `selection-change` fires whenever an action replaces the selection, including `UNDO` and `REDO`.
+- Checkpoints are written as version 2. Restore still reads version 1, and `isCheckpoint` accepts both.

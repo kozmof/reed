@@ -83,29 +83,29 @@ function anchorUnchunked(selection: SelectionState): HistorySelectionState {
 }
 
 /**
- * Anchor a live selection, giving each gap the key new text would receive there.
+ * Anchor a live selection.
  *
- * `shift`, when given, returns an amount to add to the anchored value of each
- * offset. An edit uses it when the document that undo rebuilds differs in
- * length from the one the selection was made in.
+ * A cursor takes the key text typed there receives, so it stays next to that
+ * text. A range's start stays with the content after it and its end with the
+ * content before it, so a chunk that loads at either edge lands outside the
+ * range (see `GapSide`).
  */
 export function anchorSelection(
   pieceTable: PieceTableState,
   selection: SelectionState,
-  shift?: (offset: number) => number,
 ): HistorySelectionState {
-  const unchunked = pieceTable.nextExpectedChunk === 0;
-  if (unchunked && shift === undefined) return anchorUnchunked(selection);
+  if (pieceTable.nextExpectedChunk === 0) return anchorUnchunked(selection);
   const root = pieceTable.root;
-  const keyAt = (offset: number): number => (unchunked ? NO_CHUNK : gapKey(root, offset));
-  const anchored = (key: number, offset: number): number =>
-    toAnchoredOffset(pieceTable, key, offset) + (shift?.(offset) ?? 0);
   const ranges = selection.ranges.map((range): HistorySelectionRange => {
-    const anchorKey = keyAt(range.anchor);
-    const headKey = range.head === range.anchor ? anchorKey : keyAt(range.head);
+    const collapsed = range.head === range.anchor;
+    const anchorSide = collapsed || range.anchor > range.head ? "before" : "after";
+    const anchorKey = gapKey(root, range.anchor, anchorSide);
+    const headKey = collapsed
+      ? anchorKey
+      : gapKey(root, range.head, anchorSide === "before" ? "after" : "before");
     return Object.freeze({
-      anchor: anchored(anchorKey, range.anchor),
-      head: anchored(headKey, range.head),
+      anchor: toAnchoredOffset(pieceTable, anchorKey, range.anchor),
+      head: toAnchoredOffset(pieceTable, headKey, range.head),
       anchorAfterChunk: anchorKey,
       headAfterChunk: headKey,
     });

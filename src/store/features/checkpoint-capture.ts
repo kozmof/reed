@@ -134,20 +134,29 @@ function captureHistorySelection(selection: HistorySelectionState): CheckpointHi
   };
 }
 
+function captureBytes(bytes: ReadonlyUint8Array | undefined): string | undefined {
+  return bytes === undefined ? undefined : encodeBase64(unwrapReadonlyUint8Array(bytes));
+}
+
 function captureHistoryChange(change: HistoryChange): CheckpointHistoryChange {
-  const withKey = change.afterChunk !== -1;
+  const bytes = captureBytes(change.bytes);
   switch (change.type) {
     case "insert":
     case "delete": {
       const kind = change.type === "insert" ? "i" : "d";
-      return withKey
+      if (bytes !== undefined)
+        return [kind, change.position, change.text, change.afterChunk, bytes];
+      return change.afterChunk !== -1
         ? [kind, change.position, change.text, change.afterChunk]
         : [kind, change.position, change.text];
     }
-    case "replace":
-      return withKey
-        ? ["r", change.position, change.text, change.oldText, change.afterChunk]
-        : ["r", change.position, change.text, change.oldText];
+    case "replace": {
+      const oldBytes = captureBytes(change.oldBytes);
+      const head = ["r", change.position, change.text, change.oldText] as const;
+      if (oldBytes !== undefined) return [...head, change.afterChunk, bytes ?? null, oldBytes];
+      if (bytes !== undefined) return [...head, change.afterChunk, bytes];
+      return change.afterChunk !== -1 ? [...head, change.afterChunk] : head;
+    }
   }
 }
 

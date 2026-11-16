@@ -14,7 +14,7 @@ import { documentReducer } from "./reducer.js";
 import { createCheckpoint, restoreCheckpoint } from "./checkpoint.js";
 import { createInitialState } from "../core/state.js";
 import { byteOffset } from "../../types/branded.js";
-import { getValue } from "../core/piece-table.js";
+import { getBytes, getValue } from "../core/piece-table.js";
 import { getUndoCount, getRedoCount } from "./history.js";
 import type { DocumentState, HistoryEvictionPolicy } from "../../types/state.js";
 import type { DocumentAction } from "../../types/actions.js";
@@ -43,6 +43,10 @@ function makeStore(
 
 type Store = ReturnType<typeof makeStore>;
 const text = (s: Store) => getValue(s.getSnapshot().pieceTable);
+const bytesOf = (s: Store) => {
+  const { pieceTable } = s.getSnapshot();
+  return [...getBytes(pieceTable, byteOffset(0), byteOffset(pieceTable.totalLength))];
+};
 const load = (s: Store, i: number) => s.dispatch(DocumentActions.loadChunk(i, enc(CHUNKS[i]!)));
 const cursor = (s: Store) => s.getSnapshot().selection.ranges[0];
 
@@ -312,6 +316,51 @@ describe("placement of text next to chunks that are not loaded", () => {
     expect(text(s)).toBe("AAAAAAA\nXBBBBBBB\nCCCCCCC\n");
   });
 
+  it("keeps text typed after a chunk next to it when a chunk in a hole loads", () => {
+    const s = makeStore(3);
+    load(s, 0);
+    load(s, 1);
+    load(s, 2);
+    s.dispatch(DocumentActions.evictChunk(1));
+    expect(text(s)).toBe("AAAAAAA\nCCCCCCC\n");
+    // Typed right after chunk 0's text, with chunk 1 missing after it.
+    s.dispatch(DocumentActions.insert(byteOffset(8), "X"));
+    load(s, 1);
+    expect(text(s)).toBe("AAAAAAA\nXBBBBBBB\nCCCCCCC\n");
+    s.dispatch(DocumentActions.undo());
+    expect(text(s)).toBe("AAAAAAA\nBBBBBBB\nCCCCCCC\n");
+    s.dispatch(DocumentActions.redo());
+    expect(text(s)).toBe("AAAAAAA\nXBBBBBBB\nCCCCCCC\n");
+  });
+
+  it("keeps a chunk that loads at a selection's edge outside the selection", () => {
+    const s = makeStore(3);
+    load(s, 0);
+    load(s, 2);
+    // All of chunk 0, ending at the hole where chunk 1 belongs.
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(8) }]));
+    load(s, 1);
+    expect(cursor(s)).toEqual({ anchor: 0, head: 8 });
+
+    // All of chunk 2, starting at the hole: a backward selection this time.
+    s.dispatch(DocumentActions.evictChunk(1));
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(16), head: byteOffset(8) }]));
+    load(s, 1);
+    expect(cursor(s)).toEqual({ anchor: 24, head: 16 });
+  });
+
+  it("restores a selection that ended at a hole without the chunk that loaded there", () => {
+    const s = makeStore(3);
+    load(s, 0);
+    load(s, 2);
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(8) }]));
+    s.dispatch(DocumentActions.delete(byteOffset(0), byteOffset(8)));
+    load(s, 1);
+    s.dispatch(DocumentActions.undo());
+    expect(text(s)).toBe("AAAAAAA\nBBBBBBB\nCCCCCCC\n");
+    expect(cursor(s)).toEqual({ anchor: 0, head: 8 });
+  });
+
   it("restores a delete that spanned an unloaded chunk on both sides of it", () => {
     const s = makeStore(3);
     load(s, 0);
@@ -570,6 +619,20 @@ describe("events for chunk loads and evictions", () => {
     expect(heads).toEqual([10, 2]);
   });
 
+  it("emits selection-change when undo or redo restores the selection", () => {
+    const s = makeEventStore("pin");
+    s.dispatch(DocumentActions.loadChunk(0, enc(CHUNK0)));
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(2), head: byteOffset(2) }]));
+    s.dispatch(DocumentActions.insert(byteOffset(2), "XY"));
+    const heads: number[] = [];
+    s.addEventListener("selection-change", ({ nextState }) =>
+      heads.push(nextState.selection.ranges[0].head),
+    );
+    s.dispatch(DocumentActions.undo());
+    s.dispatch(DocumentActions.redo());
+    expect(heads).toEqual([2, 4]);
+  });
+
   it("does not emit selection-change when the selection stays put", () => {
     const s = makeEventStore("pin");
     let fired = 0;
@@ -707,15 +770,50 @@ describe("review regressions", () => {
     expect(text(s)).toBe("abkl");
 
     s.dispatch(DocumentActions.undo());
-    // The incomplete byte comes back as U+FFFD, but nothing lands inside it.
-    expect(text(s)).toBe("abc�ijkl");
-    // The cursor was before "k", which now sits two bytes later.
-    expect(cursor(s)).toEqual({ anchor: 8, head: 8 });
+    // Undo restores the incomplete byte itself, not U+FFFD.
+    const original = [0x61, 0x62, 0x63, 0xc3, ...enc("ijkl")];
+    expect(bytesOf(s)).toEqual(original);
+    expect(cursor(s)).toEqual({ anchor: 6, head: 6 });
 
     s.dispatch(DocumentActions.redo());
     expect(text(s)).toBe("abkl");
     s.dispatch(DocumentActions.undo());
-    expect(text(s)).toBe("abc�ijkl");
+    expect(bytesOf(s)).toEqual(original);
+    // Reloading chunk 1 completes the character again.
+    s.dispatch(DocumentActions.loadChunk(1, bytes[1]!));
+    expect(text(s)).toBe("abcéfghijkl");
+  });
+
+  it("restores a deleted byte order mark so older entries stay aligned", () => {
+    // Decoding drops the BOM, so the deleted text is shorter than the bytes.
+    const s = createDocumentStore({
+      chunkSize: 8,
+      totalFileSize: 16,
+      reconcileMode: "none",
+    });
+    const chunk0 = new Uint8Array([0xef, 0xbb, 0xbf, ...enc("AAAA\n")]);
+    s.dispatch(DocumentActions.loadChunk(0, chunk0));
+    s.dispatch(DocumentActions.loadChunk(1, enc("BBBBBBB\n")));
+    const original = bytesOf(s);
+
+    s.dispatch(DocumentActions.insert(byteOffset(10), "X"));
+    s.dispatch(DocumentActions.delete(byteOffset(0), byteOffset(5)));
+    s.dispatch(DocumentActions.undo());
+    expect(bytesOf(s)).toEqual([...original.slice(0, 10), 0x58, ...original.slice(10)]);
+    s.dispatch(DocumentActions.undo());
+    expect(bytesOf(s)).toEqual(original);
+
+    // The raw bytes survive a checkpoint round trip.
+    s.dispatch(DocumentActions.redo());
+    s.dispatch(DocumentActions.redo());
+    const checkpoint = JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow())));
+    let state: DocumentState = restoreCheckpoint(checkpoint);
+    state = documentReducer(state, DocumentActions.undo());
+    state = documentReducer(state, DocumentActions.undo());
+    const { pieceTable } = state;
+    expect([...getBytes(pieceTable, byteOffset(0), byteOffset(pieceTable.totalLength))]).toEqual(
+      original,
+    );
   });
 
   it("keeps a selection at a chunk's start there across evict and reload", () => {

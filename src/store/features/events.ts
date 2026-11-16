@@ -44,8 +44,9 @@ export interface ContentChangeEvent extends DocumentEvent {
 }
 
 /**
- * Fired when selection changes: on SET_SELECTION, and when LOAD_CHUNK,
- * LOAD_CHUNKS, or EVICT_CHUNK moves the selection.
+ * Fired when selection changes: on SET_SELECTION, and whenever another action
+ * replaces the selection, such as UNDO or REDO restoring it, an edit carrying
+ * an inline selection, or LOAD_CHUNK, LOAD_CHUNKS, or EVICT_CHUNK moving it.
  */
 export interface SelectionChangeEvent extends DocumentEvent {
   readonly type: "selection-change";

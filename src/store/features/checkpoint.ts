@@ -846,9 +846,6 @@ function restoreHistoryChange(
   const tuple = readArray(raw, what, budget);
   const kind = readEnum(tuple[0], ["i", "d", "r"] as const, `${what}[0]`, budget);
   const text = readString(tuple[2], `${what}[2]`, budget);
-  // Derive byte lengths from text so an incorrect stored length cannot
-  // shift the offsets computed during undo.
-  const textLength = byteLength(utf8ByteLength(text));
   // Anchored positions may be negative (see HistoryAnchor). The placement key
   // follows the text fields, so its index depends on the change kind.
   const keyIndex = kind === "r" ? 4 : 3;
@@ -859,23 +856,40 @@ function restoreHistoryChange(
     `${what}[${keyIndex}]`,
     bounds,
   );
+  // Raw bytes follow the key. A null `bytes` only holds the place of `oldBytes`.
+  const readRawBytes = (index: number): { bytes: ReadonlyUint8Array } | undefined => {
+    const value = tuple[index];
+    if (value === undefined || (value === null && index === keyIndex + 1)) return undefined;
+    return {
+      bytes: asReadonlyUint8Array(readBytes(value, `${what}[${index}]`, budget)),
+    };
+  };
+  const bytes = readRawBytes(keyIndex + 1);
+  // Derive byte lengths from the bytes undo inserts, so an incorrect stored
+  // length cannot shift the offsets computed during undo.
+  const lengthOf = (value: string, raw: { bytes: ReadonlyUint8Array } | undefined) =>
+    byteLength(raw?.bytes.length ?? utf8ByteLength(value));
 
   if (kind === "r") {
     const oldText = readString(tuple[3], `${what}[3]`, budget);
+    const oldBytes = readRawBytes(keyIndex + 2);
     return Object.freeze({
       type: "replace",
       ...anchor,
+      ...bytes,
       text,
-      byteLength: textLength,
+      byteLength: lengthOf(text, bytes),
+      ...(oldBytes !== undefined && { oldBytes: oldBytes.bytes }),
       oldText,
-      oldByteLength: byteLength(utf8ByteLength(oldText)),
+      oldByteLength: lengthOf(oldText, oldBytes),
     });
   }
   return Object.freeze({
     type: kind === "i" ? "insert" : "delete",
     ...anchor,
+    ...bytes,
     text,
-    byteLength: textLength,
+    byteLength: lengthOf(text, bytes),
   });
 }
 
@@ -1074,8 +1088,10 @@ function restoreAttention(
 /**
  * Check the format tag, supported version, and required checkpoint sections.
  *
- * Use this envelope check to route values before restoring them.
- * `restoreCheckpoint` validates the payload's internal consistency.
+ * Use this envelope check to route values before restoring them. It accepts
+ * every version `restoreCheckpoint` can migrate, so a true result may be an
+ * older format: read the sections only through `restoreCheckpoint`, which
+ * migrates the payload and validates its internal consistency.
  */
 export function isCheckpoint(value: unknown): value is CheckpointEnvelope {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;

@@ -25,7 +25,7 @@ import type {
   NonEmptyReadonlyArray,
 } from "../../types/state.js";
 import { pstackPush, pstackPeek, pstackPop, pstackTrimToSize } from "../../types/state.js";
-import type { ByteOffset } from "../../types/branded.js";
+import type { ByteOffset, ReadonlyUint8Array } from "../../types/branded.js";
 import type { DeleteBoundaryContext, ReadTextFn } from "../../types/operations.js";
 import { byteOffset, byteLength } from "../../types/branded.js";
 import { withState, withLineIndexState } from "../core/state.js";
@@ -34,6 +34,7 @@ import {
   pieceTableDelete as ptDelete,
   getText,
   getRawByte,
+  getBytes,
   isUtf8Boundary,
 } from "../core/piece-table.js";
 import type { SplitRecord } from "../core/piece-table.js";
@@ -46,6 +47,7 @@ import {
   rebuildLineIndex,
   repairLineIndexWindow,
 } from "../core/line-index.js";
+import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
 import { utf8ByteLength } from "../core/encoding.js";
 import { NO_CHUNK, gapKey, hasUnloadedChunkBetween, placementRuns } from "../core/chunk-anchor.js";
 import { anchorAt, anchorSelection, anchoredCursor, residentOffset } from "./history-anchor.js";
@@ -107,7 +109,7 @@ export function validateRange(
 export function pieceTableInsert(
   state: DocumentState,
   position: ByteOffset,
-  text: string,
+  text: string | Uint8Array,
   afterChunk?: number,
 ): { state: DocumentState; insertedByteLength: number; splits: readonly SplitRecord[] } {
   const result = ptInsert(state.pieceTable, position, text, afterChunk);
@@ -290,6 +292,9 @@ function canCoalesce(
   const last = lastHistoryChange(lastEntry);
   if (!last) return false;
   if (last.type !== newChange.type) return false;
+  // A change with raw bytes restores exactly the bytes one edit removed. Keep
+  // it separate rather than merge decoded text with a neighbour.
+  if (last.bytes !== undefined || newChange.bytes !== undefined) return false;
   // A merged change re-inserts its text with one placement key on undo. Keep
   // changes separate when a chunk that is not loaded lies between their keys.
   const lowKey = Math.min(last.afterChunk, newChange.afterChunk);
@@ -505,30 +510,32 @@ export function historyPush(
  * This formalizes the duality between applyChange and applyInverseChange.
  */
 export function invertChange(change: HistoryChange): HistoryChange {
+  const anchor = { position: change.position, afterChunk: change.afterChunk };
   switch (change.type) {
     case "insert":
       return Object.freeze({
         type: "delete" as const,
-        position: change.position,
-        afterChunk: change.afterChunk,
+        ...anchor,
+        ...(change.bytes !== undefined && { bytes: change.bytes }),
         text: change.text,
         byteLength: change.byteLength,
       });
     case "delete":
       return Object.freeze({
         type: "insert" as const,
-        position: change.position,
-        afterChunk: change.afterChunk,
+        ...anchor,
+        ...(change.bytes !== undefined && { bytes: change.bytes }),
         text: change.text,
         byteLength: change.byteLength,
       });
     case "replace":
       return Object.freeze({
         type: "replace" as const,
-        position: change.position,
-        afterChunk: change.afterChunk,
+        ...anchor,
+        ...(change.oldBytes !== undefined && { bytes: change.oldBytes }),
         text: change.oldText,
         byteLength: change.oldByteLength,
+        ...(change.bytes !== undefined && { oldBytes: change.bytes }),
         oldText: change.text,
         oldByteLength: change.byteLength,
       });
@@ -538,10 +545,13 @@ export function invertChange(change: HistoryChange): HistoryChange {
 /**
  * Replay history through the same lazy structural pipeline as local edits.
  * The anchored position is resolved against the current chunk layout, and
- * inserted text gets the recorded placement key.
+ * inserted text gets the recorded placement key. Recorded raw bytes are
+ * inserted as they are, so undo restores bytes that decoding altered.
  */
 export function applyChange(state: DocumentState, change: HistoryChange): DocumentState {
   const position = residentOffset(state.pieceTable, change);
+  const insertBytes =
+    change.bytes !== undefined ? { insertBytes: unwrapReadonlyUint8Array(change.bytes) } : {};
   switch (change.type) {
     case "insert":
       return applyUntrackedEdit(
@@ -550,6 +560,7 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
           kind: "insert",
           position,
           insertText: change.text,
+          ...insertBytes,
           afterChunk: change.afterChunk,
         },
         state.revision + 1,
@@ -562,6 +573,7 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
           position,
           deleteEnd: byteOffset(position + change.byteLength),
           deletedText: change.text,
+          ...(change.bytes !== undefined && { deletedTextInexact: true }),
         },
         state.revision + 1,
       );
@@ -573,7 +585,9 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
           position,
           deleteEnd: byteOffset(position + change.oldByteLength),
           deletedText: change.oldText,
+          ...(change.oldBytes !== undefined && { deletedTextInexact: true }),
           insertText: change.text,
+          ...insertBytes,
           afterChunk: change.afterChunk,
         },
         state.revision + 1,
@@ -598,6 +612,8 @@ export type StructuralEditOperation =
       readonly kind: "insert";
       readonly position: ByteOffset;
       readonly insertText: string;
+      /** Raw bytes to insert in place of `insertText` encoded as UTF-8. */
+      readonly insertBytes?: Uint8Array | undefined;
       /** Placement key for the inserted text. Defaults to the gap's key. */
       readonly afterChunk?: number | undefined;
     }
@@ -606,13 +622,19 @@ export type StructuralEditOperation =
       readonly position: ByteOffset;
       readonly deleteEnd: ByteOffset;
       readonly deletedText: string;
+      /** The deleted bytes do not encode `deletedText`, so lines are re-read. */
+      readonly deletedTextInexact?: boolean | undefined;
     }
   | {
       readonly kind: "replace";
       readonly position: ByteOffset;
       readonly deleteEnd: ByteOffset;
       readonly deletedText: string;
+      /** The deleted bytes do not encode `deletedText`, so lines are re-read. */
+      readonly deletedTextInexact?: boolean | undefined;
       readonly insertText: string;
+      /** Raw bytes to insert in place of `insertText` encoded as UTF-8. */
+      readonly insertBytes?: Uint8Array | undefined;
       /** Placement key for the inserted text. Defaults to the gap's key. */
       readonly afterChunk?: number | undefined;
     };
@@ -644,8 +666,14 @@ export function applyUntrackedEdit(
     op.kind !== "insert"
       ? getDeleteBoundaryContext(newState, op.position, op.deleteEnd)
       : undefined;
+  // Line updates read the edit's text. When that text is not the bytes being
+  // deleted or inserted, re-read the affected lines from the piece table.
+  const insertBytes = op.kind !== "delete" ? op.insertBytes : undefined;
   const needsRebuild =
-    op.kind !== "insert" && shouldRebuildLineIndexForDelete(op.deletedText, deleteContext);
+    insertBytes !== undefined ||
+    (op.kind !== "insert" &&
+      (op.deletedTextInexact === true ||
+        shouldRebuildLineIndexForDelete(op.deletedText, deleteContext)));
 
   if (op.kind !== "insert") {
     if (needsRebuild) {
@@ -663,8 +691,9 @@ export function applyUntrackedEdit(
     }
   }
 
-  if (op.kind !== "delete" && op.insertText.length > 0) {
-    const result = pieceTableInsert(newState, op.position, op.insertText, op.afterChunk);
+  const insertContent = insertBytes ?? (op.kind !== "delete" ? op.insertText : "");
+  if (op.kind !== "delete" && insertContent.length > 0) {
+    const result = pieceTableInsert(newState, op.position, insertContent, op.afterChunk);
     newState = result.state;
     if (!needsRebuild) {
       const readText = pieceTableReader(newState.pieceTable);
@@ -679,13 +708,14 @@ export function applyUntrackedEdit(
   }
 
   if (needsRebuild) {
+    const deleteEnd = op.kind === "insert" ? op.position : op.deleteEnd;
     const insertedLength =
-      newState.pieceTable.totalLength - state.pieceTable.totalLength + (op.deleteEnd - op.position);
+      newState.pieceTable.totalLength - state.pieceTable.totalLength + (deleteEnd - op.position);
     return withState(newState, {
       lineIndex: repairLineIndexWindow(
         state.lineIndex,
         op.position,
-        op.deleteEnd,
+        deleteEnd,
         insertedLength,
         pieceTableReader(newState.pieceTable),
         revision,
@@ -737,7 +767,7 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
       ? runs[0]!.key
       : pieceTable.nextExpectedChunk === 0
         ? NO_CHUNK
-        : gapKey(pieceTable.root, op.position);
+        : gapKey(pieceTable.root, op.position, "before");
   let newState = applyUntrackedEdit(
     state,
     op.kind === "delete" ? op : { ...op, afterChunk: insertKey },
@@ -762,47 +792,56 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
     });
   }
 
-  // Reuse measured insert lengths. Deleted text may have been normalized by
-  // decoding (malformed chunk bytes or a BOM), so measure it without encoding.
+  // Reuse the insert length measured by the structural edit.
   const deletedLength = op.kind === "insert" ? 0 : op.deleteEnd - op.position;
   const insertedLength =
     newState.pieceTable.totalLength - state.pieceTable.totalLength + deletedLength;
   // History positions are anchored against the pre-edit document. Edits never
   // load or evict chunks, so the post-edit chunk layout resolves them the same way.
   const anchor = anchorAt(pieceTable, insertKey, op.position);
-  const runTexts = runs.map((run) =>
-    runs.length === 1 && op.kind !== "insert"
-      ? op.deletedText
-      : getTextRange(state, byteOffset(run.start), byteOffset(run.end)),
-  );
-  // Decoding replaces malformed bytes with U+FFFD, so a run's text can encode
-  // to a different length than the bytes it was read from. Bytes at the edge
-  // of an unloaded chunk are often an incomplete character, which is exactly
-  // where runs split. Undo re-inserts the decoded text, so history describes
-  // the document as undo rebuilds it: every position after a run moves by the
-  // run's length difference.
-  const runShifts: number[] = [];
-  let shift = 0;
-  for (let i = 0; i < runs.length; i++) {
-    runShifts.push(shift);
-    shift += utf8ByteLength(runTexts[i]!) - (runs[i]!.end - runs[i]!.start);
-  }
+  // Deleted text as undo re-inserts it. Decoding replaces malformed bytes with
+  // U+FFFD and drops a leading byte order mark, so the text can encode to
+  // different bytes than were deleted. Bytes at the edge of an unloaded chunk
+  // are often an incomplete character. When the lengths differ, history keeps
+  // the exact bytes, so undo restores the document byte for byte and every
+  // recorded position stays valid.
+  // Runs are empty for an insert. A single run is the whole deleted range.
+  const deletedText = op.kind === "insert" ? "" : op.deletedText;
+  const deleted = runs.map((run): { text: string; length: number; bytes?: ReadonlyUint8Array } => {
+    const text =
+      runs.length === 1
+        ? deletedText
+        : getTextRange(state, byteOffset(run.start), byteOffset(run.end));
+    const length = run.end - run.start;
+    return utf8ByteLength(text) === length
+      ? { text, length }
+      : {
+          text,
+          length,
+          bytes: asReadonlyUint8Array(
+            getBytes(pieceTable, byteOffset(run.start), byteOffset(run.end)),
+          ),
+        };
+  });
   // Each run except the first becomes its own delete, ordered right to left so
   // every position is valid when its change is applied. Undo applies them in
   // reverse, re-inserting each run with its own key.
   const changes: HistoryChange[] = [];
   for (let i = runs.length - 1; i >= 1; i--) {
     const run = runs[i]!;
+    const { text, length, bytes } = deleted[i]!;
     changes.push(
-      makeDeleteChange(
-        anchorAt(pieceTable, run.key, run.start).position + runShifts[i]!,
-        runTexts[i]!,
-        run.key,
-      ),
+      Object.freeze({
+        type: "delete" as const,
+        ...anchorAt(pieceTable, run.key, run.start),
+        ...(bytes !== undefined && { bytes }),
+        text,
+        byteLength: byteLength(length),
+      }),
     );
   }
-  const firstDeletedText = runTexts[0] ?? "";
-  const historyDeletedLength = utf8ByteLength(firstDeletedText);
+  const first = deleted[0] ?? { text: "", length: 0 };
+  const firstBytes = first.bytes;
   changes.push(
     Object.freeze(
       op.kind === "replace"
@@ -811,8 +850,9 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
             ...anchor,
             text: op.insertText,
             byteLength: byteLength(insertedLength),
-            oldText: firstDeletedText,
-            oldByteLength: byteLength(historyDeletedLength),
+            ...(firstBytes !== undefined && { oldBytes: firstBytes }),
+            oldText: first.text,
+            oldByteLength: byteLength(first.length),
           }
         : op.kind === "insert"
           ? {
@@ -824,35 +864,20 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
           : {
               type: "delete" as const,
               ...anchor,
-              text: firstDeletedText,
-              byteLength: byteLength(historyDeletedLength),
+              ...(firstBytes !== undefined && { bytes: firstBytes }),
+              text: first.text,
+              byteLength: byteLength(first.length),
             },
     ),
   );
   // Timestamp-less hand-written actions remain deterministic. Normal callers use
   // DocumentActions, which captures wall-clock time before reduction.
   const selectionBeforeEdit = newState.selection;
-  // Selection offsets after a run whose decoded length differs move with it.
-  const shiftOffset =
-    shift === 0
-      ? undefined
-      : (offset: number): number => {
-          let moved = 0;
-          for (let i = 0; i < runs.length; i++) {
-            const run = runs[i]!;
-            if (offset <= run.start) break;
-            const decodedEnd = run.start + utf8ByteLength(runTexts[i]!);
-            // Inside a run, stay within its decoded text.
-            if (offset < run.end) return Math.min(offset, decodedEnd) - offset + runShifts[i]!;
-            moved = runShifts[i + 1] ?? shift;
-          }
-          return moved;
-        };
   newState = historyPush(
     newState,
     changes as unknown as NonEmptyReadonlyArray<HistoryChange>,
     op.timestamp ?? state.revision,
-    () => anchorSelection(pieceTable, selectionBeforeEdit, shiftOffset),
+    () => anchorSelection(pieceTable, selectionBeforeEdit),
   );
 
   // Mark as dirty and increment revision

@@ -24,7 +24,7 @@ import {
   pieceTableDelete,
 } from "../core/piece-table.js";
 import { hasAttentionForPiece } from "../core/attention.js";
-import { pieceKey } from "../core/chunk-anchor.js";
+import { deriveLoadedChunks, pieceKey } from "../core/chunk-anchor.js";
 import { carrySelectionAcrossChunks, historyForEviction } from "./history-anchor.js";
 import { repairChunkLines } from "../core/chunk-line-repair.js";
 import { summarizeBytes } from "../core/decoded-metrics.js";
@@ -300,6 +300,13 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
     pieceTable = next;
   }
   lineIndex = withUnloadedLineCounts(lineIndex, asReadonlyMap(unloadedCounts), unloadedLineCount);
+  // Extend the loaded-chunk lengths instead of rebuilding them for the new map.
+  deriveLoadedChunks(
+    state.pieceTable.chunkMap,
+    pieceTable.chunkMap,
+    prepared.map((chunk) => [chunk.chunkIndex, chunk.data.length] as const),
+    [],
+  );
 
   return withState(state, {
     revision: state.revision + prepared.length,
@@ -328,6 +335,7 @@ export function evictChunk(state: DocumentState, action: EvictChunkAction): Docu
   const deleted = pieceTableDelete(state.pieceTable, range.start, range.end);
   const nextChunkMap = PersistentMap.from(state.pieceTable.chunkMap).without(chunkIndex);
   const nextPieceTable = Object.freeze({ ...deleted, chunkMap: asReadonlyMap(nextChunkMap) });
+  deriveLoadedChunks(state.pieceTable.chunkMap, nextPieceTable.chunkMap, [], [chunkIndex]);
   const nextRevision = state.revision + 1;
   let lineIndex: LineIndexState = repairChunkLines(
     state.lineIndex,

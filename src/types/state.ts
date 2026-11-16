@@ -417,9 +417,16 @@ export interface HistoryAnchor {
  */
 export interface HistoryInsertChange extends HistoryAnchor {
   readonly type: "insert";
+  /**
+   * Exact bytes to insert, present only when `text` does not encode back to
+   * them: text decoded from malformed UTF-8 or a byte order mark. `byteLength`
+   * is then their length. Undo and redo insert these bytes, so the document
+   * comes back byte for byte.
+   */
+  readonly bytes?: ReadonlyUint8Array;
   /** Text that was inserted */
   readonly text: string;
-  /** Pre-computed UTF-8 byte length of `text` */
+  /** Byte length of the inserted text: of `bytes` when present, else of `text` in UTF-8 */
   readonly byteLength: ByteLength;
 }
 
@@ -428,9 +435,14 @@ export interface HistoryInsertChange extends HistoryAnchor {
  */
 export interface HistoryDeleteChange extends HistoryAnchor {
   readonly type: "delete";
-  /** Text that was deleted */
+  /**
+   * Exact bytes deleted, present only when `text` does not encode back to
+   * them (see `HistoryInsertChange.bytes`). Undo re-inserts these bytes.
+   */
+  readonly bytes?: ReadonlyUint8Array;
+  /** Text that was deleted, as decoded */
   readonly text: string;
-  /** Pre-computed UTF-8 byte length of `text` */
+  /** Byte length of the deleted range: of `bytes` when present, else of `text` in UTF-8 */
   readonly byteLength: ByteLength;
 }
 
@@ -439,13 +451,20 @@ export interface HistoryDeleteChange extends HistoryAnchor {
  */
 export interface HistoryReplaceChange extends HistoryAnchor {
   readonly type: "replace";
+  /** Exact bytes of `text`, when it does not encode back to them */
+  readonly bytes?: ReadonlyUint8Array;
   /** Text that was inserted */
   readonly text: string;
-  /** Pre-computed UTF-8 byte length of `text` */
+  /** Byte length of the inserted text: of `bytes` when present, else of `text` in UTF-8 */
   readonly byteLength: ByteLength;
-  /** The original text that was replaced */
+  /**
+   * Exact bytes replaced, present only when `oldText` does not encode back to
+   * them (see `HistoryInsertChange.bytes`). Undo re-inserts these bytes.
+   */
+  readonly oldBytes?: ReadonlyUint8Array;
+  /** The original text that was replaced, as decoded */
   readonly oldText: string;
-  /** Pre-computed UTF-8 byte length of `oldText` */
+  /** Byte length of the replaced range: of `oldBytes` when present, else of `oldText` in UTF-8 */
   readonly oldByteLength: ByteLength;
 }
 
