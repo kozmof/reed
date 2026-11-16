@@ -23,11 +23,11 @@ import { CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
 import { base64DecodedLength } from "../core/base64.js";
 import type { GapSide } from "../core/chunk-anchor.js";
 import {
-  buildLoadedPrefix,
+  buildLoadedChunks,
   byteKey,
   gapKey,
   keyFitsAt,
-  prefixLengthAtOrBelow,
+  loadedSumAtOrBelow,
 } from "../core/chunk-anchor.js";
 import { utf8ByteLength } from "../core/encoding.js";
 import { pieceTableDelete, pieceTableInsert } from "../core/piece-table.js";
@@ -229,10 +229,10 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
       }
     }
   }
-  // Same prefix sums as live anchoring, so each anchor costs O(log C).
-  const loaded = buildLoadedPrefix(chunkLengths);
+  // The same tree as live anchoring, so each anchor costs O(log C).
+  const loaded = buildLoadedChunks(chunkLengths);
   const anchorWith = (offset: number, key: number): [number, number] => [
-    offset - prefixLengthAtOrBelow(loaded, key),
+    offset - loadedSumAtOrBelow(loaded, key),
     key,
   ];
   // Version 1 kept text next to the content before it, as `"before"` does.

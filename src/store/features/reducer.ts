@@ -13,6 +13,7 @@ import {
   validatePosition,
   validateRange,
   getTextRange,
+  readDeletedRange,
   applyEdit,
   applyUntrackedEdit,
 } from "./edit.js";
@@ -110,12 +111,11 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       if (end - start <= 0) return state;
       validateBoundaryPosition(state, start, "DELETE start");
       validateBoundaryPosition(state, end, "DELETE end");
-      const deletedText = getTextRange(state, start, end);
       return applyEdit(state, {
         kind: "delete",
         position: start,
         deleteEnd: end,
-        deletedText,
+        ...readDeletedRange(state, start, end),
         timestamp: action.timestamp,
         selection: action.selection,
       });
@@ -130,7 +130,6 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       if (!valid) return state;
       validateBoundaryPosition(state, start, "REPLACE start");
       validateBoundaryPosition(state, end, "REPLACE end");
-      const oldText = getTextRange(state, start, end);
       const replaceText = state.metadata.normalizeInsertedLineEndings
         ? normalizeLineEndings(action.text, state.metadata.lineEnding)
         : action.text;
@@ -138,7 +137,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
         kind: "replace",
         position: start,
         deleteEnd: end,
-        deletedText: oldText,
+        ...readDeletedRange(state, start, end),
         insertText: replaceText,
         timestamp: action.timestamp,
         selection: action.selection,

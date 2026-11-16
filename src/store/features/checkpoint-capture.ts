@@ -14,7 +14,7 @@ import type {
 } from "../../types/state.js";
 import { pstackToArray } from "../../types/state.js";
 import type { AttentionLayerState } from "../../types/attention.js";
-import type { ReadonlyUint8Array } from "../../types/branded.js";
+import { byteOffset, type ReadonlyUint8Array } from "../../types/branded.js";
 import type {
   DocumentCheckpoint,
   CheckpointOptions,
@@ -36,17 +36,13 @@ import type {
   CheckpointErrorCode,
 } from "../../types/checkpoint.js";
 import { CHECKPOINT_FORMAT, CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
-import { collectPieces, compactAddBuffer, getValue } from "../core/piece-table.js";
+import { collectPieces, compactAddBuffer, getBytes } from "../core/piece-table.js";
 import { collectLines } from "../core/line-index.js";
 import { resolveAllAttentions } from "../core/attention.js";
 import { encodeBase64 } from "../core/base64.js";
 import { unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
-import { textEncoder } from "../core/encoding.js";
 import { keyFitsAt } from "../core/chunk-anchor.js";
-import {
-  findNewlineBytePositions,
-  findNewlineCharPositions,
-} from "../core/line-index-text-scan.js";
+import { decodedCharLength } from "../core/decoded-metrics.js";
 
 function fail(code: CheckpointErrorCode, message: string): never {
   throw new CheckpointError(code, message);
@@ -118,8 +114,8 @@ function captureLineIndex(lineIndex: LineIndexState<"eager">): CheckpointLineInd
 }
 
 /**
- * Capture the live selection. Edits do not move stored placement keys, so a
- * key can stop fitting its offset (see `SelectionRange.anchorAfterChunk`).
+ * Capture the live selection. APPLY_REMOTE moves text but not the selection,
+ * so a stored placement key can stop fitting its offset (see `SelectionRange.anchorAfterChunk`).
  * Such a key is ignored everywhere, so it is left out. `pieceTable` is the
  * document the checkpoint holds, or null when it holds no chunks and so no key
  * applies.
@@ -224,6 +220,28 @@ function captureAttention(attention: AttentionLayerState): CheckpointAttentionLa
 }
 
 /**
+ * Line descriptors for contiguous document bytes. A line ends after LF, after
+ * CRLF, or after a CR not followed by LF. Characters are counted the way the
+ * line index counts them (see `decodedCharLength`), so restore accepts them.
+ */
+function captureNormalizedLines(bytes: Uint8Array): CheckpointLine[] {
+  const lines: CheckpointLine[] = [];
+  let lineStart = 0;
+  const endLine = (end: number) => {
+    lines.push([end - lineStart, decodedCharLength(bytes, lineStart, end)]);
+    lineStart = end;
+  };
+  for (let i = 0; i < bytes.length; i++) {
+    const byte = bytes[i]!;
+    if (byte === 0x0d && bytes[i + 1] === 0x0a) i++;
+    if (byte === 0x0d || byte === 0x0a) endLine(i + 1);
+  }
+  // Every document has a final line, even after a newline.
+  endLine(bytes.length);
+  return lines;
+}
+
+/**
  * Capture normalized wire data directly instead of first constructing a second
  * piece tree and line tree. This keeps peak memory close to the content bytes
  * plus the final checkpoint payload.
@@ -236,21 +254,12 @@ function captureNormalizedCheckpoint(state: DocumentState<"eager">): DocumentChe
     );
   }
 
-  const content = getValue(state.pieceTable);
-  const bytes = textEncoder.encode(content);
-  const { positions: breakBytes } = findNewlineBytePositions(content);
-  const breakChars = findNewlineCharPositions(content);
-  const lines: CheckpointLine[] = [];
-  let previousByte = 0;
-  let previousChar = 0;
-  for (let i = 0; i < breakBytes.length; i++) {
-    const endByte = breakBytes[i]! + 1;
-    const endChar = breakChars[i]! + 1;
-    lines.push([endByte - previousByte, endChar - previousChar]);
-    previousByte = endByte;
-    previousChar = endChar;
-  }
-  lines.push([bytes.length - previousByte, content.length - previousChar]);
+  // Copy the bytes as they are. Decoding and re-encoding would drop a leading
+  // U+FEFF and turn malformed bytes into U+FFFD. Either changes the byte
+  // length and moves every history position recorded against these bytes.
+  const total = state.pieceTable.totalLength;
+  const bytes = getBytes(state.pieceTable, byteOffset(0), byteOffset(total));
+  const lines = captureNormalizedLines(bytes);
 
   const attentions: CheckpointAttention[] = [];
   if (bytes.length > 0) {

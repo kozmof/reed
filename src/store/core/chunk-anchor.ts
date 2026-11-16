@@ -157,56 +157,17 @@ export function placementKey(
 }
 
 // =============================================================================
-// Loaded-chunk prefix sums for wire data
-// =============================================================================
-
-export interface LoadedPrefix {
-  /** Loaded chunk indices, ascending. */
-  readonly indices: readonly number[];
-  /** prefix[i] = total original length of indices[0..i). */
-  readonly prefix: readonly number[];
-}
-
-/**
- * Build the prefix table from (chunk index, length) pairs in any order.
- * Shared with the v1 checkpoint migration, which reads lengths from wire data.
- */
-export function buildLoadedPrefix(chunks: Iterable<readonly [number, number]>): LoadedPrefix {
-  const sorted = [...chunks].sort((a, b) => a[0] - b[0]);
-  const indices = sorted.map(([index]) => index);
-  const prefix = [0];
-  for (const [, length] of sorted) prefix.push(prefix[prefix.length - 1]! + length);
-  return { indices, prefix };
-}
-
-/** Number of entries in `table` with index <= key. */
-function prefixCountAtOrBelow(table: LoadedPrefix, key: number): number {
-  let lo = 0;
-  let hi = table.indices.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    if (table.indices[mid]! <= key) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo;
-}
-
-/** Total length of the chunks in `table` with index <= key. O(log L). */
-export function prefixLengthAtOrBelow(table: LoadedPrefix, key: number): number {
-  return table.prefix[prefixCountAtOrBelow(table, key)]!;
-}
-
-// =============================================================================
-// Loaded-chunk lengths for live documents
+// Loaded-chunk lengths
 // =============================================================================
 
 /**
  * Persistent AVL tree of the loaded chunks, keyed by chunk index, with the
  * total length of each subtree. A load or eviction copies one search
  * path, so streaming a file costs O(log L) per chunk instead of rebuilding a
- * table over every loaded chunk.
+ * table over every loaded chunk. Live documents keep one per chunk map, and
+ * the v1 checkpoint migration builds one from wire data.
  */
-interface LoadedNode {
+export interface LoadedNode {
   /** Chunk index. */
   readonly key: number;
   /** Original length of the chunk. */
@@ -241,8 +202,20 @@ function removeLoaded(node: LoadedNode | null, index: number): LoadedNode | null
   return avlRemove<number, number, LoadedNode>(loadedNode, node, index);
 }
 
+/**
+ * Build the tree from (chunk index, length) pairs in any order. A repeated
+ * index keeps its last length.
+ */
+export function buildLoadedChunks(
+  chunks: Iterable<readonly [index: number, length: number]>,
+): LoadedNode | null {
+  let root: LoadedNode | null = null;
+  for (const [index, length] of chunks) root = putLoaded(root, index, length);
+  return root;
+}
+
 /** Total length of the loaded chunks with index <= key. O(log L). */
-function loadedSumAtOrBelow(root: LoadedNode | null, key: number): number {
+export function loadedSumAtOrBelow(root: LoadedNode | null, key: number): number {
   let sum = 0;
   let node = root;
   while (node !== null) {
@@ -264,8 +237,9 @@ const loadedTrees = new WeakMap<ChunkMap, LoadedNode | null>();
 function loadedTree(chunkMap: ChunkMap): LoadedNode | null {
   const cached = loadedTrees.get(chunkMap);
   if (cached !== undefined) return cached;
-  let root: LoadedNode | null = null;
-  for (const [index, bytes] of chunkMap) root = putLoaded(root, index, bytes.length);
+  const root = buildLoadedChunks(
+    Array.from(chunkMap, ([index, bytes]) => [index, bytes.length] as const),
+  );
   loadedTrees.set(chunkMap, root);
   return root;
 }

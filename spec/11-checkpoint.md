@@ -58,10 +58,10 @@ Version 2 adds chunk placement keys and anchored history positions:
 - An add piece tuple may carry a fifth element, its placement key (`afterChunk`). It is omitted when the key is `-1`.
 - A history change tuple ends with its placement key, omitted when `-1`. Its position is an anchored position and may be negative.
 - A history change may carry the exact bytes undo restores, as base64 after the placement key: `["i" | "d", position, text, afterChunk, bytes]` or `["r", position, text, oldText, afterChunk, bytes | null, oldBytes]`. `null` holds the place of `bytes` only when `oldBytes` follows, and restore rejects a tuple with more elements than these. They are present only when the text does not encode back to those bytes (malformed UTF-8 or a byte order mark), and the key is then written even when `-1`. Restore takes the byte length from them and counts them toward the decoded-bytes limit.
-- Restore checks every history placement key against the loaded chunks: it must be at most `nextExpectedChunk - 1`, so `-1` without chunking. A change's anchored position with key `K` must resolve to a non-negative offset in the restored layout, so it is at least minus the lengths of the loaded chunks at or below `K`. A history selection is clamped when undo or redo restores it, so its positions need only be at least `-(K + 1) * chunkSize`. Positions with key `-1` are non-negative.
+- Restore checks every history placement key against the loaded chunks: it must be at most `nextExpectedChunk - 1`, so `-1` without chunking. A change's anchored position with key `K` must resolve to a non-negative offset in the restored layout, so it is at least minus the lengths of the loaded chunks at or below `K`. A history selection is clamped when undo or redo restores it, so its positions need only be at least `-(K + 1) * chunkSize`. Positions with key `-1` are non-negative. Restore also replays each stack's lengths from its newest entry, undo last change first and redo first change first, and rejects a change whose range ends past the document it applies to, which would make `UNDO` or `REDO` throw.
 - Undo and redo refuse, with a `RangeError`, to replay a change that resolves outside the document. Restore cannot rule this out, because each entry applies to a different revision of the document.
 - A history selection range is `[anchor, head]` or `[anchor, head, anchorAfterChunk, headAfterChunk]`.
-- A live selection range is `[anchor, head]` byte offsets, or `[anchor, head, anchorAfterChunk, headAfterChunk]` when it stores a placement key (see `SelectionRange.anchorAfterChunk`). `null` stands for a key the range does not store. Edits do not move stored keys, so a key can stop fitting its offset. Capture leaves out a key that does not fit, and restore ignores one, as the live selection does.
+- A live selection range is `[anchor, head]` byte offsets, or `[anchor, head, anchorAfterChunk, headAfterChunk]` when it stores a placement key (see `SelectionRange.anchorAfterChunk`). `null` stands for a key the range does not store. APPLY_REMOTE moves text but not the selection, so a key can stop fitting its offset. Capture leaves out a key that does not fit, and restore ignores one, as the live selection does.
 - `history.evictionPolicy` is `'pin'` or `'drop'`. Restore treats a missing value as `'pin'`.
 
 The version 1 to 2 step derives the keys from the captured layout. Each history offset is keyed in the document its entry applied to: the step follows the captured document back through the undo stack and forward through the redo stack, so an offset that later edits moved into another chunk keeps the chunk it was recorded in. Documents without chunks need no change.
@@ -157,7 +157,8 @@ constraint on the allocator.
 | `exact`      | Piece list, piece identities, both buffers | Payload carries the original and add buffers    |
 | `normalized` | Text, history, selection, metadata         | Piece identities change, attentions re-anchored |
 
-`normalized` collapses the document to a single original-buffer piece and rebuilds the line
+`normalized` collapses the document to a single original-buffer piece holding its bytes as they are,
+including a leading U+FEFF and malformed sequences, and rebuilds the line
 index from the text. Attentions are resolved to byte ranges at capture and re-created against
 the new piece, so they keep resolving to the same text under their original ids. History
 survives either mode, because a `HistoryChange` records an anchored position and text rather
@@ -197,7 +198,7 @@ string code units. Omitted limits remain unrestricted for backward compatibility
 | `LINE_INDEX_MISMATCH`    | Line lengths do not cover the document                                                                                             |
 | `ID_COLLISION`           | A duplicate id, or an allocator cursor that would reissue one                                                                      |
 | `SELECTION_OUT_OF_RANGE` | A selection offset past the document, or no ranges at all                                                                          |
-| `HISTORY_INVALID`        | Bad limit, bad coalesce timeout, a stack deeper than its limit, or a history placement key naming a chunk that has not been loaded |
+| `HISTORY_INVALID`        | Bad limit, bad coalesce timeout, a stack deeper than its limit, a history placement key naming a chunk that has not been loaded, or a history change that replays past the end of its document |
 | `ATTENTION_DANGLING`     | An attention names an unknown piece or an out-of-range boundary                                                                    |
 | `CHUNKED_NORMALIZE`      | `normalized` capture requested for a chunked document                                                                              |
 | `RESOURCE_LIMIT`         | A configured restore resource limit was exceeded                                                                                   |

@@ -153,7 +153,7 @@ Supported event types:
 Auto-emitted by `store.createDocumentStoreWithEvents`:
 
 - `content-change` (`INSERT/DELETE/REPLACE/APPLY_REMOTE`)
-- `selection-change` (`SET_SELECTION`, and any other action that replaces the selection: `UNDO`/`REDO`, an edit with an inline selection, `LOAD_CHUNK`/`LOAD_CHUNKS`/`EVICT_CHUNK` when they move it)
+- `selection-change` (`SET_SELECTION`, and any other action that moves the selection: `INSERT`/`DELETE`/`REPLACE` moving it past the edit, `UNDO`/`REDO`, `LOAD_CHUNK`/`LOAD_CHUNKS`/`EVICT_CHUNK`)
 - `history-change` (`UNDO/REDO`)
 - `history-drop` (`EVICT_CHUNK` when the `'drop'` policy discards entries)
 - `attention-change` (create, delete, or content edits that rewrite stored points)

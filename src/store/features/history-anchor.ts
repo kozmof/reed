@@ -32,6 +32,7 @@ import {
   toResidentOffset,
 } from "../core/chunk-anchor.js";
 import { getBytes, isUtf8Boundary } from "../core/piece-table.js";
+import { MAX_CONTINUATION_BYTES, isContinuationByte } from "../core/utf8-seam.js";
 import {
   forEachHistoryChange,
   someHistoryChange,
@@ -268,6 +269,42 @@ export function selectionAfterEdit(
   );
 }
 
+/**
+ * The live selection after a local edit replaced [start, end) of the document
+ * `selection` describes with `inserted` bytes, giving `pieceTable`.
+ *
+ * Offsets before `start` stay. An endpoint at `start` or inside the removed
+ * range moves past the inserted text, as a caret does when text is typed at
+ * it, so typing over a selection leaves a caret after the new text. Offsets
+ * after the removed range shift by the change in length. A moved endpoint
+ * keeps its stored key only where `selectionRange` would.
+ *
+ * Returns `selection` itself when no endpoint moves.
+ */
+export function moveSelectionPastEdit(
+  pieceTable: PieceTableState,
+  selection: SelectionState,
+  start: number,
+  end: number,
+  inserted: number,
+): SelectionState {
+  const move = (offset: ByteOffset): ByteOffset =>
+    offset < start
+      ? offset
+      : offset >= end
+        ? byteOffset(offset - (end - start) + inserted)
+        : byteOffset(start + inserted);
+  let changed = false;
+  const ranges = selection.ranges.map((range) => {
+    const anchor = move(range.anchor);
+    const head = move(range.head);
+    if (anchor === range.anchor && head === range.head) return range;
+    changed = true;
+    return selectionRange(pieceTable, anchor, head, range.anchorAfterChunk, range.headAfterChunk);
+  });
+  return changed ? freezeSelection(ranges, selection.primaryIndex) : selection;
+}
+
 // =============================================================================
 // Anchoring and resolving selections
 // =============================================================================
@@ -336,14 +373,8 @@ export function anchoredCursor(key: number, position: number): HistorySelectionS
   );
 }
 
-/** Bytes a UTF-8 lead byte can own after it. */
-const MAX_CONTINUATION_BYTES = 3;
 /** Bytes read at a time while scanning a long run of continuation bytes. */
 const SCAN_BLOCK = 256;
-
-function isContinuation(byte: number): boolean {
-  return (byte & 0xc0) === 0x80;
-}
 
 /**
  * The UTF-8 code-point boundary a position clamped to `offset` moves to.
@@ -370,7 +401,7 @@ function nextBoundary(pieceTable: PieceTableState, offset: number): number {
     byteOffset(offset + 1 + MAX_CONTINUATION_BYTES),
   );
   for (let i = 0; i < leftovers.length; i++) {
-    if (!isContinuation(leftovers[i]!)) return offset + 1 + i;
+    if (!isContinuationByte(leftovers[i]!)) return offset + 1 + i;
   }
   if (offset + 1 + leftovers.length >= total) return total;
 
@@ -384,7 +415,7 @@ function nextBoundary(pieceTable: PieceTableState, offset: number): number {
   for (;;) {
     if (after === undefined) {
       const block = getBytes(pieceTable, byteOffset(ahead), byteOffset(ahead + SCAN_BLOCK));
-      const i = block.findIndex((byte) => !isContinuation(byte));
+      const i = block.findIndex((byte) => !isContinuationByte(byte));
       if (i >= 0) after = ahead + i;
       else if ((ahead += block.length) >= total) after = total;
     }
@@ -392,7 +423,7 @@ function nextBoundary(pieceTable: PieceTableState, offset: number): number {
       const from = Math.max(0, behind - SCAN_BLOCK);
       const block = getBytes(pieceTable, byteOffset(from), byteOffset(behind));
       let i = block.length - 1;
-      while (i >= 0 && isContinuation(block[i]!)) i--;
+      while (i >= 0 && isContinuationByte(block[i]!)) i--;
       if (i >= 0) before = from + i;
       else if ((behind = from) === 0) before = 0;
     }
@@ -468,6 +499,20 @@ function sameRange(a: SelectionRange, b: SelectionRange): boolean {
 }
 
 /**
+ * `current` when `next` holds the same ranges, stored keys, and primary index,
+ * else `next`. An action that leaves the selection in place keeps the same
+ * object, so `state.selection !== prev.selection` means it moved.
+ */
+export function keepSameSelection(current: SelectionState, next: SelectionState): SelectionState {
+  return current === next ||
+    (current.primaryIndex === next.primaryIndex &&
+      current.ranges.length === next.ranges.length &&
+      current.ranges.every((range, i) => sameRange(range, next.ranges[i]!)))
+    ? current
+    : next;
+}
+
+/**
  * Move the live selection from `before` to `after`, two documents that differ
  * only by loaded or evicted chunks.
  *
@@ -490,9 +535,7 @@ export function carrySelectionAcrossChunks(
   selection: SelectionState,
 ): SelectionState {
   if (before.nextExpectedChunk === 0) return selection;
-  const resolved = resolveSelection(after, anchorSelection(before, selection));
-  const unchanged = resolved.ranges.every((range, i) => sameRange(range, selection.ranges[i]!));
-  return unchanged ? selection : resolved;
+  return keepSameSelection(selection, resolveSelection(after, anchorSelection(before, selection)));
 }
 
 // =============================================================================

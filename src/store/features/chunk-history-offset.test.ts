@@ -735,7 +735,7 @@ describe("checkpoint restore validates history anchors", () => {
     // nextExpectedChunk is 2, so key 1 is fine and key 2 is not.
     const atKey = (key: number, position = 2) =>
       editUndo(checkpoint, (entry) => (entry.changes[0] = ["i", position, "X", key]));
-    expect(() => restoreCheckpoint(atKey(1))).not.toThrow();
+    expect(() => restoreCheckpoint(atKey(1, -1))).not.toThrow();
     expect(() => restoreCheckpoint(atKey(2))).toThrow(/placement key 2/);
     // A change is replayed in the restored layout, so its position subtracts
     // at most the loaded chunks at or below its key: none for key 0, whose
@@ -1247,11 +1247,10 @@ describe("fifth review regressions: checkpoints", () => {
     checkpoint.history.undo[0].changes[0] = ["i", -500, "X", 0];
     expect(() => restoreCheckpoint(checkpoint)).toThrow(/at least 0/);
 
-    // Past the end: restore cannot tell, as older entries apply to other
-    // documents, so undo refuses rather than delete other bytes.
+    // Past the end: restore replays the stack's lengths and refuses it, so
+    // UNDO never meets it.
     checkpoint.history.undo[0].changes[0] = ["i", 100, "X", 0];
-    const state = restoreCheckpoint(checkpoint);
-    expect(() => documentReducer(state, DocumentActions.undo())).toThrow(RangeError);
+    expect(() => restoreCheckpoint(checkpoint)).toThrow(/past the end of the 9-byte document/);
   });
 });
 
@@ -1296,7 +1295,7 @@ describe("sixth review regressions", () => {
     expect(() => roundTrip(s)).not.toThrow();
   });
 
-  it("leaves out a live selection key that edits have made stale", () => {
+  it("leaves out a live selection key that remote edits have made stale", () => {
     const s = makeStore(3);
     for (let i = 0; i < 3; i++) load(s, i);
     s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(16), head: byteOffset(16) }]));
@@ -1307,11 +1306,17 @@ describe("sixth review regressions", () => {
       anchorAfterChunk: 1,
       headAfterChunk: 1,
     });
-    // The edit moves the text but not the selection, so key 1 no longer fits offset 8.
+    // A local edit moves the selection with the text, so the key still fits.
     s.dispatch(DocumentActions.insert(byteOffset(0), "xyz"));
+    expect(createCheckpoint(s.reconcileNow()).selection.ranges).toEqual([[11, 11, 1, 1]]);
+    // A remote edit moves the text but not the selection, so key 1 no longer
+    // fits offset 11.
+    s.dispatch(
+      DocumentActions.applyRemote([{ type: "insert", start: byteOffset(0), text: "abc" }]),
+    );
     const checkpoint = createCheckpoint(s.reconcileNow());
-    expect(checkpoint.selection.ranges).toEqual([[8, 8]]);
-    expect(roundTrip(s).selection.ranges[0]).toEqual({ anchor: 8, head: 8 });
+    expect(checkpoint.selection.ranges).toEqual([[11, 11]]);
+    expect(roundTrip(s).selection.ranges[0]).toEqual({ anchor: 11, head: 11 });
   });
 
   it("keeps inserts with different placement keys in separate changes", () => {
@@ -1478,20 +1483,37 @@ describe("seventh review regressions", () => {
     });
   });
 
-  it("fires no selection-change for an edit that carries its selection", () => {
+  it("moves the selection past an edit and reports it only when it moves", () => {
     const s = createDocumentStoreWithEvents({ content: "hello", reconcileMode: "none" });
     s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(5), head: byteOffset(5) }]));
-    let events = 0;
-    s.addEventListener("selection-change", () => events++);
-    s.dispatch(
-      DocumentActions.insert(byteOffset(5), "!", [{ anchor: byteOffset(5), head: byteOffset(5) }]),
+    const heads: number[] = [];
+    s.addEventListener("selection-change", ({ nextState }) =>
+      heads.push(nextState.selection.ranges[0].head),
     );
+    const at = (offset: number) =>
+      [{ anchor: byteOffset(offset), head: byteOffset(offset) }] as const;
+    // A caret at the insertion point moves past the inserted text.
+    s.dispatch(DocumentActions.insert(byteOffset(5), "!", at(5)));
+    // An inline selection before the edit stays where it is.
+    s.dispatch(DocumentActions.insert(byteOffset(6), "?", at(2)));
+    // Without one, the current selection moves: here it shifts after an insert before it.
+    s.dispatch(DocumentActions.insert(byteOffset(0), "ab"));
+    expect(heads).toEqual([6, 2, 4]);
+    // An edit after the selection leaves the same object, so nothing fires.
+    const before = s.getSnapshot().selection;
+    s.dispatch(DocumentActions.insert(byteOffset(9), "z"));
+    expect(s.getSnapshot().selection).toBe(before);
+    expect(heads).toEqual([6, 2, 4]);
+    // Typing over a selection leaves a caret after the new text.
     s.dispatch(
-      DocumentActions.insert(byteOffset(6), "?", [{ anchor: byteOffset(2), head: byteOffset(2) }]),
+      DocumentActions.replace(byteOffset(2), byteOffset(7), "Q", [
+        { anchor: byteOffset(2), head: byteOffset(7) },
+      ]),
     );
-    expect(events).toBe(0);
-    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(7), head: byteOffset(7) }]));
-    expect(events).toBe(1);
+    expect(s.getSnapshot().selection.ranges).toEqual([{ anchor: 3, head: 3 }]);
+    // Undo restores the selection the edit came from.
+    s.dispatch(DocumentActions.undo());
+    expect(s.getSnapshot().selection.ranges).toEqual([{ anchor: 2, head: 7 }]);
   });
 
   describe("remote inserts at the local cursor", () => {
@@ -1683,5 +1705,62 @@ describe("seventh review regressions", () => {
       ]);
       expect(cursor(s)).toEqual({ anchor: SIZE + 300, head: SIZE + 300 });
     });
+  });
+});
+
+describe("eighth review regressions", () => {
+  type Wire = Record<string, any>;
+  const wire = (state: DocumentState<"eager">, mode: "exact" | "normalized" = "exact"): Wire =>
+    JSON.parse(JSON.stringify(createCheckpoint(state, { mode })));
+
+  it("keeps a leading U+FEFF in a normalized checkpoint, so undo still applies", () => {
+    const s = createDocumentStore({ content: "﻿abc", reconcileMode: "none" });
+    s.dispatch(DocumentActions.insert(byteOffset(6), "X"));
+    const restored = createDocumentStoreFromCheckpoint(wire(s.reconcileNow(), "normalized"));
+    expect(restored.getSnapshot().pieceTable.totalLength).toBe(7);
+    restored.dispatch(DocumentActions.undo());
+    const { pieceTable } = restored.getSnapshot();
+    expect([...getBytes(pieceTable, byteOffset(0), byteOffset(pieceTable.totalLength))]).toEqual([
+      ...enc("﻿abc"),
+    ]);
+    restored.dispatch(DocumentActions.redo());
+    expect(restored.getSnapshot().pieceTable.totalLength).toBe(7);
+  });
+
+  it("rejects an older undo entry that lands past the document it applies to", () => {
+    const s = createDocumentStore({ content: "abc", reconcileMode: "none", undoGroupTimeout: 0 });
+    s.dispatch(DocumentActions.insert(byteOffset(3), "X"));
+    s.dispatch(DocumentActions.insert(byteOffset(4), "Y"));
+    const checkpoint = wire(s.reconcileNow());
+    expect(() => restoreCheckpoint(checkpoint)).not.toThrow();
+    // [4, 5) fits the 5-byte document, but not the 4 bytes left once "Y" is undone.
+    checkpoint.history.undo[0].changes[0] = ["i", 4, "X"];
+    expect(() => restoreCheckpoint(checkpoint)).toThrow(/history\.undo\[0\]\.changes\[0\]/);
+  });
+
+  it("rejects a redo entry that lands past the document it applies to", () => {
+    const s = createDocumentStore({ content: "abc", reconcileMode: "none" });
+    s.dispatch(DocumentActions.delete(byteOffset(1), byteOffset(3)));
+    s.dispatch(DocumentActions.undo());
+    const checkpoint = wire(s.reconcileNow());
+    expect(checkpoint.history.redo[0].changes[0]).toEqual(["d", 1, "bc"]);
+    expect(() => restoreCheckpoint(checkpoint)).not.toThrow();
+    checkpoint.history.redo[0].changes[0] = ["d", 2, "bc"];
+    expect(() => restoreCheckpoint(checkpoint)).toThrow(/past the end of the 3-byte document/);
+  });
+
+  it("keeps the selection object when undo or redo restores the same selection", () => {
+    const s = createDocumentStoreWithEvents({ content: "abc", reconcileMode: "none" });
+    let fired = 0;
+    s.addEventListener("selection-change", () => fired++);
+    s.dispatch(DocumentActions.insert(byteOffset(1), "X"));
+    const before = s.getSnapshot().selection;
+    s.dispatch(DocumentActions.undo());
+    expect(s.getSnapshot().selection).toBe(before);
+    expect(fired).toBe(0);
+    // Redo places the caret after the inserted text, which does move it.
+    s.dispatch(DocumentActions.redo());
+    expect(s.getSnapshot().selection.ranges).toEqual([{ anchor: 2, head: 2 }]);
+    expect(fired).toBe(1);
   });
 });

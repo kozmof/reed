@@ -51,12 +51,14 @@ import {
 import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
 import { contentDecoder, encodesTo, utf8ByteLength } from "../core/encoding.js";
 import { NO_CHUNK, placementRuns } from "../core/chunk-anchor.js";
+import { codePointWindow, isSafeSplit } from "../core/utf8-seam.js";
 import type { KeyRun } from "../core/chunk-anchor.js";
 import {
   anchorAt,
   anchorSelection,
   anchoredCursor,
   insertionKey,
+  moveSelectionPastEdit,
   residentOffset,
   selectionRangesWithKeys,
 } from "./history-anchor.js";
@@ -169,6 +171,21 @@ export function pieceTableDelete(
  */
 export function getTextRange(state: DocumentState, start: ByteOffset, end: ByteOffset): string {
   return contentDecoder.decode(getBytes(state.pieceTable, start, end));
+}
+
+/**
+ * The text a local edit deletes from [start, end), decoded as `getTextRange`
+ * does, with the bytes it was decoded from. `applyEdit` keeps those bytes in
+ * history when the text does not encode back to them, so passing them on
+ * saves reading the range a second time.
+ */
+export function readDeletedRange(
+  state: DocumentState,
+  start: ByteOffset,
+  end: ByteOffset,
+): { readonly deletedText: string; readonly deletedBytes: Uint8Array } {
+  const deletedBytes = getBytes(state.pieceTable, start, end);
+  return { deletedText: contentDecoder.decode(deletedBytes), deletedBytes };
 }
 
 // =============================================================================
@@ -392,18 +409,6 @@ function isExactDecoding(text: string, length: number): boolean {
   return utf8ByteLength(text) === length && !text.includes("�");
 }
 
-/** The bytes in `[start, end)` when `text`, their decoding, does not encode back to them. */
-function rawBytesUnlessExact(
-  pieceTable: PieceTableState,
-  text: string,
-  start: number,
-  end: number,
-): ReadonlyUint8Array | undefined {
-  if (isExactDecoding(text, end - start)) return undefined;
-  const raw = getBytes(pieceTable, byteOffset(start), byteOffset(end));
-  return encodesTo(text, raw) ? undefined : asReadonlyUint8Array(raw);
-}
-
 /** Deleted text of one placement run, with its bytes when the text is inexact. */
 interface DeletedRun {
   readonly text: string;
@@ -414,26 +419,31 @@ interface DeletedRun {
 /**
  * Text and, where needed, raw bytes of each run of a delete. `deletedText` is
  * the decoding of the whole range, which a single run reuses. Several runs
- * read the range's bytes once and decode each run from them, the way
- * `getText` decodes a range.
+ * decode each run from the range's bytes, the way `getText` decodes a range.
+ * `deletedBytes`, when given, holds the range's bytes, so they are not read
+ * again. Otherwise they are read once, and only when needed.
  */
 function deletedRuns(
   pieceTable: PieceTableState,
   runs: readonly KeyRun[],
   deletedText: string,
+  deletedBytes: Uint8Array | undefined,
 ): DeletedRun[] {
-  if (runs.length === 1) {
-    const { start, end } = runs[0]!;
-    const bytes = rawBytesUnlessExact(pieceTable, deletedText, start, end);
-    return [
-      bytes === undefined
-        ? { text: deletedText, length: end - start }
-        : { text: deletedText, length: end - start, bytes },
-    ];
-  }
   if (runs.length === 0) return [];
   const base = runs[0]!.start;
-  const all = getBytes(pieceTable, byteOffset(base), byteOffset(runs[runs.length - 1]!.end));
+  const end = runs[runs.length - 1]!.end;
+  const rangeBytes = () => deletedBytes ?? getBytes(pieceTable, byteOffset(base), byteOffset(end));
+  if (runs.length === 1) {
+    const length = end - base;
+    if (isExactDecoding(deletedText, length)) return [{ text: deletedText, length }];
+    const raw = rangeBytes();
+    return [
+      encodesTo(deletedText, raw)
+        ? { text: deletedText, length }
+        : { text: deletedText, length, bytes: asReadonlyUint8Array(raw) },
+    ];
+  }
+  const all = rangeBytes();
   return runs.map((run) => {
     const raw = all.subarray(run.start - base, run.end - base);
     const text = contentDecoder.decode(raw);
@@ -734,6 +744,12 @@ export type StructuralEditOperation =
 export type EditOperation = StructuralEditOperation & {
   readonly timestamp?: number | undefined;
   readonly selection?: NonEmptyReadonlyArray<SelectionRange> | undefined;
+  /**
+   * For a delete or replace, the bytes of [position, deleteEnd) that
+   * `deletedText` was decoded from (see `readDeletedRange`). When omitted,
+   * they are read again where history needs them.
+   */
+  readonly deletedBytes?: Uint8Array | undefined;
 };
 
 /**
@@ -831,32 +847,6 @@ export function applyUntrackedEdit(
   return newState;
 }
 
-/** Bytes a UTF-8 lead byte can own after it. */
-const MAX_CONTINUATION_BYTES = 3;
-
-function isContinuationByte(pieceTable: PieceTableState, offset: number): boolean {
-  return (getRawByte(pieceTable, byteOffset(offset)) & 0xc0) === 0x80;
-}
-
-/**
- * True when splitting the bytes of `pieceTable` at `offset` leaves the decoding
- * of both sides as it is in the whole document, so their characters can be
- * counted apart.
- *
- * A decoder ends a pending sequence at a byte that is not a continuation byte,
- * just as it does at the end of its input, so splitting before such a byte is
- * safe. So is splitting before a continuation byte that follows three others:
- * no lead byte can own it, so it decodes to U+FFFD on its own either way.
- */
-function isSafeSplit(pieceTable: PieceTableState, offset: number): boolean {
-  if (offset <= 0 || offset >= pieceTable.totalLength) return true;
-  if (!isContinuationByte(pieceTable, offset)) return true;
-  for (let back = 1; back <= MAX_CONTINUATION_BYTES; back++) {
-    if (offset - back < 0 || !isContinuationByte(pieceTable, offset - back)) return false;
-  }
-  return true;
-}
-
 /**
  * True when an edge of `op` cuts a character of `pieceTable`, the document
  * before the edit.
@@ -887,38 +877,6 @@ function splitsCharacter(pieceTable: PieceTableState, op: StructuralEditOperatio
 function splitsCharacterAfter(pieceTable: PieceTableState, start: number, end: number): boolean {
   if (pieceTable.nextExpectedChunk === 0) return false;
   return !isSafeSplit(pieceTable, start) || !isSafeSplit(pieceTable, end);
-}
-
-/**
- * Widen an edit that replaced [start, end) with `insertedLength` bytes so both
- * edges are safe splits of `pieceTable`, the edited document (see
- * `isSafeSplit`).
- *
- * The line-index repair counts the characters before, inside and after the
- * edit apart. Bytes undo or redo puts back can join the bytes beside them into
- * one character, for example a lead byte re-inserted before the continuation
- * bytes of a chunk that loaded since the edit. Counted apart, those bytes give
- * one U+FFFD each. The bytes the window gains are the same in both documents,
- * so they count as deleted and re-inserted. A safe split lies within four bytes
- * of any offset.
- */
-function codePointWindow(
-  pieceTable: PieceTableState,
-  start: ByteOffset,
-  end: ByteOffset,
-  insertedLength: number,
-): { start: ByteOffset; end: ByteOffset; insertedLength: number } {
-  let before = 0;
-  while (!isSafeSplit(pieceTable, start - before)) before++;
-  const insertedEnd = start + insertedLength;
-  let after = 0;
-  while (!isSafeSplit(pieceTable, insertedEnd + after)) after++;
-  if (before === 0 && after === 0) return { start, end, insertedLength };
-  return {
-    start: byteOffset(start - before),
-    end: byteOffset(end + after),
-    insertedLength: insertedLength + before + after,
-  };
 }
 
 /**
@@ -978,13 +936,22 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
     nextRevision,
   );
 
-  // Apply inline selection so historyPush records the correct selectionBefore.
-  if (op.selection) newState = withState(newState, { selection: selectionBefore });
-
   // Reuse the insert length measured by the structural edit.
   const deletedLength = op.kind === "insert" ? 0 : op.deleteEnd - op.position;
   const insertedLength =
     newState.pieceTable.totalLength - state.pieceTable.totalLength + deletedLength;
+  // Move the selection the edit comes from past the edit, so the state holds a
+  // selection of the edited document. History records it as it was before.
+  const selectionAfter = moveSelectionPastEdit(
+    newState.pieceTable,
+    selectionBefore,
+    op.position,
+    op.position + deletedLength,
+    insertedLength,
+  );
+  if (selectionAfter !== newState.selection) {
+    newState = withState(newState, { selection: selectionAfter });
+  }
   // History positions are anchored against the pre-edit document. Edits never
   // load or evict chunks, so the post-edit chunk layout resolves them the same way.
   const anchor = anchorAt(pieceTable, insertKey, op.position);
@@ -994,7 +961,8 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   // the deleted bytes, history keeps the exact bytes, so undo restores the
   // document byte for byte and every recorded position stays valid.
   // Runs are empty for an insert. A single run is the whole deleted range.
-  const deleted = deletedRuns(pieceTable, runs, op.kind === "insert" ? "" : op.deletedText);
+  const deleted =
+    op.kind === "insert" ? [] : deletedRuns(pieceTable, runs, op.deletedText, op.deletedBytes);
   // Each run except the first becomes its own delete, ordered right to left so
   // every position is valid when its change is applied. Undo applies them in
   // reverse, re-inserting each run with its own key.

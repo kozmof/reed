@@ -806,7 +806,7 @@ function restoreSelection(
       }
       // null stands for no stored key. A key text at its offset could not
       // take is ignored, as it is on the live selection (see
-      // `SelectionRange.anchorAfterChunk`): edits do not move stored keys.
+      // `SelectionRange.anchorAfterChunk`): remote edits do not move stored keys.
       const readKey = (index: 2 | 3): number | undefined => {
         const value = tuple[index];
         if (value === null || value === undefined) return undefined;
@@ -999,6 +999,50 @@ function restoreHistoryEntry(
   });
 }
 
+/**
+ * Check that a stack replays inside the document: undo (`direction` -1) walks
+ * changes last to first, and redo (1) first to last, both from the newest
+ * entry. Each change applies to the document the newer ones left, so the
+ * walk tracks only its length. A change whose range ends past that length
+ * would make UNDO or REDO throw, so the checkpoint is rejected here instead.
+ *
+ * Replay loads and evicts no chunks, so every position resolves against the
+ * restored layout. `readAnchor` has already checked each against zero.
+ */
+function assertStackReplays(
+  entries: readonly HistoryEntry[],
+  pieceTable: PieceTableState,
+  direction: 1 | -1,
+  what: string,
+): void {
+  let length = pieceTable.totalLength;
+  for (let e = entries.length - 1; e >= 0; e--) {
+    const { changes } = entries[e]!;
+    for (let n = 0; n < changes.length; n++) {
+      const i = direction < 0 ? changes.length - 1 - n : n;
+      const change = changes[i]!;
+      // Bytes the change removes and inserts when redone. Undo swaps them.
+      const [redoRemoves, redoInserts] =
+        change.type === "insert"
+          ? [0, change.byteLength]
+          : change.type === "delete"
+            ? [change.byteLength, 0]
+            : [change.oldByteLength, change.byteLength];
+      const [remove, insert] =
+        direction > 0 ? [redoRemoves, redoInserts] : [redoInserts, redoRemoves];
+      const start = change.position + loadedLengthAtOrBelow(pieceTable, change.afterChunk);
+      if (start + remove > length) {
+        fail(
+          "HISTORY_INVALID",
+          `${what}[${e}].changes[${i}] resolves to [${start}, ${start + remove}), past the end of ` +
+            `the ${length}-byte document it applies to`,
+        );
+      }
+      length += insert - remove;
+    }
+  }
+}
+
 function restoreHistory(
   raw: unknown,
   pieceTable: PieceTableState,
@@ -1035,10 +1079,14 @@ function restoreHistory(
       restoreHistoryEntry(entry, `${what}[${i}]`, pieceTable, budget),
     );
   };
+  const undo = readStack(rawUndo, "history.undo");
+  const redo = readStack(rawRedo, "history.redo");
+  assertStackReplays(undo, pieceTable, -1, "history.undo");
+  assertStackReplays(redo, pieceTable, 1, "history.redo");
 
   return Object.freeze({
-    undoStack: pstackFromArray(readStack(rawUndo, "history.undo")),
-    redoStack: pstackFromArray(readStack(rawRedo, "history.redo")),
+    undoStack: pstackFromArray(undo),
+    redoStack: pstackFromArray(redo),
     limit,
     coalesceTimeout,
     evictionPolicy,

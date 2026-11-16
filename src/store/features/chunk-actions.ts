@@ -290,7 +290,6 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
     });
     lineIndex = repairChunkLines(
       lineIndex,
-      pieceTable,
       next,
       insertionPos,
       insertionPos,
@@ -339,7 +338,6 @@ export function evictChunk(state: DocumentState, action: EvictChunkAction): Docu
   const nextRevision = state.revision + 1;
   let lineIndex: LineIndexState = repairChunkLines(
     state.lineIndex,
-    state.pieceTable,
     nextPieceTable,
     range.start,
     range.end,

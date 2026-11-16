@@ -87,18 +87,11 @@ export function withEvents(
     }
 
     // Selection change events: SET_SELECTION, and every other action that
-    // replaces the selection, such as undo and redo restoring it, a chunk load
-    // shifting it, or an eviction collapsing it. Selections are immutable, so
-    // the reference check is O(1).
-    //
-    // A text edit with an inline selection also replaces it, but with the
-    // selection the caller sent, which describes the document before the
-    // edit. Reporting it would hand listeners the caret from before the edit
-    // on the edited document, so text edits fire 'content-change' only.
-    if (
-      action.type === "SET_SELECTION" ||
-      (!isTextEditAction(action) && prevState.selection !== nextState.selection)
-    ) {
+    // moves the selection, such as an edit moving it past the edited text,
+    // undo and redo restoring it, a chunk load shifting it, or an eviction
+    // collapsing it. Selections are immutable and an action that leaves the
+    // selection in place keeps the same object, so the reference check is O(1).
+    if (action.type === "SET_SELECTION" || prevState.selection !== nextState.selection) {
       prepare("selection-change", createSelectionChangeEvent(prevState, nextState));
     }
 

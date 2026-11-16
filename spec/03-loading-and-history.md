@@ -131,6 +131,7 @@ Implemented:
 - timeout-based coalescing for consecutive edits
 - selection restoration on undo and redo
 - the optional edit selection records the pre-edit caret restored by undo
+- an edit moves the selection it comes from past the edit: offsets before it stay, an endpoint at or inside the edited range moves after the inserted text, and later offsets shift by the change in length
 - redo derives its caret from the change kind, placing inserts and replacements after inserted text and deletes at the deletion point
 
 Transaction behavior:
@@ -154,7 +155,7 @@ History boundaries:
 `store.createDocumentStoreWithEvents` emits:
 
 - `content-change` for local text edits and `APPLY_REMOTE`
-- `selection-change` whenever an action replaces the selection, including undo, redo, and a chunk load or eviction that moves it
+- `selection-change` whenever an action moves the selection, including an edit, undo, redo, and a chunk load or eviction
 - `history-change` for undo and redo
 - `history-drop` when eviction discards entries under the `'drop'` policy
 - `attention-change` when attention records are created, deleted, or migrated
