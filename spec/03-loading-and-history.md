@@ -70,8 +70,10 @@ Loads and evictions leave both values valid. Undo and redo convert them back to 
 offsets. Without chunking, `afterChunk` is `-1` and `position` is the plain byte offset.
 History selections use the same pairs.
 
-A delete that spans a chunk which is not loaded is recorded as several changes in one entry.
-Undo then puts each part back on the correct side of that chunk.
+A delete that spans text with different placement keys, such as text from two chunks, is
+recorded as several changes in one entry, one for each key. Undo then puts each part back with
+its own key, on the correct side of every chunk. For the same reason, consecutive edits merge
+into one change only when they have the same key.
 
 History records deleted text as decoded strings. When decoding changed the bytes, so the text
 no longer encodes back to them (malformed UTF-8 such as half of a character cut off by an

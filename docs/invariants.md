@@ -79,7 +79,9 @@ wholly before the piece, and higher chunks lie after it.
 - original piece — `-1`
 
 Keys never decrease in document order. `findReloadInsertionPos` places a
-loaded chunk `c` before the first piece whose key is at least `c`. An add
+loaded chunk `c` before the first piece whose key is at least `c`.
+`pieceTableInsert` enforces the order: a given key that does not fit the
+insertion point is replaced by the gap's key. An add
 piece key is always below `nextExpectedChunk`, so a sequential first load can
 append at the end. See `src/store/core/chunk-anchor.ts`.
 

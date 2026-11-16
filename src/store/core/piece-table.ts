@@ -51,7 +51,7 @@ import {
 } from "./rb-tree.js";
 import { textEncoder, textDecoder } from "./encoding.js";
 import { GrowableBuffer } from "./growable-buffer.js";
-import { NO_CHUNK, gapKey, pieceKey } from "./chunk-anchor.js";
+import { NO_CHUNK, gapKey, keyFitsAt, pieceKey } from "./chunk-anchor.js";
 import { lastPiece, pieceAt } from "./piece-search.js";
 import type { PathEntry } from "./piece-search.js";
 import { inOrderPieces } from "./piece-table-stream.js";
@@ -542,6 +542,13 @@ export interface PieceTableInsertResult {
   splits: readonly SplitRecord[];
 }
 
+/** True when text inserted at `position` can take placement key `key`. */
+function insertKeyFits(state: PieceTableState, position: number, key: number): boolean {
+  // Before any chunk loads, NO_CHUNK is the only key.
+  if (state.nextExpectedChunk === 0) return key === NO_CHUNK;
+  return keyFitsAt(state, position, key);
+}
+
 /**
  * Insert text into the piece table at the given position.
  * Returns the new state and the UTF-8 byte length of the inserted text.
@@ -554,6 +561,11 @@ export interface PieceTableInsertResult {
  * (see `gapKey`). An empty tree has no gap to read, so the default there is
  * `-1`. Pass the key when the caller knows where the text belongs in the file:
  * the document reducer passes the key a cursor at `position` holds.
+ *
+ * Keys never decrease in document order, and loading, reload placement and
+ * anchored positions all rely on it. A given key that would break that order at
+ * `position` (see `keyFitsAt`) is replaced by the default, so no caller can
+ * leave the tree out of order.
  */
 export function pieceTableInsert(
   state: PieceTableState,
@@ -576,6 +588,9 @@ export function pieceTableInsert(
   const newAddStart = state.addBuffer.length;
   const addBuffer = state.addBuffer.append(textBytes);
 
+  const givenKey =
+    afterChunk !== undefined && insertKeyFits(state, position, afterChunk) ? afterChunk : undefined;
+
   // Handle empty tree
   if (state.root === null) {
     const newRoot = createPieceNode(
@@ -586,7 +601,7 @@ export function pieceTableInsert(
       null,
       null,
       allocatePieceID(),
-      afterChunk ?? NO_CHUNK,
+      givenKey ?? NO_CHUNK,
     );
     return $proveCtx($beginCost("O(n)"), {
       state: freezePieceTableState({
@@ -607,7 +622,7 @@ export function pieceTableInsert(
   // already found. Only a piece boundary needs gapKey.
   const root = state.root;
   const keyAt = (resolved: PieceLocation | null): number =>
-    afterChunk ??
+    givenKey ??
     (state.nextExpectedChunk === 0
       ? NO_CHUNK
       : resolved !== null && resolved.offsetInPiece > 0

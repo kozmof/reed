@@ -54,7 +54,7 @@ import { base64DecodedLength, decodeBase64 } from "../core/base64.js";
 import { inOrderPieces } from "../core/piece-table-stream.js";
 import { decodedCharLength, joinDecoded, type DecodedSummary } from "../core/decoded-metrics.js";
 import { utf8ByteLength } from "../core/encoding.js";
-import { keyFitsAt, loadedLengthAtOrBelow } from "../core/chunk-anchor.js";
+import { loadedLengthAtOrBelow } from "../core/chunk-anchor.js";
 import { selectionRange } from "./history-anchor.js";
 import { GrowableBuffer } from "../core/growable-buffer.js";
 import {
@@ -804,26 +804,20 @@ function restoreSelection(
           `${rangeWhat} spans [${anchor}, ${head}] but the document holds ${maxOffset} bytes`,
         );
       }
-      // A stored key must be one text at its offset could take (see
-      // `SelectionRange.anchorAfterChunk`). null stands for no stored key.
-      const readKey = (index: 2 | 3, offset: number): number | undefined => {
+      // null stands for no stored key. A key text at its offset could not
+      // take is ignored, as it is on the live selection (see
+      // `SelectionRange.anchorAfterChunk`): edits do not move stored keys.
+      const readKey = (index: 2 | 3): number | undefined => {
         const value = tuple[index];
         if (value === null || value === undefined) return undefined;
-        const key = readPlacementKey(value, `${rangeWhat}[${index}]`);
-        if (!keyFitsAt(pieceTable, offset, key)) {
-          fail(
-            "SELECTION_OUT_OF_RANGE",
-            `${rangeWhat}[${index}] is placement key ${key}, which does not fit offset ${offset}`,
-          );
-        }
-        return key;
+        return readPlacementKey(value, `${rangeWhat}[${index}]`);
       };
       return selectionRange(
         pieceTable,
         byteOffset(anchor),
         byteOffset(head),
-        readKey(2, anchor),
-        readKey(3, head),
+        readKey(2),
+        readKey(3),
       );
     }),
   );
@@ -891,12 +885,19 @@ function restoreHistoryChange(
     pieceTable,
     "change",
   );
-  // Raw bytes follow the key. A null `bytes` only holds the place of a
-  // replace's `oldBytes`, so null is accepted nowhere else.
+  // Raw bytes follow the key: `bytes`, then a replace's `oldBytes`.
+  const maxLength = kind === "r" ? keyIndex + 3 : keyIndex + 2;
+  if (tuple.length > maxLength) {
+    fail("MALFORMED", `${what} has ${tuple.length} elements: expected at most ${maxLength}`);
+  }
+  // A null `bytes` only holds the place of a replace's `oldBytes`, so it is
+  // accepted only when `oldBytes` follows.
   const readRawBytes = (index: number): { bytes: ReadonlyUint8Array } | undefined => {
     const value = tuple[index];
     if (value === undefined) return undefined;
-    if (value === null && kind === "r" && index === keyIndex + 1) return undefined;
+    if (value === null && kind === "r" && index === keyIndex + 1 && tuple.length === maxLength) {
+      return undefined;
+    }
     return {
       bytes: asReadonlyUint8Array(readBytes(value, `${what}[${index}]`, budget)),
     };

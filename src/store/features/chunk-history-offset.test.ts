@@ -18,10 +18,13 @@ import { documentReducer } from "./reducer.js";
 import { createCheckpoint, restoreCheckpoint } from "./checkpoint.js";
 import { createInitialState } from "../core/state.js";
 import { byteOffset } from "../../types/branded.js";
-import { getBytes, getValue } from "../core/piece-table.js";
+import { collectPieces, getBytes, getValue, isUtf8Boundary } from "../core/piece-table.js";
+import { pieceKey } from "../core/chunk-anchor.js";
+import { collectLines, rebuildLineIndex } from "../core/line-index.js";
 import { getUndoCount, getRedoCount } from "./history.js";
 import type { DocumentState, HistoryEvictionPolicy } from "../../types/state.js";
 import type { DocumentAction } from "../../types/actions.js";
+import { makeDeterministicRng } from "../../../test-utils/large-content.js";
 
 const CHUNK_SIZE = 8;
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -1218,8 +1221,9 @@ describe("fifth review regressions: checkpoints", () => {
       head: 8,
       headAfterChunk: 1,
     });
+    // A key that does not fit its offset is ignored, as on the live selection.
     checkpoint.selection.ranges = [[4, 4, 1, 1]];
-    expect(() => restoreCheckpoint(checkpoint)).toThrow(/does not fit offset 4/);
+    expect(restoreCheckpoint(checkpoint).selection.ranges[0]).toEqual({ anchor: 4, head: 4 });
     checkpoint.selection.ranges = [[8, 8, 1]];
     expect(() => restoreCheckpoint(checkpoint)).toThrow(/3 elements/);
   });
@@ -1239,5 +1243,190 @@ describe("fifth review regressions: checkpoints", () => {
     checkpoint.history.undo[0].changes[0] = ["i", 100, "X", 0];
     const state = restoreCheckpoint(checkpoint);
     expect(() => documentReducer(state, DocumentActions.undo())).toThrow(RangeError);
+  });
+});
+
+describe("sixth review regressions", () => {
+  /** Placement keys of the pieces, in document order. */
+  const keys = (s: Store) => collectPieces(s.getSnapshot().pieceTable.root).map(pieceKey);
+  /** Capture and restore the store's document, which validates it in full. */
+  const roundTrip = (s: Store) =>
+    restoreCheckpoint(JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow()))));
+
+  it("gives every deleted byte back its own placement key on undo", () => {
+    const s = makeStore();
+    load(s, 0);
+    load(s, 1);
+    s.dispatch(DocumentActions.delete(byteOffset(9), byteOffset(10)));
+    // Chunk 0 bytes have key -1 and chunk 1 bytes key 0: two runs, one entry.
+    s.dispatch(DocumentActions.delete(byteOffset(6), byteOffset(12)));
+    expect(getUndoCount(s.getSnapshot().history)).toBe(2);
+    s.dispatch(DocumentActions.undo());
+    s.dispatch(DocumentActions.undo());
+    expect(text(s)).toBe(CHUNK0 + CHUNK1);
+    const k = keys(s);
+    expect(k).toEqual([...k].sort((a, b) => a - b));
+    expect(() => roundTrip(s)).not.toThrow();
+  });
+
+  it("recounts a character that undo joins with bytes of a chunk loaded since the edit", () => {
+    // An emoji split across the edge of chunks 0 and 1.
+    const bytes = new Uint8Array([
+      0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0xf0, 0x9f, 0x98, 0x80, 0x0a, 0x58, 0x59, 0x5a,
+      0x0a,
+    ]);
+    const s = makeStore();
+    s.dispatch(DocumentActions.loadChunk(0, bytes.slice(0, 8)));
+    s.dispatch(DocumentActions.replace(byteOffset(1), byteOffset(8), "#"));
+    s.dispatch(DocumentActions.loadChunk(1, bytes.slice(8)));
+    s.dispatch(DocumentActions.undo());
+    expect(text(s)).toBe("ABCDEFG\u{1F600}\nXYZ\n");
+    const lines = (root: Parameters<typeof collectLines>[0]) =>
+      collectLines(root).map((line) => line.charLength);
+    expect(lines(s.getSnapshot().lineIndex.root)).toEqual(lines(rebuildLineIndex(text(s)).root));
+    expect(() => roundTrip(s)).not.toThrow();
+  });
+
+  it("leaves out a live selection key that edits have made stale", () => {
+    const s = makeStore(3);
+    for (let i = 0; i < 3; i++) load(s, i);
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(16), head: byteOffset(16) }]));
+    s.dispatch(DocumentActions.evictChunk(1));
+    expect(s.getSnapshot().selection.ranges[0]).toEqual({
+      anchor: 8,
+      head: 8,
+      anchorAfterChunk: 1,
+      headAfterChunk: 1,
+    });
+    // The edit moves the text but not the selection, so key 1 no longer fits offset 8.
+    s.dispatch(DocumentActions.insert(byteOffset(0), "xyz"));
+    const checkpoint = createCheckpoint(s.reconcileNow());
+    expect(checkpoint.selection.ranges).toEqual([[8, 8]]);
+    expect(roundTrip(s).selection.ranges[0]).toEqual({ anchor: 8, head: 8 });
+  });
+
+  it("keeps inserts with different placement keys in separate changes", () => {
+    const s = makeStore(2, "pin", 60_000);
+    load(s, 0);
+    load(s, 1);
+    s.dispatch(DocumentActions.evictChunk(1));
+    // At the end of the document, after chunk 0, both keys 0 and 1 fit.
+    s.dispatch(DocumentActions.insert(byteOffset(8), "X"));
+    s.dispatch(
+      DocumentActions.insert(byteOffset(9), "Y", [
+        { anchor: byteOffset(9), head: byteOffset(9), anchorAfterChunk: 1, headAfterChunk: 1 },
+      ]),
+    );
+    expect(keys(s)).toEqual([-1, 0, 1]);
+    expect(getUndoCount(s.getSnapshot().history)).toBe(2);
+    s.dispatch(DocumentActions.undo());
+    s.dispatch(DocumentActions.undo());
+    s.dispatch(DocumentActions.redo());
+    s.dispatch(DocumentActions.redo());
+    expect(keys(s)).toEqual([-1, 0, 1]);
+    load(s, 1);
+    expect(text(s)).toBe(CHUNK0 + "X" + CHUNK1 + "Y");
+  });
+
+  it("rejects history change tuples with extra elements or a lone null bytes", () => {
+    const s = makeStore();
+    load(s, 1);
+    s.dispatch(DocumentActions.insert(byteOffset(2), "X"));
+    const checkpoint = JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow())));
+    const malformed = expect.objectContaining({ code: "MALFORMED" });
+    checkpoint.history.undo[0].changes[0] = ["i", 2, "X", 0, "WA==", "junk"];
+    expect(() => restoreCheckpoint(checkpoint)).toThrow(malformed);
+    checkpoint.history.undo[0].changes[0] = ["r", 2, "X", "", 0, null];
+    expect(() => restoreCheckpoint(checkpoint)).toThrow(malformed);
+    checkpoint.history.undo[0].changes[0] = ["r", 2, "X", "", 0, null, "", "junk"];
+    expect(() => restoreCheckpoint(checkpoint)).toThrow(malformed);
+    checkpoint.history.undo[0].changes[0] = ["i", 2, "X", 0];
+    expect(() => restoreCheckpoint(checkpoint)).not.toThrow();
+  });
+
+  describe("randomized edits, history and chunk churn stay restorable", () => {
+    // Characters of every UTF-8 length, so chunk edges cut characters in two.
+    const FILE = enc("a\u00e9\u{1F600}b\n\u4e16c\u{1F600}\u00e9\nde\u{1F600}\u4e16\n".repeat(3));
+    const SIZE = 8;
+    const COUNT = Math.ceil(FILE.length / SIZE);
+    const INSERTS = ["q", "\u00e9", "\u{1F600}", "\n", "xy"];
+
+    for (const policy of ["pin", "drop"] as const) {
+      for (const seed of [1, 2, 3, 4, 5, 6]) {
+        it(`policy ${policy}, seed ${seed}`, () => {
+          const s = createDocumentStore({
+            chunkSize: SIZE,
+            totalFileSize: FILE.length,
+            reconcileMode: "none",
+            historyEvictionPolicy: policy,
+            historyLimit: 6,
+            undoGroupTimeout: 60_000,
+          });
+          const rng = makeDeterministicRng(seed);
+          const rand = (n: number) => Math.floor(rng() * n);
+          const boundary = (offset: number) => {
+            const { pieceTable } = s.getSnapshot();
+            let p = offset;
+            while (!isUtf8Boundary(pieceTable, byteOffset(p))) p++;
+            return byteOffset(p);
+          };
+          for (let step = 0; step < 250; step++) {
+            const { pieceTable } = s.getSnapshot();
+            const total = pieceTable.totalLength;
+            const a = boundary(rand(total + 1));
+            const b = boundary(Math.min(total, a + rand(12)));
+            const chunk = rand(COUNT);
+            switch (rand(8)) {
+              case 0:
+                if (!pieceTable.chunkMap.has(chunk)) {
+                  s.dispatch(
+                    DocumentActions.loadChunk(chunk, FILE.slice(chunk * SIZE, (chunk + 1) * SIZE)),
+                  );
+                }
+                break;
+              case 1:
+                if (pieceTable.chunkMap.has(chunk)) s.dispatch(DocumentActions.evictChunk(chunk));
+                break;
+              case 2:
+                s.dispatch(DocumentActions.insert(a, INSERTS[rand(INSERTS.length)]!));
+                break;
+              case 3:
+                if (b > a) s.dispatch(DocumentActions.delete(a, b));
+                break;
+              case 4:
+                s.dispatch(DocumentActions.replace(a, b, INSERTS[rand(INSERTS.length)]!));
+                break;
+              case 5:
+                s.dispatch(DocumentActions.undo());
+                break;
+              case 6:
+                s.dispatch(DocumentActions.redo());
+                break;
+              case 7:
+                s.dispatch(DocumentActions.setSelection([{ anchor: a, head: b }]));
+                break;
+            }
+            // Edits leave the live selection alone, so an editor sets it again
+            // after one that shortens the document.
+            const after = s.getSnapshot();
+            const range = after.selection.ranges[0]!;
+            if (Math.max(range.anchor, range.head) > after.pieceTable.totalLength) {
+              const end = byteOffset(after.pieceTable.totalLength);
+              s.dispatch(DocumentActions.setSelection([{ anchor: end, head: end }]));
+            }
+            const where = `seed ${seed} step ${step}`;
+            const k = keys(s);
+            expect(k, where).toEqual([...k].sort((x, y) => x - y));
+            const chars = (root: Parameters<typeof collectLines>[0]) =>
+              collectLines(root).map((line) => line.charLength);
+            expect(chars(s.reconcileNow().lineIndex.root), where).toEqual(
+              chars(rebuildLineIndex(text(s)).root),
+            );
+            const restored = roundTrip(s);
+            expect(getValue(restored.pieceTable), where).toBe(text(s));
+          }
+        });
+      }
+    }
   });
 });

@@ -178,7 +178,7 @@ export function prefixLengthAtOrBelow(table: LoadedPrefix, key: number): number 
 
 /**
  * Persistent AVL tree of the loaded chunks, keyed by chunk index, with the
- * count and total length of each subtree. A load or eviction copies one search
+ * total length of each subtree. A load or eviction copies one search
  * path, so streaming a file costs O(log L) per chunk instead of rebuilding a
  * table over every loaded chunk.
  */
@@ -188,7 +188,6 @@ interface LoadedNode {
   readonly left: LoadedNode | null;
   readonly right: LoadedNode | null;
   readonly height: number;
-  readonly count: number;
   readonly sum: number;
 }
 
@@ -204,7 +203,6 @@ function loadedNode(
     left,
     right,
     height: 1 + Math.max(left?.height ?? 0, right?.height ?? 0),
-    count: 1 + (left?.count ?? 0) + (right?.count ?? 0),
     sum: length + (left?.sum ?? 0) + (right?.sum ?? 0),
   };
 }
@@ -274,21 +272,19 @@ function removeLoaded(node: LoadedNode | null, index: number): LoadedNode | null
   );
 }
 
-/** Count and total length of the loaded chunks with index <= key. O(log L). */
-function loadedAtOrBelow(root: LoadedNode | null, key: number): { count: number; sum: number } {
-  let count = 0;
+/** Total length of the loaded chunks with index <= key. O(log L). */
+function loadedSumAtOrBelow(root: LoadedNode | null, key: number): number {
   let sum = 0;
   let node = root;
   while (node !== null) {
     if (node.index <= key) {
-      count += 1 + (node.left?.count ?? 0);
       sum += node.length + (node.left?.sum ?? 0);
       node = node.right;
     } else {
       node = node.left;
     }
   }
-  return { count, sum };
+  return sum;
 }
 
 type ChunkMap = PieceTableState["chunkMap"];
@@ -327,20 +323,7 @@ export function deriveLoadedChunks(
 /** Total original length of the loaded chunks with index <= key. O(log L). */
 export function loadedLengthAtOrBelow(pieceTable: PieceTableState, key: number): number {
   if (key < 0 || pieceTable.chunkMap.size === 0) return 0;
-  return loadedAtOrBelow(loadedTree(pieceTable.chunkMap), key).sum;
-}
-
-/** True when some chunk with index in (low, high] is not loaded. */
-export function hasUnloadedChunkBetween(
-  pieceTable: PieceTableState,
-  low: number,
-  high: number,
-): boolean {
-  const from = Math.max(low, NO_CHUNK);
-  if (high <= from) return false;
-  const root = loadedTree(pieceTable.chunkMap);
-  const loaded = loadedAtOrBelow(root, high).count - loadedAtOrBelow(root, from).count;
-  return loaded < high - from;
+  return loadedSumAtOrBelow(loadedTree(pieceTable.chunkMap), key);
 }
 
 // =============================================================================
@@ -369,12 +352,13 @@ export interface KeyRun {
 }
 
 /**
- * Split the resident range [start, end) where text on either side of a split
- * would land on different sides of a chunk that is not loaded.
+ * Split the resident range [start, end) into runs of bytes that share a
+ * placement key.
  *
- * Re-inserting deleted text with a single key would move part of it across
- * such a chunk. Runs with different keys but no unloaded chunk between them
- * stay merged, because no load can separate them.
+ * Undo re-inserts each run with its own key, so every byte gets back the key
+ * it had. Re-inserting runs with different keys under one key would give the
+ * later bytes a smaller key, and an older change replayed among them would
+ * then leave keys decreasing in document order. Usually there is one run.
  */
 export function placementRuns(pieceTable: PieceTableState, start: number, end: number): KeyRun[] {
   const runs: KeyRun[] = [];
@@ -382,14 +366,10 @@ export function placementRuns(pieceTable: PieceTableState, start: number, end: n
   // Before any chunk has loaded, every key is NO_CHUNK and nothing can split.
   if (pieceTable.nextExpectedChunk === 0) return [{ start, end, key: NO_CHUNK }];
   const firstKey = byteKey(pieceTable.root, start);
-  // Keys never decrease, so every split needs an unloaded chunk between the
-  // first and last keys. Without one the range is a single run: O(log n).
-  if (!hasUnloadedChunkBetween(pieceTable, firstKey, byteKey(pieceTable.root, end - 1))) {
-    return [{ start, end, key: firstKey }];
-  }
+  // Keys never decrease, so equal first and last keys mean one run: O(log n).
+  if (firstKey === byteKey(pieceTable.root, end - 1)) return [{ start, end, key: firstKey }];
   let runStart = start;
   let runKey = firstKey;
-  let previousKey = firstKey;
   // In-order walk of the pieces that start inside (start, end). Subtrees that
   // end before `start` or begin at or after `end` are skipped.
   const visit = (node: PieceNode | null, base: number): void => {
@@ -399,12 +379,11 @@ export function placementRuns(pieceTable: PieceTableState, start: number, end: n
     if (start < nodeStart) visit(node.left, base);
     if (nodeStart > start && nodeStart < end) {
       const key = pieceKey(node);
-      if (key !== previousKey && hasUnloadedChunkBetween(pieceTable, previousKey, key)) {
+      if (key !== runKey) {
         runs.push({ start: runStart, end: nodeStart, key: runKey });
         runStart = nodeStart;
         runKey = key;
       }
-      previousKey = key;
     }
     if (nodeEnd < end) visit(node.right, nodeEnd);
   };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasUnloadedChunkBetween, loadedLengthAtOrBelow } from "./chunk-anchor.js";
+import { loadedLengthAtOrBelow } from "./chunk-anchor.js";
 import { createDocumentStore } from "../features/store.js";
 import { DocumentActions } from "../features/actions.js";
 
@@ -36,14 +36,6 @@ describe("loaded-chunk lengths", () => {
       for (let key = -2; key <= chunkCount; key++) {
         const expected = loaded.filter(([i]) => i <= key).reduce((sum, [, n]) => sum + n, 0);
         expect(loadedLengthAtOrBelow(table, key), `step ${step} key ${key}`).toBe(expected);
-      }
-      for (let low = -1; low < chunkCount; low += 3) {
-        for (let high = low; high < chunkCount; high += 2) {
-          const unloaded = Array.from({ length: high - low }, (_, k) => low + 1 + k).some(
-            (i) => !table.chunkMap.has(i),
-          );
-          expect(hasUnloadedChunkBetween(table, low, high)).toBe(unloaded);
-        }
       }
     }
   });

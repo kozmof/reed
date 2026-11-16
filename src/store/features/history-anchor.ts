@@ -345,10 +345,11 @@ function sameRange(a: SelectionRange, b: SelectionRange): boolean {
  * only by loaded or evicted chunks.
  *
  * Each offset is anchored in `before` and resolved in `after`, the same way
- * history selections are. An offset inside an evicted chunk lands where the
- * chunk was, and keeps that chunk's key, so evicting and re-loading a chunk
- * leaves the cursor where it was. Returns `selection` itself when neither an
- * offset nor a stored key changes.
+ * history selections are. An offset inside an evicted chunk moves to where the
+ * chunk was, which is the chunk's start once it loads again: the offset within
+ * the chunk is lost. The endpoint keeps the chunk's key, so it stays on that
+ * side of the chunk. Returns `selection` itself when neither an offset nor a
+ * stored key changes.
  *
  * Before the first chunk loads, a selection has no side of any chunk: every
  * key is NO_CHUNK because nothing has loaded, not because the selection was
