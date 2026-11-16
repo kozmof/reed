@@ -81,7 +81,18 @@ entries stays valid. Such changes are never merged with neighbouring edits.
 
 The live selection moves the same way on loads and evictions. A cursor inside an evicted chunk
 moves to where the chunk was, and it stays on that side of the chunk when the chunk loads
-again.
+again. If the evicted chunk cut a character in two, the cursor moves past the bytes of that
+character left in the next chunk, so it always sits on a UTF-8 code-point boundary. Undo and
+redo place a restored selection the same way.
+
+Next to a chunk that is not loaded, a byte offset cannot say which side of the chunk a
+position is on. A selection range then stores the placement key of that endpoint
+(`SelectionRange.anchorAfterChunk` and `headAfterChunk`). The key is present only when the
+document cannot supply it, and it is kept by undo, redo, checkpoints, and a `SET_SELECTION`
+or edit selection that repeats the range at the same index. Text inserted at that endpoint,
+by a local edit or `APPLY_REMOTE`, takes the key, so it stays where the cursor was in the
+file, even when every chunk has been evicted. A key that no longer fits its offset after
+other edits is ignored.
 
 ### 2.2 Eviction and history
 

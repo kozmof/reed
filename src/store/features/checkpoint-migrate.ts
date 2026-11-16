@@ -22,9 +22,18 @@
 import { CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
 import { base64DecodedLength } from "../core/base64.js";
 import type { GapSide } from "../core/chunk-anchor.js";
-import { buildLoadedPrefix, gapKey, prefixLengthAtOrBelow } from "../core/chunk-anchor.js";
+import {
+  buildLoadedPrefix,
+  byteKey,
+  gapKey,
+  keyFitsAt,
+  prefixLengthAtOrBelow,
+} from "../core/chunk-anchor.js";
+import { utf8ByteLength } from "../core/encoding.js";
+import { pieceTableDelete, pieceTableInsert } from "../core/piece-table.js";
 import type { PieceDescriptor } from "../core/state.js";
-import { buildPieceTree } from "../core/state.js";
+import { buildPieceTree, createEmptyPieceTableState } from "../core/state.js";
+import type { PieceTableState } from "../../types/state.js";
 import { byteLength, byteOffset, pieceID } from "../../types/branded.js";
 
 /** Raw, unvalidated checkpoint wire data. */
@@ -53,14 +62,76 @@ const isInt = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value);
 
 /**
+ * A version 1 change as the bytes it removes and inserts at `offset`, which is
+ * all that moves text. A replace removes its old text and inserts its new text.
+ */
+interface ChangeShape {
+  readonly offset: number;
+  readonly removed: number;
+  readonly inserted: number;
+}
+
+const clampTo = (doc: PieceTableState, offset: number) =>
+  byteOffset(Math.max(0, Math.min(offset, doc.totalLength)));
+
+/** `doc` with `length` stand-in bytes inserted at `offset` with key `key`. */
+function insertStandIn(
+  doc: PieceTableState,
+  offset: number,
+  length: number,
+  key: number,
+): PieceTableState {
+  if (length <= 0) return doc;
+  return pieceTableInsert(doc, clampTo(doc, offset), new Uint8Array(length), key).state;
+}
+
+function removeBytes(doc: PieceTableState, offset: number, length: number): PieceTableState {
+  return pieceTableDelete(doc, clampTo(doc, offset), clampTo(doc, offset + length));
+}
+
+/**
+ * The key `shape` takes in `before`, the document it applies to, and the
+ * document after it. As `applyEdit` records it: the key of the first removed
+ * byte, else the key of the gap that inserted text takes.
+ */
+function applyShape(before: PieceTableState, shape: ChangeShape): [number, PieceTableState] {
+  const { offset, removed, inserted } = shape;
+  const key =
+    removed > 0 && offset >= 0 && offset < before.totalLength
+      ? byteKey(before.root, offset)
+      : gapKey(before.root, clampTo(before, offset), "before");
+  return [key, insertStandIn(removeBytes(before, offset, removed), offset, inserted, key)];
+}
+
+/**
+ * The key `shape` takes in the document it applies to, and that document,
+ * given `after`, the document it produced. Inserted text keeps the key it has
+ * in `after`, and removed text comes back with that key.
+ */
+function unapplyShape(after: PieceTableState, shape: ChangeShape): [number, PieceTableState] {
+  const { offset, removed, inserted } = shape;
+  const without = removeBytes(after, offset, inserted);
+  const insertedKey =
+    inserted > 0 && offset >= 0 && offset < after.totalLength
+      ? byteKey(after.root, offset)
+      : undefined;
+  const key =
+    insertedKey !== undefined && keyFitsAt(without, clampTo(without, offset), insertedKey)
+      ? insertedKey
+      : gapKey(without.root, clampTo(without, offset), "before");
+  return [key, insertStandIn(without, offset, removed, key)];
+}
+
+/**
  * Version 2 adds a chunk placement key to add pieces and stores history
  * positions as anchors (see `HistoryAnchor`) instead of resident offsets.
  *
  * Version 1 placed a re-loaded chunk after every add piece that followed a
  * higher chunk, so an add piece belongs after the nearest chunk before it. The
  * derived keys reproduce that placement. Version 1 history offsets are read in
- * the captured chunk layout and anchored there, which keeps undo and redo
- * behaving as they would have right after restore.
+ * the captured chunk layout, each in the document its entry applied to, and
+ * anchored there, which keeps undo and redo behaving as they would have right
+ * after restore.
  *
  * Documents without chunk pieces need no change: every key is -1 and every
  * anchor equals its offset. Malformed input is returned as is for the
@@ -112,7 +183,6 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
   // as live edits. Only lengths and keys matter here: a piece that is not a
   // chunk piece stands in as an add piece carrying its key. Empty and
   // malformed lengths are left out, as no byte lies in them.
-  const PLACEHOLDER_ID = pieceID("v1-migration");
   const descriptors: PieceDescriptor[] = [];
   for (let i = 0; i < pieces.length; i++) {
     const length = pieces[i]![3];
@@ -121,14 +191,14 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
     descriptors.push(
       chunkIndex !== null && chunkIndex !== undefined
         ? {
-            id: PLACEHOLDER_ID,
+            id: pieceID(`m${i}`),
             bufferType: "chunk",
             chunkIndex,
             start: byteOffset(0),
             length: byteLength(length),
           }
         : {
-            id: PLACEHOLDER_ID,
+            id: pieceID(`m${i}`),
             bufferType: "add",
             afterChunk: keys[i]!,
             start: byteOffset(0),
@@ -137,6 +207,16 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
     );
   }
   const root = buildPieceTree(descriptors);
+  // Only the tree structure and keys are read, so chunk bytes are not needed.
+  const captured: PieceTableState = {
+    ...createEmptyPieceTableState(),
+    root,
+    totalLength: root?.subtreeLength ?? 0,
+    nextExpectedChunk: chunkOf.reduce<number>(
+      (next, chunk) => Math.max(next, (chunk ?? -1) + 1),
+      0,
+    ),
+  };
 
   const chunkLengths: [number, number][] = [];
   if (Array.isArray(table.chunks)) {
@@ -151,14 +231,15 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
   }
   // Same prefix sums as live anchoring, so each anchor costs O(log C).
   const loaded = buildLoadedPrefix(chunkLengths);
+  const anchorWith = (offset: number, key: number): [number, number] => [
+    offset - prefixLengthAtOrBelow(loaded, key),
+    key,
+  ];
   // Version 1 kept text next to the content before it, as `"before"` does.
-  const anchor = (offset: unknown, side: GapSide = "before"): [unknown, number] => {
-    if (!isInt(offset)) return [offset, -1];
-    const key = gapKey(root, offset, side);
-    return [offset - prefixLengthAtOrBelow(loaded, key), key];
-  };
+  const anchor = (doc: PieceTableState, offset: unknown, side: GapSide): [unknown, number] =>
+    isInt(offset) ? anchorWith(offset, gapKey(doc.root, offset, side)) : [offset, -1];
 
-  const migrateSelection = (raw: unknown): unknown => {
+  const migrateSelection = (raw: unknown, doc: PieceTableState): unknown => {
     if (typeof raw !== "object" || raw === null) return raw;
     const selection = raw as Record<string, unknown>;
     if (!Array.isArray(selection.ranges)) return raw;
@@ -170,29 +251,91 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
         // stays with the content after it and its end with the content before.
         const forward = isInt(range[0]) && isInt(range[1]) && range[0] < range[1];
         const backward = isInt(range[0]) && isInt(range[1]) && range[0] > range[1];
-        const [anchorPos, anchorKey] = anchor(range[0], forward ? "after" : "before");
-        const [headPos, headKey] = anchor(range[1], backward ? "after" : "before");
+        const [anchorPos, anchorKey] = anchor(doc, range[0], forward ? "after" : "before");
+        const [headPos, headKey] = anchor(doc, range[1], backward ? "after" : "before");
         return anchorKey === -1 && headKey === -1
           ? [anchorPos, headPos]
           : [anchorPos, headPos, anchorKey, headKey];
       }),
     };
   };
-  const migrateChange = (raw: unknown): unknown => {
-    if (!isTuple(raw)) return raw;
-    const [position, key] = anchor(raw[1]);
+
+  // Each version 1 offset is a resident offset in the document its change or
+  // selection applied to, which edits since then have changed. Read in the
+  // captured tree, an older offset would take the key of whatever text sits
+  // there now. Instead, follow the document back through the undo stack and
+  // forward through the redo stack, and key each offset in its own document.
+  // Inserted bytes only stand in for their length and key.
+  const shapeOf = (raw: unknown): ChangeShape | null => {
+    if (!isTuple(raw) || !isInt(raw[1])) return null;
+    const length = (text: unknown) => (typeof text === "string" ? utf8ByteLength(text) : 0);
+    switch (raw[0]) {
+      case "i":
+        return { offset: raw[1], removed: 0, inserted: length(raw[2]) };
+      case "d":
+        return { offset: raw[1], removed: length(raw[2]), inserted: 0 };
+      case "r":
+        return { offset: raw[1], removed: length(raw[3]), inserted: length(raw[2]) };
+      default:
+        return null;
+    }
+  };
+  const migrateChange = (raw: unknown, key: number): unknown => {
+    if (!isTuple(raw) || !isInt(raw[1])) return raw;
+    const [position] = anchorWith(raw[1], key);
     const head = [raw[0], position, ...raw.slice(2, raw[0] === "r" ? 4 : 3)];
     return key === -1 ? head : [...head, key];
   };
-  const migrateEntry = (raw: unknown): unknown => {
-    if (typeof raw !== "object" || raw === null) return raw;
+  /**
+   * Migrate one entry. `doc` is the document on the side the walk starts
+   * from: after the entry for undo, before it for redo. Returns the migrated
+   * entry and the document on the other side.
+   */
+  const migrateEntry = (
+    raw: unknown,
+    doc: PieceTableState,
+    direction: "undo" | "redo",
+  ): [unknown, PieceTableState] => {
+    if (typeof raw !== "object" || raw === null) return [raw, doc];
     const entry = raw as Record<string, unknown>;
-    return {
-      ...entry,
-      changes: Array.isArray(entry.changes) ? entry.changes.map(migrateChange) : entry.changes,
-      selectionBefore: migrateSelection(entry.selectionBefore),
-      selectionAfter: migrateSelection(entry.selectionAfter),
-    };
+    const rawChanges = Array.isArray(entry.changes) ? entry.changes : [];
+    const changes: unknown[] = Array.from({ length: rawChanges.length });
+    const start = doc;
+    let current = doc;
+    // Undo replays an entry's changes last to first, redo first to last.
+    for (let n = 0; n < rawChanges.length; n++) {
+      const i = direction === "undo" ? rawChanges.length - 1 - n : n;
+      const shape = shapeOf(rawChanges[i]);
+      if (shape === null) {
+        changes[i] = rawChanges[i];
+        continue;
+      }
+      const [key, next] =
+        direction === "undo" ? unapplyShape(current, shape) : applyShape(current, shape);
+      changes[i] = migrateChange(rawChanges[i], key);
+      current = next;
+    }
+    const [before, after] = direction === "undo" ? [current, start] : [start, current];
+    return [
+      {
+        ...entry,
+        changes: Array.isArray(entry.changes) ? changes : entry.changes,
+        selectionBefore: migrateSelection(entry.selectionBefore, before),
+        selectionAfter: migrateSelection(entry.selectionAfter, after),
+      },
+      current,
+    ];
+  };
+  // Stacks are stored oldest first, so the newest undo entry and the next
+  // redo entry are both last.
+  const migrateStack = (raw: unknown, direction: "undo" | "redo"): unknown => {
+    if (!Array.isArray(raw)) return raw;
+    const migrated: unknown[] = Array.from({ length: raw.length });
+    let doc = captured;
+    for (let i = raw.length - 1; i >= 0; i--) {
+      [migrated[i], doc] = migrateEntry(raw[i], doc, direction);
+    }
+    return migrated;
   };
 
   let history = data.history;
@@ -200,8 +343,8 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
     const source = history as Record<string, unknown>;
     history = {
       ...source,
-      undo: Array.isArray(source.undo) ? source.undo.map(migrateEntry) : source.undo,
-      redo: Array.isArray(source.redo) ? source.redo.map(migrateEntry) : source.redo,
+      undo: migrateStack(source.undo, "undo"),
+      redo: migrateStack(source.redo, "redo"),
     };
   }
 

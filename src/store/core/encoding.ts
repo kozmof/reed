@@ -6,6 +6,23 @@
 export const textEncoder = new TextEncoder();
 export const textDecoder = new TextDecoder();
 
+// Rejects malformed input and keeps a leading byte order mark, so it decodes
+// exactly the byte sequences that `textEncoder` produces.
+const exactDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+/**
+ * True when `text` encodes to exactly `bytes` in UTF-8. UTF-8 encoding is a
+ * bijection between strings without lone surrogates and well-formed bytes, so
+ * this holds exactly when `bytes` decode strictly to `text`.
+ */
+export function encodesTo(text: string, bytes: Uint8Array): boolean {
+  try {
+    return exactDecoder.decode(bytes) === text;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Return true when the UTF-16 code units at `index` and `index + 1` form a
  * valid surrogate pair.

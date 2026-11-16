@@ -359,6 +359,22 @@ export interface SelectionRange {
   readonly anchor: ByteOffset;
   /** Ending position (cursor) of the selection (byte offset) */
   readonly head: ByteOffset;
+  /**
+   * Chunk placement key of `anchor` (see {@link HistoryAnchor}), present only
+   * when the document cannot supply it.
+   *
+   * Next to a chunk that is not loaded, a byte offset does not say which side
+   * of the chunk a position is on. Reed sets this key when a chunk load or
+   * eviction, UNDO, REDO, or a checkpoint restore places the endpoint there,
+   * so the chunk loads on the correct side of it and text typed there stays
+   * where the cursor was. Pass ranges from the state back unchanged to keep
+   * it. SET_SELECTION and edit selections also keep it for a range whose
+   * offsets match the current range at the same index. A key that does not
+   * fit the offset is dropped.
+   */
+  readonly anchorAfterChunk?: number;
+  /** Chunk placement key of `head`. See `anchorAfterChunk`. */
+  readonly headAfterChunk?: number;
 }
 
 /**

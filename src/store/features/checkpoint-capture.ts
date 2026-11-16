@@ -118,7 +118,16 @@ function captureLineIndex(lineIndex: LineIndexState<"eager">): CheckpointLineInd
 
 function captureSelection(selection: SelectionState): CheckpointSelection {
   return {
-    ranges: selection.ranges.map((range) => [range.anchor, range.head] as const),
+    ranges: selection.ranges.map((range) =>
+      range.anchorAfterChunk === undefined && range.headAfterChunk === undefined
+        ? ([range.anchor, range.head] as const)
+        : ([
+            range.anchor,
+            range.head,
+            range.anchorAfterChunk ?? null,
+            range.headAfterChunk ?? null,
+          ] as const),
+    ),
     primaryIndex: selection.primaryIndex,
   };
 }

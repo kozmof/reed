@@ -108,9 +108,22 @@ export interface CheckpointLineIndex {
   readonly lines: readonly CheckpointLine[];
 }
 
-/** Serialized `SelectionState`. Ranges are `[anchor, head]` byte offsets. */
+/**
+ * Serialized `SelectionState`. Ranges are `[anchor, head]` byte offsets,
+ * followed by both placement keys when the range stores either (see
+ * `SelectionRange.anchorAfterChunk`). `null` stands for a key the range does
+ * not store.
+ */
 export interface CheckpointSelection {
-  readonly ranges: readonly (readonly [anchor: number, head: number])[];
+  readonly ranges: readonly (
+    | readonly [anchor: number, head: number]
+    | readonly [
+        anchor: number,
+        head: number,
+        anchorAfterChunk: number | null,
+        headAfterChunk: number | null,
+      ]
+  )[];
   readonly primaryIndex: number;
 }
 

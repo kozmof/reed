@@ -22,6 +22,7 @@ import type {
   HistorySelectionState,
   PieceTableState,
   SelectionRange,
+  SelectionState,
   NonEmptyReadonlyArray,
 } from "../../types/state.js";
 import { pstackPush, pstackPeek, pstackPop, pstackTrimToSize } from "../../types/state.js";
@@ -48,14 +49,15 @@ import {
   repairLineIndexWindow,
 } from "../core/line-index.js";
 import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
-import { textEncoder, utf8ByteLength } from "../core/encoding.js";
-import { NO_CHUNK, gapKey, hasUnloadedChunkBetween, placementRuns } from "../core/chunk-anchor.js";
+import { encodesTo, utf8ByteLength } from "../core/encoding.js";
+import { NO_CHUNK, hasUnloadedChunkBetween, placementRuns } from "../core/chunk-anchor.js";
 import {
   anchorAt,
   anchorSelection,
   anchoredCursor,
-  liveKeyAt,
+  insertionKey,
   residentOffset,
+  selectionRangesWithKeys,
 } from "./history-anchor.js";
 import { coalescedTails, lastHistoryChange } from "./history-entry.js";
 
@@ -396,14 +398,7 @@ function rawBytesUnlessExact(
   const length = end - start;
   if (utf8ByteLength(text) === length && !text.includes("�")) return undefined;
   const raw = getBytes(pieceTable, byteOffset(start), byteOffset(end));
-  if (raw.length === length && bytesEqual(raw, textEncoder.encode(text))) return undefined;
-  return asReadonlyUint8Array(raw);
-}
-
-function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
+  return encodesTo(text, raw) ? undefined : asReadonlyUint8Array(raw);
 }
 
 // =============================================================================
@@ -577,6 +572,11 @@ export function invertChange(change: HistoryChange): HistoryChange {
   }
 }
 
+/** Bytes a delete or replace change removes. */
+function historyDeletedLength(change: HistoryDeleteChange | HistoryReplaceChange): number {
+  return change.type === "delete" ? change.byteLength : change.oldByteLength;
+}
+
 /**
  * Replay history through the same lazy structural pipeline as local edits.
  * The anchored position is resolved against the current chunk layout, and
@@ -585,6 +585,17 @@ export function invertChange(change: HistoryChange): HistoryChange {
  */
 export function applyChange(state: DocumentState, change: HistoryChange): DocumentState {
   const position = residentOffset(state.pieceTable, change);
+  // A position is recorded in the document the change applies to, so a valid
+  // history always resolves inside it. Insert would append an out-of-range
+  // position at the end and delete would remove other bytes, so refuse instead.
+  const removed = change.type === "insert" ? 0 : historyDeletedLength(change);
+  if (position < 0 || position + removed > state.pieceTable.totalLength) {
+    throw new RangeError(
+      `history ${change.type} at anchored position ${change.position} with placement key ` +
+        `${change.afterChunk} resolves to [${position}, ${position + removed}), outside the ` +
+        `${state.pieceTable.totalLength}-byte document`,
+    );
+  }
   const insertBytes =
     change.bytes !== undefined ? { insertBytes: unwrapReadonlyUint8Array(change.bytes) } : {};
   switch (change.type) {
@@ -728,7 +739,12 @@ export function applyUntrackedEdit(
 
   const insertContent = insertBytes ?? (op.kind !== "delete" ? op.insertText : "");
   if (op.kind !== "delete" && insertContent.length > 0) {
-    const result = pieceTableInsert(newState, op.position, insertContent, op.afterChunk);
+    // Without a key from the caller, take the one a cursor there holds (see
+    // `insertionKey`), so remote text typed into an empty document stays
+    // where the cursor was in the file.
+    const afterChunk =
+      op.afterChunk ?? insertionKey(newState.pieceTable, state.selection, op.position);
+    const result = pieceTableInsert(newState, op.position, insertContent, afterChunk);
     newState = result.state;
     if (!needsRebuild) {
       const readText = pieceTableReader(newState.pieceTable);
@@ -792,21 +808,25 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   }
   const nextRevision = state.revision + 1;
   const pieceTable = state.pieceTable;
+  // The selection the edit comes from: the inline selection when given, else
+  // the current one. Inline edit selections describe the pre-edit document,
+  // so clamp to the original length. A range that repeats the current one
+  // keeps its placement keys (see `selectionRangesWithKeys`).
+  const selectionBefore: SelectionState = op.selection
+    ? Object.freeze({
+        ranges: selectionRangesWithKeys(pieceTable, state.selection, op.selection, (offset) =>
+          validatePosition(offset, pieceTable.totalLength),
+        ),
+        primaryIndex: 0,
+      })
+    : state.selection;
   // Split deleted text where parts of it would land on different sides of an
   // unloaded chunk when re-inserted. Usually there is a single run.
   const runs = op.kind === "insert" ? [] : placementRuns(pieceTable, op.position, op.deleteEnd);
-  // Inserted text takes the key of the text it replaces, or the gap's key.
-  // Without chunks every key is NO_CHUNK, so skip the tree lookup. With every
-  // chunk evicted the document is empty and the gap says nothing about where
-  // in the file the text goes, so take the key of the cursor carried there.
+  // Inserted text takes the key of the text it replaces, or the key a cursor
+  // at the insertion point holds, or the gap's key.
   const insertKey =
-    runs.length > 0
-      ? runs[0]!.key
-      : pieceTable.nextExpectedChunk === 0
-        ? NO_CHUNK
-        : pieceTable.root === null
-          ? (liveKeyAt(pieceTable, state.selection, op.position) ?? NO_CHUNK)
-          : gapKey(pieceTable.root, op.position, "before");
+    runs.length > 0 ? runs[0]!.key : insertionKey(pieceTable, selectionBefore, op.position);
   let newState = applyUntrackedEdit(
     state,
     op.kind === "delete" ? op : { ...op, afterChunk: insertKey },
@@ -814,22 +834,7 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   );
 
   // Apply inline selection so historyPush records the correct selectionBefore.
-  // Inline edit selections describe the pre-edit document, so clamp to the original length.
-  if (op.selection) {
-    newState = withState(newState, {
-      selection: Object.freeze({
-        ranges: Object.freeze(
-          op.selection.map((r) =>
-            Object.freeze({
-              anchor: validatePosition(r.anchor, state.pieceTable.totalLength),
-              head: validatePosition(r.head, state.pieceTable.totalLength),
-            }),
-          ),
-        ) as NonEmptyReadonlyArray<SelectionRange>,
-        primaryIndex: 0,
-      }),
-    });
-  }
+  if (op.selection) newState = withState(newState, { selection: selectionBefore });
 
   // Reuse the insert length measured by the structural edit.
   const deletedLength = op.kind === "insert" ? 0 : op.deleteEnd - op.position;
@@ -904,12 +909,11 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   );
   // Timestamp-less hand-written actions remain deterministic. Normal callers use
   // DocumentActions, which captures wall-clock time before reduction.
-  const selectionBeforeEdit = newState.selection;
   newState = historyPush(
     newState,
     changes as unknown as NonEmptyReadonlyArray<HistoryChange>,
     op.timestamp ?? state.revision,
-    () => anchorSelection(pieceTable, selectionBeforeEdit),
+    () => anchorSelection(pieceTable, selectionBefore),
   );
 
   // Mark as dirty and increment revision

@@ -52,6 +52,8 @@ import {
 import { textEncoder, textDecoder } from "./encoding.js";
 import { GrowableBuffer } from "./growable-buffer.js";
 import { NO_CHUNK, gapKey, pieceKey } from "./chunk-anchor.js";
+import { lastPiece, pieceAt } from "./piece-search.js";
+import type { PathEntry } from "./piece-search.js";
 import { inOrderPieces } from "./piece-table-stream.js";
 
 export { getValueStream, inOrderPieces } from "./piece-table-stream.js";
@@ -278,14 +280,7 @@ export interface PieceLocation {
   path: readonly PathEntry[];
 }
 
-/**
- * Entry in the path from root to a node.
- * Used for immutable tree modifications with path copying.
- */
-export interface PathEntry {
-  readonly node: PieceNode;
-  readonly direction: "left" | "right";
-}
+export type { PathEntry } from "./piece-search.js";
 
 // =============================================================================
 // Tree Traversal
@@ -299,59 +294,28 @@ export function findPieceAtPosition(
   root: PieceNode | null,
   position: ByteOffset,
 ): LogCost<PieceLocation> | null {
-  if (root === null) return null;
-  if (position < 0) return null;
-
   const path: PathEntry[] = [];
-  let current: PieceNode | null = root;
-  let currentOffset = 0;
-
-  while (current !== null) {
-    const leftLength = current.left?.subtreeLength ?? 0;
-    const pieceStart = currentOffset + leftLength;
-    const pieceEnd = pieceStart + current.length;
-
-    if (position < pieceStart) {
-      path.push({ node: current, direction: "left" });
-      current = current.left;
-    } else if (position >= pieceEnd) {
-      path.push({ node: current, direction: "right" });
-      currentOffset = pieceEnd;
-      current = current.right;
-    } else {
-      return $proveCtx($beginCost("O(log n)"), {
-        node: current,
-        offsetInPiece: position - pieceStart,
-        pieceStartOffset: pieceStart,
-        path,
-      });
-    }
-  }
-
-  return null;
+  const hit = pieceAt(root, position, path);
+  if (hit === null) return null;
+  return $proveCtx($beginCost("O(log n)"), {
+    node: hit.node,
+    offsetInPiece: position - hit.pieceStart,
+    pieceStartOffset: hit.pieceStart,
+    path,
+  });
 }
 
 /**
  * Find the piece at the end of the document (rightmost node).
  */
 export function findLastPiece(root: PieceNode | null): LogCost<PieceLocation> | null {
-  if (root === null) return null;
-
   const path: PathEntry[] = [];
-  let current = root;
-  let currentOffset = 0;
-
-  while (current.right !== null) {
-    currentOffset += (current.left?.subtreeLength ?? 0) + current.length;
-    path.push({ node: current, direction: "right" });
-    current = current.right;
-  }
-
-  const leftLength = current.left?.subtreeLength ?? 0;
+  const hit = lastPiece(root, path);
+  if (hit === null) return null;
   return $proveCtx($beginCost("O(log n)"), {
-    node: current,
-    offsetInPiece: current.length,
-    pieceStartOffset: currentOffset + leftLength,
+    node: hit.node,
+    offsetInPiece: hit.node.length,
+    pieceStartOffset: hit.pieceStart,
     path,
   });
 }
@@ -587,7 +551,9 @@ export interface PieceTableInsertResult {
  * `HistoryDeleteChange.bytes`).
  *
  * `afterChunk` defaults to the gap key at `position` that inserted text takes
- * (see `gapKey`).
+ * (see `gapKey`). An empty tree has no gap to read, so the default there is
+ * `-1`. Pass the key when the caller knows where the text belongs in the file:
+ * the document reducer passes the key a cursor at `position` holds.
  */
 export function pieceTableInsert(
   state: PieceTableState,
@@ -596,7 +562,11 @@ export function pieceTableInsert(
   afterChunk?: number,
 ): LinearCost<PieceTableInsertResult> {
   if (text.length === 0)
-    return $proveCtx($beginCost("O(n)"), { state, insertedByteLength: 0, splits: [] });
+    return $proveCtx($beginCost("O(n)"), {
+      state,
+      insertedByteLength: 0,
+      splits: [],
+    });
 
   const textBytes = typeof text === "string" ? textEncoder.encode(text) : text;
   let nextPieceID = state.nextPieceID;

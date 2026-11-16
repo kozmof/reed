@@ -21,13 +21,16 @@ import type { NonEmptyReadonlyArray } from "../../types/utils.js";
 import { pstackSize, pstackTrimToSize } from "../../types/state.js";
 import type { ByteOffset } from "../../types/branded.js";
 import { byteOffset } from "../../types/branded.js";
+import type { GapSide } from "../core/chunk-anchor.js";
 import {
   NO_CHUNK,
   gapKey,
+  keyFitsAt,
   keySpan,
   toAnchoredOffset,
   toResidentOffset,
 } from "../core/chunk-anchor.js";
+import { isUtf8Boundary } from "../core/piece-table.js";
 import {
   forEachHistoryChange,
   someHistoryChange,
@@ -36,7 +39,10 @@ import {
 
 /** Anchor resident `offset` using placement key `key`. */
 export function anchorAt(pieceTable: PieceTableState, key: number, offset: number): HistoryAnchor {
-  return { position: toAnchoredOffset(pieceTable, key, offset), afterChunk: key };
+  return {
+    position: toAnchoredOffset(pieceTable, key, offset),
+    afterChunk: key,
+  };
 }
 
 /** Resident offset of an anchored position in `pieceTable`. */
@@ -51,12 +57,146 @@ export function residentOffset(pieceTable: PieceTableState, anchor: HistoryAncho
 function freezeSelection<R extends SelectionRange | HistorySelectionRange>(
   ranges: readonly R[],
   primaryIndex: number,
-): { readonly ranges: NonEmptyReadonlyArray<R>; readonly primaryIndex: number } {
+): {
+  readonly ranges: NonEmptyReadonlyArray<R>;
+  readonly primaryIndex: number;
+} {
   return Object.freeze({
     ranges: Object.freeze(ranges) as unknown as NonEmptyReadonlyArray<R>,
     primaryIndex,
   });
 }
+
+// =============================================================================
+// Placement keys of selection endpoints
+// =============================================================================
+
+/**
+ * The gap side each endpoint of a range with these offsets takes.
+ *
+ * A cursor takes the side text typed there takes, so it stays next to that
+ * text. A range's start stays with the content after it and its end with the
+ * content before it, so a chunk that loads at either edge lands outside the
+ * range (see `GapSide`).
+ */
+function endpointSides(anchor: number, head: number): readonly [GapSide, GapSide] {
+  if (anchor === head) return ["before", "before"];
+  return anchor < head ? ["after", "before"] : ["before", "after"];
+}
+
+/**
+ * The placement key of a selection endpoint at resident `offset`: `stored`
+ * when it is a key text at `offset` could take, else the key of the gap on
+ * `side`. A stored key records the side of an unloaded chunk the endpoint is
+ * on, which the offset cannot say (see `SelectionRange.anchorAfterChunk`).
+ */
+function endpointKey(
+  pieceTable: PieceTableState,
+  offset: number,
+  stored: number | undefined,
+  side: GapSide,
+): number {
+  if (pieceTable.nextExpectedChunk === 0) return NO_CHUNK;
+  if (stored !== undefined && keyFitsAt(pieceTable, offset, stored)) return stored;
+  return gapKey(pieceTable.root, offset, side);
+}
+
+/**
+ * A frozen live range with offsets `anchor` and `head`. Each key is stored
+ * only when it fits its offset and differs from the key the document gives
+ * that endpoint, so a range carries keys only next to an unloaded chunk.
+ */
+export function selectionRange(
+  pieceTable: PieceTableState,
+  anchor: ByteOffset,
+  head: ByteOffset,
+  anchorKey: number | undefined,
+  headKey: number | undefined,
+): SelectionRange {
+  if (pieceTable.nextExpectedChunk === 0 || (anchorKey === undefined && headKey === undefined)) {
+    return Object.freeze({ anchor, head });
+  }
+  const [anchorSide, headSide] = endpointSides(anchor, head);
+  const keep = (offset: number, key: number | undefined, side: GapSide): key is number =>
+    key !== undefined &&
+    keyFitsAt(pieceTable, offset, key) &&
+    key !== gapKey(pieceTable.root, offset, side);
+  const range: { -readonly [K in keyof SelectionRange]: SelectionRange[K] } = {
+    anchor,
+    head,
+  };
+  if (keep(anchor, anchorKey, anchorSide)) range.anchorAfterChunk = anchorKey;
+  if (keep(head, headKey, headSide)) range.headAfterChunk = headKey;
+  return Object.freeze(range);
+}
+
+/**
+ * Build the ranges of a selection that replaces `previous` without changing
+ * the document. `validate` checks each offset of `ranges` and returns it as
+ * stored, or throws.
+ *
+ * Next to an unloaded chunk, only the stored key knows which side of the chunk
+ * an endpoint is on. An editor that echoes the selection back as plain offsets
+ * would otherwise lose that side. Each range keeps the keys it brings. A range
+ * without keys whose offsets equal the range at the same index in `previous`
+ * takes that range's keys. Other ranges take the keys their shape calls for.
+ */
+export function selectionRangesWithKeys(
+  pieceTable: PieceTableState,
+  previous: SelectionState,
+  ranges: readonly SelectionRange[],
+  validate: (offset: number, endpoint: "anchor" | "head") => ByteOffset,
+): NonEmptyReadonlyArray<SelectionRange> {
+  return Object.freeze(
+    ranges.map((range, i) => {
+      const anchor = validate(range.anchor, "anchor");
+      const head = validate(range.head, "head");
+      const old = previous.ranges[i];
+      const same = old !== undefined && old.anchor === anchor && old.head === head;
+      return selectionRange(
+        pieceTable,
+        anchor,
+        head,
+        range.anchorAfterChunk ?? (same ? old.anchorAfterChunk : undefined),
+        range.headAfterChunk ?? (same ? old.headAfterChunk : undefined),
+      );
+    }),
+  ) as unknown as NonEmptyReadonlyArray<SelectionRange>;
+}
+
+/**
+ * Placement key for text inserted at resident `offset` when the edit does not
+ * give one: the key stored on an endpoint of `selection` at that offset, else
+ * the key of the gap (see `gapKey`).
+ *
+ * When every chunk has been evicted the document is empty, and the cursor's
+ * stored key is the only record of where in the file it was.
+ */
+export function insertionKey(
+  pieceTable: PieceTableState,
+  selection: SelectionState,
+  offset: number,
+): number {
+  if (pieceTable.nextExpectedChunk === 0) return NO_CHUNK;
+  const fits = (key: number | undefined): key is number =>
+    key !== undefined && keyFitsAt(pieceTable, offset, key);
+  const keyOf = (range: SelectionRange | undefined): number | undefined => {
+    if (range === undefined) return undefined;
+    if (range.head === offset && fits(range.headAfterChunk)) return range.headAfterChunk;
+    if (range.anchor === offset && fits(range.anchorAfterChunk)) return range.anchorAfterChunk;
+    return undefined;
+  };
+  // The primary range first: it is the one an edit usually comes from.
+  let key = keyOf(selection.ranges[selection.primaryIndex]);
+  for (let i = 0; key === undefined && i < selection.ranges.length; i++) {
+    key = keyOf(selection.ranges[i]);
+  }
+  return key ?? gapKey(pieceTable.root, offset, "before");
+}
+
+// =============================================================================
+// Anchoring and resolving selections
+// =============================================================================
 
 // Before any chunk loads, every key is NO_CHUNK and an anchored position equals
 // its offset, so the anchored form depends only on the selection. Selections
@@ -83,43 +223,28 @@ function anchorUnchunked(selection: SelectionState): HistorySelectionState {
 }
 
 /**
- * Anchor a live selection.
- *
- * A cursor takes the key text typed there receives, so it stays next to that
- * text. A range's start stays with the content after it and its end with the
- * content before it, so a chunk that loads at either edge lands outside the
- * range (see `GapSide`). A selection carried across a chunk load or eviction
- * keeps the anchors it was carried with, which know the side of a gap next to
- * an unloaded chunk.
+ * Anchor a live selection. Each endpoint takes its stored key, or the key its
+ * side of the gap gives (see `endpointSides`).
  */
 export function anchorSelection(
   pieceTable: PieceTableState,
   selection: SelectionState,
 ): HistorySelectionState {
   if (pieceTable.nextExpectedChunk === 0) return anchorUnchunked(selection);
-  const cached = liveAnchors.get(selection);
-  if (cached !== undefined && isLiveRoot(cached, pieceTable.root)) return cached.anchored;
   return freezeSelection(
-    selection.ranges.map((range) => anchorRange(pieceTable, range)),
+    selection.ranges.map((range): HistorySelectionRange => {
+      const [anchorSide, headSide] = endpointSides(range.anchor, range.head);
+      const anchorKey = endpointKey(pieceTable, range.anchor, range.anchorAfterChunk, anchorSide);
+      const headKey = endpointKey(pieceTable, range.head, range.headAfterChunk, headSide);
+      return Object.freeze({
+        anchor: toAnchoredOffset(pieceTable, anchorKey, range.anchor),
+        head: toAnchoredOffset(pieceTable, headKey, range.head),
+        anchorAfterChunk: anchorKey,
+        headAfterChunk: headKey,
+      });
+    }),
     selection.primaryIndex,
   );
-}
-
-/** Anchor one live range (see `anchorSelection`). */
-function anchorRange(pieceTable: PieceTableState, range: SelectionRange): HistorySelectionRange {
-  const root = pieceTable.root;
-  const collapsed = range.head === range.anchor;
-  const anchorSide = collapsed || range.anchor > range.head ? "before" : "after";
-  const anchorKey = gapKey(root, range.anchor, anchorSide);
-  const headKey = collapsed
-    ? anchorKey
-    : gapKey(root, range.head, anchorSide === "before" ? "after" : "before");
-  return Object.freeze({
-    anchor: toAnchoredOffset(pieceTable, anchorKey, range.anchor),
-    head: toAnchoredOffset(pieceTable, headKey, range.head),
-    anchorAfterChunk: anchorKey,
-    headAfterChunk: headKey,
-  });
 }
 
 /** A history selection holding one cursor at anchored `position` with key `key`. */
@@ -138,13 +263,32 @@ export function anchoredCursor(key: number, position: number): HistorySelectionS
 }
 
 /**
+ * The first UTF-8 code-point boundary at or after `offset`.
+ *
+ * Evicting a chunk can leave the bytes of a character split across its edge
+ * behind, as continuation bytes with no lead byte. A position clamped to where
+ * the chunk was can land on one, and edits and SET_SELECTION reject such a
+ * position. Those bytes belonged to the evicted character, so step past them.
+ * The end of the document is always a boundary.
+ */
+function nextBoundary(pieceTable: PieceTableState, offset: number): number {
+  let position = offset;
+  while (!isUtf8Boundary(pieceTable, byteOffset(position))) position++;
+  return position;
+}
+
+/**
  * Resolve a history selection to resident offsets.
  *
  * Selections do not block eviction, so a cursor may have pointed inside a chunk
  * that is no longer loaded. Its resident offset would then land in whatever
  * follows that chunk. Each position is instead clamped to the span of gaps that
- * share its placement key, which puts it where the evicted chunk was, as
- * `evictChunk` does for the live selection.
+ * share its placement key, which puts it where the evicted chunk was, then
+ * moved past any continuation bytes the chunk left (see `nextBoundary`).
+ *
+ * Each endpoint keeps its key on the live range when the document cannot
+ * supply it (see `SelectionRange.anchorAfterChunk`), so the side of an
+ * unloaded chunk survives undo, redo, and further loads and evictions.
  */
 export function resolveSelection(
   pieceTable: PieceTableState,
@@ -158,55 +302,42 @@ export function resolveSelection(
     return freezeSelection(
       selection.ranges.map(
         (range): SelectionRange =>
-          Object.freeze({ anchor: within(range.anchor), head: within(range.head) }),
+          Object.freeze({
+            anchor: within(range.anchor),
+            head: within(range.head),
+          }),
       ),
       selection.primaryIndex,
     );
   }
-  const clamp = (key: number, anchored: number) => {
+  const resolve = (key: number, anchored: number) => {
     const { start, end } = keySpan(pieceTable.root, key);
-    const offset = toResidentOffset(pieceTable, key, anchored);
-    return byteOffset(Math.max(start, Math.min(offset, end)));
+    const offset = Math.max(start, Math.min(toResidentOffset(pieceTable, key, anchored), end));
+    const boundary = nextBoundary(pieceTable, offset);
+    // Past the clamped offset the key no longer fits, so the document's applies.
+    return {
+      offset: byteOffset(boundary),
+      key: boundary === offset ? key : undefined,
+    };
   };
   return freezeSelection(
-    selection.ranges.map(
-      (range): SelectionRange =>
-        Object.freeze({
-          anchor: clamp(range.anchorAfterChunk, range.anchor),
-          head: clamp(range.headAfterChunk, range.head),
-        }),
-    ),
+    selection.ranges.map((range) => {
+      const anchor = resolve(range.anchorAfterChunk, range.anchor);
+      const head = resolve(range.headAfterChunk, range.head);
+      return selectionRange(pieceTable, anchor.offset, head.offset, anchor.key, head.key);
+    }),
     selection.primaryIndex,
   );
 }
 
-// =============================================================================
-// Live selection across chunk loads and evictions
-// =============================================================================
-
-/**
- * Anchored form of a live selection, valid while the piece tree is the one
- * `root` refers to. A gap next to an unloaded chunk has two sides, and its
- * resident offset cannot say which one the cursor is on. Keeping the anchor
- * from the last load or eviction keeps the cursor on its side when the chunk
- * loads again.
- *
- * `root` is weak so that a selection that outlives many edits does not keep an
- * old piece tree alive. It is null for an empty document.
- */
-interface LiveAnchors {
-  readonly root: WeakRef<NonNullable<PieceTableState["root"]>> | null;
-  readonly anchored: HistorySelectionState;
-}
-
-// Selections and piece trees are immutable, so an entry stays valid until
-// either changes. Every edit, load, and eviction replaces the tree, and every
-// selection change replaces the selection. The piece table object itself is
-// copied on each state update, so it cannot serve as the key.
-const liveAnchors = new WeakMap<SelectionState, LiveAnchors>();
-
-function isLiveRoot(cached: LiveAnchors, root: PieceTableState["root"]): boolean {
-  return cached.root === null ? root === null : cached.root.deref() === root;
+/** True when two live ranges have the same offsets and stored keys. */
+function sameRange(a: SelectionRange, b: SelectionRange): boolean {
+  return (
+    a.anchor === b.anchor &&
+    a.head === b.head &&
+    a.anchorAfterChunk === b.anchorAfterChunk &&
+    a.headAfterChunk === b.headAfterChunk
+  );
 }
 
 /**
@@ -216,103 +347,24 @@ function isLiveRoot(cached: LiveAnchors, root: PieceTableState["root"]): boolean
  * Each offset is anchored in `before` and resolved in `after`, the same way
  * history selections are. An offset inside an evicted chunk lands where the
  * chunk was, and keeps that chunk's key, so evicting and re-loading a chunk
- * leaves the cursor where it was. Returns `selection` itself when no offset
- * moves.
+ * leaves the cursor where it was. Returns `selection` itself when neither an
+ * offset nor a stored key changes.
+ *
+ * Before the first chunk loads, a selection has no side of any chunk: every
+ * key is NO_CHUNK because nothing has loaded, not because the selection was
+ * placed before chunk 0. Text typed before any load stays before every chunk,
+ * so its offsets hold, and the document gives each endpoint its key, as for a
+ * selection set after the load (see `gapKey`).
  */
 export function carrySelectionAcrossChunks(
   before: PieceTableState,
   after: PieceTableState,
   selection: SelectionState,
 ): SelectionState {
-  const anchored = anchorSelection(before, selection);
-  const resolved = resolveSelection(after, anchored);
-  const unchanged = resolved.ranges.every(
-    (range, i) =>
-      range.anchor === selection.ranges[i]!.anchor && range.head === selection.ranges[i]!.head,
-  );
-  const result = unchanged ? selection : resolved;
-  // Re-anchor with the same keys, so a clamped offset records where it is now.
-  const reanchored = freezeSelection(
-    anchored.ranges.map(
-      (range, i): HistorySelectionRange =>
-        Object.freeze({
-          ...range,
-          anchor: toAnchoredOffset(after, range.anchorAfterChunk, result.ranges[i]!.anchor),
-          head: toAnchoredOffset(after, range.headAfterChunk, result.ranges[i]!.head),
-        }),
-    ),
-    anchored.primaryIndex,
-  );
-  liveAnchors.set(result, {
-    root: after.root === null ? null : new WeakRef(after.root),
-    anchored: reanchored,
-  });
-  return result;
-}
-
-/**
- * Placement key the live selection holds for resident `offset`, when a cursor
- * or range endpoint carried across a chunk load or eviction sits there, else
- * undefined.
- *
- * When every chunk has been evicted the document is empty, and this key is the
- * only record of where in the file the cursor was. Text typed there takes it.
- */
-export function liveKeyAt(
-  pieceTable: PieceTableState,
-  selection: SelectionState,
-  offset: number,
-): number | undefined {
-  const cached = liveAnchors.get(selection);
-  if (cached === undefined || !isLiveRoot(cached, pieceTable.root)) return undefined;
-  const keyOf = (i: number): number | undefined => {
-    const range = selection.ranges[i];
-    const anchored = cached.anchored.ranges[i];
-    if (range === undefined || anchored === undefined) return undefined;
-    if (range.head === offset) return anchored.headAfterChunk;
-    if (range.anchor === offset) return anchored.anchorAfterChunk;
-    return undefined;
-  };
-  // The primary range first: it is the one an edit usually comes from.
-  let key = keyOf(selection.primaryIndex);
-  for (let i = 0; key === undefined && i < selection.ranges.length; i++) key = keyOf(i);
-  return key;
-}
-
-/**
- * Keep the live anchors of `previous` for `next`, a selection that replaces it
- * without changing the document.
- *
- * Next to an unloaded chunk, a resident offset cannot say which side of the
- * chunk a cursor is on, and only the anchors from the last load or eviction
- * know. An editor that echoes the selection back would otherwise lose that
- * side. Each range of `next` equal to the range at the same index in
- * `previous` keeps its anchors. Other ranges are anchored as usual: a range
- * that changed shape takes the sides its new shape calls for (see `GapSide`).
- */
-export function carryLiveAnchors(
-  pieceTable: PieceTableState,
-  previous: SelectionState,
-  next: SelectionState,
-): void {
-  if (pieceTable.nextExpectedChunk === 0 || previous === next) return;
-  const cached = liveAnchors.get(previous);
-  if (cached === undefined || !isLiveRoot(cached, pieceTable.root)) return;
-  let kept = false;
-  const ranges = next.ranges.map((range, i): HistorySelectionRange => {
-    const old = previous.ranges[i];
-    const oldAnchored = cached.anchored.ranges[i];
-    if (oldAnchored === undefined || old?.anchor !== range.anchor || old.head !== range.head) {
-      return anchorRange(pieceTable, range);
-    }
-    kept = true;
-    return oldAnchored;
-  });
-  if (!kept) return;
-  liveAnchors.set(next, {
-    root: cached.root,
-    anchored: freezeSelection(ranges, next.primaryIndex),
-  });
+  if (before.nextExpectedChunk === 0) return selection;
+  const resolved = resolveSelection(after, anchorSelection(before, selection));
+  const unchanged = resolved.ranges.every((range, i) => sameRange(range, selection.ranges[i]!));
+  return unchanged ? selection : resolved;
 }
 
 // =============================================================================
@@ -332,7 +384,11 @@ interface ChangeSummary {
 
 type StackNode = NonNullable<HistoryState["undoStack"]>;
 
-const EMPTY_SUMMARY: ChangeSummary = { minKey: Infinity, maxKey: -Infinity, delta: 0 };
+const EMPTY_SUMMARY: ChangeSummary = {
+  minKey: Infinity,
+  maxKey: -Infinity,
+  delta: 0,
+};
 const entrySummaryCache = new WeakMap<HistoryEntry, ChangeSummary>();
 // Stack nodes are shared between successive stacks, so a push or pop computes
 // summaries only for the O(log H) nodes it creates, each in O(1).
@@ -441,6 +497,40 @@ function firstInside(node: StackNode | null, firstIndex: number, track: ChunkTra
   return firstInside(node.left, firstIndex, track);
 }
 
+/** Where each stack must be cut to evict a chunk (see `firstInside`). */
+interface EvictionCuts {
+  readonly anchoredStart: number;
+  readonly undoCut: number;
+  readonly redoCut: number;
+}
+
+// Under "pin", a refused eviction leaves history unchanged, and ChunkManager
+// tries every refused candidate again on each load. The cuts depend only on
+// the history, the chunk, and the chunk's anchored start. Loading or evicting
+// other chunks leaves the anchored start unchanged, and every edit, undo, and
+// redo replaces the history object, so the cuts are kept per history object.
+const evictionCutCache = new WeakMap<HistoryState, Map<number, EvictionCuts>>();
+
+function evictionCuts(history: HistoryState, chunkIndex: number, anchoredStart: number) {
+  let byChunk = evictionCutCache.get(history);
+  const cached = byChunk?.get(chunkIndex);
+  if (cached !== undefined && cached.anchoredStart === anchoredStart) return cached;
+  const key = chunkIndex - 1;
+  const cut = (stack: HistoryState["undoStack"], direction: 1 | -1) =>
+    firstInside(stack, 0, { key, direction, start: anchoredStart });
+  const cuts: EvictionCuts = {
+    anchoredStart,
+    undoCut: cut(history.undoStack, -1),
+    redoCut: cut(history.redoStack, 1),
+  };
+  if (byChunk === undefined) {
+    byChunk = new Map();
+    evictionCutCache.set(history, byChunk);
+  }
+  byChunk.set(chunkIndex, cuts);
+  return cuts;
+}
+
 /**
  * Apply the history eviction policy before evicting `chunkIndex`, whose first
  * resident byte is at `start`.
@@ -471,10 +561,7 @@ export function historyForEviction(
   if (history.undoStack === null && history.redoStack === null) return history;
   const key = chunkIndex - 1;
   const anchoredStart = toAnchoredOffset(pieceTable, key, start);
-  const cut = (stack: HistoryState["undoStack"], direction: 1 | -1) =>
-    firstInside(stack, 0, { key, direction, start: anchoredStart });
-  const undoCut = cut(history.undoStack, -1);
-  const redoCut = cut(history.redoStack, 1);
+  const { undoCut, redoCut } = evictionCuts(history, chunkIndex, anchoredStart);
   if (undoCut < 0 && redoCut < 0) return history;
   if (history.evictionPolicy === "pin") return null;
   // Keep only the entries newer than the cut. The split shares structure.

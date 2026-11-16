@@ -278,6 +278,7 @@ Anchored history positions (chunk-safe undo and redo) change the meaning of expo
 - `HistoryEntry.selectionBefore` and `selectionAfter` are `HistorySelectionState` (anchored positions with placement keys), not `SelectionState`.
 - `HistoryChange` gains `afterChunk`, and may carry `bytes` (and `oldBytes` on a replace) when its decoded text does not encode back to the bytes it stands for.
 - `AddPieceNode` gains `afterChunk`.
+- `SelectionRange` gains optional `anchorAfterChunk` and `headAfterChunk`, present on a range next to a chunk that is not loaded. A test that compares a selection range with `toEqual({ anchor, head })` sees them there.
 - `HistoryState` gains `evictionPolicy`.
 - `selection-change` fires whenever an action replaces the selection, including `UNDO` and `REDO`.
 - Checkpoints are written as version 2. Restore still reads version 1, and `isCheckpoint` accepts both.

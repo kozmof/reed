@@ -52,7 +52,11 @@ const bytesOf = (s: Store) => {
   return [...getBytes(pieceTable, byteOffset(0), byteOffset(pieceTable.totalLength))];
 };
 const load = (s: Store, i: number) => s.dispatch(DocumentActions.loadChunk(i, enc(CHUNKS[i]!)));
-const cursor = (s: Store) => s.getSnapshot().selection.ranges[0];
+/** Offsets of the primary range. Placement keys are checked where they matter. */
+const cursor = (s: Store) => {
+  const { anchor, head } = s.getSnapshot().selection.ranges[0]!;
+  return { anchor, head };
+};
 
 describe("history offsets across chunk load/evict", () => {
   it("UNDO after loading an earlier chunk removes the edit, not bytes of the new chunk", () => {
@@ -721,9 +725,18 @@ describe("checkpoint restore validates history anchors", () => {
       editUndo(checkpoint, (entry) => (entry.changes[0] = ["i", position, "X", key]));
     expect(() => restoreCheckpoint(atKey(1))).not.toThrow();
     expect(() => restoreCheckpoint(atKey(2))).toThrow(/placement key 2/);
-    // Key 0 can subtract at most one chunk (8 bytes).
-    expect(() => restoreCheckpoint(atKey(0, -8))).not.toThrow();
-    expect(() => restoreCheckpoint(atKey(0, -9))).toThrow(/at least -8/);
+    // A change is replayed in the restored layout, so its position subtracts
+    // at most the loaded chunks at or below its key: none for key 0, whose
+    // chunk 0 is not loaded, and chunk 1 (8 bytes) for key 1.
+    expect(() => restoreCheckpoint(atKey(0, -1))).toThrow(/at least 0/);
+    expect(() => restoreCheckpoint(atKey(1, -8))).not.toThrow();
+    expect(() => restoreCheckpoint(atKey(1, -9))).toThrow(/at least -8/);
+    // A selection is clamped on restore, so it keeps the bound that holds in
+    // any layout: one chunk length per chunk at or below its key.
+    const selectionAt = (position: number) =>
+      editUndo(checkpoint, (entry) => (entry.selectionBefore.ranges[0] = [position, 2, 0, 0]));
+    expect(() => restoreCheckpoint(selectionAt(-8))).not.toThrow();
+    expect(() => restoreCheckpoint(selectionAt(-9))).toThrow(/at least -8/);
   });
 
   it("rejects a history selection range with one placement key", () => {
@@ -963,5 +976,268 @@ describe("fourth review regressions", () => {
         historyEvictionPolicy: "keep" as unknown as HistoryEvictionPolicy,
       }),
     ).toThrow(/historyEvictionPolicy/);
+  });
+});
+
+describe("fifth review regressions", () => {
+  const key = (s: Store) => {
+    const { anchorAfterChunk, headAfterChunk } = s.getSnapshot().selection.ranges[0]!;
+    return { anchorAfterChunk, headAfterChunk };
+  };
+
+  it("keeps the cursor's key through undo, so text typed after it stays in place", () => {
+    const s = makeStore();
+    load(s, 0);
+    load(s, 1);
+    // Inside chunk 1, so the cursor sits after chunk 0.
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(12), head: byteOffset(12) }]));
+    s.dispatch(DocumentActions.evictChunk(0));
+    s.dispatch(DocumentActions.evictChunk(1));
+    expect(s.getSnapshot().pieceTable.root).toBeNull();
+    expect(key(s)).toEqual({ anchorAfterChunk: 0, headAfterChunk: 0 });
+
+    s.dispatch(DocumentActions.insert(byteOffset(0), "X"));
+    s.dispatch(DocumentActions.undo());
+    expect(key(s)).toEqual({ anchorAfterChunk: 0, headAfterChunk: 0 });
+    s.dispatch(DocumentActions.insert(byteOffset(0), "Y"));
+    load(s, 0);
+    expect(text(s)).toBe("AAAAAAA\nY");
+
+    // Redo restores the key too.
+    s.dispatch(DocumentActions.undo());
+    s.dispatch(DocumentActions.evictChunk(0));
+    s.dispatch(DocumentActions.redo());
+    s.dispatch(DocumentActions.undo());
+    s.dispatch(DocumentActions.insert(byteOffset(0), "Z"));
+    load(s, 1);
+    expect(text(s)).toBe("ZBBBBBBB\n");
+    load(s, 0);
+    expect(text(s)).toBe("AAAAAAA\nZBBBBBBB\n");
+  });
+
+  describe("a character split across a chunk edge", () => {
+    // "€" is E2 82 AC: chunk 1 ends with its first two bytes.
+    const chunks = [
+      enc("AAAAAAA\n"),
+      new Uint8Array([...enc("BBBBBB"), 0xe2, 0x82]),
+      new Uint8Array([0xac, ...enc("CCCCCC\n")]),
+    ];
+    const splitStore = () => {
+      const s = makeStore(3);
+      chunks.forEach((data, i) => s.dispatch(DocumentActions.loadChunk(i, data)));
+      return s;
+    };
+    const atBoundary = (s: Store) => {
+      const { anchor, head } = cursor(s);
+      // Both actions reject a position on a continuation byte.
+      s.dispatch(DocumentActions.setSelection([{ anchor, head }]));
+      s.dispatch(DocumentActions.insert(head, "!"));
+      s.dispatch(DocumentActions.undo());
+    };
+
+    it("moves a cursor past its leftover bytes when the chunk is evicted", () => {
+      const s = splitStore();
+      s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(10), head: byteOffset(10) }]));
+      s.dispatch(DocumentActions.evictChunk(1));
+      // Offset 8 would be the orphaned 0xAC.
+      expect(cursor(s)).toEqual({ anchor: 9, head: 9 });
+      expect(() => atBoundary(s)).not.toThrow();
+      s.dispatch(DocumentActions.loadChunk(1, chunks[1]!));
+      expect(text(s)).toBe("AAAAAAA\nBBBBBB€CCCCCC\n");
+      expect(cursor(s)).toEqual({ anchor: 17, head: 17 });
+    });
+
+    it("moves a selection that undo restores past them too", () => {
+      const s = splitStore();
+      s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(10), head: byteOffset(10) }]));
+      s.dispatch(DocumentActions.insert(byteOffset(0), "X"));
+      s.dispatch(DocumentActions.evictChunk(1));
+      s.dispatch(DocumentActions.undo());
+      expect(text(s)).toBe("AAAAAAA\n�CCCCCC\n");
+      expect(cursor(s)).toEqual({ anchor: 9, head: 9 });
+      expect(() => atBoundary(s)).not.toThrow();
+    });
+  });
+
+  it("places remote text typed with every chunk evicted where the cursor was", () => {
+    const s = makeStore(4);
+    for (let i = 0; i < 4; i++) load(s, i);
+    // The end of chunk 1.
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(16), head: byteOffset(16) }]));
+    for (let i = 0; i < 4; i++) s.dispatch(DocumentActions.evictChunk(i));
+    s.dispatch(DocumentActions.applyRemote([{ type: "insert", start: byteOffset(0), text: "R" }]));
+    load(s, 3);
+    load(s, 0);
+    expect(text(s)).toBe("AAAAAAA\nRDDDDDDD\n");
+  });
+
+  describe("text typed at a cursor clamped next to an evicted chunk", () => {
+    // Inside chunk 2, then chunks 1 and 2 go: the cursor ends at the end of
+    // chunk 0 but stays after chunk 1.
+    const clamped = () => {
+      const s = makeStore(3);
+      for (let i = 0; i < 3; i++) load(s, i);
+      s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(20), head: byteOffset(20) }]));
+      s.dispatch(DocumentActions.evictChunk(1));
+      s.dispatch(DocumentActions.evictChunk(2));
+      expect(cursor(s)).toEqual({ anchor: 8, head: 8 });
+      expect(key(s)).toEqual({ anchorAfterChunk: 1, headAfterChunk: 1 });
+      return s;
+    };
+
+    it("goes after the chunk the cursor was after", () => {
+      const s = clamped();
+      s.dispatch(DocumentActions.insert(byteOffset(8), "X"));
+      load(s, 1);
+      expect(text(s)).toBe("AAAAAAA\nBBBBBBB\nX");
+    });
+
+    it("does so when the edit carries the same selection inline", () => {
+      const s = clamped();
+      s.dispatch(
+        DocumentActions.insert(byteOffset(8), "X", [
+          { anchor: byteOffset(8), head: byteOffset(8) },
+        ]),
+      );
+      load(s, 1);
+      expect(text(s)).toBe("AAAAAAA\nBBBBBBB\nX");
+    });
+
+    it("keeps the gap's key for a cursor that was set there", () => {
+      const s = clamped();
+      s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(4), head: byteOffset(4) }]));
+      s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(8), head: byteOffset(8) }]));
+      expect(key(s)).toEqual({ anchorAfterChunk: undefined, headAfterChunk: undefined });
+      s.dispatch(DocumentActions.insert(byteOffset(8), "X"));
+      load(s, 1);
+      expect(text(s)).toBe("AAAAAAA\nXBBBBBBB\n");
+    });
+  });
+
+  it("ignores a placement key that does not fit the offset", () => {
+    const s = makeStore(3);
+    for (let i = 0; i < 3; i++) load(s, i);
+    // Key 2 names chunk 2, which lies after offset 0 in every layout.
+    s.dispatch(
+      DocumentActions.setSelection([
+        { anchor: byteOffset(0), head: byteOffset(0), anchorAfterChunk: 2, headAfterChunk: 2 },
+      ]),
+    );
+    expect(key(s)).toEqual({ anchorAfterChunk: undefined, headAfterChunk: undefined });
+  });
+});
+
+describe("fifth review regressions: checkpoints", () => {
+  type Wire = Record<string, any>;
+  /** A version 1 payload for the store's document, with `history` as given. */
+  const v1Of = (s: Store, history: { undo: unknown[]; redo: unknown[] }): Wire => {
+    const v2: Wire = JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow())));
+    return {
+      ...v2,
+      version: 1,
+      pieceTable: {
+        ...v2.pieceTable,
+        pieces: v2.pieceTable.pieces.map((p: unknown[]) => (p[1] === "a" ? p.slice(0, 4) : p)),
+      },
+      history: { limit: v2.history.limit, coalesceTimeout: v2.history.coalesceTimeout, ...history },
+    };
+  };
+  const v1Entry = (change: unknown[], before: number, after: number) => ({
+    changes: [change],
+    selectionBefore: { ranges: [[before, before]], primaryIndex: 0 },
+    selectionAfter: { ranges: [[after, after]], primaryIndex: 0 },
+    timestamp: 0,
+  });
+
+  it("migrates an older undo offset in the document it applied to", () => {
+    const s = makeStore(3);
+    for (let i = 0; i < 3; i++) load(s, i);
+    s.dispatch(DocumentActions.insert(byteOffset(18), "Q")); // chunk 2
+    s.dispatch(DocumentActions.insert(byteOffset(3), "ZZZZ")); // chunk 0
+    expect(text(s)).toBe("AAAZZZZAAAA\nBBBBBBB\nCCQCCCCC\n");
+    // In the captured document, offset 18 falls inside chunk 1.
+    const v1 = v1Of(s, {
+      undo: [v1Entry(["i", 18, "Q"], 18, 19), v1Entry(["i", 3, "ZZZZ"], 3, 7)],
+      redo: [],
+    });
+
+    let state: DocumentState = restoreCheckpoint(v1);
+    // Nothing points inside chunk 1, so it evicts.
+    state = documentReducer(state, DocumentActions.evictChunk(1));
+    expect(state.pieceTable.chunkMap.has(1)).toBe(false);
+    state = documentReducer(state, DocumentActions.undo());
+    state = documentReducer(state, DocumentActions.undo());
+    expect(getValue(state.pieceTable)).toBe("AAAAAAA\nCCCCCCC\n");
+    state = documentReducer(state, DocumentActions.loadChunk(1, enc(CHUNK1)));
+    expect(getValue(state.pieceTable)).toBe("AAAAAAA\nBBBBBBB\nCCCCCCC\n");
+  });
+
+  it("migrates a later redo offset in the document the earlier redo leaves", () => {
+    const s = makeStore();
+    load(s, 0);
+    load(s, 1);
+    s.dispatch(DocumentActions.delete(byteOffset(0), byteOffset(4)));
+    s.dispatch(DocumentActions.insert(byteOffset(6), "Q")); // chunk 1
+    s.dispatch(DocumentActions.undo());
+    s.dispatch(DocumentActions.undo());
+    expect(text(s)).toBe("AAAAAAA\nBBBBBBB\n");
+    // Redo is stored oldest first: the delete is redone first. In the
+    // captured document, offset 6 falls inside chunk 0.
+    const v1 = v1Of(s, {
+      undo: [],
+      redo: [v1Entry(["i", 6, "Q"], 6, 7), v1Entry(["d", 0, "AAAA"], 0, 0)],
+    });
+
+    let state: DocumentState = restoreCheckpoint(v1);
+    // The insert points inside chunk 1, so the default policy keeps it.
+    state = documentReducer(state, DocumentActions.evictChunk(1));
+    expect(state.pieceTable.chunkMap.has(1)).toBe(true);
+    state = documentReducer(state, DocumentActions.redo());
+    state = documentReducer(state, DocumentActions.redo());
+    expect(getValue(state.pieceTable)).toBe("AAA\nBBQBBBBB\n");
+  });
+
+  it("round-trips the placement keys of the live selection", () => {
+    const s = makeStore(3);
+    for (let i = 0; i < 3; i++) load(s, i);
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(20), head: byteOffset(20) }]));
+    s.dispatch(DocumentActions.evictChunk(1));
+    s.dispatch(DocumentActions.evictChunk(2));
+    const checkpoint: Wire = JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow())));
+    expect(checkpoint.selection.ranges).toEqual([[8, 8, 1, 1]]);
+
+    const restored = createDocumentStoreFromCheckpoint(checkpoint, { reconcileMode: "none" });
+    restored.dispatch(DocumentActions.insert(byteOffset(8), "X"));
+    restored.dispatch(DocumentActions.loadChunk(1, enc(CHUNK1)));
+    expect(getValue(restored.getSnapshot().pieceTable)).toBe("AAAAAAA\nBBBBBBB\nX");
+
+    // One stored key; null stands for the other.
+    checkpoint.selection.ranges = [[0, 8, null, 1]];
+    expect(restoreCheckpoint(checkpoint).selection.ranges[0]).toEqual({
+      anchor: 0,
+      head: 8,
+      headAfterChunk: 1,
+    });
+    checkpoint.selection.ranges = [[4, 4, 1, 1]];
+    expect(() => restoreCheckpoint(checkpoint)).toThrow(/does not fit offset 4/);
+    checkpoint.selection.ranges = [[8, 8, 1]];
+    expect(() => restoreCheckpoint(checkpoint)).toThrow(/3 elements/);
+  });
+
+  it("refuses to replay a history change that resolves outside the document", () => {
+    const s = makeStore();
+    load(s, 1);
+    s.dispatch(DocumentActions.insert(byteOffset(2), "X"));
+    const checkpoint: Wire = JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow())));
+    expect(checkpoint.history.undo[0].changes[0]).toEqual(["i", 2, "X", 0]);
+    // With chunk 0 not loaded, key 0 subtracts nothing.
+    checkpoint.history.undo[0].changes[0] = ["i", -500, "X", 0];
+    expect(() => restoreCheckpoint(checkpoint)).toThrow(/at least 0/);
+
+    // Past the end: restore cannot tell, as older entries apply to other
+    // documents, so undo refuses rather than delete other bytes.
+    checkpoint.history.undo[0].changes[0] = ["i", 100, "X", 0];
+    const state = restoreCheckpoint(checkpoint);
+    expect(() => documentReducer(state, DocumentActions.undo())).toThrow(RangeError);
   });
 });

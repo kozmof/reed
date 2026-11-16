@@ -21,6 +21,7 @@
  */
 
 import type { PieceNode, PieceTableState } from "../../types/state.js";
+import { lastPiece, pieceAt } from "./piece-search.js";
 
 /** Key for positions before every chunk, and for every position without chunking. */
 export const NO_CHUNK = -1;
@@ -47,26 +48,7 @@ function keyAfterPiece(piece: PieceNode): number {
 
 /** The piece holding resident byte `offset`, or null when `offset` is out of range. */
 function pieceAtByte(root: PieceNode | null, offset: number): PieceNode | null {
-  let node = root;
-  let remaining = offset;
-  while (node !== null) {
-    const leftLength = node.left?.subtreeLength ?? 0;
-    if (remaining < leftLength) {
-      node = node.left;
-    } else if (remaining < leftLength + node.length) {
-      return node;
-    } else {
-      remaining -= leftLength + node.length;
-      node = node.right;
-    }
-  }
-  return null;
-}
-
-function lastPiece(root: PieceNode | null): PieceNode | null {
-  let node = root;
-  while (node?.right) node = node.right;
-  return node;
+  return pieceAt(root, offset)?.node ?? null;
 }
 
 /** Placement key of the resident byte at `offset` (`offset < totalLength`). */
@@ -100,7 +82,7 @@ export function gapKey(root: PieceNode | null, offset: number, side: GapSide): n
   if (root === null) return NO_CHUNK;
   const after = offset < root.subtreeLength ? pieceAtByte(root, offset) : null;
   if (offset <= 0) return after === null ? NO_CHUNK : pieceKey(after);
-  if (after === null) return keyAfterPiece(lastPiece(root)!);
+  if (after === null) return keyAfterPiece(lastPiece(root)!.node);
   if (side === "after") return pieceKey(after);
   const before = pieceAtByte(root, offset - 1)!;
   if (before === after) return pieceKey(after);
@@ -135,6 +117,19 @@ function lengthWithKeyAtMost(root: PieceNode | null, key: number): number {
  */
 export function keySpan(root: PieceNode | null, key: number): { start: number; end: number } {
   return { start: lengthWithKeyAtMost(root, key - 1), end: lengthWithKeyAtMost(root, key) };
+}
+
+/**
+ * True when `key` is a placement key text inserted at resident `offset` could
+ * take: every byte before the offset has a key at or below it, every byte after
+ * has a key at or above it, and it names no chunk that has never loaded. O(log n).
+ */
+export function keyFitsAt(pieceTable: PieceTableState, offset: number, key: number): boolean {
+  if (!Number.isSafeInteger(key) || key < NO_CHUNK || key >= pieceTable.nextExpectedChunk) {
+    return false;
+  }
+  const { start, end } = keySpan(pieceTable.root, key);
+  return start <= offset && offset <= end;
 }
 
 // =============================================================================
