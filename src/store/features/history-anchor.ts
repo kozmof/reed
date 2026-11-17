@@ -769,6 +769,24 @@ function evictionCuts(history: HistoryState, chunkIndex: number, anchoredStart: 
   return cuts;
 }
 
+const NO_CUTS = Object.freeze({ undoCut: -1, redoCut: -1 });
+
+/**
+ * Where each stack must be cut to evict `chunkIndex`, whose first resident
+ * byte is at `start`: -1 for a stack nothing in which points inside the chunk.
+ * `historyForEviction` and `historyLossForEviction` both read the cuts here,
+ * so the loss ChunkManager measures is what EVICT_CHUNK drops.
+ */
+function evictionCutsAt(
+  pieceTable: PieceTableState,
+  history: HistoryState,
+  chunkIndex: number,
+  start: number,
+): { readonly undoCut: number; readonly redoCut: number } {
+  if (history.undoStack === null && history.redoStack === null) return NO_CUTS;
+  return evictionCuts(history, chunkIndex, toAnchoredOffset(pieceTable, chunkIndex - 1, start));
+}
+
 /**
  * Apply the history eviction policy before evicting `chunkIndex`, whose first
  * resident byte is at `start`.
@@ -798,12 +816,7 @@ export function historyForEviction(
   start: number,
   overLimit = false,
 ): HistoryState | null {
-  if (history.undoStack === null && history.redoStack === null) return history;
-  const { undoCut, redoCut } = evictionCuts(
-    history,
-    chunkIndex,
-    toAnchoredOffset(pieceTable, chunkIndex - 1, start),
-  );
+  const { undoCut, redoCut } = evictionCutsAt(pieceTable, history, chunkIndex, start);
   if (undoCut < 0 && redoCut < 0) return history;
   const policy = history.evictionPolicy;
   if (policy === "pin" || (policy === "pin-bounded" && !overLimit)) return null;
@@ -837,12 +850,7 @@ export function historyLossForEviction(
   chunkIndex: number,
   start: number,
 ): EvictionHistoryLoss {
-  if (history.undoStack === null && history.redoStack === null) return { undo: 0, redo: 0 };
-  const { undoCut, redoCut } = evictionCuts(
-    history,
-    chunkIndex,
-    toAnchoredOffset(pieceTable, chunkIndex - 1, start),
-  );
+  const { undoCut, redoCut } = evictionCutsAt(pieceTable, history, chunkIndex, start);
   // Cutting at `cut` drops it and every entry older than it (see `keepNewerThan`).
   return { undo: undoCut + 1, redo: redoCut + 1 };
 }

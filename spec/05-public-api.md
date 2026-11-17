@@ -88,7 +88,7 @@ counterpart. Restoring emits no events.
 
 Config is `DocumentStoreRestoreConfig`, which accepts `logger`, either `reconcileMode` or
 `scheduler`, and `historyEvictionPolicy`. The policy, when given, replaces the one in the
-checkpoint; a version 1 checkpoint stores none and otherwise restores with `'pin'`. Other
+checkpoint; a version 1 checkpoint stores none and otherwise restores with `'pin-bounded'`. Other
 state-bearing options come from the checkpoint, and passing one throws.
 
 ### 2.4 Flat `createChunkManager(store, loader, config?)`

@@ -792,16 +792,18 @@ describe("checkpoint restore validates history anchors", () => {
     const checkpoint = createCheckpoint(s.reconcileNow());
     expect(checkpoint.history.undo[0]!.changes[0]).toEqual(["i", 2, "X", 0]);
 
-    // nextExpectedChunk is 2, so key 1 is fine and key 2 is not.
+    // nextExpectedChunk is 2, so key 1 is fine and key 2 is not. Key 1 fits
+    // only after chunk 1 (resident 8), where redo puts "X" back.
     const atKey = (key: number, position = 2) =>
       editUndo(checkpoint, (entry) => (entry.changes[0] = ["i", position, "X", key]));
-    expect(() => restoreCheckpoint(atKey(1, -1))).not.toThrow();
+    expect(() => restoreCheckpoint(atKey(1, 0))).not.toThrow();
     expect(() => restoreCheckpoint(atKey(2))).toThrow(/placement key 2/);
     // A change is replayed in the restored layout, so its position subtracts
     // at most the loaded chunks at or below its key: none for key 0, whose
     // chunk 0 is not loaded, and chunk 1 (8 bytes) for key 1.
     expect(() => restoreCheckpoint(atKey(0, -1))).toThrow(/at least 0/);
-    expect(() => restoreCheckpoint(atKey(1, -8))).not.toThrow();
+    // -8 passes the bound, but redo would insert under key 1 before chunk 1.
+    expect(() => restoreCheckpoint(atKey(1, -8))).toThrow(/placement keys out of document order/);
     expect(() => restoreCheckpoint(atKey(1, -9))).toThrow(/at least -8/);
     // A selection is clamped on restore, so it keeps the bound that holds in
     // any layout: one chunk length per chunk at or below its key.
@@ -2490,5 +2492,65 @@ describe("fifteenth review regressions", () => {
     expect(getValue(state.pieceTable)).toBe("abcd\n");
     const rebuilt = rebuildLineIndexFromPieceTableState(state);
     expect(collectLines(rebuilt.lineIndex.root)[0]!.charLength).toBe(6);
+  });
+});
+
+describe("sixteenth review regressions", () => {
+  type Wire = Record<string, any>;
+  const wireOf = (s: Store): Wire => JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow())));
+  const restoreError = (checkpoint: Wire): CheckpointError => {
+    try {
+      restoreCheckpoint(checkpoint);
+    } catch (error) {
+      expect(error).toBeInstanceOf(CheckpointError);
+      return error as CheckpointError;
+    }
+    throw new Error("expected a CheckpointError");
+  };
+
+  it("refuses an undo entry whose text would not fit when redone", () => {
+    const s = makeStore();
+    load(s, 0);
+    load(s, 1);
+    s.dispatch(DocumentActions.insert(byteOffset(8), "X"));
+    const checkpoint = wireOf(s);
+    expect(checkpoint.history.undo[0].changes[0]).toEqual(["i", 0, "X", 0]);
+    // The same resident offset 8 under key 1. Undo only deletes, but redo
+    // would insert "X" there under key 1, before chunk 1's bytes (key 0).
+    checkpoint.history.undo[0].changes[0] = ["i", -8, "X", 1];
+    const error = restoreError(checkpoint);
+    expect(error.code).toBe("HISTORY_INVALID");
+    expect(error.message).toMatch(/placement keys out of document order/);
+  });
+
+  it("refuses a redo entry whose text would not fit when undone", () => {
+    const s = makeStore();
+    load(s, 0);
+    load(s, 1);
+    s.dispatch(DocumentActions.delete(byteOffset(8), byteOffset(9)));
+    s.dispatch(DocumentActions.undo());
+    const checkpoint = wireOf(s);
+    expect(checkpoint.history.redo[0].changes[0]).toEqual(["d", 0, "B", 0]);
+    // Redo only deletes, but undoing it again would put "B" back under key 1.
+    checkpoint.history.redo[0].changes[0] = ["d", -8, "B", 1];
+    const error = restoreError(checkpoint);
+    expect(error.code).toBe("HISTORY_INVALID");
+    expect(error.message).toMatch(/placement keys out of document order/);
+  });
+
+  it("still restores history whose keys fit both ways, and replays it", () => {
+    const s = makeStore();
+    load(s, 0);
+    load(s, 1);
+    s.dispatch(DocumentActions.insert(byteOffset(8), "X"));
+    s.dispatch(DocumentActions.delete(byteOffset(12), byteOffset(14)));
+    s.dispatch(DocumentActions.undo());
+    const restored = createDocumentStoreFromCheckpoint(wireOf(s), { reconcileMode: "none" });
+    const before = getValue(restored.getSnapshot().pieceTable);
+    restored.dispatch(DocumentActions.undo());
+    restored.dispatch(DocumentActions.redo());
+    restored.dispatch(DocumentActions.redo());
+    restored.dispatch(DocumentActions.undo());
+    expect(getValue(restored.getSnapshot().pieceTable)).toBe(before);
   });
 });

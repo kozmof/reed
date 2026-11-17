@@ -55,7 +55,7 @@ import { base64DecodedLength, decodeBase64 } from "../core/base64.js";
 import { inOrderPieces } from "../core/piece-table-stream.js";
 import { decodedCharLength, joinDecoded, type DecodedSummary } from "../core/decoded-metrics.js";
 import { utf8ByteLength } from "../core/encoding.js";
-import { loadedLengthAtOrBelow } from "../core/chunk-anchor.js";
+import { keyFitsAt, loadedLengthAtOrBelow } from "../core/chunk-anchor.js";
 import { pieceTableDelete, pieceTableInsertPlaceholder } from "../core/piece-table.js";
 import { selectionRange } from "./history-anchor.js";
 import { insertedLength, removedLength } from "./history-entry.js";
@@ -1043,6 +1043,13 @@ function restoreHistoryEntry(
  * not fit where it lands (see `keyFitsAt`). The checkpoint is rejected here
  * instead.
  *
+ * A replayed entry moves to the other stack, and the next replay applies it in
+ * the other direction, so the key must also fit for the text that direction
+ * inserts. Undoing changes n-1 down to i leaves the document that redoing
+ * change i starts from, and the other way round. Both directions insert at the
+ * same offset, into the document left once this direction's removed bytes are
+ * gone, so one check there covers both.
+ *
  * Without chunks every key is NO_CHUNK and fits everywhere, so the walk
  * tracks only the length. With chunks it replays each change on stand-in
  * bytes, since whether a key fits depends on the keys around it. That costs
@@ -1078,18 +1085,17 @@ function assertStackReplays(
       length += insert - remove;
       if (!chunked) continue;
       if (remove > 0) doc = pieceTableDelete(doc, byteOffset(start), byteOffset(start + remove));
-      // Only lengths and keys are checked, so the inserted text stands in as
-      // a placeholder: no bytes move. It throws when the key does not fit.
-      try {
-        doc = pieceTableInsertPlaceholder(doc, byteOffset(start), insert, change.afterChunk);
-      } catch (error) {
-        if (!(error instanceof RangeError)) throw error;
+      // `remove` bytes are what the other direction inserts back here.
+      if ((insert > 0 || remove > 0) && !keyFitsAt(doc, start, change.afterChunk)) {
         fail(
           "HISTORY_INVALID",
           `${what}[${e}].changes[${i}] inserts text with placement key ${change.afterChunk} at ` +
-            `offset ${start}, which would put placement keys out of document order`,
+            `offset ${start} on undo or redo, which would put placement keys out of document order`,
         );
       }
+      // Only lengths and keys are checked, so the inserted text stands in as
+      // a placeholder: no bytes move.
+      doc = pieceTableInsertPlaceholder(doc, byteOffset(start), insert, change.afterChunk);
     }
   }
 }

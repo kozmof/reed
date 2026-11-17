@@ -88,8 +88,10 @@ export interface HistoryChangeEvent extends DocumentEvent {
 /**
  * Fired when EVICT_CHUNK discards history entries under the `"drop"` eviction
  * policy, or under `"pin-bounded"` with `overLimit`. Nothing is undone or
- * redone and the selection is unchanged by it: only the undo and redo counts
- * drop.
+ * redone: the undo and redo counts drop. Dropping history does not move the
+ * selection, but the same eviction can: an endpoint inside the evicted chunk
+ * collapses to where the chunk was, and `selection-change` fires for that
+ * separately.
  */
 export interface HistoryDropEvent extends DocumentEvent {
   readonly type: "history-drop";

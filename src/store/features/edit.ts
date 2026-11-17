@@ -181,19 +181,20 @@ export function pieceTableDelete(
  * Get text in a range from the piece table, as the edit pipeline counts it.
  * Used for capturing deleted text for undo and for the line-index update.
  *
- * A U+FEFF at the start of the range is kept (see `contentDecoder`). The line
+ * A U+FEFF at the start of the range is kept, as `getText` keeps it. The line
  * index counts it as a character, so deleted text without it would leave the
  * line one character too long, and undo could not restore it from the text.
  */
 export function getTextRange(state: DocumentState, start: ByteOffset, end: ByteOffset): string {
-  return contentDecoder.decode(getBytes(state.pieceTable, start, end));
+  return getText(state.pieceTable, start, end);
 }
 
 /**
- * The text a local edit deletes from [start, end), decoded as `getTextRange`
- * does, with the bytes it was decoded from. `applyEdit` keeps those bytes in
- * history when the text does not encode back to them, so passing them on
- * saves reading the range a second time.
+ * The text a local edit deletes from [start, end), with the bytes it was
+ * decoded from. `applyEdit` keeps those bytes in history when the text does
+ * not encode back to them, so passing them on saves reading the range a
+ * second time. It decodes with `contentDecoder`, as `getText` does; it cannot
+ * call `getText` without reading the bytes twice.
  */
 export function readDeletedRange(
   state: DocumentState,

@@ -7,7 +7,12 @@
  * the chunk lifecycle a focused test boundary.
  */
 
-import type { DocumentState, LineIndexState, PieceNode } from "../../types/state.js";
+import type {
+  DocumentState,
+  LineIndexState,
+  PieceNode,
+  PieceTableState,
+} from "../../types/state.js";
 import type {
   DeclareChunkMetadataAction,
   EvictChunkAction,
@@ -321,15 +326,37 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
   });
 }
 
+type EvictableRange = { readonly start: ByteOffset; readonly end: ByteOffset } | null;
+
+// ChunkManager measures a candidate's loss (`evictionHistoryLoss`) and then
+// dispatches EVICT_CHUNK on the same state, and both need the range. It
+// depends only on the piece table, the attention state, and the chunk, all
+// immutable, so it is kept per piece table and checked against the attention.
+const evictableRangeCache = new WeakMap<
+  PieceTableState,
+  Map<number, { readonly attention: DocumentState["attention"]; readonly range: EvictableRange }>
+>();
+
 /**
  * The resident range of `chunkIndex` when only history could keep it from
  * being evicted, else null: it is not loaded, an attention is anchored to it,
  * or edits have split or touched it.
  */
-function evictableRange(
-  state: DocumentState,
-  chunkIndex: number,
-): { start: ByteOffset; end: ByteOffset } | null {
+function evictableRange(state: DocumentState, chunkIndex: number): EvictableRange {
+  const { pieceTable, attention } = state;
+  let byChunk = evictableRangeCache.get(pieceTable);
+  const cached = byChunk?.get(chunkIndex);
+  if (cached !== undefined && cached.attention === attention) return cached.range;
+  const range = measureEvictableRange(state, chunkIndex);
+  if (byChunk === undefined) {
+    byChunk = new Map();
+    evictableRangeCache.set(pieceTable, byChunk);
+  }
+  byChunk.set(chunkIndex, { attention, range });
+  return range;
+}
+
+function measureEvictableRange(state: DocumentState, chunkIndex: number): EvictableRange {
   const chunkBytes = state.pieceTable.chunkMap.get(chunkIndex);
   if (chunkBytes === undefined) return null;
   if (hasAttentionAnchoredToChunk(state, chunkIndex)) return null;
