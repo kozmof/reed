@@ -153,7 +153,7 @@ Supported event types:
 Auto-emitted by `store.createDocumentStoreWithEvents`:
 
 - `content-change` (`INSERT/DELETE/REPLACE/APPLY_REMOTE`)
-- `selection-change` (`SET_SELECTION`, and any other action that moves the selection: `INSERT`/`DELETE`/`REPLACE` moving it past the edit, `UNDO`/`REDO`, `LOAD_CHUNK`/`LOAD_CHUNKS`/`EVICT_CHUNK`)
+- `selection-change` (`SET_SELECTION`, and any other action that moves the selection: `INSERT`/`DELETE`/`REPLACE`/`APPLY_REMOTE` moving it past the edit, `UNDO`/`REDO`, `LOAD_CHUNK`/`LOAD_CHUNKS`/`EVICT_CHUNK`)
 - `history-change` (`UNDO/REDO`)
 - `history-drop` (`EVICT_CHUNK` when the `'drop'` policy discards entries)
 - `attention-change` (create, delete, or content edits that rewrite stored points)
@@ -280,7 +280,8 @@ Anchored history positions (chunk-safe undo and redo) change the meaning of expo
 - `AddPieceNode` gains `afterChunk`.
 - `SelectionRange` gains optional `anchorAfterChunk` and `headAfterChunk`, present on a range next to a chunk that is not loaded. A test that compares a selection range with `toEqual({ anchor, head })` sees them there.
 - `HistoryState` gains `evictionPolicy`.
-- `INSERT`, `DELETE`, and `REPLACE` move `state.selection` past the edit. An endpoint at or after the edit's start moves: one inside the removed range or at its start goes after the inserted text, and one after the removed range shifts by the change in length. An endpoint before the edit stays. The inline `selection` of an edit is the selection the edit comes from, not the one stored: it is moved the same way. In 4.x an edit stored the inline selection as given and otherwise left `state.selection` alone, so a caret at 20 now becomes 23 after inserting 3 bytes at 10. Callers that set the selection after each edit can keep doing so. Callers that relied on it staying put must save and restore it themselves.
+- `INSERT`, `DELETE`, and `REPLACE` move `state.selection` past the edit. An endpoint before the edit stays, and one after the removed range shifts by the change in length. A caret, or the start of a range, at the edit's start or inside the removed range goes after the inserted text. The end of a non-empty range at the edit's start or inside the removed range stays at the start, before the inserted text, so a range never grows to take in text inserted at its edge: with `{ anchor: 2, head: 5 }`, inserting 2 bytes at 5 leaves the head at 5. A range wholly inside the removed range collapses to a caret after the inserted text. The inline `selection` of an edit is the selection the edit comes from, not the one stored: it is moved the same way. In 4.x an edit stored the inline selection as given and otherwise left `state.selection` alone, so a caret at 20 now becomes 23 after inserting 3 bytes at 10. Callers that set the selection after each edit can keep doing so. Callers that relied on it staying put must save and restore it themselves.
+- `APPLY_REMOTE` moves `state.selection` past each remote change the same way, except that a caret where a change inserts text stays before that text. In 4.x it left `state.selection` alone.
 - `REDO` restores the selection the edit left, not a caret at the end of the redone change. `UNDO` still restores the selection the edit came from.
-- `selection-change` fires whenever an action replaces the selection, including `INSERT`, `DELETE`, `REPLACE`, `UNDO`, and `REDO`.
+- `selection-change` fires whenever an action replaces the selection, including `INSERT`, `DELETE`, `REPLACE`, `APPLY_REMOTE`, `UNDO`, and `REDO`.
 - Checkpoints are written as version 2. Restore still reads version 1, and `isCheckpoint` accepts both.

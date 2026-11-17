@@ -121,8 +121,8 @@ export function selectionRange(
 
 /**
  * Build the ranges of a selection that replaces `previous` without changing
- * the document. `validate` checks each offset of `ranges` and returns it as
- * stored, or throws.
+ * the document. `validate` checks each offset of `ranges`, given which endpoint
+ * of which range it is, and returns it as stored, or throws.
  *
  * Next to an unloaded chunk, only the stored key knows which side of the chunk
  * an endpoint is on. An editor that echoes the selection back as plain offsets
@@ -136,13 +136,13 @@ export function selectionRangesWithKeys(
   pieceTable: PieceTableState,
   previous: SelectionState,
   ranges: readonly SelectionRange[],
-  validate: (offset: number, endpoint: "anchor" | "head") => ByteOffset,
+  validate: (offset: number, endpoint: "anchor" | "head", index: number) => ByteOffset,
 ): NonEmptyReadonlyArray<SelectionRange> {
   const findPrevious = previousRangeLookup(pieceTable, previous);
   return Object.freeze(
     ranges.map((range, i) => {
-      const anchor = validate(range.anchor, "anchor");
-      const head = validate(range.head, "head");
+      const anchor = validate(range.anchor, "anchor", i);
+      const head = validate(range.head, "head", i);
       const old =
         range.anchorAfterChunk === undefined || range.headAfterChunk === undefined
           ? findPrevious(i, anchor, head)
@@ -236,43 +236,8 @@ function rangeHasKey(range: SelectionRange): boolean {
   return range.anchorAfterChunk !== undefined || range.headAfterChunk !== undefined;
 }
 
-/** True when an endpoint of `selection` stores a placement key. */
-export function hasStoredKeys(selection: SelectionState): boolean {
-  return selection.ranges.some(rangeHasKey);
-}
-
 /**
- * `selection` with its offsets moved past an edit that replaced [start, end)
- * with `inserted` bytes. Stored keys are kept as they are: `insertionKey`
- * checks each against the edited document before using it.
- *
- * An endpoint at `start` stays there, before the inserted text, and one inside
- * the removed range moves to `start`. APPLY_REMOTE uses this to look up the
- * local cursor's keys while a batch of changes applies, without moving the
- * selection the document holds.
- */
-export function selectionAfterEdit(
-  selection: SelectionState,
-  start: number,
-  end: number,
-  inserted: number,
-): SelectionState {
-  const move = (offset: ByteOffset): ByteOffset =>
-    offset >= end && offset > start
-      ? byteOffset(offset - (end - start) + inserted)
-      : offset > start
-        ? byteOffset(start)
-        : offset;
-  return freezeSelection(
-    selection.ranges.map((range) =>
-      Object.freeze({ ...range, anchor: move(range.anchor), head: move(range.head) }),
-    ),
-    selection.primaryIndex,
-  );
-}
-
-/**
- * The live selection after a local edit replaced [start, end) of the document
+ * The live selection after an edit replaced [start, end) of the document
  * `selection` describes with `inserted` bytes, giving `pieceTable`.
  *
  * Offsets before `start` stay. An endpoint at `start` or inside the removed
@@ -295,6 +260,13 @@ export function selectionAfterEdit(
  * key, as a resolved history selection does. Every other endpoint keeps the
  * boundary it was on.
  *
+ * With `remote`, for an edit another user made (APPLY_REMOTE), a caret at
+ * `start` or inside the removed range stays at `start`, as the end of a range
+ * does: the local cursor did not type the text, so the text lands after it.
+ * Text a later change of the same batch inserts at the caret then still finds
+ * the caret's key (see `insertionKey`). Non-empty ranges move as for a local
+ * edit.
+ *
  * Returns `selection` itself when no endpoint moves.
  */
 export function moveSelectionPastEdit(
@@ -303,6 +275,7 @@ export function moveSelectionPastEdit(
   start: number,
   end: number,
   inserted: number,
+  remote = false,
 ): SelectionState {
   const landing = start + inserted;
   let boundary: number | undefined;
@@ -315,10 +288,11 @@ export function moveSelectionPastEdit(
     boundary ??= nextBoundary(pieceTable, landing, true);
     return { offset: byteOffset(boundary), key: boundary === landing ? key : undefined };
   };
-  // The end of a non-empty range: it stays before text inserted at `start`, and
-  // an end inside the removed range moves to `start`. Its key was stored for
-  // its old offset, so it keeps the key only when that offset was `start`.
-  const moveEnd = (offset: ByteOffset, key: number | undefined) =>
+  // An endpoint that stays before text inserted at `start`, as the end of a
+  // non-empty range does: one inside the removed range moves to `start`. Its
+  // key was stored for its old offset, so it keeps the key only when that
+  // offset was `start`.
+  const stay = (offset: ByteOffset, key: number | undefined) =>
     offset === start
       ? { offset, key }
       : offset > start && offset < end
@@ -328,8 +302,9 @@ export function moveSelectionPastEdit(
   const ranges = selection.ranges.map((range) => {
     const forward = range.anchor < range.head;
     const backward = range.anchor > range.head;
-    let anchor = (backward ? moveEnd : move)(range.anchor, range.anchorAfterChunk);
-    let head = (forward ? moveEnd : move)(range.head, range.headAfterChunk);
+    const remoteCaret = remote && range.anchor === range.head;
+    let anchor = (remoteCaret || backward ? stay : move)(range.anchor, range.anchorAfterChunk);
+    let head = (remoteCaret || forward ? stay : move)(range.head, range.headAfterChunk);
     // A range wholly inside the removed range: its start moved past the
     // inserted text and its end to before it. Collapse it to a caret there.
     if (forward && head.offset < anchor.offset) head = anchor;

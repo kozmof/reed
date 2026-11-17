@@ -600,19 +600,54 @@ export function pieceTableInsertFitted(
   const key = afterChunk ?? placementKey(state, position, undefined, "before");
 
   const textBytes = typeof text === "string" ? textEncoder.encode(text) : text;
+  return insertAddPiece(
+    state,
+    position,
+    state.addBuffer.length,
+    textBytes.length,
+    key,
+    state.addBuffer.append(textBytes),
+  );
+}
+
+/**
+ * `state` with a placeholder for `length` bytes at `position` under placement
+ * key `afterChunk`: an add piece that reads no bytes, and no bytes move. Only
+ * the lengths and keys of the result may be read. Checks that replay history
+ * over a copy of a document, which need nothing else, use it. The key is not
+ * checked (see `keyFitsAt`). O(log n).
+ */
+export function pieceTableInsertPlaceholder(
+  state: PieceTableState,
+  position: ByteOffset,
+  length: number,
+  afterChunk: number,
+): PieceTableState {
+  if (length <= 0) return state;
+  return insertAddPiece(state, position, 0, length, afterChunk, state.addBuffer).state;
+}
+
+/**
+ * `state` with an add piece reading [start, start + length) of `addBuffer`
+ * inserted at `position` under key `key`, and `addBuffer` as its add buffer.
+ */
+function insertAddPiece(
+  state: PieceTableState,
+  position: ByteOffset,
+  newAddStart: number,
+  length: number,
+  key: number,
+  addBuffer: PieceTableState["addBuffer"],
+): LinearCost<PieceTableInsertResult> {
   let nextPieceID = state.nextPieceID;
   const allocatePieceID = (): PieceID => pieceID(`p${nextPieceID++}`);
-
-  // Append text to add buffer
-  const newAddStart = state.addBuffer.length;
-  const addBuffer = state.addBuffer.append(textBytes);
 
   // Handle empty tree
   if (state.root === null) {
     const newRoot = createPieceNode(
       "add",
       byteOffset(newAddStart),
-      byteLength(textBytes.length),
+      byteLength(length),
       "black",
       null,
       null,
@@ -624,10 +659,10 @@ export function pieceTableInsertFitted(
         ...state,
         root: carryPieceIdentityIndex(state.root, newRoot),
         addBuffer,
-        totalLength: textBytes.length,
+        totalLength: length,
         nextPieceID,
       }),
-      insertedByteLength: textBytes.length,
+      insertedByteLength: length,
       splits: [],
     });
   }
@@ -650,7 +685,7 @@ export function pieceTableInsertFitted(
                 state.totalLength,
                 "add",
                 byteOffset(newAddStart),
-                byteLength(textBytes.length),
+                byteLength(length),
                 allocatePieceID(),
                 key,
               ),
@@ -663,7 +698,7 @@ export function pieceTableInsertFitted(
                 resolvedLocation.pieceStartOffset,
                 "add",
                 byteOffset(newAddStart),
-                byteLength(textBytes.length),
+                byteLength(length),
                 allocatePieceID(),
                 key,
               ),
@@ -676,7 +711,7 @@ export function pieceTableInsertFitted(
                 resolvedLocation.pieceStartOffset + resolvedLocation.node.length,
                 "add",
                 byteOffset(newAddStart),
-                byteLength(textBytes.length),
+                byteLength(length),
                 allocatePieceID(),
                 key,
               ),
@@ -687,7 +722,7 @@ export function pieceTableInsertFitted(
             resolvedLocation,
             "add",
             byteOffset(newAddStart),
-            byteLength(textBytes.length),
+            byteLength(length),
             allocatePieceID(),
             allocatePieceID(),
             key,
@@ -700,10 +735,10 @@ export function pieceTableInsertFitted(
             ...state,
             root: carryPieceIdentityIndex(state.root, newRoot),
             addBuffer,
-            totalLength: state.totalLength + textBytes.length,
+            totalLength: state.totalLength + length,
             nextPieceID,
           }),
-          insertedByteLength: textBytes.length,
+          insertedByteLength: length,
           splits: capturedSplit !== null ? [capturedSplit] : ([] as readonly SplitRecord[]),
         })),
       ),
@@ -712,8 +747,10 @@ export function pieceTableInsertFitted(
 }
 
 /**
- * Insert a chunk piece at the given document byte position.
- * Used for re-loading an evicted chunk at its original document position.
+ * Insert a chunk piece at the given document byte position, which must be a
+ * piece boundary. Used for re-loading an evicted chunk at its original
+ * document position, where the piece covers the whole chunk. `offsetInChunk`
+ * starts the piece later in the chunk, for a piece that covers only part of it.
  * Performs BST insertion + RB fixup, O(log n).
  */
 export function insertChunkPieceAt(
@@ -722,10 +759,11 @@ export function insertChunkPieceAt(
   chunkIndex: number,
   chunkByteLength: number,
   id: PieceID = generatePieceID(),
+  offsetInChunk: number = 0,
 ): PieceNode {
   const newLeaf = createChunkPieceNode(
     chunkIndex,
-    byteOffset(0),
+    byteOffset(offsetInChunk),
     byteLength(chunkByteLength),
     "red",
     null,

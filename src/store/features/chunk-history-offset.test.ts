@@ -1321,7 +1321,7 @@ describe("sixth review regressions", () => {
     expect(() => roundTrip(s)).not.toThrow();
   });
 
-  it("leaves out a live selection key that remote edits have made stale", () => {
+  it("moves a live selection key with the text through remote edits", () => {
     const s = makeStore(3);
     for (let i = 0; i < 3; i++) load(s, i);
     s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(16), head: byteOffset(16) }]));
@@ -1335,14 +1335,12 @@ describe("sixth review regressions", () => {
     // A local edit moves the selection with the text, so the key still fits.
     s.dispatch(DocumentActions.insert(byteOffset(0), "xyz"));
     expect(createCheckpoint(s.reconcileNow()).selection.ranges).toEqual([[11, 11, 1, 1]]);
-    // A remote edit moves the text but not the selection, so key 1 no longer
-    // fits offset 11.
+    // So does a remote edit.
     s.dispatch(
       DocumentActions.applyRemote([{ type: "insert", start: byteOffset(0), text: "abc" }]),
     );
-    const checkpoint = createCheckpoint(s.reconcileNow());
-    expect(checkpoint.selection.ranges).toEqual([[11, 11]]);
-    expect(roundTrip(s).selection.ranges[0]).toEqual({ anchor: 11, head: 11 });
+    expect(createCheckpoint(s.reconcileNow()).selection.ranges).toEqual([[14, 14, 1, 1]]);
+    expect(roundTrip(s).selection.ranges[0]).toEqual(s.getSnapshot().selection.ranges[0]);
   });
 
   it("keeps inserts with different placement keys in separate changes", () => {
@@ -2045,5 +2043,270 @@ describe("tenth review regressions", () => {
     expect(bytesOf(s)).toEqual([...enc("ab"), ...chunk1]);
     // Past the run, not between "a" and "b".
     expect(cursor(s)).toEqual({ anchor: 7, head: 7 });
+  });
+});
+
+describe("twelfth review regressions", () => {
+  type Wire = Record<string, any>;
+  const wireOf = (state: DocumentState): Wire =>
+    JSON.parse(JSON.stringify(createCheckpoint(state)));
+  /**
+   * The version 1 payload a store would have written for `state`: no
+   * placement keys, and history positions as resident offsets in the
+   * captured chunk layout.
+   */
+  const toV1 = (state: DocumentState): Wire => {
+    const v2 = wireOf(state);
+    const lengths = new Map<number, number>(
+      v2.pieceTable.chunks.map((c: [number, string]) => [c[0], atob(c[1]).length]),
+    );
+    const resident = (position: number, key: number | undefined) => {
+      let sum = 0;
+      for (const [index, length] of lengths) if (index <= (key ?? -1)) sum += length;
+      return position + sum;
+    };
+    const change = (c: any[]) => {
+      expect(c.length, "test content has no raw bytes").toBeLessThanOrEqual(c[0] === "r" ? 5 : 4);
+      return c[0] === "r"
+        ? ["r", resident(c[1], c[4]), c[2], c[3]]
+        : [c[0], resident(c[1], c[3]), c[2]];
+    };
+    const selection = (s: any) => ({
+      ...s,
+      ranges: s.ranges.map((r: number[]) => [resident(r[0]!, r[2]), resident(r[1]!, r[3])]),
+    });
+    const entry = (e: any) => ({
+      ...e,
+      changes: e.changes.map(change),
+      selectionBefore: selection(e.selectionBefore),
+      selectionAfter: selection(e.selectionAfter),
+    });
+    return {
+      ...v2,
+      version: 1,
+      pieceTable: {
+        ...v2.pieceTable,
+        pieces: v2.pieceTable.pieces.map((p: unknown[]) => (p[1] === "a" ? p.slice(0, 4) : p)),
+      },
+      history: {
+        ...v2.history,
+        undo: v2.history.undo.map(entry),
+        redo: v2.history.redo.map(entry),
+      },
+    };
+  };
+  const undoAll = (state: DocumentState) => {
+    while (getUndoCount(state) > 0) state = documentReducer(state, DocumentActions.undo());
+    return state;
+  };
+  const redoAll = (state: DocumentState) => {
+    while (getRedoCount(state) > 0) state = documentReducer(state, DocumentActions.redo());
+    return state;
+  };
+
+  it("gives a migrated undo the key of the chunk its deleted bytes came from", () => {
+    const chunks = ["abcdef", "\nghijk", "lmnopq"];
+    const s = createDocumentStore({ chunkSize: 6, totalFileSize: 18, reconcileMode: "none" });
+    s.dispatch(DocumentActions.loadChunk(0, enc(chunks[0]!)));
+    s.dispatch(DocumentActions.loadChunk(2, enc(chunks[2]!)));
+    // "l", the first byte of chunk 2, which chunk 1 loads before.
+    s.dispatch(DocumentActions.delete(byteOffset(6), byteOffset(7)));
+    for (const payload of [wireOf(s.reconcileNow()), toV1(s.reconcileNow())]) {
+      let state = restoreCheckpoint(payload);
+      state = documentReducer(state, DocumentActions.loadChunk(1, enc(chunks[1]!)));
+      state = documentReducer(state, DocumentActions.undo());
+      expect(getValue(state.pieceTable), `version ${payload.version}`).toBe(chunks.join(""));
+    }
+  });
+
+  it("tells apart bytes a migrated undo cut from either side of the gap", () => {
+    const chunks = ["abcdef", "\nghijk", "lmnopq"];
+    const s = createDocumentStore({ chunkSize: 6, totalFileSize: 18, reconcileMode: "none" });
+    s.dispatch(DocumentActions.loadChunk(0, enc(chunks[0]!)));
+    s.dispatch(DocumentActions.loadChunk(2, enc(chunks[2]!)));
+    // "f" ends chunk 0 and "lm" starts chunk 2, deleted one at a time.
+    s.dispatch(DocumentActions.delete(byteOffset(6), byteOffset(7)));
+    s.dispatch(DocumentActions.delete(byteOffset(5), byteOffset(6)));
+    s.dispatch(DocumentActions.delete(byteOffset(5), byteOffset(6)));
+    expect(text(s)).toBe("abcdenopq");
+    let state = restoreCheckpoint(toV1(s.reconcileNow()));
+    state = documentReducer(state, DocumentActions.loadChunk(1, enc(chunks[1]!)));
+    state = undoAll(state);
+    expect(getValue(state.pieceTable)).toBe(chunks.join(""));
+  });
+
+  describe("randomized version 1 checkpoints", () => {
+    // ASCII, so version 1 text keeps every byte, and no byte twice: the
+    // migration finds where deleted text came from by looking for it in the
+    // chunks, which repeated text leaves to a guess. Long next to the edits,
+    // so most runs still hold a byte of every loaded chunk (see `keyed`).
+    const FILE = Array.from({ length: 90 }, (_, i) => String.fromCharCode(33 + i)).join("");
+    const SIZE = 15;
+    const COUNT = FILE.length / SIZE;
+    const chunkOf = (i: number) => enc(FILE.slice(i * SIZE, (i + 1) * SIZE));
+    const INSERTS = ["q", "\n", "xy", "abc"];
+    const sorted = (state: DocumentState, where: string) => {
+      const k = collectPieces(state.pieceTable.root).map(pieceKey);
+      expect(k, where).toEqual([...k].sort((x, y) => x - y));
+    };
+    const loadAll = (state: DocumentState) => {
+      for (let i = 0; i < COUNT; i++) {
+        if (!state.pieceTable.chunkMap.has(i)) {
+          state = documentReducer(state, DocumentActions.loadChunk(i, chunkOf(i)));
+        }
+      }
+      return state;
+    };
+
+    /**
+     * The document after 60 random loads, evictions and deletes. `typing`
+     * adds undo, redo, inserts and replaces.
+     */
+    const session = (seed: number, typing: boolean) => {
+      const s = createDocumentStore({
+        chunkSize: SIZE,
+        totalFileSize: FILE.length,
+        reconcileMode: "none",
+        historyEvictionPolicy: "pin",
+        undoGroupTimeout: 0,
+      });
+      const rng = makeDeterministicRng(seed);
+      const rand = (n: number) => Math.floor(rng() * n);
+      const insert = () => INSERTS[rand(INSERTS.length)]!;
+      for (let step = 0; step < 60; step++) {
+        const { pieceTable } = s.getSnapshot();
+        const a = rand(pieceTable.totalLength + 1);
+        const b = Math.min(pieceTable.totalLength, a + 1 + rand(5));
+        const chunk = rand(COUNT);
+        const op = rand(typing ? 7 : 3);
+        if (op === 0 && !pieceTable.chunkMap.has(chunk)) {
+          s.dispatch(DocumentActions.loadChunk(chunk, chunkOf(chunk)));
+        } else if (op === 1 && pieceTable.chunkMap.has(chunk)) {
+          s.dispatch(DocumentActions.evictChunk(chunk));
+        } else if (op === 2 && b > a) {
+          s.dispatch(DocumentActions.delete(byteOffset(a), byteOffset(b)));
+        } else if (op === 3) {
+          s.dispatch(DocumentActions.undo());
+        } else if (op === 4) {
+          s.dispatch(DocumentActions.redo());
+        } else if (op === 5) {
+          s.dispatch(DocumentActions.insert(byteOffset(a), insert()));
+        } else if (op === 6) {
+          s.dispatch(DocumentActions.replace(byteOffset(a), byteOffset(b), insert()));
+        }
+      }
+      return s.reconcileNow();
+    };
+    /**
+     * Version 1 history has no keys, so where text that undo gives back
+     * belongs comes from the chunk pieces around it. With every byte of a
+     * loaded chunk deleted, nothing records where that chunk was.
+     */
+    const keyed = (state: DocumentState) => {
+      const resident = new Set(
+        collectPieces(state.pieceTable.root).flatMap((p) =>
+          p.bufferType === "chunk" ? [p.chunkIndex] : [],
+        ),
+      );
+      return [...state.pieceTable.chunkMap.keys()].every((i) => resident.has(i));
+    };
+
+    for (let seed = 1; seed <= 50; seed++) {
+      it(`deleted text comes back where it was, seed ${seed}`, () => {
+        const captured = session(seed, false);
+        const payloads = keyed(captured) ? [wireOf(captured), toV1(captured)] : [wireOf(captured)];
+        for (const payload of payloads) {
+          const where = `seed ${seed}, version ${payload.version}`;
+          let state = restoreCheckpoint(payload);
+          expect(getValue(state.pieceTable), where).toBe(getValue(captured.pieceTable));
+          state = undoAll(loadAll(state));
+          expect(getValue(state.pieceTable), where).toBe(FILE);
+          state = undoAll(redoAll(state));
+          expect(getValue(state.pieceTable), where).toBe(FILE);
+        }
+      });
+    }
+
+    // Typed text takes the key of the chunk before it in version 1 (see
+    // `migrateV1ToV2`), which need not be where a live edit put it, so only
+    // version 2 must undo back to the file. Version 1 history must still
+    // replay and keep keys in order.
+    for (let seed = 1; seed <= 30; seed++) {
+      it(`typed text replays, seed ${seed}`, () => {
+        const captured = session(seed, true);
+        let live = undoAll(loadAll(restoreCheckpoint(wireOf(captured))));
+        expect(getValue(live.pieceTable)).toBe(FILE);
+        live = undoAll(redoAll(live));
+        expect(getValue(live.pieceTable)).toBe(FILE);
+
+        const where = `seed ${seed}`;
+        let state = loadAll(restoreCheckpoint(toV1(captured)));
+        // Redo all from here, or undo all first: either way the same text.
+        const redone = redoAll(state);
+        sorted(redone, where);
+        state = undoAll(state);
+        sorted(state, where);
+        state = redoAll(state);
+        expect(getValue(state.pieceTable), where).toBe(getValue(redone.pieceTable));
+      });
+    }
+  });
+});
+
+describe("twelfth review regressions: remote edits move the selection", () => {
+  const remote = (...changes: Parameters<typeof DocumentActions.applyRemote>[0]) =>
+    DocumentActions.applyRemote(changes);
+  const range = (anchor: number, head: number) =>
+    [{ anchor: byteOffset(anchor), head: byteOffset(head) }] as const;
+
+  it("shifts the selection past remote text before it and fires selection-change", () => {
+    const s = createDocumentStoreWithEvents({ content: "0123456789", reconcileMode: "none" });
+    s.dispatch(DocumentActions.setSelection(range(2, 6)));
+    let fired = 0;
+    s.addEventListener("selection-change", () => fired++);
+    s.dispatch(remote({ type: "insert", start: byteOffset(0), text: "ab" }));
+    expect(cursor(s)).toEqual({ anchor: 4, head: 8 });
+    expect(fired).toBe(1);
+    // Text after the selection leaves it in place.
+    s.dispatch(remote({ type: "delete", start: byteOffset(9), length: byteLength(2) }));
+    expect(cursor(s)).toEqual({ anchor: 4, head: 8 });
+    expect(fired).toBe(1);
+  });
+
+  it("never grows a range to take in remote text at its edges", () => {
+    const s = createDocumentStore({ content: "0123456789", reconcileMode: "none" });
+    s.dispatch(DocumentActions.setSelection(range(2, 6)));
+    s.dispatch(
+      remote(
+        { type: "insert", start: byteOffset(6), text: "E" },
+        { type: "insert", start: byteOffset(2), text: "S" },
+      ),
+    );
+    expect(text(s)).toBe("01S2345E6789");
+    expect(cursor(s)).toEqual({ anchor: 3, head: 7 });
+  });
+
+  it("keeps a caret before remote text inserted at it, and on a boundary", () => {
+    // The document starts with the two continuation bytes of a character
+    // that chunk 0, not loaded, cut in two.
+    const chunk1 = Uint8Array.from([0xb8, 0x96, ...enc("abcdef")]);
+    const s = makeStore();
+    s.dispatch(DocumentActions.loadChunk(1, chunk1));
+    s.dispatch(DocumentActions.setSelection(range(2, 2)));
+    s.dispatch(remote({ type: "insert", start: byteOffset(0), text: "xy" }));
+    expect(cursor(s)).toEqual({ anchor: 4, head: 4 });
+    expect(isUtf8Boundary(s.getSnapshot().pieceTable, byteOffset(4))).toBe(true);
+    // At the caret: the remote text lands after it.
+    s.dispatch(remote({ type: "insert", start: byteOffset(4), text: "Q" }));
+    expect(cursor(s)).toEqual({ anchor: 4, head: 4 });
+    expect(bytesOf(s)).toEqual([...enc("xy"), 0xb8, 0x96, ...enc("Qabcdef")]);
+  });
+
+  it("moves a caret inside remotely deleted text to the start of it", () => {
+    const s = createDocumentStore({ content: "0123456789", reconcileMode: "none" });
+    s.dispatch(DocumentActions.setSelection(range(5, 5)));
+    s.dispatch(remote({ type: "delete", start: byteOffset(3), length: byteLength(4) }));
+    expect(text(s)).toBe("012789");
+    expect(cursor(s)).toEqual({ anchor: 3, head: 3 });
   });
 });

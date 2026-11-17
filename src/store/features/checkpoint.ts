@@ -56,7 +56,7 @@ import { inOrderPieces } from "../core/piece-table-stream.js";
 import { decodedCharLength, joinDecoded, type DecodedSummary } from "../core/decoded-metrics.js";
 import { utf8ByteLength } from "../core/encoding.js";
 import { keyFitsAt, loadedLengthAtOrBelow } from "../core/chunk-anchor.js";
-import { pieceTableDelete, pieceTableInsertFitted } from "../core/piece-table.js";
+import { pieceTableDelete, pieceTableInsertPlaceholder } from "../core/piece-table.js";
 import { selectionRange } from "./history-anchor.js";
 import { insertedLength, removedLength } from "./history-entry.js";
 import { GrowableBuffer } from "../core/growable-buffer.js";
@@ -1057,12 +1057,9 @@ function assertStackReplays(
             `offset ${start}, which would put placement keys out of document order`,
         );
       }
-      doc = pieceTableInsertFitted(
-        doc,
-        byteOffset(start),
-        new Uint8Array(insert),
-        change.afterChunk,
-      ).state;
+      // Only lengths and keys are checked, so the inserted text stands in as
+      // a placeholder: no bytes move.
+      doc = pieceTableInsertPlaceholder(doc, byteOffset(start), insert, change.afterChunk);
     }
   }
 }

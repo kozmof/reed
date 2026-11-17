@@ -19,10 +19,9 @@ import {
 } from "./edit.js";
 import { historyUndo, historyRedo } from "./history.js";
 import {
-  hasStoredKeys,
   insertionKey,
   keepSameSelection,
-  selectionAfterEdit,
+  moveSelectionPastEdit,
   selectionRangesWithKeys,
 } from "./history-anchor.js";
 import { createPoint, createAttention, deleteAttention } from "../core/attention.js";
@@ -206,9 +205,20 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       const nextRevision = state.revision + 1;
       let newState = state;
       let didApplyChange = false;
-      // The local selection, with its offsets moved past each change applied so
-      // far, while it stores a placement key a remote insert could take.
-      let keyed: SelectionState | null = hasStoredKeys(state.selection) ? state.selection : null;
+      // Move the local selection past each change, as a local edit does, so it
+      // stays on the text it was on. A caret where a change inserts text stays
+      // before it (see `moveSelectionPastEdit`).
+      const moveSelection = (start: number, end: number, inserted: number) => {
+        const selection = moveSelectionPastEdit(
+          newState.pieceTable,
+          newState.selection,
+          start,
+          end,
+          inserted,
+          true,
+        );
+        if (selection !== newState.selection) newState = withState(newState, { selection });
+      };
       for (const change of action.changes) {
         if (change.type === "insert" && change.text.length > 0) {
           // Normalize line endings on remote inserts the same way local inserts are treated,
@@ -227,18 +237,14 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
           // on. Text inserted at the local cursor goes where the cursor is, as
           // local typing would, which keeps remote text typed into a document
           // with every chunk evicted where the cursor was in the file.
-          const afterChunk =
-            keyed !== null ? insertionKey(newState.pieceTable, keyed, position) : undefined;
+          const afterChunk = insertionKey(newState.pieceTable, newState.selection, position);
           const before = newState.pieceTable.totalLength;
           newState = applyUntrackedEdit(
             newState,
             { kind: "insert", position, insertText, afterChunk },
             nextRevision,
           );
-          if (keyed !== null) {
-            const inserted = newState.pieceTable.totalLength - before;
-            keyed = selectionAfterEdit(keyed, position, position, inserted);
-          }
+          moveSelection(position, position, newState.pieceTable.totalLength - before);
         } else if (change.type === "delete" && change.length > 0) {
           const { start, end, valid } = validateRange(
             change.start,
@@ -255,7 +261,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
             { kind: "delete", position: start, deleteEnd: end, deletedText },
             nextRevision,
           );
-          if (keyed !== null) keyed = selectionAfterEdit(keyed, start, end, 0);
+          moveSelection(start, end, 0);
         }
       }
       if (!didApplyChange) {

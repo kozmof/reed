@@ -895,32 +895,28 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   if (op.selection?.length === 0) {
     throw new TypeError("Edit selection ranges must be non-empty");
   }
-  if (op.selection) {
-    for (const [index, range] of op.selection.entries()) {
-      const anchor = validatePosition(range.anchor, state.pieceTable.totalLength);
-      const head = validatePosition(range.head, state.pieceTable.totalLength);
-      if (!isUtf8Boundary(state.pieceTable, anchor)) {
-        throw new RangeError(
-          `edit selection[${index}].anchor (${anchor}) must be a UTF-8 code-point boundary`,
-        );
-      }
-      if (!isUtf8Boundary(state.pieceTable, head)) {
-        throw new RangeError(
-          `edit selection[${index}].head (${head}) must be a UTF-8 code-point boundary`,
-        );
-      }
-    }
-  }
   const nextRevision = state.revision + 1;
   const pieceTable = state.pieceTable;
   // The selection the edit comes from: the inline selection when given, else
   // the current one. Inline edit selections describe the pre-edit document,
-  // so clamp to the original length. A range that repeats the current one
-  // keeps its placement keys (see `selectionRangesWithKeys`).
+  // so clamp to the original length, and each endpoint must be a UTF-8
+  // code-point boundary there. A range that repeats the current one keeps its
+  // placement keys (see `selectionRangesWithKeys`).
   const selectionBefore: SelectionState = op.selection
     ? Object.freeze({
-        ranges: selectionRangesWithKeys(pieceTable, state.selection, op.selection, (offset) =>
-          validatePosition(offset, pieceTable.totalLength),
+        ranges: selectionRangesWithKeys(
+          pieceTable,
+          state.selection,
+          op.selection,
+          (offset, endpoint, index) => {
+            const position = validatePosition(offset, pieceTable.totalLength);
+            if (!isUtf8Boundary(pieceTable, position)) {
+              throw new RangeError(
+                `edit selection[${index}].${endpoint} (${position}) must be a UTF-8 code-point boundary`,
+              );
+            }
+            return position;
+          },
         ),
         primaryIndex: 0,
       })

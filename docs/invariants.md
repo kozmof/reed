@@ -81,9 +81,13 @@ wholly before the piece, and higher chunks lie after it.
 Keys never decrease in document order. `findReloadInsertionPos` places a
 loaded chunk `c` before the first piece whose key is at least `c`.
 `pieceTableInsert` enforces the order: a given key that does not fit the
-insertion point is replaced by the gap's key. An add
-piece key is always below `nextExpectedChunk`, so a sequential first load can
-append at the end. See `src/store/core/chunk-anchor.ts`.
+insertion point (see `keyFitsAt`) means the caller computed it wrongly, so the
+insert throws a `RangeError` instead of placing the text under another key.
+Undo, redo, and checkpoint restore rely on that throw to reject history whose
+recorded key does not fit. `pieceTableInsertFitted` skips the check, for keys
+the caller derived from the same document. An add piece key is always below
+`nextExpectedChunk`, so a sequential first load can append at the end. See
+`src/store/core/chunk-anchor.ts`.
 
 ### 1.5 UTF-8 boundaries
 

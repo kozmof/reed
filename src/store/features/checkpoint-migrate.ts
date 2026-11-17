@@ -20,7 +20,7 @@
  */
 
 import { CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
-import { base64DecodedLength, encodeBase64 } from "../core/base64.js";
+import { base64DecodedLength, decodeBase64, encodeBase64 } from "../core/base64.js";
 import type { GapSide, KeyRun } from "../core/chunk-anchor.js";
 import {
   buildLoadedChunks,
@@ -31,7 +31,12 @@ import {
   placementRuns,
 } from "../core/chunk-anchor.js";
 import { contentDecoder, encodesTo, textEncoder, utf8ByteLength } from "../core/encoding.js";
-import { pieceTableDelete, pieceTableInsert } from "../core/piece-table.js";
+import {
+  insertChunkPieceAt,
+  pieceTableDelete,
+  pieceTableInsertPlaceholder,
+} from "../core/piece-table.js";
+import { pieceAt } from "../core/piece-search.js";
 import type { PieceDescriptor } from "../core/state.js";
 import { buildPieceTree, createEmptyPieceTableState } from "../core/state.js";
 import type { PieceTableState } from "../../types/state.js";
@@ -75,12 +80,18 @@ interface ChangeShape {
   readonly offset: number;
   readonly removed: number;
   readonly inserted: number;
+  /** The removed text, which `removed` is the UTF-8 length of. */
+  readonly removedText: string;
 }
 
 const clampTo = (doc: PieceTableState, offset: number) =>
   byteOffset(Math.max(0, Math.min(offset, doc.totalLength)));
 
-/** `doc` with `length` stand-in bytes inserted at `offset` with key `key`. */
+/**
+ * `doc` with `length` stand-in bytes inserted at `offset` with key `key`. A
+ * key that does not fit there throws, as `pieceTableInsert` does, and the
+ * migration reports the payload as malformed.
+ */
 function insertStandIn(
   doc: PieceTableState,
   offset: number,
@@ -88,7 +99,11 @@ function insertStandIn(
   key: number,
 ): PieceTableState {
   if (length <= 0) return doc;
-  return pieceTableInsert(doc, clampTo(doc, offset), new Uint8Array(length), key).state;
+  const at = clampTo(doc, offset);
+  if (!keyFitsAt(doc, at, key)) {
+    throw new RangeError(`placement key ${key} does not fit at offset ${at}`);
+  }
+  return pieceTableInsertPlaceholder(doc, at, length, key);
 }
 
 function removeBytes(doc: PieceTableState, offset: number, length: number): PieceTableState {
@@ -122,27 +137,250 @@ function applyShape(
   return { key, runs, after };
 }
 
+/** `doc` with a piece of chunk `chunk` covering [start, start + length) inserted at piece boundary `offset`. */
+function insertChunkStandIn(
+  doc: PieceTableState,
+  offset: number,
+  chunk: number,
+  start: number,
+  length: number,
+): PieceTableState {
+  if (length <= 0) return doc;
+  const root = insertChunkPieceAt(doc.root, offset, chunk, length, undefined, start);
+  return { ...doc, root, totalLength: doc.totalLength + length };
+}
+
+/** Number of leading bytes `a` and `b` share, up to `limit`. */
+function sharedPrefix(a: Uint8Array, aStart: number, b: Uint8Array, bStart: number, limit: number) {
+  let n = 0;
+  while (n < limit && a[aStart + n] === b[bStart + n]) n++;
+  return n;
+}
+
+/** Number of bytes `a` and `b` share ending at `aEnd` and `bEnd`, up to `limit`. */
+function sharedSuffix(a: Uint8Array, aEnd: number, b: Uint8Array, bEnd: number, limit: number) {
+  let n = 0;
+  while (n < limit && a[aEnd - 1 - n] === b[bEnd - 1 - n]) n++;
+  return n;
+}
+
 /**
- * The key `shape` takes in the document it applies to, and that document,
- * given `after`, the document it produced. Inserted text keeps the key it has
- * in `after`, and removed text comes back with that key.
- *
- * The removed bytes are not in `after`, so the keys they had are unknown, and
- * one key is all there is to give them. Version 1 re-inserted them as one add
- * piece, which one key reproduces.
+ * Where `needle` lies in `haystack[from, to)`: the first place, or with
+ * `last` the last place, or -1 when it is not there. A plain scan: it runs
+ * once per migrated change, over at most one chunk.
  */
-function unapplyShape(after: PieceTableState, shape: ChangeShape): [number, PieceTableState] {
+function indexIn(
+  haystack: Uint8Array,
+  needle: Uint8Array,
+  from: number,
+  to: number,
+  last: boolean,
+) {
+  const n = needle.length;
+  for (let k = 0; k <= to - from - n; k++) {
+    const at = last ? to - n - k : from + k;
+    if (sharedPrefix(needle, 0, haystack, at, n) === n) return at;
+  }
+  return -1;
+}
+
+/**
+ * The text of each of `runs`, which split the UTF-8 bytes of `text` from the
+ * first run's start, with the bytes as well where a run edge cuts a character.
+ */
+function runTexts(text: unknown, runs: readonly KeyRun[]) {
+  const all = textEncoder.encode(typeof text === "string" ? text : "");
+  const base = runs[0]?.start ?? 0;
+  return (run: KeyRun): [string] | [string, string] => {
+    const bytes = all.subarray(run.start - base, run.end - base);
+    const decoded = contentDecoder.decode(bytes);
+    return encodesTo(decoded, bytes) ? [decoded] : [decoded, encodeBase64(bytes)];
+  };
+}
+
+/** The bytes of a loaded chunk, or undefined when the checkpoint does not hold them. */
+type ChunkBytes = (chunk: number) => Uint8Array | undefined;
+
+/** Bytes [start, start + length) of chunk `chunk`. */
+interface ChunkRun {
+  readonly chunk: number;
+  readonly start: number;
+  readonly length: number;
+}
+
+/**
+ * Which chunks the bytes `removed` came from, for the gap at `offset` in
+ * `doc`, the document without them.
+ *
+ * A chunk piece that ends at the gap before the end of its chunk, or starts
+ * at it after the start of its chunk, lost bytes there. Removed bytes that
+ * begin with the bytes the first lost are its (`tail`), and removed bytes
+ * that end with the bytes the second lost are its (`head`). Bytes between
+ * them that an older edit, not yet given back, kept apart from the piece are
+ * looked for in the rest of what it lost (`middle`). When they are not
+ * there, `inside` is the key of such a chunk, which they most likely came from.
+ */
+function removedSources(
+  doc: PieceTableState,
+  offset: number,
+  removed: Uint8Array,
+  chunkBytes: ChunkBytes,
+): {
+  tail: ChunkRun | null;
+  middle: ChunkRun | null;
+  head: ChunkRun | null;
+  inside: number | undefined;
+} {
+  const before = offset > 0 ? pieceAt(doc.root, offset - 1) : null;
+  const after = pieceAt(doc.root, offset);
+  const none = { tail: null, middle: null, head: null, inside: undefined };
+  // Inside a piece, nothing was lost at the gap.
+  if (before !== null && after !== null && before.node === after.node) return none;
+  const leftNode =
+    before !== null &&
+    before.node.bufferType === "chunk" &&
+    before.pieceStart + before.node.length === offset
+      ? before.node
+      : null;
+  const rightNode = after !== null && after.node.bufferType === "chunk" ? after.node : null;
+  const leftBytes = leftNode === null ? undefined : chunkBytes(leftNode.chunkIndex);
+  const rightBytes = rightNode === null ? undefined : chunkBytes(rightNode.chunkIndex);
+  // Where each neighbor lost bytes. Two pieces of one chunk lost only the
+  // bytes between them.
+  const sameChunk = leftNode !== null && leftNode.chunkIndex === rightNode?.chunkIndex;
+  const left =
+    leftNode !== null && leftBytes !== undefined
+      ? {
+          chunk: leftNode.chunkIndex,
+          bytes: leftBytes,
+          from: leftNode.start + leftNode.length,
+          to: sameChunk ? rightNode!.start : leftBytes.length,
+        }
+      : null;
+  const right =
+    rightNode !== null && rightBytes !== undefined && rightNode.start <= rightBytes.length
+      ? {
+          chunk: rightNode.chunkIndex,
+          bytes: rightBytes,
+          from: sameChunk ? leftNode!.start + leftNode!.length : 0,
+          to: rightNode.start,
+        }
+      : null;
+  const lostLeft = left !== null && left.from < left.to ? left : null;
+  const lostRight = right !== null && right.from < right.to ? right : null;
+  if (lostLeft === null && lostRight === null) return none;
+
+  let start = 0;
+  let end = removed.length;
+  let tail: ChunkRun | null = null;
+  let head: ChunkRun | null = null;
+  if (lostLeft !== null) {
+    const length = sharedPrefix(
+      removed,
+      0,
+      lostLeft.bytes,
+      lostLeft.from,
+      Math.min(end, lostLeft.to - lostLeft.from),
+    );
+    if (length > 0) {
+      tail = { chunk: lostLeft.chunk, start: lostLeft.from, length };
+      start = length;
+    }
+  }
+  if (lostRight !== null) {
+    const room = Math.min(
+      end - start,
+      lostRight.to - (sameChunk ? lostRight.from + start : lostRight.from),
+    );
+    const length = sharedSuffix(removed, end, lostRight.bytes, lostRight.to, room);
+    if (length > 0) {
+      head = { chunk: lostRight.chunk, start: lostRight.to - length, length };
+      end -= length;
+    }
+  }
+  let middle: ChunkRun | null = null;
+  if (end > start) {
+    const rest = removed.subarray(start, end);
+    for (const lost of [lostLeft, lostRight]) {
+      if (lost === null || middle !== null) continue;
+      const from = lost === lostLeft ? lost.from + start : lost.from;
+      const to = lost === lostRight ? lost.to - (removed.length - end) : lost.to;
+      const at = indexIn(lost.bytes, rest, from, to, lost === lostRight);
+      if (at >= 0) middle = { chunk: lost.chunk, start: at, length: rest.length };
+    }
+  }
+  const inside = (lostLeft ?? lostRight)!.chunk - 1;
+  return { tail, middle, head, inside };
+}
+
+/**
+ * The document `shape` applies to, given `after`, the document it produced,
+ * and the keys it takes there: the inserted text split into runs that share a
+ * key in `after` (`inserts`), and the removed bytes split into runs that share
+ * a key (`runs`), as `applyShape` gives them. `key` is the key of the first
+ * inserted run, else of the gap. Redo inserts each run under its key, so the
+ * text gets back the keys the rest of the walk saw it with.
+ *
+ * The removed bytes are not in `after`, so the keys they had are not
+ * recorded. Bytes found in a chunk that lost them at the gap (see
+ * `removedSources`) come back as that chunk's bytes with its key, so later
+ * steps of the walk see the chunk whole again. Other removed bytes take the
+ * key of such a chunk, else the key the inserted text had, else the key of
+ * the gap.
+ */
+function unapplyShape(
+  after: PieceTableState,
+  shape: ChangeShape,
+  chunkBytes: ChunkBytes,
+): {
+  key: number;
+  inserts: readonly KeyRun[];
+  runs: readonly KeyRun[];
+  before: PieceTableState;
+} {
   const { offset, removed, inserted } = shape;
   const without = removeBytes(after, offset, inserted);
-  const insertedKey =
-    inserted > 0 && offset >= 0 && offset < after.totalLength
-      ? byteKey(after.root, offset)
-      : undefined;
-  const key =
-    insertedKey !== undefined && keyFitsAt(without, clampTo(without, offset), insertedKey)
-      ? insertedKey
-      : gapKey(without.root, clampTo(without, offset), "before");
-  return [key, insertStandIn(without, offset, removed, key)];
+  const at = clampTo(without, offset);
+  // Out of range, the change is malformed, which restore reports.
+  const inserts =
+    inserted > 0 && offset >= 0 && offset + inserted <= after.totalLength
+      ? placementRuns(after, offset, offset + inserted)
+      : [];
+  const insertedKey = inserts[0]?.key;
+  const fitting = (doc: PieceTableState, position: number, ...keys: (number | undefined)[]) =>
+    keys.find((key) => key !== undefined && keyFitsAt(doc, position, key)) ??
+    gapKey(doc.root, position, "before");
+  const key = fitting(without, at, insertedKey);
+  if (removed <= 0) return { key, inserts, runs: [], before: without };
+
+  const { tail, middle, head, inside } = removedSources(
+    without,
+    at,
+    textEncoder.encode(shape.removedText),
+    chunkBytes,
+  );
+  const runs: KeyRun[] = [];
+  let doc = without;
+  let position: number = at;
+  // Give back `length` bytes at `position`, as bytes of `run` when given.
+  // Runs are in document order, and neighbors that share a key are one run.
+  const giveBack = (length: number, key: number, run: ChunkRun | null) => {
+    if (length <= 0) return;
+    doc =
+      run === null
+        ? insertStandIn(doc, position, length, key)
+        : insertChunkStandIn(doc, position, run.chunk, run.start, length);
+    const last = runs[runs.length - 1];
+    if (last?.key === key) runs[runs.length - 1] = { ...last, end: position + length };
+    else runs.push({ start: position, end: position + length, key });
+    position += length;
+  };
+  if (tail !== null) giveBack(tail.length, tail.chunk - 1, tail);
+  const rest = removed - (tail?.length ?? 0) - (head?.length ?? 0);
+  if (middle !== null) giveBack(rest, middle.chunk - 1, middle);
+  else giveBack(rest, fitting(doc, position, inside, insertedKey), null);
+  if (head !== null) giveBack(head.length, head.chunk - 1, head);
+  return { key, inserts, runs, before: doc };
 }
 
 /**
@@ -208,12 +446,13 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
   }
 
   // A piece tree with the derived keys, so anchoring uses the same `gapKey`
-  // as live edits. Only lengths and keys matter here: a piece that is not a
-  // chunk piece stands in as an add piece carrying its key. Empty and
-  // malformed lengths are left out, as no byte lies in them.
+  // as live edits. Only lengths, keys and where chunk pieces start in their
+  // chunks matter here: a piece that is not a chunk piece stands in as an add
+  // piece carrying its key. Empty and malformed lengths are left out, as no
+  // byte lies in them.
   const descriptors: PieceDescriptor[] = [];
   for (let i = 0; i < pieces.length; i++) {
-    const length = pieces[i]![3];
+    const [, , start, length] = pieces[i]!;
     if (!isInt(length) || length <= 0) continue;
     const chunkIndex = chunkOf[i];
     descriptors.push(
@@ -222,7 +461,7 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
             id: pieceID(`m${i}`),
             bufferType: "chunk",
             chunkIndex,
-            start: byteOffset(0),
+            start: byteOffset(isInt(start) ? Math.max(0, start) : 0),
             length: byteLength(length),
           }
         : {
@@ -234,8 +473,36 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
           },
     );
   }
+
+  const chunkLengths: [number, number][] = [];
+  const chunkBase64 = new Map<number, string>();
+  if (Array.isArray(table.chunks)) {
+    for (const entry of table.chunks) {
+      if (isTuple(entry) && isInt(entry[0])) {
+        const base64 = typeof entry[1] === "string" ? entry[1] : "";
+        chunkLengths.push([entry[0], base64DecodedLength(base64)]);
+        chunkBase64.set(entry[0], base64);
+      }
+    }
+  }
+  // Decoded only for chunks next to bytes that undo gives back.
+  const decoded = new Map<number, Uint8Array | undefined>();
+  const chunkBytes: ChunkBytes = (chunk) => {
+    if (!decoded.has(chunk)) {
+      const base64 = chunkBase64.get(chunk);
+      let bytes: Uint8Array | undefined;
+      try {
+        bytes = base64 === undefined ? undefined : decodeBase64(base64);
+      } catch {
+        // Malformed chunk data, which restore reports.
+      }
+      decoded.set(chunk, bytes);
+    }
+    return decoded.get(chunk);
+  };
+
   const root = buildPieceTree(descriptors);
-  // Only the tree structure and keys are read, so chunk bytes are not needed.
+  // Only the tree structure and keys are read, so the tree holds no bytes.
   const captured: PieceTableState = {
     ...createEmptyPieceTableState(),
     root,
@@ -245,18 +512,6 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
       0,
     ),
   };
-
-  const chunkLengths: [number, number][] = [];
-  if (Array.isArray(table.chunks)) {
-    for (const entry of table.chunks) {
-      if (isTuple(entry) && isInt(entry[0])) {
-        chunkLengths.push([
-          entry[0],
-          typeof entry[1] === "string" ? base64DecodedLength(entry[1]) : 0,
-        ]);
-      }
-    }
-  }
   // The same tree as live anchoring, so each anchor costs O(log C).
   const loaded = buildLoadedChunks(chunkLengths);
   const anchorWith = (offset: number, key: number): [number, number] => [
@@ -298,14 +553,20 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
   // Inserted bytes only stand in for their length and key.
   const shapeOf = (raw: unknown): ChangeShape | null => {
     if (!isTuple(raw) || !isInt(raw[1])) return null;
-    const length = (text: unknown) => (typeof text === "string" ? utf8ByteLength(text) : 0);
+    const text = (value: unknown) => (typeof value === "string" ? value : "");
+    const length = (value: unknown) => utf8ByteLength(text(value));
     switch (raw[0]) {
       case "i":
-        return { offset: raw[1], removed: 0, inserted: length(raw[2]) };
+        return { offset: raw[1], removed: 0, inserted: length(raw[2]), removedText: "" };
       case "d":
-        return { offset: raw[1], removed: length(raw[2]), inserted: 0 };
+        return { offset: raw[1], removed: length(raw[2]), inserted: 0, removedText: text(raw[2]) };
       case "r":
-        return { offset: raw[1], removed: length(raw[3]), inserted: length(raw[2]) };
+        return {
+          offset: raw[1],
+          removed: length(raw[3]),
+          inserted: length(raw[2]),
+          removedText: text(raw[3]),
+        };
       default:
         return null;
     }
@@ -324,14 +585,8 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
    * edge cuts a character, keeps the bytes as well.
    */
   const splitChange = (raw: WireTuple, runs: readonly KeyRun[]): unknown[] => {
-    const removedText = raw[0] === "r" ? raw[3] : raw[2];
-    const all = textEncoder.encode(typeof removedText === "string" ? removedText : "");
+    const runText = runTexts(raw[0] === "r" ? raw[3] : raw[2], runs);
     const base = runs[0]!.start;
-    const runText = (run: KeyRun): unknown[] => {
-      const bytes = all.subarray(run.start - base, run.end - base);
-      const text = contentDecoder.decode(bytes);
-      return encodesTo(text, bytes) ? [text] : [text, encodeBase64(bytes)];
-    };
     const changes: unknown[] = [];
     for (let r = runs.length - 1; r >= 1; r--) {
       const run = runs[r]!;
@@ -348,6 +603,37 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
         : ["d", position, text, key, ...(bytes === undefined ? [] : [bytes])],
     );
     return changes;
+  };
+  /** Inserts of `text` split into `runs`, left to right. */
+  const insertChanges = (text: unknown, runs: readonly KeyRun[]): unknown[] => {
+    const runText = runTexts(text, runs);
+    return runs.map((run) => {
+      const [position] = anchorWith(run.start, run.key);
+      const [part, bytes] = runText(run);
+      return ["i", position, part, run.key, ...(bytes === undefined ? [] : [bytes])];
+    });
+  };
+  /**
+   * The version 2 changes for version 1 change `raw`, given the runs its
+   * inserted text (`inserts`) and its removed bytes (`runs`) split into, and
+   * `key`, the key of a change with neither. One change has one key, so
+   * inserted text that spans keys becomes one insert per run, after deletes
+   * of the removed runs. So does a replace whose inserted text takes another
+   * key than its first removed run.
+   */
+  const keyedChanges = (
+    raw: WireTuple,
+    key: number,
+    inserts: readonly KeyRun[],
+    runs: readonly KeyRun[],
+  ): unknown[] => {
+    const insertKey = inserts[0]?.key ?? key;
+    if (inserts.length > 1 || (raw[0] === "r" && runs.length > 0 && runs[0]!.key !== insertKey)) {
+      const deletes = runs.length === 0 ? [] : splitChange(["d", raw[1], raw[3]], runs);
+      return [...deletes, ...insertChanges(raw[2], inserts)];
+    }
+    if (runs.length === 0) return [migrateChange(raw, insertKey)];
+    return runs.length > 1 ? splitChange(raw, runs) : [migrateChange(raw, runs[0]!.key)];
   };
   /**
    * Migrate one entry. `doc` is the document on the side the walk starts
@@ -373,17 +659,18 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
       const shape = shapeOf(change);
       if (shape === null) {
         changes[i] = [change];
-      } else if (direction === "undo") {
-        const [key, next] = unapplyShape(current, shape);
-        changes[i] = [migrateChange(change, key)];
-        current = next;
       } else {
-        // Only a redo entry's removed bytes are in the document, so only
-        // they can be split by key.
-        const { key, runs, after } = applyShape(current, shape);
-        changes[i] =
-          runs.length > 1 ? splitChange(change as WireTuple, runs) : [migrateChange(change, key)];
-        current = after;
+        let key: number;
+        let inserts: readonly KeyRun[];
+        let runs: readonly KeyRun[];
+        if (direction === "undo") {
+          ({ key, inserts, runs, before: current } = unapplyShape(current, shape, chunkBytes));
+        } else {
+          ({ key, runs, after: current } = applyShape(current, shape));
+          const { offset, inserted } = shape;
+          inserts = inserted > 0 ? [{ start: offset, end: offset + inserted, key }] : [];
+        }
+        changes[i] = keyedChanges(change as WireTuple, key, inserts, runs);
       }
     }
     const [before, after] = direction === "undo" ? [current, start] : [start, current];

@@ -41,7 +41,6 @@ import { collectLines } from "../core/line-index.js";
 import { resolveAllAttentions } from "../core/attention.js";
 import { encodeBase64 } from "../core/base64.js";
 import { unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
-import { keyFitsAt } from "../core/chunk-anchor.js";
 import { scanPieceLines } from "../core/decoded-metrics.js";
 
 function fail(code: CheckpointErrorCode, message: string): never {
@@ -114,22 +113,15 @@ function captureLineIndex(lineIndex: LineIndexState<"eager">): CheckpointLineInd
 }
 
 /**
- * Capture the live selection. APPLY_REMOTE moves text but not the selection,
- * so a stored placement key can stop fitting its offset (see `SelectionRange.anchorAfterChunk`).
- * Such a key is ignored everywhere, so it is left out. `pieceTable` is the
- * document the checkpoint holds, or null when it holds no chunks and so no key
- * applies.
+ * Capture the live selection with the placement keys it stores (see
+ * `SelectionRange.anchorAfterChunk`). Every action that changes the document
+ * moves the selection with it, so a stored key fits its offset.
  */
-function captureSelection(
-  selection: SelectionState,
-  pieceTable: PieceTableState | null,
-): CheckpointSelection {
-  const keyAt = (offset: number, key: number | undefined): number | null =>
-    key !== undefined && pieceTable !== null && keyFitsAt(pieceTable, offset, key) ? key : null;
+function captureSelection(selection: SelectionState): CheckpointSelection {
   return {
     ranges: selection.ranges.map((range) => {
-      const anchorKey = keyAt(range.anchor, range.anchorAfterChunk);
-      const headKey = keyAt(range.head, range.headAfterChunk);
+      const anchorKey = range.anchorAfterChunk ?? null;
+      const headKey = range.headAfterChunk ?? null;
       return anchorKey === null && headKey === null
         ? ([range.anchor, range.head] as const)
         : ([range.anchor, range.head, anchorKey, headKey] as const);
@@ -277,7 +269,7 @@ function captureNormalizedCheckpoint(state: DocumentState<"eager">): DocumentChe
       unloadedLineCounts: [],
       lines,
     },
-    selection: captureSelection(state.selection, null),
+    selection: captureSelection(state.selection),
     history: captureHistory(state.history),
     metadata: captureMetadata(state.metadata),
     attention: { nextID: state.attention.nextID, attentions },
@@ -325,7 +317,7 @@ export function createCheckpoint(
     selectionRevision: source.selectionRevision,
     pieceTable: capturePieceTable(source.pieceTable),
     lineIndex: captureLineIndex(source.lineIndex),
-    selection: captureSelection(source.selection, source.pieceTable),
+    selection: captureSelection(source.selection),
     history: captureHistory(source.history),
     metadata: captureMetadata(source.metadata),
     attention: captureAttention(source.attention),
