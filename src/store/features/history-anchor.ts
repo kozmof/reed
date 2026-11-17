@@ -34,7 +34,9 @@ import {
 import { getBytes, isUtf8Boundary } from "../core/piece-table.js";
 import { MAX_CONTINUATION_BYTES, isContinuationByte } from "../core/utf8-seam.js";
 import {
+  changeDelta,
   forEachHistoryChange,
+  removedLength,
   someHistoryChange,
   someHistoryChangeBackward,
 } from "./history-entry.js";
@@ -279,6 +281,13 @@ export function selectionAfterEdit(
  * after the removed range shift by the change in length. A moved endpoint
  * keeps its stored key only where `selectionRange` would.
  *
+ * An endpoint that lands just past the edit sits on the byte that was at
+ * `end`. That byte can be a continuation byte when `end` was 0, which is a
+ * boundary however the document starts: the resident text can begin with the
+ * tail of a character cut by an unloaded chunk. Such an endpoint moves past
+ * those bytes (see `nextBoundary`) and drops its stored key, as a resolved
+ * history selection does. Every other endpoint keeps the boundary it was on.
+ *
  * Returns `selection` itself when no endpoint moves.
  */
 export function moveSelectionPastEdit(
@@ -288,19 +297,24 @@ export function moveSelectionPastEdit(
   end: number,
   inserted: number,
 ): SelectionState {
-  const move = (offset: ByteOffset): ByteOffset =>
-    offset < start
-      ? offset
-      : offset >= end
-        ? byteOffset(offset - (end - start) + inserted)
-        : byteOffset(start + inserted);
+  const landing = start + inserted;
+  let boundary: number | undefined;
+  // The endpoint's new offset and key. A key fits only the offset it was
+  // stored for, so a snapped endpoint drops it.
+  const move = (offset: ByteOffset, key: number | undefined) => {
+    if (offset < start) return { offset, key };
+    const moved = offset >= end ? offset - (end - start) + inserted : landing;
+    if (moved !== landing) return { offset: byteOffset(moved), key };
+    boundary ??= nextBoundary(pieceTable, landing);
+    return { offset: byteOffset(boundary), key: boundary === landing ? key : undefined };
+  };
   let changed = false;
   const ranges = selection.ranges.map((range) => {
-    const anchor = move(range.anchor);
-    const head = move(range.head);
-    if (anchor === range.anchor && head === range.head) return range;
+    const anchor = move(range.anchor, range.anchorAfterChunk);
+    const head = move(range.head, range.headAfterChunk);
+    if (anchor.offset === range.anchor && head.offset === range.head) return range;
     changed = true;
-    return selectionRange(pieceTable, anchor, head, range.anchorAfterChunk, range.headAfterChunk);
+    return selectionRange(pieceTable, anchor.offset, head.offset, anchor.key, head.key);
   });
   return changed ? freezeSelection(ranges, selection.primaryIndex) : selection;
 }
@@ -527,14 +541,28 @@ export function keepSameSelection(current: SelectionState, next: SelectionState)
  * key is NO_CHUNK because nothing has loaded, not because the selection was
  * placed before chunk 0. Text typed before any load stays before every chunk,
  * so its offsets hold, and the document gives each endpoint its key, as for a
- * selection set after the load (see `gapKey`).
+ * selection set after the load (see `gapKey`). The chunk can start with the
+ * tail of a character cut at its edge, so an endpoint where it loads moves
+ * past those bytes, as on every later load (see `nextBoundary`).
  */
 export function carrySelectionAcrossChunks(
   before: PieceTableState,
   after: PieceTableState,
   selection: SelectionState,
 ): SelectionState {
-  if (before.nextExpectedChunk === 0) return selection;
+  if (before.nextExpectedChunk === 0) {
+    if (after.nextExpectedChunk === 0) return selection;
+    const snap = (offset: ByteOffset) => byteOffset(nextBoundary(after, offset));
+    return keepSameSelection(
+      selection,
+      freezeSelection(
+        selection.ranges.map((range) =>
+          selectionRange(after, snap(range.anchor), snap(range.head), undefined, undefined),
+        ),
+        selection.primaryIndex,
+      ),
+    );
+  }
   return keepSameSelection(selection, resolveSelection(after, anchorSelection(before, selection)));
 }
 
@@ -564,18 +592,6 @@ const entrySummaryCache = new WeakMap<HistoryEntry, ChangeSummary>();
 // Stack nodes are shared between successive stacks, so a push or pop computes
 // summaries only for the O(log H) nodes it creates, each in O(1).
 const nodeSummaryCache = new WeakMap<StackNode, ChangeSummary>();
-
-/** Bytes `change` adds to the document when applied forward. */
-function changeDelta(change: HistoryChange): number {
-  switch (change.type) {
-    case "insert":
-      return change.byteLength;
-    case "delete":
-      return -change.byteLength;
-    case "replace":
-      return change.byteLength - change.oldByteLength;
-  }
-}
 
 function combineSummaries(a: ChangeSummary, b: ChangeSummary): ChangeSummary {
   return {
@@ -646,21 +662,6 @@ function changeInsideChunk(change: HistoryChange, track: ChunkTrack): boolean {
   }
   track.start += track.direction * changeDelta(change);
   return false;
-}
-
-/**
- * Bytes `change` removes when replayed in `direction`: when redone, what it
- * deleted; when undone, what it inserted.
- */
-function removedLength(change: HistoryChange, direction: 1 | -1): number {
-  switch (change.type) {
-    case "insert":
-      return direction < 0 ? change.byteLength : 0;
-    case "delete":
-      return direction > 0 ? change.byteLength : 0;
-    case "replace":
-      return direction > 0 ? change.oldByteLength : change.byteLength;
-  }
 }
 
 /**

@@ -533,8 +533,9 @@ describe("undo and redo caret contract", () => {
       name: "insert without an explicit selection",
       content: "hello world",
       action: DocumentActions.insert(byteOffset(11), "!!!", undefined, 1),
+      // The caret at 0 is before the edit, so neither the edit nor redo moves it.
       undo: 0,
-      redo: 14,
+      redo: 0,
     },
     {
       name: "forward delete",

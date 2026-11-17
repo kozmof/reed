@@ -56,13 +56,12 @@ import type { KeyRun } from "../core/chunk-anchor.js";
 import {
   anchorAt,
   anchorSelection,
-  anchoredCursor,
   insertionKey,
   moveSelectionPastEdit,
   residentOffset,
   selectionRangesWithKeys,
 } from "./history-anchor.js";
-import { coalescedTails, lastHistoryChange } from "./history-entry.js";
+import { coalescedTails, lastHistoryChange, removedLength } from "./history-entry.js";
 
 // =============================================================================
 // Position Validation
@@ -285,20 +284,6 @@ export function rebuildLineIndexFromPieceTableState(state: DocumentState): Docum
 // =============================================================================
 
 /**
- * Selection to restore when redoing `change`: a cursor after the inserted text,
- * or at the deletion point.
- *
- * The cursor takes the change's own placement key. Redo replays the change
- * with that key, so the cursor stays next to the replayed text even when a
- * chunk next to it loads in between. The gap's key in the edited document can
- * name the far side of a chunk that was not loaded when the edit was made.
- */
-function selectionAfterChange(change: HistoryChange): HistorySelectionState {
-  const position = change.type === "delete" ? change.position : change.position + change.byteLength;
-  return anchoredCursor(change.afterChunk, position);
-}
-
-/**
  * Check if a new change can be coalesced with the last history entry.
  * Coalescing merges consecutive same-type changes within a timeout window
  * into a single undo entry (e.g., typing a word becomes one undo step).
@@ -399,14 +384,15 @@ function coalesceChanges(existing: HistoryChange, incoming: HistoryChange): Hist
  * True when `text`, the decoding of `length` bytes, is known to encode back to
  * them without comparing bytes.
  *
- * Decoding changes bytes only by replacing malformed sequences with U+FFFD or
- * dropping a leading byte order mark. Dropping a BOM shortens the text, so text
- * of the right length with no U+FFFD is exact. A replacement can keep the
- * length (three malformed bytes become one 3-byte U+FFFD), so text containing
- * U+FFFD has to be compared byte for byte.
+ * `contentDecoder` keeps a byte order mark, so decoding changes bytes only by
+ * replacing malformed sequences with U+FFFD. Text `decoded` by it from those
+ * very bytes is therefore exact when it has no U+FFFD, which one native scan
+ * finds. Text from elsewhere must also have the right length. A replacement
+ * can keep the length (three malformed bytes become one 3-byte U+FFFD), so
+ * text containing U+FFFD has to be compared byte for byte.
  */
-function isExactDecoding(text: string, length: number): boolean {
-  return utf8ByteLength(text) === length && !text.includes("�");
+function isExactDecoding(text: string, length: number, decoded: boolean): boolean {
+  return !text.includes("�") && (decoded || utf8ByteLength(text) === length);
 }
 
 /** Deleted text of one placement run, with its bytes when the text is inexact. */
@@ -435,7 +421,10 @@ function deletedRuns(
   const rangeBytes = () => deletedBytes ?? getBytes(pieceTable, byteOffset(base), byteOffset(end));
   if (runs.length === 1) {
     const length = end - base;
-    if (isExactDecoding(deletedText, length)) return [{ text: deletedText, length }];
+    // `deletedBytes` are the bytes `deletedText` was decoded from.
+    if (isExactDecoding(deletedText, length, deletedBytes !== undefined)) {
+      return [{ text: deletedText, length }];
+    }
     const raw = rangeBytes();
     return [
       encodesTo(deletedText, raw)
@@ -448,7 +437,7 @@ function deletedRuns(
     const raw = all.subarray(run.start - base, run.end - base);
     const text = contentDecoder.decode(raw);
     const length = run.end - run.start;
-    return isExactDecoding(text, length) || encodesTo(text, raw)
+    return isExactDecoding(text, length, true) || encodesTo(text, raw)
       ? { text, length }
       : { text, length, bytes: asReadonlyUint8Array(raw.slice()) };
   });
@@ -516,18 +505,17 @@ export function makeReplaceChange(
  * only called when a new entry is created: a coalesced entry keeps the
  * selection of the entry it extends. It must anchor the selection against the
  * document before the changes, which `state` no longer holds.
+ * `selectionAfter` is the selection the edit left, anchored against `state`,
+ * which redo restores.
  */
 export function historyPush(
   state: DocumentState,
   changes: NonEmptyReadonlyArray<HistoryChange>,
   now: number,
   selectionBefore: () => HistorySelectionState,
+  selectionAfter: HistorySelectionState,
 ): DocumentState {
   const history = state.history;
-
-  // Compute expected selection after the change for proper redo. The last
-  // change of an entry is the one applied last, so it places the cursor.
-  const selectionAfter = selectionAfterChange(changes[changes.length - 1]!);
 
   // Try to coalesce with the last entry
   const change = changes[0];
@@ -625,11 +613,6 @@ export function invertChange(change: HistoryChange): HistoryChange {
   }
 }
 
-/** Bytes a delete or replace change removes. */
-function historyDeletedLength(change: HistoryDeleteChange | HistoryReplaceChange): number {
-  return change.type === "delete" ? change.byteLength : change.oldByteLength;
-}
-
 /**
  * Replay history through the same lazy structural pipeline as local edits.
  * The anchored position is resolved against the current chunk layout, and
@@ -641,7 +624,7 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
   // A position is recorded in the document the change applies to, so a valid
   // history always resolves inside it. Insert would append an out-of-range
   // position at the end and delete would remove other bytes, so refuse instead.
-  const removed = change.type === "insert" ? 0 : historyDeletedLength(change);
+  const removed = removedLength(change, 1);
   if (position < 0 || position + removed > state.pieceTable.totalLength) {
     throw new RangeError(
       `history ${change.type} at anchored position ${change.position} with placement key ` +
@@ -1017,6 +1000,9 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
     changes as unknown as NonEmptyReadonlyArray<HistoryChange>,
     op.timestamp ?? state.revision,
     () => anchorSelection(pieceTable, selectionBefore),
+    // Redo restores the selection the edit left in the state, anchored in the
+    // edited document like any other history selection.
+    anchorSelection(newState.pieceTable, selectionAfter),
   );
 
   // Mark as dirty and increment revision

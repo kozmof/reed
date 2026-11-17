@@ -873,16 +873,23 @@ describe("review regressions", () => {
     expect(cursor(s)).toEqual({ anchor: 16, head: 16 });
   });
 
-  it("places the redo cursor at the replayed edit after a chunk loads beside it", () => {
+  it("places the redo cursor where the edit left it after a chunk loads beside it", () => {
     const s = makeStore(3);
     load(s, 0);
     load(s, 2);
-    s.dispatch(DocumentActions.delete(byteOffset(6), byteOffset(10)));
+    // A backspace over [6, 10) leaves the caret at 6.
+    s.dispatch(
+      DocumentActions.delete(byteOffset(6), byteOffset(10), [
+        { anchor: byteOffset(10), head: byteOffset(10) },
+      ]),
+    );
+    expect(cursor(s)).toEqual({ anchor: 6, head: 6 });
     load(s, 1);
+    const afterLoad = cursor(s);
     s.dispatch(DocumentActions.undo());
     s.dispatch(DocumentActions.redo());
     expect(text(s)).toBe("AAAAAABBBBBBB\nCCCCC\n");
-    expect(cursor(s)).toEqual({ anchor: 6, head: 6 });
+    expect(cursor(s)).toEqual(afterLoad);
   });
 });
 
@@ -1401,9 +1408,12 @@ describe("sixth review regressions", () => {
               case 1:
                 if (pieceTable.chunkMap.has(chunk)) s.dispatch(DocumentActions.evictChunk(chunk));
                 break;
-              case 2:
-                s.dispatch(DocumentActions.insert(a, INSERTS[rand(INSERTS.length)]!));
+              case 2: {
+                // Half the time type at the caret, as an editor does.
+                const at = rand(2) === 0 ? a : s.getSnapshot().selection.ranges[0]!.head;
+                s.dispatch(DocumentActions.insert(at, INSERTS[rand(INSERTS.length)]!));
                 break;
+              }
               case 3:
                 if (b > a) s.dispatch(DocumentActions.delete(a, b));
                 break;
@@ -1420,15 +1430,16 @@ describe("sixth review regressions", () => {
                 s.dispatch(DocumentActions.setSelection([{ anchor: a, head: b }]));
                 break;
             }
-            // Edits leave the live selection alone, so an editor sets it again
-            // after one that shortens the document.
+            const where = `seed ${seed} step ${step}`;
+            // Edits move the live selection past them, so it stays on a
+            // boundary of the document without the editor setting it again.
             const after = s.getSnapshot();
             const range = after.selection.ranges[0]!;
-            if (Math.max(range.anchor, range.head) > after.pieceTable.totalLength) {
-              const end = byteOffset(after.pieceTable.totalLength);
-              s.dispatch(DocumentActions.setSelection([{ anchor: end, head: end }]));
-            }
-            const where = `seed ${seed} step ${step}`;
+            expect(Math.max(range.anchor, range.head), where).toBeLessThanOrEqual(
+              after.pieceTable.totalLength,
+            );
+            expect(isUtf8Boundary(after.pieceTable, range.anchor), where).toBe(true);
+            expect(isUtf8Boundary(after.pieceTable, range.head), where).toBe(true);
             const k = keys(s);
             expect(k, where).toEqual([...k].sort((x, y) => x - y));
             const chars = (root: Parameters<typeof collectLines>[0]) =>
@@ -1758,9 +1769,79 @@ describe("eighth review regressions", () => {
     s.dispatch(DocumentActions.undo());
     expect(s.getSnapshot().selection).toBe(before);
     expect(fired).toBe(0);
-    // Redo places the caret after the inserted text, which does move it.
+    // The insert left the caret at 0, so redo restores it there too.
     s.dispatch(DocumentActions.redo());
-    expect(s.getSnapshot().selection.ranges).toEqual([{ anchor: 2, head: 2 }]);
-    expect(fired).toBe(1);
+    expect(s.getSnapshot().selection).toBe(before);
+    expect(fired).toBe(0);
+  });
+});
+
+describe("ninth review regressions", () => {
+  // "abcdefg世hijklmn" in 8-byte chunks: chunk 0 ends with the lead byte of
+  // 世 and chunk 1 starts with its two continuation bytes.
+  const SPLIT = enc("abcdefg世hijklmn");
+  const splitStore = () =>
+    createDocumentStore({ chunkSize: 8, totalFileSize: SPLIT.length, reconcileMode: "none" });
+  const loadSplit = (s: Store, i: number) =>
+    s.dispatch(DocumentActions.loadChunk(i, SPLIT.slice(i * 8, (i + 1) * 8)));
+  const atBoundary = (s: Store) => {
+    const { pieceTable, selection } = s.getSnapshot();
+    return selection.ranges.every(
+      (range) => isUtf8Boundary(pieceTable, range.anchor) && isUtf8Boundary(pieceTable, range.head),
+    );
+  };
+
+  it("moves a caret typed before leftover continuation bytes past them", () => {
+    const s = splitStore();
+    loadSplit(s, 1);
+    s.dispatch(DocumentActions.insert(byteOffset(0), "X"));
+    // The caret steps past the two leftover bytes of 世.
+    expect(cursor(s)).toEqual({ anchor: 3, head: 3 });
+    expect(atBoundary(s)).toBe(true);
+    // Typing at the caret is accepted.
+    const at = s.getSnapshot().selection.ranges[0]!.head;
+    s.dispatch(DocumentActions.insert(at, "Y"));
+    expect(bytesOf(s)).toEqual([...enc("X"), 0xb8, 0x96, ...enc("Yhijklm")]);
+  });
+
+  it("moves the caret past leftover continuation bytes on the first chunk load", () => {
+    const s = splitStore();
+    s.dispatch(DocumentActions.insert(byteOffset(0), "X"));
+    expect(cursor(s)).toEqual({ anchor: 1, head: 1 });
+    loadSplit(s, 1);
+    expect(cursor(s)).toEqual({ anchor: 3, head: 3 });
+    expect(atBoundary(s)).toBe(true);
+    const at = s.getSnapshot().selection.ranges[0]!.head;
+    s.dispatch(DocumentActions.insert(at, "Y"));
+    expect(bytesOf(s)).toEqual([...enc("X"), 0xb8, 0x96, ...enc("Yhijklm")]);
+  });
+
+  it("keeps the selection object on the first chunk load when no endpoint moves", () => {
+    const s = splitStore();
+    s.dispatch(DocumentActions.insert(byteOffset(0), "X"));
+    const before = s.getSnapshot().selection;
+    load(s, 0);
+    expect(s.getSnapshot().selection).toBe(before);
+  });
+
+  it("restores on redo the selection the edit left", () => {
+    const s = createDocumentStore({ content: "0123456789abcdefghijklmnop", reconcileMode: "none" });
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(20), head: byteOffset(20) }]));
+    s.dispatch(DocumentActions.insert(byteOffset(10), "XYZ"));
+    expect(cursor(s)).toEqual({ anchor: 23, head: 23 });
+    s.dispatch(DocumentActions.undo());
+    expect(cursor(s)).toEqual({ anchor: 20, head: 20 });
+    s.dispatch(DocumentActions.redo());
+    expect(cursor(s)).toEqual({ anchor: 23, head: 23 });
+  });
+
+  it("restores on redo a range the edit shifted", () => {
+    const s = createDocumentStore({ content: "0123456789abcdefghijklmnop", reconcileMode: "none" });
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(15), head: byteOffset(20) }]));
+    s.dispatch(DocumentActions.delete(byteOffset(2), byteOffset(4)));
+    expect(cursor(s)).toEqual({ anchor: 13, head: 18 });
+    s.dispatch(DocumentActions.undo());
+    s.dispatch(DocumentActions.redo());
+    expect(cursor(s)).toEqual({ anchor: 13, head: 18 });
   });
 });

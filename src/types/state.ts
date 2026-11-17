@@ -368,9 +368,10 @@ export interface SelectionRange {
    * eviction, UNDO, REDO, or a checkpoint restore places the endpoint there,
    * so the chunk loads on the correct side of it and text typed there stays
    * where the cursor was. Pass ranges from the state back unchanged to keep
-   * it. SET_SELECTION and edit selections also keep it for a range whose
-   * offsets match the current range at the same index. A key that does not
-   * fit the offset is dropped.
+   * it. SET_SELECTION and edit selections also keep it for a range without
+   * keys whose offsets match a current range, wherever that range sits in the
+   * list, or match it with anchor and head swapped, in which case the keys
+   * swap too. A key that does not fit the offset is dropped.
    */
   readonly anchorAfterChunk?: number;
   /** Chunk placement key of `head`. See `anchorAfterChunk`. */

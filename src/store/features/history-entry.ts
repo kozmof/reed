@@ -77,3 +77,28 @@ export function someHistoryChangeBackward(
   }
   return false;
 }
+
+/**
+ * Bytes `change` removes when replayed in `direction`: when redone (1), what
+ * it deleted; when undone (-1), what it inserted.
+ */
+export function removedLength(change: HistoryChange, direction: 1 | -1): number {
+  switch (change.type) {
+    case "insert":
+      return direction < 0 ? change.byteLength : 0;
+    case "delete":
+      return direction > 0 ? change.byteLength : 0;
+    case "replace":
+      return direction > 0 ? change.oldByteLength : change.byteLength;
+  }
+}
+
+/** Bytes `change` inserts when replayed in `direction`, which the other direction removes. */
+export function insertedLength(change: HistoryChange, direction: 1 | -1): number {
+  return removedLength(change, direction > 0 ? -1 : 1);
+}
+
+/** Bytes `change` adds to the document when applied forward. */
+export function changeDelta(change: HistoryChange): number {
+  return insertedLength(change, 1) - removedLength(change, 1);
+}

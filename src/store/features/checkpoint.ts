@@ -56,6 +56,7 @@ import { decodedCharLength, joinDecoded, type DecodedSummary } from "../core/dec
 import { utf8ByteLength } from "../core/encoding.js";
 import { loadedLengthAtOrBelow } from "../core/chunk-anchor.js";
 import { selectionRange } from "./history-anchor.js";
+import { insertedLength, removedLength } from "./history-entry.js";
 import { GrowableBuffer } from "../core/growable-buffer.js";
 import {
   asReadonlyMap,
@@ -1021,15 +1022,8 @@ function assertStackReplays(
     for (let n = 0; n < changes.length; n++) {
       const i = direction < 0 ? changes.length - 1 - n : n;
       const change = changes[i]!;
-      // Bytes the change removes and inserts when redone. Undo swaps them.
-      const [redoRemoves, redoInserts] =
-        change.type === "insert"
-          ? [0, change.byteLength]
-          : change.type === "delete"
-            ? [change.byteLength, 0]
-            : [change.oldByteLength, change.byteLength];
-      const [remove, insert] =
-        direction > 0 ? [redoRemoves, redoInserts] : [redoInserts, redoRemoves];
+      const remove = removedLength(change, direction);
+      const insert = insertedLength(change, direction);
       const start = change.position + loadedLengthAtOrBelow(pieceTable, change.afterChunk);
       if (start + remove > length) {
         fail(
