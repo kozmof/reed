@@ -769,6 +769,24 @@ describe("Store event transaction guards", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
+  it("SET_SELECTION with the current selection emits nothing", () => {
+    const store = createDocumentStoreWithEvents({ content: "hello" });
+    const caret = (offset: number) =>
+      [{ anchor: byteOffset(offset), head: byteOffset(offset) }] as const;
+    store.dispatch(DocumentActions.setSelection(caret(5)));
+    const handler = vi.fn();
+    store.addEventListener("selection-change", handler);
+    // An editor types at the caret and then sets the caret it computed itself,
+    // which the insert already moved the selection to: one event per keystroke.
+    store.dispatch(DocumentActions.insert(byteOffset(5), "!"));
+    const moved = store.getSnapshot().selection;
+    store.dispatch(DocumentActions.setSelection(caret(6)));
+    expect(store.getSnapshot().selection).toBe(moved);
+    expect(handler).toHaveBeenCalledTimes(1);
+    // SET_SELECTION still counts as a selection dispatch.
+    expect(store.getSnapshot().selectionRevision).toBe(2);
+  });
+
   it("dispatching UNDO emits history-change event", () => {
     const store = createDocumentStoreWithEvents({ content: "" });
     store.dispatch(DocumentActions.insert(byteOffset(0), "hello"));

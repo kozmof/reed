@@ -86,12 +86,13 @@ export function withEvents(
       );
     }
 
-    // Selection change events: SET_SELECTION, and every other action that
-    // moves the selection, such as an edit moving it past the edited text,
-    // undo and redo restoring it, a chunk load shifting it, or an eviction
-    // collapsing it. Selections are immutable and an action that leaves the
-    // selection in place keeps the same object, so the reference check is O(1).
-    if (action.type === "SET_SELECTION" || prevState.selection !== nextState.selection) {
+    // Selection change events: every action that moves the selection, such as
+    // SET_SELECTION, an edit moving it past the edited text, undo and redo
+    // restoring it, a chunk load shifting it, or an eviction collapsing it.
+    // Selections are immutable and an action that leaves the selection in
+    // place keeps the same object (SET_SELECTION with the current ranges
+    // included), so the reference check is O(1).
+    if (prevState.selection !== nextState.selection) {
       prepare("selection-change", createSelectionChangeEvent(prevState, nextState));
     }
 

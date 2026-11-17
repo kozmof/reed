@@ -39,6 +39,7 @@ import type {
 } from "../../types/checkpoint.js";
 import { CHECKPOINT_FORMAT, CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
 import {
+  isInt,
   migrateCheckpointData,
   migrationPath,
   minimumSupportedVersion,
@@ -214,18 +215,21 @@ function readBoolean(value: unknown, what: string): boolean {
   return value;
 }
 
-/** Validate a non-negative safe integer for an offset, length, or count. */
-function readCount(value: unknown, what: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    fail("MALFORMED", `${what} must be a non-negative safe integer`);
+/** Validate a safe integer no smaller than `min`. */
+function readInteger(value: unknown, what: string, min: number = Number.MIN_SAFE_INTEGER): number {
+  if (!isInt(value) || value < min) {
+    fail("MALFORMED", `${what} must be a safe integer of at least ${min}`);
   }
   return value;
 }
 
-/** Validate a safe integer no smaller than `min`. */
-function readInteger(value: unknown, what: string, min: number = Number.MIN_SAFE_INTEGER): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min) {
-    fail("MALFORMED", `${what} must be a safe integer of at least ${min}`);
+/**
+ * Validate a non-negative safe integer for an offset, length, or count. It is
+ * `readInteger` with a minimum of 0, worded as the spec's error messages are.
+ */
+function readCount(value: unknown, what: string): number {
+  if (!isInt(value) || value < 0) {
+    fail("MALFORMED", `${what} must be a non-negative safe integer`);
   }
   return value;
 }

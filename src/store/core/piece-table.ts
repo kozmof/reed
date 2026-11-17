@@ -557,8 +557,8 @@ export interface PieceTableInsertResult {
  *
  * Keys never decrease in document order, and loading, reload placement and
  * anchored positions all rely on it. A given key that would break that order at
- * `position` (see `keyFitsAt`) is replaced by the default, so no caller can
- * leave the tree out of order.
+ * `position` (see `keyFitsAt`) means the caller computed it wrongly, so the
+ * insert throws a RangeError instead of placing the text under another key.
  */
 export function pieceTableInsert(
   state: PieceTableState,
@@ -573,6 +573,14 @@ export function pieceTableInsert(
       splits: [],
     });
 
+  if (afterChunk !== undefined && !keyFitsAt(state, position, afterChunk)) {
+    throw new RangeError(
+      `placement key ${afterChunk} does not fit at offset ${position}: ` +
+        `inserting there would put placement keys out of document order`,
+    );
+  }
+  const givenKey = afterChunk;
+
   const textBytes = typeof text === "string" ? textEncoder.encode(text) : text;
   let nextPieceID = state.nextPieceID;
   const allocatePieceID = (): PieceID => pieceID(`p${nextPieceID++}`);
@@ -580,9 +588,6 @@ export function pieceTableInsert(
   // Append text to add buffer
   const newAddStart = state.addBuffer.length;
   const addBuffer = state.addBuffer.append(textBytes);
-
-  const givenKey =
-    afterChunk !== undefined && keyFitsAt(state, position, afterChunk) ? afterChunk : undefined;
 
   // Handle empty tree
   if (state.root === null) {
@@ -1006,20 +1011,9 @@ export function getText(
   start: ByteOffset,
   end: ByteOffset,
 ): LinearCost<string> {
-  if (state.root === null) return $proveCtx($beginCost("O(n)"), "");
+  // A negative start reads nothing, where getBytes clamps it to 0.
   if (start < 0) return $proveCtx($beginCost("O(n)"), "");
-  if (start >= end) return $proveCtx($beginCost("O(n)"), "");
-  if (start >= state.totalLength) return $proveCtx($beginCost("O(n)"), "");
-
-  const actualEnd = Math.min(end, state.totalLength);
-
-  // Pre-allocate result buffer for the exact range size
-  const rangeLength = actualEnd - start;
-  const result = new Uint8Array(rangeLength);
-  const writeState = { offset: 0 };
-  collectBytesInRange(state, state.root, 0, start, actualEnd, result, writeState);
-
-  return $proveCtx($beginCost("O(n)"), textDecoder.decode(result.subarray(0, writeState.offset)));
+  return $proveCtx($beginCost("O(n)"), textDecoder.decode(getBytes(state, start, end)));
 }
 
 /**

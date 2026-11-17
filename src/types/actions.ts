@@ -328,10 +328,24 @@ function isValidTimestamp(value: unknown): boolean {
   return value === undefined || (typeof value === "number" && Number.isFinite(value));
 }
 
+/**
+ * An optional chunk placement key: absent, or a safe integer no lower than -1
+ * (the key before every chunk), as checkpoints require. A well-formed key that
+ * does not fit its offset is the reducer's to drop.
+ */
+function isOptionalPlacementKey(value: unknown): boolean {
+  return value === undefined || (Number.isSafeInteger(value) && (value as number) >= -1);
+}
+
 function isSelectionRange(value: unknown): value is SelectionRange {
   if (typeof value !== "object" || value === null) return false;
   const range = value as Partial<SelectionRange>;
-  return isNonNegativeInteger(range.anchor) && isNonNegativeInteger(range.head);
+  return (
+    isNonNegativeInteger(range.anchor) &&
+    isNonNegativeInteger(range.head) &&
+    isOptionalPlacementKey(range.anchorAfterChunk) &&
+    isOptionalPlacementKey(range.headAfterChunk)
+  );
 }
 
 function isSelectionRangeArray(value: unknown): value is readonly SelectionRange[] {

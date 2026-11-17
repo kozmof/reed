@@ -1199,6 +1199,25 @@ describe("Type Guards", () => {
       );
     });
 
+    it("should check the placement keys of selection ranges", () => {
+      const select = (range: Record<string, unknown>) =>
+        validateAction({ type: "SET_SELECTION", ranges: [{ anchor: 0, head: 1, ...range }] }).valid;
+      expect(select({ anchorAfterChunk: -1, headAfterChunk: 3 })).toBe(true);
+      expect(select({ anchorAfterChunk: undefined })).toBe(true);
+      expect(select({ anchorAfterChunk: "3" })).toBe(false);
+      expect(select({ headAfterChunk: 1.5 })).toBe(false);
+      expect(select({ headAfterChunk: -2 })).toBe(false);
+      expect(select({ anchorAfterChunk: Number.NaN })).toBe(false);
+      expect(
+        validateAction({
+          type: "INSERT",
+          start: 0,
+          text: "x",
+          selection: [{ anchor: 0, head: 0, headAfterChunk: null }],
+        }).valid,
+      ).toBe(false);
+    });
+
     it("should reject malformed remote changes and chunk metadata", () => {
       expect(
         validateAction({

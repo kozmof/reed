@@ -18,7 +18,13 @@ import { documentReducer } from "./reducer.js";
 import { createCheckpoint, restoreCheckpoint } from "./checkpoint.js";
 import { createInitialState } from "../core/state.js";
 import { byteLength, byteOffset } from "../../types/branded.js";
-import { collectPieces, getBytes, getValue, isUtf8Boundary } from "../core/piece-table.js";
+import {
+  collectPieces,
+  getBytes,
+  getValue,
+  isUtf8Boundary,
+  pieceTableInsert,
+} from "../core/piece-table.js";
 import { pieceKey } from "../core/chunk-anchor.js";
 import { collectLines, rebuildLineIndex } from "../core/line-index.js";
 import { getUndoCount, getRedoCount } from "./history.js";
@@ -1144,6 +1150,18 @@ describe("fifth review regressions", () => {
     );
     expect(key(s)).toEqual({ anchorAfterChunk: undefined, headAfterChunk: undefined });
   });
+
+  it("refuses to insert text with a placement key that does not fit the offset", () => {
+    const s = makeStore(3);
+    for (let i = 0; i < 3; i++) load(s, i);
+    const { pieceTable } = s.getSnapshot();
+    // Key 2 names chunk 2, which lies after offset 0, so text keyed 2 at
+    // offset 0 would put the keys out of order.
+    expect(() => pieceTableInsert(pieceTable, byteOffset(0), "X", 2)).toThrow(RangeError);
+    // A key that fits is used as given.
+    const fitted = pieceTableInsert(pieceTable, byteOffset(0), "X", -1).state;
+    expect(getValue(fitted).startsWith("X")).toBe(true);
+  });
 });
 
 describe("fifth review regressions: checkpoints", () => {
@@ -1525,6 +1543,57 @@ describe("seventh review regressions", () => {
     // Undo restores the selection the edit came from.
     s.dispatch(DocumentActions.undo());
     expect(s.getSnapshot().selection.ranges).toEqual([{ anchor: 2, head: 7 }]);
+  });
+
+  describe("a range never grows to take in text inserted at its edge", () => {
+    const store = () => createDocumentStore({ content: "hello world", reconcileMode: "none" });
+    const select = (s: Store, anchor: number, head: number) =>
+      s.dispatch(
+        DocumentActions.setSelection([{ anchor: byteOffset(anchor), head: byteOffset(head) }]),
+      );
+    const ranges = (s: Store) => s.getSnapshot().selection.ranges;
+
+    it("keeps text inserted at a range's end outside it, through undo and redo", () => {
+      const s = store();
+      select(s, 0, 5);
+      s.dispatch(DocumentActions.insert(byteOffset(5), "XYZ"));
+      expect(text(s)).toBe("helloXYZ world");
+      expect(ranges(s)).toEqual([{ anchor: 0, head: 5 }]);
+      s.dispatch(DocumentActions.undo());
+      expect(ranges(s)).toEqual([{ anchor: 0, head: 5 }]);
+      s.dispatch(DocumentActions.redo());
+      expect(ranges(s)).toEqual([{ anchor: 0, head: 5 }]);
+    });
+
+    it("does so for a backward range", () => {
+      const s = store();
+      select(s, 5, 0);
+      s.dispatch(DocumentActions.insert(byteOffset(5), "XYZ"));
+      expect(ranges(s)).toEqual([{ anchor: 5, head: 0 }]);
+    });
+
+    it("moves a range's start past text inserted there", () => {
+      const s = store();
+      select(s, 5, 8);
+      s.dispatch(DocumentActions.insert(byteOffset(5), "XYZ"));
+      expect(ranges(s)).toEqual([{ anchor: 8, head: 11 }]);
+    });
+
+    it("moves an end inside the replaced text to before the new text", () => {
+      const s = store();
+      select(s, 0, 7);
+      s.dispatch(DocumentActions.replace(byteOffset(5), byteOffset(9), "_"));
+      expect(text(s)).toBe("hello_ld");
+      expect(ranges(s)).toEqual([{ anchor: 0, head: 5 }]);
+    });
+
+    it("collapses a range inside the replaced text to a caret after the new text", () => {
+      const s = store();
+      select(s, 7, 3);
+      s.dispatch(DocumentActions.replace(byteOffset(2), byteOffset(9), "QQ"));
+      expect(text(s)).toBe("heQQld");
+      expect(ranges(s)).toEqual([{ anchor: 4, head: 4 }]);
+    });
   });
 
   describe("remote inserts at the local cursor", () => {

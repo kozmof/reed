@@ -277,9 +277,14 @@ export function selectionAfterEdit(
  *
  * Offsets before `start` stay. An endpoint at `start` or inside the removed
  * range moves past the inserted text, as a caret does when text is typed at
- * it, so typing over a selection leaves a caret after the new text. Offsets
- * after the removed range shift by the change in length. A moved endpoint
- * keeps its stored key only where `selectionRange` would.
+ * it. Offsets after the removed range shift by the change in length. A moved
+ * endpoint keeps its stored key only where `selectionRange` would.
+ *
+ * A non-empty range never grows to take in text inserted at its edge. Its end
+ * at `start` or inside the removed range stays at `start`, before the inserted
+ * text, so text inserted where a range ends lands outside it. A range that
+ * lies wholly inside the removed range collapses to a caret after the inserted
+ * text, so typing over a selection leaves a caret after the new text.
  *
  * An endpoint that lands just past the edit sits on the byte that was at
  * `end`. That byte can be a continuation byte when `end` was 0, which is a
@@ -308,10 +313,25 @@ export function moveSelectionPastEdit(
     boundary ??= nextBoundary(pieceTable, landing);
     return { offset: byteOffset(boundary), key: boundary === landing ? key : undefined };
   };
+  // The end of a non-empty range: it stays before text inserted at `start`, and
+  // an end inside the removed range moves to `start`. Its key was stored for
+  // its old offset, so it keeps the key only when that offset was `start`.
+  const moveEnd = (offset: ByteOffset, key: number | undefined) =>
+    offset === start
+      ? { offset, key }
+      : offset > start && offset < end
+        ? { offset: byteOffset(start), key: undefined }
+        : move(offset, key);
   let changed = false;
   const ranges = selection.ranges.map((range) => {
-    const anchor = move(range.anchor, range.anchorAfterChunk);
-    const head = move(range.head, range.headAfterChunk);
+    const forward = range.anchor < range.head;
+    const backward = range.anchor > range.head;
+    let anchor = (backward ? moveEnd : move)(range.anchor, range.anchorAfterChunk);
+    let head = (forward ? moveEnd : move)(range.head, range.headAfterChunk);
+    // A range wholly inside the removed range: its start moved past the
+    // inserted text and its end to before it. Collapse it to a caret there.
+    if (forward && head.offset < anchor.offset) head = anchor;
+    if (backward && anchor.offset < head.offset) anchor = head;
     if (anchor.offset === range.anchor && head.offset === range.head) return range;
     changed = true;
     return selectionRange(pieceTable, anchor.offset, head.offset, anchor.key, head.key);

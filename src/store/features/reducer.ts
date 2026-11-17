@@ -21,6 +21,7 @@ import { historyUndo, historyRedo } from "./history.js";
 import {
   hasStoredKeys,
   insertionKey,
+  keepSameSelection,
   selectionAfterEdit,
   selectionRangesWithKeys,
 } from "./history-anchor.js";
@@ -60,7 +61,9 @@ function validateBoundaryPosition(state: DocumentState, position: number, what: 
 // =============================================================================
 
 /**
- * Update selection state.
+ * Update selection state. A selection equal to the current one, stored keys
+ * included, keeps the current object, so an editor that echoes back the
+ * selection an edit already moved to does not report a second change.
  */
 function setSelection(state: DocumentState, ranges: readonly SelectionRange[]): DocumentState {
   if (ranges.length === 0) {
@@ -73,7 +76,7 @@ function setSelection(state: DocumentState, ranges: readonly SelectionRange[]): 
     ),
     primaryIndex: 0,
   });
-  return withState(state, { selection });
+  return withState(state, { selection: keepSameSelection(state.selection, selection) });
 }
 
 // =============================================================================

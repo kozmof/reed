@@ -58,7 +58,11 @@ export interface CheckpointMigration {
 type WireTuple = readonly unknown[];
 
 const isTuple = (value: unknown): value is WireTuple => Array.isArray(value);
-const isInt = (value: unknown): value is number =>
+/**
+ * True when `value` is a safe integer. Restore validates checkpoint integers
+ * with this too, so migration and restore agree on what is malformed.
+ */
+export const isInt = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value);
 
 /**

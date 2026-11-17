@@ -42,7 +42,7 @@ import { resolveAllAttentions } from "../core/attention.js";
 import { encodeBase64 } from "../core/base64.js";
 import { unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
 import { keyFitsAt } from "../core/chunk-anchor.js";
-import { decodedCharLength } from "../core/decoded-metrics.js";
+import { scanPieceLines } from "../core/decoded-metrics.js";
 
 function fail(code: CheckpointErrorCode, message: string): never {
   throw new CheckpointError(code, message);
@@ -220,28 +220,6 @@ function captureAttention(attention: AttentionLayerState): CheckpointAttentionLa
 }
 
 /**
- * Line descriptors for contiguous document bytes. A line ends after LF, after
- * CRLF, or after a CR not followed by LF. Characters are counted the way the
- * line index counts them (see `decodedCharLength`), so restore accepts them.
- */
-function captureNormalizedLines(bytes: Uint8Array): CheckpointLine[] {
-  const lines: CheckpointLine[] = [];
-  let lineStart = 0;
-  const endLine = (end: number) => {
-    lines.push([end - lineStart, decodedCharLength(bytes, lineStart, end)]);
-    lineStart = end;
-  };
-  for (let i = 0; i < bytes.length; i++) {
-    const byte = bytes[i]!;
-    if (byte === 0x0d && bytes[i + 1] === 0x0a) i++;
-    if (byte === 0x0d || byte === 0x0a) endLine(i + 1);
-  }
-  // Every document has a final line, even after a newline.
-  endLine(bytes.length);
-  return lines;
-}
-
-/**
  * Capture normalized wire data directly instead of first constructing a second
  * piece tree and line tree. This keeps peak memory close to the content bytes
  * plus the final checkpoint payload.
@@ -259,7 +237,11 @@ function captureNormalizedCheckpoint(state: DocumentState<"eager">): DocumentChe
   // length and moves every history position recorded against these bytes.
   const total = state.pieceTable.totalLength;
   const bytes = getBytes(state.pieceTable, byteOffset(0), byteOffset(total));
-  const lines = captureNormalizedLines(bytes);
+  // Lines split and counted by the same scan the line index uses, so restore
+  // accepts them.
+  const lines = scanPieceLines(state.pieceTable, 0, total).map(
+    ({ length, charLength }): CheckpointLine => [length, charLength],
+  );
 
   const attentions: CheckpointAttention[] = [];
   if (bytes.length > 0) {
