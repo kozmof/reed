@@ -696,61 +696,45 @@ export function applyInverseChange(state: DocumentState, change: HistoryChange):
 // Unified Edit Pipeline
 // =============================================================================
 
+/** The insert phase of an insert or replace. */
+interface InsertFields {
+  readonly insertText: string;
+  /** Raw bytes to insert in place of `insertText` encoded as UTF-8. */
+  readonly insertBytes?: Uint8Array | undefined;
+  /**
+   * Placement key for the inserted text. Defaults to the gap's key. A key
+   * that does not fit at `position` (see `keyFitsAt`) throws a RangeError.
+   */
+  readonly afterChunk?: number | undefined;
+  /**
+   * True when `afterChunk` was derived from this document, by
+   * `insertionKey` or `placementRuns`, which only return keys that fit.
+   * The check is then skipped (see `pieceTableInsertFitted`). Leave it
+   * unset for a key from anywhere else, such as a recorded history change.
+   */
+  readonly afterChunkFits?: boolean | undefined;
+}
+
+/** The delete phase of a delete or replace. */
+interface DeleteFields {
+  readonly deleteEnd: ByteOffset;
+  readonly deletedText: string;
+  /** The deleted bytes do not encode `deletedText`, so lines are re-read. */
+  readonly deletedTextInexact?: boolean | undefined;
+}
+
 /**
  * An edit operation distinguished by `kind`. Each variant carries only the
  * fields needed for its delete and insert phases.
  */
 export type StructuralEditOperation =
-  | {
-      readonly kind: "insert";
-      readonly position: ByteOffset;
-      readonly insertText: string;
-      /** Raw bytes to insert in place of `insertText` encoded as UTF-8. */
-      readonly insertBytes?: Uint8Array | undefined;
-      /**
-       * Placement key for the inserted text. Defaults to the gap's key. A key
-       * that does not fit at `position` (see `keyFitsAt`) throws a RangeError.
-       */
-      readonly afterChunk?: number | undefined;
-      /**
-       * True when `afterChunk` was derived from this document, by
-       * `insertionKey` or `placementRuns`, which only return keys that fit.
-       * The check is then skipped (see `pieceTableInsertFitted`). Leave it
-       * unset for a key from anywhere else, such as a recorded history change.
-       */
-      readonly afterChunkFits?: boolean | undefined;
-    }
-  | {
-      readonly kind: "delete";
-      readonly position: ByteOffset;
-      readonly deleteEnd: ByteOffset;
-      readonly deletedText: string;
-      /** The deleted bytes do not encode `deletedText`, so lines are re-read. */
-      readonly deletedTextInexact?: boolean | undefined;
-    }
-  | {
+  | ({ readonly kind: "insert"; readonly position: ByteOffset } & InsertFields)
+  | ({ readonly kind: "delete"; readonly position: ByteOffset } & DeleteFields)
+  | ({
       readonly kind: "replace";
       readonly position: ByteOffset;
-      readonly deleteEnd: ByteOffset;
-      readonly deletedText: string;
-      /** The deleted bytes do not encode `deletedText`, so lines are re-read. */
-      readonly deletedTextInexact?: boolean | undefined;
-      readonly insertText: string;
-      /** Raw bytes to insert in place of `insertText` encoded as UTF-8. */
-      readonly insertBytes?: Uint8Array | undefined;
-      /**
-       * Placement key for the inserted text. Defaults to the gap's key. A key
-       * that does not fit at `position` (see `keyFitsAt`) throws a RangeError.
-       */
-      readonly afterChunk?: number | undefined;
-      /**
-       * True when `afterChunk` was derived from this document, by
-       * `insertionKey` or `placementRuns`, which only return keys that fit.
-       * The check is then skipped (see `pieceTableInsertFitted`). Leave it
-       * unset for a key from anywhere else, such as a recorded history change.
-       */
-      readonly afterChunkFits?: boolean | undefined;
-    };
+    } & DeleteFields &
+      InsertFields);
 
 export type EditOperation = StructuralEditOperation & {
   readonly timestamp?: number | undefined;

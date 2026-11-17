@@ -108,7 +108,7 @@ outside the chunk's current span, and one outside it can have a position inside 
 
 - `'pin'` (default) — refuse the eviction. The chunk stays loaded until those entries leave history. Only the history limit bounds how many chunks this keeps loaded, whatever `maxLoadedChunks` a ChunkManager has.
 - `'drop'` — evict and discard those entries, along with every entry that can only be undone or redone after them.
-- `'pin-bounded'` — as `'pin'`, except that `EVICT_CHUNK` with `overLimit: true` evicts as `'drop'` does. ChunkManager first evicts every chunk it can without discarding history, and sends `overLimit` only when it is still above `maxLoadedChunks`.
+- `'pin-bounded'` — as `'pin'`, except that `EVICT_CHUNK` with `overLimit: true` evicts as `'drop'` does. ChunkManager first evicts every chunk it can without discarding history, and sends `overLimit` only when it is still above `maxLoadedChunks`. It then evicts, one at a time, the chunk whose eviction discards the fewest undo and redo entries, the least recently used on a tie.
 
 Positions on a chunk boundary do not block eviction.
 

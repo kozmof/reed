@@ -126,15 +126,24 @@ function assertResourceLimit(actual: number, limit: number, what: string): void 
 /**
  * Check the collections a migration walks before it runs.
  *
- * Migration copies, sorts, and searches raw wire data, so untrusted input must
- * meet the restore limits first. The count here covers only the arrays the
- * migration walks, which validation counts as well, so it never rejects a
- * payload that validation would accept. Validation repeats the full check.
+ * Migration copies, sorts, and searches raw wire data, decodes chunk data, and
+ * encodes change text, so untrusted input must meet the restore limits first.
+ * The checks here cover only what the migration reads, which validation counts
+ * as well, so they never reject a payload that validation would accept:
+ *
+ * - Validation reads every array counted here.
+ * - Validation reads and decodes the chunk strings as they are.
+ * - Migration keeps a change's text, or splits it into runs whose texts are
+ *   together at least as long: a run edge inside a character decodes to a
+ *   replacement character on each side, and keeps the bytes as well.
+ *
+ * Validation repeats the full check.
  */
 function assertMigrationLimits(source: Record<string, unknown>, limits: RestoreLimits): void {
   const length = (value: unknown): number => (Array.isArray(value) ? value.length : 0);
   const section = (value: unknown): Record<string, unknown> =>
     typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+  const units = (value: unknown): number => (typeof value === "string" ? value.length : 0);
   const pieceTable = section(source.pieceTable);
   const history = section(source.history);
   assertResourceLimit(length(pieceTable.pieces), limits.maxPieces, "pieceTable.pieces");
@@ -145,6 +154,15 @@ function assertMigrationLimits(source: Record<string, unknown>, limits: RestoreL
   );
   // The entry count is bounded above, so this walk is too.
   let items = length(pieceTable.pieces) + length(pieceTable.chunks);
+  let codeUnits = 0;
+  let decodedBytes = 0;
+  if (Array.isArray(pieceTable.chunks)) {
+    for (const chunk of pieceTable.chunks) {
+      if (!Array.isArray(chunk) || typeof chunk[1] !== "string") continue;
+      codeUnits += chunk[1].length;
+      decodedBytes += decodedLengthBound(chunk[1]);
+    }
+  }
   for (const entries of [history.undo, history.redo]) {
     if (!Array.isArray(entries)) continue;
     for (const raw of entries) {
@@ -153,9 +171,17 @@ function assertMigrationLimits(source: Record<string, unknown>, limits: RestoreL
         length(entry.changes) +
         length(section(entry.selectionBefore).ranges) +
         length(section(entry.selectionAfter).ranges);
+      if (!Array.isArray(entry.changes)) continue;
+      // The texts a version 1 change holds: inserted text, then a replace's old text.
+      for (const change of entry.changes) {
+        if (!Array.isArray(change)) continue;
+        codeUnits += units(change[2]) + (change[0] === "r" ? units(change[3]) : 0);
+      }
     }
   }
   assertResourceLimit(items, limits.maxCollectionItems, "checkpoint collection items");
+  assertResourceLimit(codeUnits, limits.maxStringCodeUnits, "checkpoint string code units");
+  assertResourceLimit(decodedBytes, limits.maxBufferBytes, "pieceTable.chunks decoded bytes");
 }
 
 function createRestoreBudget(limits: RestoreLimits): RestoreBudget {
@@ -216,23 +242,25 @@ function readBoolean(value: unknown, what: string): boolean {
   return value;
 }
 
-/** Validate a safe integer no smaller than `min`. */
-function readInteger(value: unknown, what: string, min: number = Number.MIN_SAFE_INTEGER): number {
+/** Validate a safe integer no smaller than `min`. `expected` words the error. */
+function readInteger(
+  value: unknown,
+  what: string,
+  min: number = Number.MIN_SAFE_INTEGER,
+  expected = `a safe integer of at least ${min}`,
+): number {
   if (!isInt(value) || value < min) {
-    fail("MALFORMED", `${what} must be a safe integer of at least ${min}`);
+    fail("MALFORMED", `${what} must be ${expected}`);
   }
   return value;
 }
 
 /**
- * Validate a non-negative safe integer for an offset, length, or count. It is
- * `readInteger` with a minimum of 0, worded as the spec's error messages are.
+ * Validate a non-negative safe integer for an offset, length, or count,
+ * worded as the spec's error messages are.
  */
 function readCount(value: unknown, what: string): number {
-  if (!isInt(value) || value < 0) {
-    fail("MALFORMED", `${what} must be a non-negative safe integer`);
-  }
-  return value;
+  return readInteger(value, what, 0, "a non-negative safe integer");
 }
 
 /** Read an optional chunk placement key (>= -1), defaulting to -1. */
@@ -268,12 +296,18 @@ function readOptionalString(
   return value === undefined ? undefined : readString(value, what, budget);
 }
 
+/**
+ * The decoded length of `base64`, checked against limits before decoding.
+ * decodeBase64 rejects a length that is not a multiple of four, but the limit
+ * is checked first, so that case rounds up.
+ */
+function decodedLengthBound(base64: string): number {
+  return base64.length % 4 === 0 ? base64DecodedLength(base64) : Math.ceil(base64.length / 4) * 3;
+}
+
 function readBytes(value: unknown, what: string, budget: RestoreBudget): Uint8Array {
   const base64 = readString(value, what, budget);
-  // decodeBase64 rejects a length that is not a multiple of four, but the
-  // limit is checked first, so round that case up.
-  const decodedLength =
-    base64.length % 4 === 0 ? base64DecodedLength(base64) : Math.ceil(base64.length / 4) * 3;
+  const decodedLength = decodedLengthBound(base64);
   assertResourceLimit(decodedLength, budget.remainingBufferBytes, `${what} decoded bytes`);
   try {
     const bytes = decodeBase64(base64);
@@ -751,8 +785,8 @@ function restoreLineIndex(
 
 /**
  * Read a selection's ranges and primary index. `readRange` validates one range
- * tuple; the empty-selection and primary-index rules are shared by live and
- * history selections.
+ * tuple of 2 or 4 elements; the tuple length, empty-selection and
+ * primary-index rules are shared by live and history selections.
  */
 function restoreSelectionShape<R>(
   raw: unknown,
@@ -769,7 +803,16 @@ function restoreSelectionShape<R>(
   const ranges: R[] = [];
   for (let i = 0; i < rawRanges.length; i++) {
     const rangeWhat = `${what}.ranges[${i}]`;
-    ranges.push(Object.freeze(readRange(readArray(rawRanges[i], rangeWhat, budget), rangeWhat)));
+    const tuple = readArray(rawRanges[i], rangeWhat, budget);
+    // Keys come as a pair or not at all: a lone anchor key would leave the
+    // head unanchored.
+    if (tuple.length !== 2 && tuple.length !== 4) {
+      fail(
+        "MALFORMED",
+        `${rangeWhat} has ${tuple.length} elements: expected [anchor, head] or [anchor, head, anchorAfterChunk, headAfterChunk]`,
+      );
+    }
+    ranges.push(Object.freeze(readRange(tuple, rangeWhat)));
   }
 
   const primaryIndex = readCount(source.primaryIndex, `${what}.primaryIndex`);
@@ -796,12 +839,6 @@ function restoreSelection(
   const maxOffset = pieceTable.totalLength;
   return Object.freeze(
     restoreSelectionShape(raw, what, budget, (tuple, rangeWhat): SelectionRange => {
-      if (tuple.length !== 2 && tuple.length !== 4) {
-        fail(
-          "MALFORMED",
-          `${rangeWhat} has ${tuple.length} elements: expected [anchor, head] or [anchor, head, anchorAfterChunk, headAfterChunk]`,
-        );
-      }
       const anchor = readCount(tuple[0], `${rangeWhat}[0]`);
       const head = readCount(tuple[1], `${rangeWhat}[1]`);
       if (anchor > maxOffset || head > maxOffset) {
@@ -946,14 +983,6 @@ function restoreHistorySelection(
 ): HistorySelectionState {
   return Object.freeze(
     restoreSelectionShape(raw, what, budget, (tuple, rangeWhat): HistorySelectionRange => {
-      // Keys come as a pair or not at all: a lone anchor key would leave the
-      // head unanchored.
-      if (tuple.length !== 2 && tuple.length !== 4) {
-        fail(
-          "MALFORMED",
-          `${rangeWhat} has ${tuple.length} elements: expected [anchor, head] or [anchor, head, anchorAfterChunk, headAfterChunk]`,
-        );
-      }
       const read = (index: 0 | 1) =>
         readAnchor(
           tuple[index],

@@ -27,6 +27,13 @@ import { avlHeight, avlPut, avlRemove } from "./persistent-avl.js";
 /** Key for positions before every chunk, and for every position without chunking. */
 export const NO_CHUNK = -1;
 
+/**
+ * The parts of a piece table that placement keys are read from: the piece
+ * tree and which chunks have ever loaded. It holds no text, so keeping it
+ * does not keep chunk bytes alive.
+ */
+export type KeyLayout = Pick<PieceTableState, "root" | "totalLength" | "nextExpectedChunk">;
+
 /** Placement key of the bytes in `piece` (constant across the piece). */
 export function pieceKey(piece: PieceNode): number {
   switch (piece.bufferType) {
@@ -128,7 +135,7 @@ export function keySpan(root: PieceNode | null, key: number): { start: number; e
  * This is the one rule for whether a stored key still applies at an offset.
  * Inserted text, selection endpoints, and history anchors all check keys here.
  */
-export function keyFitsAt(pieceTable: PieceTableState, offset: number, key: number): boolean {
+export function keyFitsAt(pieceTable: KeyLayout, offset: number, key: number): boolean {
   // Before any chunk loads, NO_CHUNK is the only key and fits everywhere.
   if (pieceTable.nextExpectedChunk === 0) {
     return key === NO_CHUNK && offset >= 0 && offset <= pieceTable.totalLength;
@@ -146,7 +153,7 @@ export function keyFitsAt(pieceTable: PieceTableState, offset: number, key: numb
  * Before any chunk loads, every key is NO_CHUNK. O(log n).
  */
 export function placementKey(
-  pieceTable: PieceTableState,
+  pieceTable: KeyLayout,
   offset: number,
   stored: number | undefined,
   side: GapSide,
@@ -267,6 +274,14 @@ export function deriveLoadedChunks(
 export function loadedLengthAtOrBelow(pieceTable: PieceTableState, key: number): number {
   if (key < 0 || pieceTable.chunkMap.size === 0) return 0;
   return loadedSumAtOrBelow(loadedTree(pieceTable.chunkMap), key);
+}
+
+/**
+ * The loaded-chunk lengths of `pieceTable`, for `loadedSumAtOrBelow`. The
+ * tree holds only lengths, so keeping it does not keep chunk bytes alive.
+ */
+export function loadedChunkLengths(pieceTable: PieceTableState): LoadedNode | null {
+  return pieceTable.chunkMap.size === 0 ? null : loadedTree(pieceTable.chunkMap);
 }
 
 // =============================================================================

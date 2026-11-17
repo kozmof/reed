@@ -15,6 +15,7 @@ import type { ReedLogger } from "../../types/state.js";
 import type { DocumentStore } from "../../types/store.js";
 import { isChunkByteLengthValid } from "../core/piece-table.js";
 import { DocumentActions } from "./actions.js";
+import { evictionHistoryLoss } from "./chunk-actions.js";
 
 // =============================================================================
 // Public interfaces
@@ -239,12 +240,11 @@ export function createChunkManager(
     if (disposed) return;
     let loadedCount = store.getSnapshot().pieceTable.chunkMap.size;
 
-    // Evict least recently used chunks until within the limit. With
-    // `overLimit`, the "pin-bounded" history policy discards history that
-    // points inside a chunk instead of refusing to evict it.
-    const evictPass = (overLimit: boolean) => {
+    // Least recently used first: chunks the manager may evict and that are
+    // still in memory. Drops chunks that another path has evicted.
+    const candidates = (): number[] => {
+      const found: number[] = [];
       for (const candidate of lruOrder) {
-        if (loadedCount <= maxLoadedChunks) return;
         // Skip pinned chunks.
         if (activeChunks.has(candidate)) continue;
         // Keep the just-loaded chunk resident for the ensureLoaded()/prefetch caller.
@@ -260,26 +260,52 @@ export function createChunkManager(
           lruRemove(candidate);
           continue;
         }
-
-        store.dispatch(DocumentActions.evictChunk(candidate, overLimit || undefined));
-
-        if (!store.getSnapshot().pieceTable.chunkMap.has(candidate)) {
-          // Eviction succeeded.
-          lruRemove(candidate);
-          loadedCount--;
-        }
-        // If eviction was refused (user edits overlap the chunk's byte range, or
-        // history points inside it), leave the chunk and try the next LRU candidate.
+        found.push(candidate);
       }
+      return found;
     };
-    evictPass(false);
+    const evict = (candidate: number, overLimit: boolean): boolean => {
+      if (!store.getSnapshot().pieceTable.chunkMap.has(candidate)) {
+        lruRemove(candidate);
+        return false;
+      }
+      store.dispatch(DocumentActions.evictChunk(candidate, overLimit || undefined));
+      if (store.getSnapshot().pieceTable.chunkMap.has(candidate)) return false;
+      lruRemove(candidate);
+      loadedCount = store.getSnapshot().pieceTable.chunkMap.size;
+      return true;
+    };
+
+    // Evict least recently used chunks until within the limit. A refused
+    // eviction (user edits overlap the chunk's byte range, or history points
+    // inside it) leaves the chunk, and the next candidate is tried.
+    for (const candidate of candidates()) {
+      if (loadedCount <= maxLoadedChunks || disposed) break;
+      evict(candidate, false);
+    }
+
     // Discard history only when evicting every other candidate was not enough.
-    if (
-      loadedCount > maxLoadedChunks &&
-      !disposed &&
-      store.getSnapshot().history.evictionPolicy === "pin-bounded"
-    ) {
-      evictPass(true);
+    // The "pin-bounded" policy then evicts with `overLimit`, which discards the
+    // history that points inside the chunk. Evicting the chunk that discards
+    // the fewest entries each time keeps as much undo as the limit allows; an
+    // eviction can shorten history, so the losses are measured again after it.
+    if (store.getSnapshot().history.evictionPolicy === "pin-bounded") {
+      const refused = new Set<number>();
+      while (loadedCount > maxLoadedChunks && !disposed) {
+        let best: number | undefined;
+        let bestLoss = Infinity;
+        for (const candidate of candidates()) {
+          if (refused.has(candidate)) continue;
+          const loss = evictionHistoryLoss(store.getSnapshot(), candidate);
+          // Ties go to the least recently used.
+          if (loss !== null && loss < bestLoss) {
+            best = candidate;
+            bestLoss = loss;
+          }
+        }
+        if (best === undefined) break;
+        if (!evict(best, true)) refused.add(best);
+      }
     }
 
     if (loadedCount > maxLoadedChunks) {

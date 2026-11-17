@@ -25,7 +25,11 @@ import {
 } from "../core/piece-table.js";
 import { hasAttentionForPiece } from "../core/attention.js";
 import { deriveLoadedChunks, pieceKey } from "../core/chunk-anchor.js";
-import { carrySelectionAcrossChunks, historyForEviction } from "./history-anchor.js";
+import {
+  carrySelectionAcrossChunks,
+  historyForEviction,
+  historyLossForEviction,
+} from "./history-anchor.js";
 import { repairChunkLines } from "../core/chunk-line-repair.js";
 import { summarizeBytes } from "../core/decoded-metrics.js";
 import { PersistentMap, PersistentSet } from "../core/persistent-map.js";
@@ -316,16 +320,40 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
   });
 }
 
-export function evictChunk(state: DocumentState, action: EvictChunkAction): DocumentState {
-  const { chunkIndex } = action;
+/**
+ * The resident range of `chunkIndex` when only history could keep it from
+ * being evicted, else null: it is not loaded, an attention is anchored to it,
+ * or edits have split or touched it.
+ */
+function evictableRange(
+  state: DocumentState,
+  chunkIndex: number,
+): { start: ByteOffset; end: ByteOffset } | null {
   const chunkBytes = state.pieceTable.chunkMap.get(chunkIndex);
-  if (chunkBytes === undefined) return state;
-  if (hasAttentionAnchoredToChunk(state, chunkIndex)) return state;
-
+  if (chunkBytes === undefined) return null;
+  if (hasAttentionAnchoredToChunk(state, chunkIndex)) return null;
   const range = findPristineChunkRange(state.pieceTable.root, chunkIndex, chunkBytes.length);
   if (range === null || hasAddPieceTouchingRange(state.pieceTable.root, range.start, range.end)) {
-    return state;
+    return null;
   }
+  return range;
+}
+
+/**
+ * How many undo and redo entries EVICT_CHUNK with `overLimit` discards to
+ * evict `chunkIndex` under the `"pin-bounded"` policy, or null when it cannot
+ * evict the chunk whatever happens to history (see `evictChunk`).
+ */
+export function evictionHistoryLoss(state: DocumentState, chunkIndex: number): number | null {
+  const range = evictableRange(state, chunkIndex);
+  if (range === null) return null;
+  return historyLossForEviction(state.pieceTable, state.history, chunkIndex, range.start);
+}
+
+export function evictChunk(state: DocumentState, action: EvictChunkAction): DocumentState {
+  const { chunkIndex } = action;
+  const range = evictableRange(state, chunkIndex);
+  if (range === null) return state;
 
   // History positions survive eviction except those inside the chunk.
   const history = historyForEviction(

@@ -162,23 +162,68 @@ function sharedSuffix(a: Uint8Array, aEnd: number, b: Uint8Array, bEnd: number, 
 }
 
 /**
+ * The Knuth-Morris-Pratt failure table of `needle`: for each prefix, the
+ * length of its longest proper prefix that is also its suffix. O(n).
+ */
+function failureTable(needle: Uint8Array): Int32Array {
+  const table = new Int32Array(needle.length);
+  for (let i = 1, k = 0; i < needle.length; i++) {
+    while (k > 0 && needle[i] !== needle[k]) k = table[k - 1]!;
+    if (needle[i] === needle[k]) k++;
+    table[i] = k;
+  }
+  return table;
+}
+
+/**
  * Where `needle` lies in `haystack[from, to)`: the first place, or with
- * `last` the last place, or -1 when it is not there. A plain scan: it runs
- * once per migrated change, over at most one chunk.
+ * `last` the last place, or -1 when it is not there. `table` is the
+ * needle's `failureTable`. O(to - from), whatever the bytes.
  */
 function indexIn(
   haystack: Uint8Array,
   needle: Uint8Array,
+  table: Int32Array,
   from: number,
   to: number,
   last: boolean,
 ) {
   const n = needle.length;
-  for (let k = 0; k <= to - from - n; k++) {
-    const at = last ? to - n - k : from + k;
-    if (sharedPrefix(needle, 0, haystack, at, n) === n) return at;
+  let found = -1;
+  for (let i = from, k = 0; i < to; i++) {
+    while (k > 0 && haystack[i] !== needle[k]) k = table[k - 1]!;
+    if (haystack[i] === needle[k]) k++;
+    if (k === n) {
+      found = i + 1 - n;
+      if (!last) return found;
+      k = table[k - 1]!;
+    }
   }
-  return -1;
+  return found;
+}
+
+/**
+ * Work the searches for where removed bytes came from may still do, in bytes
+ * scanned. The bytes missing at a gap can be most of the loaded chunks, and
+ * every change of the history searches them again, so without a bound a
+ * version 1 payload could make migration take time quadratic in its size.
+ * Once spent, removed bytes are no longer looked for and take the key around
+ * them (see `removedSources`), which leaves the migrated history valid.
+ */
+interface SearchBudget {
+  remaining: number;
+}
+
+/** Work allowed per byte of chunk data and removed text in the payload. */
+const SEARCH_WORK_PER_BYTE = 16;
+/** Work allowed whatever the payload's size. */
+const SEARCH_WORK_FLOOR = 1 << 20;
+
+/** Spend `cost` from `budget`, or nothing and return false when it is not there. */
+function spend(budget: SearchBudget, cost: number): boolean {
+  if (cost > budget.remaining) return false;
+  budget.remaining -= cost;
+  return true;
 }
 
 /**
@@ -203,6 +248,8 @@ function runTexts(text: unknown, runs: readonly KeyRun[]) {
 interface LoadedChunkBytes {
   readonly indices: readonly number[];
   bytes(chunk: number): Uint8Array | undefined;
+  /** Shared by every search among them, for the whole migration. */
+  readonly budget: SearchBudget;
 }
 
 /** Bytes [start, start + length) of chunk `chunk`. */
@@ -245,8 +292,9 @@ function lowerBound(values: readonly number[], min: number): number {
  * at it after the start of its chunk, lost bytes there. Two pieces of one
  * chunk lost only the bytes between them. A loaded chunk whose key fits the
  * gap and that neither piece belongs to can have lost every byte, so all of
- * its bytes are candidates too. `inside` is the key of a neighbor that lost
- * bytes, which removed bytes found nowhere most likely came from.
+ * its bytes are candidates too, while `chunks.budget` lasts. `inside` is the
+ * key of a neighbor that lost bytes, which removed bytes found nowhere most
+ * likely came from.
  */
 function lostAt(
   doc: PieceTableState,
@@ -297,6 +345,8 @@ function lostAt(
   const high = after === null ? Infinity : pieceKey(after.node);
   const { indices } = chunks;
   for (let i = lowerBound(indices, low + 1); i < indices.length && indices[i]! - 1 <= high; i++) {
+    // Each candidate costs a step here and a scan of its bytes later.
+    if (!spend(chunks.budget, 1)) break;
     const chunk = indices[i]!;
     if (chunk === leftNode?.chunkIndex || chunk === rightNode?.chunkIndex) continue;
     const bytes = chunks.bytes(chunk);
@@ -334,6 +384,9 @@ interface RemovedPart {
  * the next missing byte equal to it, in order. A byte found nowhere takes the
  * key around it, which `inside`, the key of a neighbor that lost bytes, most
  * likely is.
+ *
+ * Both searches take time linear in the removed and missing bytes, and are
+ * skipped, leaving the bytes found nowhere, once `chunks.budget` is spent.
  */
 function removedSources(
   doc: PieceTableState,
@@ -386,28 +439,80 @@ function removedSources(
   }
   if (end <= start) return { parts: [...tail, ...head], inside };
   const rest = removed.subarray(start, end);
+  const unmatched = (): RemovedPart[] => [
+    ...tail,
+    { length: rest.length, run: null, key: undefined },
+    ...head,
+  ];
   // Missing bytes of `lost[k]` not taken by the tail or head.
   const lowAt = (k: number) => (k === first ? firstAt : lost[k]!.from);
-  const highAt = (k: number) => (k === last ? lastAt : lost[k]!.to);
+  const highAt = (k: number) => Math.max(lowAt(k), k === last ? lastAt : lost[k]!.to);
+  let missing = 0;
+  for (let k = first; k <= last; k++) missing += highAt(k) - lowAt(k);
+  // Each search below scans the missing bytes once, and `rest` once.
+  if (!spend(chunks.budget, 2 * (missing + rest.length))) return { parts: unmatched(), inside };
+  const table = failureTable(rest);
   for (let k = first; k <= last; k++) {
     const { chunk, bytes, fromEnd } = lost[k]!;
-    const at = indexIn(bytes, rest, lowAt(k), highAt(k), fromEnd);
+    const at = indexIn(bytes, rest, table, lowAt(k), highAt(k), fromEnd);
     if (at >= 0) return { parts: [...tail, part(chunk, at, rest.length), ...head], inside };
   }
+  if (missing === 0) return { parts: unmatched(), inside };
+  // The missing bytes as one sequence, in document order. `segments[s]` is
+  // where the bytes of `lost[first + s]` start in it. `where` lists the
+  // positions of each byte value in ascending order, the positions of value
+  // `v` at [`starts[v]`, `starts[v + 1]`).
+  const segments = new Float64Array(last - first + 1);
+  const starts = new Float64Array(257);
+  for (let k = first, total = 0; k <= last; k++) {
+    segments[k - first] = total;
+    total += highAt(k) - lowAt(k);
+    const { bytes } = lost[k]!;
+    for (let i = lowAt(k); i < highAt(k); i++) starts[bytes[i]! + 1] = starts[bytes[i]! + 1]! + 1;
+  }
+  for (let v = 1; v <= 256; v++) starts[v] = starts[v]! + starts[v - 1]!;
+  const where = new Float64Array(missing);
+  const filled = starts.slice(0, 256);
+  for (let k = first; k <= last; k++) {
+    const { bytes } = lost[k]!;
+    const base = segments[k - first]! - lowAt(k);
+    for (let i = lowAt(k); i < highAt(k); i++) {
+      const byte = bytes[i]!;
+      where[filled[byte]!] = base + i;
+      filled[byte] = filled[byte]! + 1;
+    }
+  }
+  /**
+   * Index into `lost` of the missing byte at `position` in the sequence: the
+   * last segment starting at or before it, as an empty segment before it
+   * shares its start.
+   */
+  const segmentOf = (position: number): number => {
+    let low = 0;
+    let high = segments.length - 1;
+    while (low < high) {
+      const mid = (low + high + 1) >>> 1;
+      if (segments[mid]! <= position) low = mid;
+      else high = mid - 1;
+    }
+    return first + low;
+  };
+  // Each byte takes the key of the next missing byte equal to it, at or after
+  // `next`. The positions `next` passes are never needed again, so `cursor[v]`
+  // skips them for value `v` once, which keeps the whole walk linear.
   const middle: RemovedPart[] = [];
-  let k = first;
-  let at = k <= last ? lowAt(k) : 0;
+  const cursor = starts.slice(0, 256);
+  let next = 0;
   for (const byte of rest) {
     let key: number | undefined;
-    // The next missing byte equal to `byte`, at or after `lost[k]` at `at`.
-    for (let j = k, from = at; j <= last; j++, from = j <= last ? lowAt(j) : 0) {
-      const found = lost[j]!.bytes.subarray(0, highAt(j)).indexOf(byte, from);
-      if (found >= 0) {
-        key = lost[j]!.chunk - 1;
-        k = j;
-        at = found + 1;
-        break;
-      }
+    const stop = starts[byte + 1]!;
+    let at = cursor[byte]!;
+    while (at < stop && where[at]! < next) at++;
+    cursor[byte] = at;
+    if (at < stop) {
+      const position = where[at]!;
+      key = lost[segmentOf(position)]!.chunk - 1;
+      next = position + 1;
     }
     const previous = middle[middle.length - 1];
     if (previous !== undefined && previous.key === key) {
@@ -558,9 +663,33 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
     }
     return decoded.get(chunk);
   };
+  // Undo gives back the removed text of each change, so the searches for
+  // where it came from may scan in all a multiple of the chunk data and that
+  // text.
+  let inputBytes = 0;
+  for (const [, length] of chunkLengths) inputBytes += length;
+  const rawHistory = data.history;
+  const undo =
+    typeof rawHistory === "object" && rawHistory !== null
+      ? (rawHistory as Record<string, unknown>).undo
+      : undefined;
+  if (Array.isArray(undo)) {
+    for (const entry of undo) {
+      const changes = (entry as Record<string, unknown> | null)?.changes;
+      if (!Array.isArray(changes)) continue;
+      for (const change of changes) {
+        if (!isTuple(change)) continue;
+        const removedText = change[0] === "r" ? change[3] : change[0] === "d" ? change[2] : "";
+        if (typeof removedText === "string") inputBytes += removedText.length;
+      }
+    }
+  }
   const chunks: LoadedChunkBytes = {
     indices: [...chunkBase64.keys()].sort((a, b) => a - b),
     bytes,
+    budget: {
+      remaining: SEARCH_WORK_PER_BYTE * inputBytes + SEARCH_WORK_FLOOR,
+    },
   };
 
   // Without chunk pieces or loaded chunks, every key is -1. A loaded chunk
@@ -571,7 +700,9 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
   const chunkOf = pieces.map((piece) => (piece[1] === "c" && isInt(piece[4]) ? piece[4] : null));
   // Chunk index of the nearest chunk piece after each piece, filled in one
   // reverse pass so each add piece finds it in O(1).
-  const nextChunkAfter: (number | null)[] = Array.from({ length: pieces.length });
+  const nextChunkAfter: (number | null)[] = Array.from({
+    length: pieces.length,
+  });
   for (let i = pieces.length - 1, next: number | null = null; i >= 0; i--) {
     nextChunkAfter[i] = next;
     next = chunkOf[i] ?? next;
@@ -691,9 +822,19 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
     const length = (value: unknown) => utf8ByteLength(text(value));
     switch (raw[0]) {
       case "i":
-        return { offset: raw[1], removed: 0, inserted: length(raw[2]), removedText: "" };
+        return {
+          offset: raw[1],
+          removed: 0,
+          inserted: length(raw[2]),
+          removedText: "",
+        };
       case "d":
-        return { offset: raw[1], removed: length(raw[2]), inserted: 0, removedText: text(raw[2]) };
+        return {
+          offset: raw[1],
+          removed: length(raw[2]),
+          inserted: 0,
+          removedText: text(raw[2]),
+        };
       case "r":
         return {
           offset: raw[1],
@@ -908,7 +1049,10 @@ export function migrateCheckpointData(
   fromVersion: number,
   target: number = CHECKPOINT_VERSION,
   registry: readonly CheckpointMigration[] = CHECKPOINT_MIGRATIONS,
-): { readonly data: CheckpointWireData; readonly applied: readonly CheckpointMigration[] } {
+): {
+  readonly data: CheckpointWireData;
+  readonly applied: readonly CheckpointMigration[];
+} {
   const path = migrationPath(fromVersion, target, registry);
 
   if (path === null) {

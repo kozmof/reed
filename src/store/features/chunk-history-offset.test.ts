@@ -36,8 +36,8 @@ import type {
   HistoryEvictionPolicy,
   HistoryState,
 } from "../../types/state.js";
-import { pstackPush } from "../../types/state.js";
-import { anchoredCursor, historyForEviction } from "./history-anchor.js";
+import { pstackPeek, pstackPush } from "../../types/state.js";
+import { anchorSelection, anchoredCursor, historyForEviction } from "./history-anchor.js";
 import { applyUntrackedEdit, makeDeleteChange, makeInsertChange } from "./edit.js";
 import type { DocumentAction } from "../../types/actions.js";
 import { validateAction } from "../../types/actions.js";
@@ -2442,5 +2442,27 @@ describe("twelfth review regressions: remote edits move the selection", () => {
     s.dispatch(remote({ type: "delete", start: byteOffset(3), length: byteLength(4) }));
     expect(text(s)).toBe("012789");
     expect(cursor(s)).toEqual({ anchor: 3, head: 3 });
+  });
+});
+
+describe("deferred anchoring of the selection an edit leaves", () => {
+  it("anchors in the edited document even when read after an eviction", () => {
+    const s = makeStore(3);
+    for (let i = 0; i < 3; i++) load(s, i);
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(18), head: byteOffset(18) }]));
+    s.dispatch(DocumentActions.insert(byteOffset(18), "Q")); // chunk 2
+    const edited = s.getSnapshot();
+    const expected = anchorSelection(edited.pieceTable, edited.selection);
+    // Chunk 0 holds no history, so it evicts, which shifts every resident
+    // offset after it.
+    s.dispatch(DocumentActions.evictChunk(0));
+    expect(s.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
+
+    const entry = pstackPeek(s.getSnapshot().history.undoStack)!;
+    expect(entry.selectionAfter).toEqual(expected);
+    s.dispatch(DocumentActions.undo());
+    s.dispatch(DocumentActions.redo());
+    // The caret after "Q", now that chunk 0's 8 bytes are gone.
+    expect(s.getSnapshot().selection.ranges[0]).toMatchObject({ anchor: 11, head: 11 });
   });
 });

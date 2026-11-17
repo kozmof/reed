@@ -9,6 +9,8 @@ import { createDocumentStore } from "./store.js";
 import { DocumentActions } from "./actions.js";
 import { byteOffset } from "../../types/branded.js";
 import type { DocumentStore } from "../../types/store.js";
+import { getRedoCount } from "./history.js";
+import { getValue } from "../core/piece-table.js";
 
 const CHUNK_SIZE = 8;
 
@@ -321,6 +323,29 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     expect([...snap.pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
     expect(snap.history.redoStack).toBeNull();
     expect(warn).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+
+  it("drops the fewest history entries, not the least recently used chunk's", async () => {
+    const { store, manager } = setup("pin-bounded");
+    await manager.ensureLoaded(0);
+    await manager.ensureLoaded(1);
+    // Type inside chunk 0, then inside chunk 1, and undo both. The next redo
+    // points inside chunk 0, so evicting it drops both redo entries; evicting
+    // chunk 1 drops only the later one.
+    store.dispatch(DocumentActions.insert(byteOffset(2), "X"));
+    store.dispatch(DocumentActions.insert(byteOffset(11), "Y"));
+    store.dispatch(DocumentActions.undo());
+    store.dispatch(DocumentActions.undo());
+    expect(getRedoCount(store.getSnapshot())).toBe(2);
+    // Chunk 0 is the least recently used.
+    await manager.ensureLoaded(2);
+
+    const snap = store.getSnapshot();
+    expect([...snap.pieceTable.chunkMap.keys()].sort()).toEqual([0, 2]);
+    expect(getRedoCount(snap)).toBe(1);
+    store.dispatch(DocumentActions.redo());
+    expect(getValue(store.getSnapshot().pieceTable).startsWith("aaXaaaaa\n")).toBe(true);
     manager.dispose();
   });
 

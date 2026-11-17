@@ -21,12 +21,14 @@ import type { NonEmptyReadonlyArray } from "../../types/utils.js";
 import { pstackSize, pstackTrimToSize } from "../../types/state.js";
 import type { ByteOffset } from "../../types/branded.js";
 import { byteOffset } from "../../types/branded.js";
-import type { GapSide } from "../core/chunk-anchor.js";
+import type { GapSide, KeyLayout, LoadedNode } from "../core/chunk-anchor.js";
 import {
   NO_CHUNK,
   gapKey,
   keyFitsAt,
   keySpan,
+  loadedChunkLengths,
+  loadedSumAtOrBelow,
   placementKey,
   toAnchoredOffset,
   toResidentOffset,
@@ -345,22 +347,22 @@ function anchorUnchunked(selection: SelectionState): HistorySelectionState {
 }
 
 /**
- * Anchor a live selection. Each endpoint takes its stored key, or the key its
- * side of the gap gives (see `endpointSides`).
+ * Anchor `selection` in a chunked document, given its key layout and its
+ * loaded-chunk lengths (see `anchorSelection`).
  */
-export function anchorSelection(
-  pieceTable: PieceTableState,
+function anchorChunked(
+  layout: KeyLayout,
+  loaded: LoadedNode | null,
   selection: SelectionState,
 ): HistorySelectionState {
-  if (pieceTable.nextExpectedChunk === 0) return anchorUnchunked(selection);
   return freezeSelection(
     selection.ranges.map((range): HistorySelectionRange => {
       const [anchorSide, headSide] = endpointSides(range.anchor, range.head);
-      const anchorKey = placementKey(pieceTable, range.anchor, range.anchorAfterChunk, anchorSide);
-      const headKey = placementKey(pieceTable, range.head, range.headAfterChunk, headSide);
+      const anchorKey = placementKey(layout, range.anchor, range.anchorAfterChunk, anchorSide);
+      const headKey = placementKey(layout, range.head, range.headAfterChunk, headSide);
       return Object.freeze({
-        anchor: toAnchoredOffset(pieceTable, anchorKey, range.anchor),
-        head: toAnchoredOffset(pieceTable, headKey, range.head),
+        anchor: range.anchor - loadedSumAtOrBelow(loaded, anchorKey),
+        head: range.head - loadedSumAtOrBelow(loaded, headKey),
         anchorAfterChunk: anchorKey,
         headAfterChunk: headKey,
       });
@@ -370,20 +372,36 @@ export function anchorSelection(
 }
 
 /**
- * `selection` anchored in `pieceTable`, as a function that returns it.
+ * Anchor a live selection. Each endpoint takes its stored key, or the key its
+ * side of the gap gives (see `endpointSides`).
+ */
+export function anchorSelection(
+  pieceTable: PieceTableState,
+  selection: SelectionState,
+): HistorySelectionState {
+  if (pieceTable.nextExpectedChunk === 0) return anchorUnchunked(selection);
+  return anchorChunked(pieceTable, loadedChunkLengths(pieceTable), selection);
+}
+
+/**
+ * `selection` anchored in `pieceTable`, as a function that derives it on the
+ * first call: a history entry that the next keystroke coalesces away never
+ * derives it.
  *
- * Without chunks the anchored form depends only on the selection, so it is
- * derived on the first call: a history entry that the next keystroke
- * coalesces away never derives it. With chunks it depends on `pieceTable`,
- * so it is derived now, and the function does not keep the document alive.
+ * Without chunks the anchored form depends only on the selection. With chunks
+ * it depends on the piece tree and the loaded-chunk lengths, which the
+ * function keeps instead of the document: neither holds chunk bytes, so an
+ * evicted chunk's bytes are not kept alive by history.
  */
 export function deferAnchorSelection(
   pieceTable: PieceTableState,
   selection: SelectionState,
 ): () => HistorySelectionState {
   if (pieceTable.nextExpectedChunk === 0) return () => anchorUnchunked(selection);
-  const anchored = anchorSelection(pieceTable, selection);
-  return () => anchored;
+  const { root, totalLength, nextExpectedChunk } = pieceTable;
+  const layout: KeyLayout = { root, totalLength, nextExpectedChunk };
+  const loaded = loadedChunkLengths(pieceTable);
+  return () => anchorChunked(layout, loaded, selection);
 }
 
 /** A history selection holding one cursor at anchored `position` with key `key`. */
@@ -776,9 +794,11 @@ export function historyForEviction(
   overLimit = false,
 ): HistoryState | null {
   if (history.undoStack === null && history.redoStack === null) return history;
-  const key = chunkIndex - 1;
-  const anchoredStart = toAnchoredOffset(pieceTable, key, start);
-  const { undoCut, redoCut } = evictionCuts(history, chunkIndex, anchoredStart);
+  const { undoCut, redoCut } = evictionCuts(
+    history,
+    chunkIndex,
+    toAnchoredOffset(pieceTable, chunkIndex - 1, start),
+  );
   if (undoCut < 0 && redoCut < 0) return history;
   const policy = history.evictionPolicy;
   if (policy === "pin" || (policy === "pin-bounded" && !overLimit)) return null;
@@ -790,4 +810,25 @@ export function historyForEviction(
     undoStack: keepNewerThan(history.undoStack, undoCut),
     redoStack: keepNewerThan(history.redoStack, redoCut),
   });
+}
+
+/**
+ * How many undo and redo entries evicting `chunkIndex`, whose first resident
+ * byte is at `start`, discards when history may be dropped: the entries
+ * `historyForEviction` leaves out, `0` when nothing points inside the chunk.
+ */
+export function historyLossForEviction(
+  pieceTable: PieceTableState,
+  history: HistoryState,
+  chunkIndex: number,
+  start: number,
+): number {
+  if (history.undoStack === null && history.redoStack === null) return 0;
+  const { undoCut, redoCut } = evictionCuts(
+    history,
+    chunkIndex,
+    toAnchoredOffset(pieceTable, chunkIndex - 1, start),
+  );
+  // Cutting at `cut` drops it and every entry older than it (see `keepNewerThan`).
+  return undoCut + 1 + (redoCut + 1);
 }
