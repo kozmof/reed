@@ -237,42 +237,59 @@ export function createChunkManager(
 
   function evictIfOverLimit(protectedChunkIndices?: number | ReadonlySet<number>): void {
     if (disposed) return;
-    const snapshot = store.getSnapshot();
-    let loadedCount = snapshot.pieceTable.chunkMap.size;
+    let loadedCount = store.getSnapshot().pieceTable.chunkMap.size;
 
-    for (const candidate of lruOrder) {
-      if (loadedCount <= maxLoadedChunks) break;
-      // Skip pinned chunks.
-      if (activeChunks.has(candidate)) continue;
-      // Keep the just-loaded chunk resident for the ensureLoaded()/prefetch caller.
-      if (
-        typeof protectedChunkIndices === "number"
-          ? candidate === protectedChunkIndices
-          : protectedChunkIndices?.has(candidate)
-      ) {
-        continue;
-      }
-      // Skip chunks no longer in memory (evicted by another path).
-      if (!snapshot.pieceTable.chunkMap.has(candidate)) {
-        lruRemove(candidate);
-        continue;
-      }
+    // Evict least recently used chunks until within the limit. With
+    // `overLimit`, the "pin-bounded" history policy discards history that
+    // points inside a chunk instead of refusing to evict it.
+    const evictPass = (overLimit: boolean) => {
+      for (const candidate of lruOrder) {
+        if (loadedCount <= maxLoadedChunks) return;
+        // Skip pinned chunks.
+        if (activeChunks.has(candidate)) continue;
+        // Keep the just-loaded chunk resident for the ensureLoaded()/prefetch caller.
+        if (
+          typeof protectedChunkIndices === "number"
+            ? candidate === protectedChunkIndices
+            : protectedChunkIndices?.has(candidate)
+        ) {
+          continue;
+        }
+        // Skip chunks no longer in memory (evicted by another path).
+        if (!store.getSnapshot().pieceTable.chunkMap.has(candidate)) {
+          lruRemove(candidate);
+          continue;
+        }
 
-      store.dispatch(DocumentActions.evictChunk(candidate));
+        store.dispatch(DocumentActions.evictChunk(candidate, overLimit || undefined));
 
-      if (!store.getSnapshot().pieceTable.chunkMap.has(candidate)) {
-        // Eviction succeeded.
-        lruRemove(candidate);
-        loadedCount--;
+        if (!store.getSnapshot().pieceTable.chunkMap.has(candidate)) {
+          // Eviction succeeded.
+          lruRemove(candidate);
+          loadedCount--;
+        }
+        // If eviction was refused (user edits overlap the chunk's byte range, or
+        // history points inside it), leave the chunk and try the next LRU candidate.
       }
-      // If eviction was refused (user edits overlap the chunk's byte range, or
-      // history points inside it), leave the chunk and try the next LRU candidate.
+    };
+    evictPass(false);
+    // Discard history only when evicting every other candidate was not enough.
+    if (
+      loadedCount > maxLoadedChunks &&
+      !disposed &&
+      store.getSnapshot().history.evictionPolicy === "pin-bounded"
+    ) {
+      evictPass(true);
     }
 
     if (loadedCount > maxLoadedChunks) {
       logger?.warn?.(
         `[ChunkManager] eviction pressure: ${loadedCount} chunks loaded but all non-pinned ` +
-          `candidates hold user edits or undo history. Memory limit (${maxLoadedChunks}) exceeded.`,
+          `candidates hold user edits or undo history. Memory limit (${maxLoadedChunks}) exceeded.` +
+          (store.getSnapshot().history.evictionPolicy === "pin"
+            ? ` The "pin" history eviction policy keeps chunks undo history points into; ` +
+              `"pin-bounded" or "drop" lets eviction discard that history.`
+            : ""),
       );
     }
   }

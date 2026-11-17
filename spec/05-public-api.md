@@ -62,7 +62,7 @@ Supported config fields (`DocumentStoreConfig`):
 - `encoding` — currently only `'utf-8'` is supported
 - `lineEnding`
 - `undoGroupTimeout`
-- `historyEvictionPolicy` — `'pin'` (default) refuses to evict a chunk that history points inside, and `'drop'` evicts it and discards those entries
+- `historyEvictionPolicy` — `'pin'` (default) refuses to evict a chunk that history points inside, `'drop'` evicts it and discards those entries, and `'pin-bounded'` refuses unless `EVICT_CHUNK` has `overLimit: true`, which ChunkManager sends only when nothing else brings it within `maxLoadedChunks`
 - `normalizeInsertedLineEndings` — coerce line endings on `INSERT`/`REPLACE` to match `lineEnding`
 - `totalFileSize` — pre-declared file size used for chunk sizing, and must be a non-negative safe integer
 - `maxDirtyRanges` — dirty-range count threshold before a full line-index rebuild is triggered
@@ -155,7 +155,7 @@ Auto-emitted by `store.createDocumentStoreWithEvents`:
 - `content-change` (`INSERT/DELETE/REPLACE/APPLY_REMOTE`)
 - `selection-change` (`SET_SELECTION`, and any other action that moves the selection: `INSERT`/`DELETE`/`REPLACE`/`APPLY_REMOTE` moving it past the edit, `UNDO`/`REDO`, `LOAD_CHUNK`/`LOAD_CHUNKS`/`EVICT_CHUNK`)
 - `history-change` (`UNDO/REDO`)
-- `history-drop` (`EVICT_CHUNK` when the `'drop'` policy discards entries)
+- `history-drop` (`EVICT_CHUNK` when the `'drop'` policy, or `'pin-bounded'` with `overLimit`, discards entries)
 - `attention-change` (create, delete, or content edits that rewrite stored points)
 - `save` (`MARK_SAVED`)
 - `dirty-change` (when dirty flag changes)

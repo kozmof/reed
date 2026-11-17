@@ -23,14 +23,16 @@ import { CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
 import { base64DecodedLength, decodeBase64, encodeBase64 } from "../core/base64.js";
 import type { GapSide, KeyRun } from "../core/chunk-anchor.js";
 import {
+  NO_CHUNK,
   buildLoadedChunks,
   byteKey,
   gapKey,
   keyFitsAt,
   loadedSumAtOrBelow,
+  pieceKey,
   placementRuns,
 } from "../core/chunk-anchor.js";
-import { contentDecoder, encodesTo, textEncoder, utf8ByteLength } from "../core/encoding.js";
+import { decodeRun, textEncoder, utf8ByteLength } from "../core/encoding.js";
 import {
   insertChunkPieceAt,
   pieceTableDelete,
@@ -89,8 +91,8 @@ const clampTo = (doc: PieceTableState, offset: number) =>
 
 /**
  * `doc` with `length` stand-in bytes inserted at `offset` with key `key`. A
- * key that does not fit there throws, as `pieceTableInsert` does, and the
- * migration reports the payload as malformed.
+ * key that does not fit there throws a RangeError (see
+ * `pieceTableInsertPlaceholder`), and restore reports the payload as malformed.
  */
 function insertStandIn(
   doc: PieceTableState,
@@ -98,12 +100,7 @@ function insertStandIn(
   length: number,
   key: number,
 ): PieceTableState {
-  if (length <= 0) return doc;
-  const at = clampTo(doc, offset);
-  if (!keyFitsAt(doc, at, key)) {
-    throw new RangeError(`placement key ${key} does not fit at offset ${at}`);
-  }
-  return pieceTableInsertPlaceholder(doc, at, length, key);
+  return pieceTableInsertPlaceholder(doc, clampTo(doc, offset), length, key);
 }
 
 function removeBytes(doc: PieceTableState, offset: number, length: number): PieceTableState {
@@ -186,20 +183,27 @@ function indexIn(
 
 /**
  * The text of each of `runs`, which split the UTF-8 bytes of `text` from the
- * first run's start, with the bytes as well where a run edge cuts a character.
+ * first run's start, with the bytes as well where the text does not encode
+ * back to them, as a live edit records them (see `decodeRun`).
  */
 function runTexts(text: unknown, runs: readonly KeyRun[]) {
   const all = textEncoder.encode(typeof text === "string" ? text : "");
   const base = runs[0]?.start ?? 0;
   return (run: KeyRun): [string] | [string, string] => {
     const bytes = all.subarray(run.start - base, run.end - base);
-    const decoded = contentDecoder.decode(bytes);
-    return encodesTo(decoded, bytes) ? [decoded] : [decoded, encodeBase64(bytes)];
+    const { text: decoded, exact } = decodeRun(bytes);
+    return exact ? [decoded] : [decoded, encodeBase64(bytes)];
   };
 }
 
-/** The bytes of a loaded chunk, or undefined when the checkpoint does not hold them. */
-type ChunkBytes = (chunk: number) => Uint8Array | undefined;
+/**
+ * The loaded chunks of a version 1 checkpoint: their indices in ascending
+ * order, and their bytes, or undefined when the checkpoint does not hold them.
+ */
+interface LoadedChunkBytes {
+  readonly indices: readonly number[];
+  bytes(chunk: number): Uint8Array | undefined;
+}
 
 /** Bytes [start, start + length) of chunk `chunk`. */
 interface ChunkRun {
@@ -209,108 +213,210 @@ interface ChunkRun {
 }
 
 /**
- * Which chunks the bytes `removed` came from, for the gap at `offset` in
- * `doc`, the document without them.
+ * Bytes [from, to) of a loaded chunk that are not resident at a gap, so bytes
+ * removed there may be theirs. `fromEnd` prefers the last place removed bytes
+ * are found in them, for the chunk after the gap.
+ */
+interface LostBytes {
+  readonly chunk: number;
+  readonly bytes: Uint8Array;
+  readonly from: number;
+  readonly to: number;
+  readonly fromEnd: boolean;
+}
+
+/** Index of the first of ascending `values` that is at least `min`. */
+function lowerBound(values: readonly number[], min: number): number {
+  let low = 0;
+  let high = values.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (values[mid]! < min) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
+/**
+ * The bytes of loaded chunks missing at the gap at `offset` in `doc`, in
+ * document order.
  *
  * A chunk piece that ends at the gap before the end of its chunk, or starts
- * at it after the start of its chunk, lost bytes there. Removed bytes that
- * begin with the bytes the first lost are its (`tail`), and removed bytes
- * that end with the bytes the second lost are its (`head`). Bytes between
- * them that an older edit, not yet given back, kept apart from the piece are
- * looked for in the rest of what it lost (`middle`). When they are not
- * there, `inside` is the key of such a chunk, which they most likely came from.
+ * at it after the start of its chunk, lost bytes there. Two pieces of one
+ * chunk lost only the bytes between them. A loaded chunk whose key fits the
+ * gap and that neither piece belongs to can have lost every byte, so all of
+ * its bytes are candidates too. `inside` is the key of a neighbor that lost
+ * bytes, which removed bytes found nowhere most likely came from.
  */
-function removedSources(
+function lostAt(
   doc: PieceTableState,
   offset: number,
-  removed: Uint8Array,
-  chunkBytes: ChunkBytes,
-): {
-  tail: ChunkRun | null;
-  middle: ChunkRun | null;
-  head: ChunkRun | null;
-  inside: number | undefined;
-} {
+  chunks: LoadedChunkBytes,
+): { lost: LostBytes[]; inside: number | undefined } {
   const before = offset > 0 ? pieceAt(doc.root, offset - 1) : null;
   const after = pieceAt(doc.root, offset);
-  const none = { tail: null, middle: null, head: null, inside: undefined };
   // Inside a piece, nothing was lost at the gap.
-  if (before !== null && after !== null && before.node === after.node) return none;
-  const leftNode =
-    before !== null &&
-    before.node.bufferType === "chunk" &&
-    before.pieceStart + before.node.length === offset
-      ? before.node
-      : null;
-  const rightNode = after !== null && after.node.bufferType === "chunk" ? after.node : null;
-  const leftBytes = leftNode === null ? undefined : chunkBytes(leftNode.chunkIndex);
-  const rightBytes = rightNode === null ? undefined : chunkBytes(rightNode.chunkIndex);
-  // Where each neighbor lost bytes. Two pieces of one chunk lost only the
-  // bytes between them.
+  if (before !== null && after !== null && before.node === after.node) {
+    return { lost: [], inside: undefined };
+  }
+  // `before` holds the byte before the gap and is not `after`, so it ends there.
+  const leftNode = before?.node.bufferType === "chunk" ? before.node : null;
+  const rightNode = after?.node.bufferType === "chunk" ? after.node : null;
+  const leftBytes = leftNode === null ? undefined : chunks.bytes(leftNode.chunkIndex);
+  const rightBytes = rightNode === null ? undefined : chunks.bytes(rightNode.chunkIndex);
   const sameChunk = leftNode !== null && leftNode.chunkIndex === rightNode?.chunkIndex;
-  const left =
+  const lostLeft: LostBytes | null =
     leftNode !== null && leftBytes !== undefined
       ? {
           chunk: leftNode.chunkIndex,
           bytes: leftBytes,
           from: leftNode.start + leftNode.length,
           to: sameChunk ? rightNode!.start : leftBytes.length,
+          fromEnd: false,
         }
       : null;
-  const right =
-    rightNode !== null && rightBytes !== undefined && rightNode.start <= rightBytes.length
+  // Two pieces of one chunk share the bytes between them, which `lostLeft` holds.
+  const lostRight: LostBytes | null =
+    rightNode !== null &&
+    rightBytes !== undefined &&
+    !sameChunk &&
+    rightNode.start <= rightBytes.length
       ? {
           chunk: rightNode.chunkIndex,
           bytes: rightBytes,
-          from: sameChunk ? leftNode!.start + leftNode!.length : 0,
+          from: 0,
           to: rightNode.start,
+          fromEnd: true,
         }
       : null;
-  const lostLeft = left !== null && left.from < left.to ? left : null;
-  const lostRight = right !== null && right.from < right.to ? right : null;
-  if (lostLeft === null && lostRight === null) return none;
+  const left = lostLeft !== null && lostLeft.from < lostLeft.to ? lostLeft : null;
+  const right = lostRight !== null && lostRight.from < lostRight.to ? lostRight : null;
+  const lost: LostBytes[] = left === null ? [] : [left];
+  // Chunk `c` has key `c - 1`, which fits between the keys on either side.
+  const low = before === null ? NO_CHUNK : pieceKey(before.node);
+  const high = after === null ? Infinity : pieceKey(after.node);
+  const { indices } = chunks;
+  for (let i = lowerBound(indices, low + 1); i < indices.length && indices[i]! - 1 <= high; i++) {
+    const chunk = indices[i]!;
+    if (chunk === leftNode?.chunkIndex || chunk === rightNode?.chunkIndex) continue;
+    const bytes = chunks.bytes(chunk);
+    if (bytes !== undefined && bytes.length > 0) {
+      lost.push({ chunk, bytes, from: 0, to: bytes.length, fromEnd: false });
+    }
+  }
+  if (right !== null) lost.push(right);
+  const neighbor = left ?? right;
+  return { lost, inside: neighbor === null ? undefined : neighbor.chunk - 1 };
+}
 
+/**
+ * Removed bytes given back as one run: as bytes of chunk run `run` when
+ * given, else under key `key`, else (both undefined) under the key of the
+ * bytes around them.
+ */
+interface RemovedPart {
+  readonly length: number;
+  readonly run: ChunkRun | null;
+  readonly key: number | undefined;
+}
+
+/**
+ * Where the bytes `removed` came from, for the gap at `offset` in `doc`, the
+ * document without them, among the bytes missing there (see `lostAt`), which
+ * are in document order. Returns `removed` split into parts in order.
+ *
+ * Removed bytes that begin with the first missing bytes are theirs, running
+ * on into the next chunk's while they match whole chunks. Removed bytes that
+ * end with the last missing bytes are theirs, running back the same way.
+ * Bytes between those that an older edit, not yet given back, kept apart from
+ * the rest are looked for in one piece among the missing bytes between. Else
+ * older edits also took bytes from among them, so each byte takes the key of
+ * the next missing byte equal to it, in order. A byte found nowhere takes the
+ * key around it, which `inside`, the key of a neighbor that lost bytes, most
+ * likely is.
+ */
+function removedSources(
+  doc: PieceTableState,
+  offset: number,
+  removed: Uint8Array,
+  chunks: LoadedChunkBytes,
+): { parts: readonly RemovedPart[]; inside: number | undefined } {
+  const { lost, inside } = lostAt(doc, offset, chunks);
+  const tail: RemovedPart[] = [];
+  const head: RemovedPart[] = [];
+  const part = (chunk: number, start: number, length: number): RemovedPart => ({
+    length,
+    run: { chunk, start, length },
+    key: chunk - 1,
+  });
+  // Removed bytes [start, end) are not matched yet. Missing bytes from
+  // `lost[first]` at `firstAt` to `lost[last]` before `lastAt` are not taken.
   let start = 0;
   let end = removed.length;
-  let tail: ChunkRun | null = null;
-  let head: ChunkRun | null = null;
-  if (lostLeft !== null) {
+  let first = 0;
+  let firstAt = lost[0]?.from ?? 0;
+  while (first < lost.length && start < end) {
+    const { chunk, bytes, to } = lost[first]!;
     const length = sharedPrefix(
       removed,
-      0,
-      lostLeft.bytes,
-      lostLeft.from,
-      Math.min(end, lostLeft.to - lostLeft.from),
+      start,
+      bytes,
+      firstAt,
+      Math.min(end - start, to - firstAt),
     );
-    if (length > 0) {
-      tail = { chunk: lostLeft.chunk, start: lostLeft.from, length };
-      start = length;
+    if (length > 0) tail.push(part(chunk, firstAt, length));
+    start += length;
+    firstAt += length;
+    if (firstAt < to) break;
+    first++;
+    firstAt = lost[first]?.from ?? 0;
+  }
+  let last = lost.length - 1;
+  let lastAt = lost[last]?.to ?? 0;
+  while (last >= first && start < end) {
+    const { chunk, bytes, from } = lost[last]!;
+    const floor = last === first ? firstAt : from;
+    const length = sharedSuffix(removed, end, bytes, lastAt, Math.min(end - start, lastAt - floor));
+    if (length > 0) head.unshift(part(chunk, lastAt - length, length));
+    end -= length;
+    lastAt -= length;
+    if (lastAt > from) break;
+    last--;
+    lastAt = lost[last]?.to ?? 0;
+  }
+  if (end <= start) return { parts: [...tail, ...head], inside };
+  const rest = removed.subarray(start, end);
+  // Missing bytes of `lost[k]` not taken by the tail or head.
+  const lowAt = (k: number) => (k === first ? firstAt : lost[k]!.from);
+  const highAt = (k: number) => (k === last ? lastAt : lost[k]!.to);
+  for (let k = first; k <= last; k++) {
+    const { chunk, bytes, fromEnd } = lost[k]!;
+    const at = indexIn(bytes, rest, lowAt(k), highAt(k), fromEnd);
+    if (at >= 0) return { parts: [...tail, part(chunk, at, rest.length), ...head], inside };
+  }
+  const middle: RemovedPart[] = [];
+  let k = first;
+  let at = k <= last ? lowAt(k) : 0;
+  for (const byte of rest) {
+    let key: number | undefined;
+    // The next missing byte equal to `byte`, at or after `lost[k]` at `at`.
+    for (let j = k, from = at; j <= last; j++, from = j <= last ? lowAt(j) : 0) {
+      const found = lost[j]!.bytes.subarray(0, highAt(j)).indexOf(byte, from);
+      if (found >= 0) {
+        key = lost[j]!.chunk - 1;
+        k = j;
+        at = found + 1;
+        break;
+      }
+    }
+    const previous = middle[middle.length - 1];
+    if (previous !== undefined && previous.key === key) {
+      middle[middle.length - 1] = { ...previous, length: previous.length + 1 };
+    } else {
+      middle.push({ length: 1, run: null, key });
     }
   }
-  if (lostRight !== null) {
-    const room = Math.min(
-      end - start,
-      lostRight.to - (sameChunk ? lostRight.from + start : lostRight.from),
-    );
-    const length = sharedSuffix(removed, end, lostRight.bytes, lostRight.to, room);
-    if (length > 0) {
-      head = { chunk: lostRight.chunk, start: lostRight.to - length, length };
-      end -= length;
-    }
-  }
-  let middle: ChunkRun | null = null;
-  if (end > start) {
-    const rest = removed.subarray(start, end);
-    for (const lost of [lostLeft, lostRight]) {
-      if (lost === null || middle !== null) continue;
-      const from = lost === lostLeft ? lost.from + start : lost.from;
-      const to = lost === lostRight ? lost.to - (removed.length - end) : lost.to;
-      const at = indexIn(lost.bytes, rest, from, to, lost === lostRight);
-      if (at >= 0) middle = { chunk: lost.chunk, start: at, length: rest.length };
-    }
-  }
-  const inside = (lostLeft ?? lostRight)!.chunk - 1;
-  return { tail, middle, head, inside };
+  return { parts: [...tail, ...middle, ...head], inside };
 }
 
 /**
@@ -322,16 +428,17 @@ function removedSources(
  * text gets back the keys the rest of the walk saw it with.
  *
  * The removed bytes are not in `after`, so the keys they had are not
- * recorded. Bytes found in a chunk that lost them at the gap (see
- * `removedSources`) come back as that chunk's bytes with its key, so later
- * steps of the walk see the chunk whole again. Other removed bytes take the
- * key of such a chunk, else the key the inserted text had, else the key of
- * the gap.
+ * recorded. Bytes found in a loaded chunk missing at the gap (see
+ * `removedSources`) take its key, and a run found in one piece comes back as
+ * that chunk's bytes, so later steps of the walk see the chunk whole again.
+ * Other removed bytes take the key of a neighbor that lost bytes, else the
+ * key the inserted text had, else the key of the gap, at most the key of the
+ * bytes found after them.
  */
 function unapplyShape(
   after: PieceTableState,
   shape: ChangeShape,
-  chunkBytes: ChunkBytes,
+  chunks: LoadedChunkBytes,
 ): {
   key: number;
   inserts: readonly KeyRun[];
@@ -347,17 +454,29 @@ function unapplyShape(
       ? placementRuns(after, offset, offset + inserted)
       : [];
   const insertedKey = inserts[0]?.key;
-  const fitting = (doc: PieceTableState, position: number, ...keys: (number | undefined)[]) =>
-    keys.find((key) => key !== undefined && keyFitsAt(doc, position, key)) ??
-    gapKey(doc.root, position, "before");
-  const key = fitting(without, at, insertedKey);
+  // The first of `keys` that fits at `position` and is at most `limit`, else
+  // the gap's key. Keys never decrease, and every key up to `limit` that is
+  // at least the keys before `position` fits there, so `limit` caps the gap's.
+  const fitting = (
+    doc: PieceTableState,
+    position: number,
+    limit: number,
+    ...keys: (number | undefined)[]
+  ) => {
+    const found = keys.find(
+      (key) => key !== undefined && key <= limit && keyFitsAt(doc, position, key),
+    );
+    if (found !== undefined) return found;
+    return Math.min(gapKey(doc.root, position, "before"), limit);
+  };
+  const key = fitting(without, at, Infinity, insertedKey);
   if (removed <= 0) return { key, inserts, runs: [], before: without };
 
-  const { tail, middle, head, inside } = removedSources(
+  const { parts, inside } = removedSources(
     without,
     at,
     textEncoder.encode(shape.removedText),
-    chunkBytes,
+    chunks,
   );
   const runs: KeyRun[] = [];
   let doc = without;
@@ -375,11 +494,18 @@ function unapplyShape(
     else runs.push({ start: position, end: position + length, key });
     position += length;
   };
-  if (tail !== null) giveBack(tail.length, tail.chunk - 1, tail);
-  const rest = removed - (tail?.length ?? 0) - (head?.length ?? 0);
-  if (middle !== null) giveBack(rest, middle.chunk - 1, middle);
-  else giveBack(rest, fitting(doc, position, inside, insertedKey), null);
-  if (head !== null) giveBack(head.length, head.chunk - 1, head);
+  for (let p = 0; p < parts.length; p++) {
+    const { length, run, key: partKey } = parts[p]!;
+    if (partKey !== undefined) {
+      giveBack(length, partKey, run);
+      continue;
+    }
+    let limit = Infinity;
+    for (let q = p + 1; q < parts.length && limit === Infinity; q++) {
+      limit = parts[q]!.key ?? Infinity;
+    }
+    giveBack(length, fitting(doc, position, limit, inside, insertedKey), null);
+  }
   return { key, inserts, runs, before: doc };
 }
 
@@ -394,9 +520,9 @@ function unapplyShape(
  * anchored there, which keeps undo and redo behaving as they would have right
  * after restore.
  *
- * Documents without chunk pieces need no change: every key is -1 and every
- * anchor equals its offset. Malformed input is returned as is for the
- * validators to report.
+ * Documents with neither chunk pieces nor loaded chunks need no change: every
+ * key is -1 and every anchor equals its offset. Malformed input is returned as
+ * is for the validators to report.
  */
 function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
   const pieceTable = data.pieceTable;
@@ -405,7 +531,41 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
   const rawPieces = table.pieces;
   if (!Array.isArray(rawPieces) || !rawPieces.every(isTuple)) return data;
   const pieces = rawPieces as readonly WireTuple[];
-  if (!pieces.some((piece) => piece[1] === "c")) return data;
+
+  const chunkLengths: [number, number][] = [];
+  const chunkBase64 = new Map<number, string>();
+  if (Array.isArray(table.chunks)) {
+    for (const entry of table.chunks) {
+      if (isTuple(entry) && isInt(entry[0])) {
+        const base64 = typeof entry[1] === "string" ? entry[1] : "";
+        chunkLengths.push([entry[0], base64DecodedLength(base64)]);
+        chunkBase64.set(entry[0], base64);
+      }
+    }
+  }
+  // Decoded only for chunks missing where undo gives bytes back.
+  const decoded = new Map<number, Uint8Array | undefined>();
+  const bytes = (chunk: number) => {
+    if (!decoded.has(chunk)) {
+      const base64 = chunkBase64.get(chunk);
+      let value: Uint8Array | undefined;
+      try {
+        value = base64 === undefined ? undefined : decodeBase64(base64);
+      } catch {
+        // Malformed chunk data, which restore reports.
+      }
+      decoded.set(chunk, value);
+    }
+    return decoded.get(chunk);
+  };
+  const chunks: LoadedChunkBytes = {
+    indices: [...chunkBase64.keys()].sort((a, b) => a - b),
+    bytes,
+  };
+
+  // Without chunk pieces or loaded chunks, every key is -1. A loaded chunk
+  // with no piece left can still be where text that undo gives back came from.
+  if (chunkBase64.size === 0 && !pieces.some((piece) => piece[1] === "c")) return data;
 
   // Chunk index of each chunk piece, or null for other pieces.
   const chunkOf = pieces.map((piece) => (piece[1] === "c" && isInt(piece[4]) ? piece[4] : null));
@@ -474,42 +634,16 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
     );
   }
 
-  const chunkLengths: [number, number][] = [];
-  const chunkBase64 = new Map<number, string>();
-  if (Array.isArray(table.chunks)) {
-    for (const entry of table.chunks) {
-      if (isTuple(entry) && isInt(entry[0])) {
-        const base64 = typeof entry[1] === "string" ? entry[1] : "";
-        chunkLengths.push([entry[0], base64DecodedLength(base64)]);
-        chunkBase64.set(entry[0], base64);
-      }
-    }
-  }
-  // Decoded only for chunks next to bytes that undo gives back.
-  const decoded = new Map<number, Uint8Array | undefined>();
-  const chunkBytes: ChunkBytes = (chunk) => {
-    if (!decoded.has(chunk)) {
-      const base64 = chunkBase64.get(chunk);
-      let bytes: Uint8Array | undefined;
-      try {
-        bytes = base64 === undefined ? undefined : decodeBase64(base64);
-      } catch {
-        // Malformed chunk data, which restore reports.
-      }
-      decoded.set(chunk, bytes);
-    }
-    return decoded.get(chunk);
-  };
-
   const root = buildPieceTree(descriptors);
   // Only the tree structure and keys are read, so the tree holds no bytes.
   const captured: PieceTableState = {
     ...createEmptyPieceTableState(),
     root,
     totalLength: root?.subtreeLength ?? 0,
-    nextExpectedChunk: chunkOf.reduce<number>(
-      (next, chunk) => Math.max(next, (chunk ?? -1) + 1),
-      0,
+    // Every chunk named by a piece or held as loaded, so their keys fit.
+    nextExpectedChunk: Math.max(
+      chunkOf.reduce<number>((next, chunk) => Math.max(next, (chunk ?? -1) + 1), 0),
+      (chunks.indices.at(-1) ?? -1) + 1,
     ),
   };
   // The same tree as live anchoring, so each anchor costs O(log C).
@@ -664,7 +798,7 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
         let inserts: readonly KeyRun[];
         let runs: readonly KeyRun[];
         if (direction === "undo") {
-          ({ key, inserts, runs, before: current } = unapplyShape(current, shape, chunkBytes));
+          ({ key, inserts, runs, before: current } = unapplyShape(current, shape, chunks));
         } else {
           ({ key, runs, after: current } = applyShape(current, shape));
           const { offset, inserted } = shape;

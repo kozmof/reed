@@ -241,7 +241,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
           const before = newState.pieceTable.totalLength;
           newState = applyUntrackedEdit(
             newState,
-            { kind: "insert", position, insertText, afterChunk },
+            { kind: "insert", position, insertText, afterChunk, afterChunkFits: true },
             nextRevision,
           );
           moveSelection(position, position, newState.pieceTable.totalLength - before);

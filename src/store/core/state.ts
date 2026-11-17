@@ -64,8 +64,10 @@ const DEFAULT_CONFIG: Required<Omit<DocumentStoreConfigBase, "logger">> & {
 };
 
 export function assertValidHistoryEvictionPolicy(policy: unknown): void {
-  if (policy !== undefined && policy !== "pin" && policy !== "drop") {
-    throw new Error(`historyEvictionPolicy must be 'pin' or 'drop': ${String(policy)}`);
+  if (policy !== undefined && policy !== "pin" && policy !== "drop" && policy !== "pin-bounded") {
+    throw new Error(
+      `historyEvictionPolicy must be 'pin', 'drop' or 'pin-bounded': ${String(policy)}`,
+    );
   }
 }
 

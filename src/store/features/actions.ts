@@ -99,7 +99,7 @@ function normalizeDeserializedAction(action: DocumentAction): DocumentAction {
     case "LOAD_CHUNKS":
       return DocumentActions.loadChunks(action.chunks);
     case "EVICT_CHUNK":
-      return DocumentActions.evictChunk(action.chunkIndex);
+      return DocumentActions.evictChunk(action.chunkIndex, action.overLimit);
     case "DECLARE_CHUNK_METADATA":
       return DocumentActions.declareChunkMetadata(action.metadata);
   }
@@ -321,8 +321,12 @@ export const DocumentActions = {
    *
    * @param chunkIndex - Zero-based index of the chunk to evict
    */
-  evictChunk(chunkIndex: number): EvictChunkAction {
-    return Object.freeze({ type: "EVICT_CHUNK", chunkIndex });
+  evictChunk(chunkIndex: number, overLimit?: boolean): EvictChunkAction {
+    return Object.freeze(
+      overLimit === undefined
+        ? { type: "EVICT_CHUNK", chunkIndex }
+        : { type: "EVICT_CHUNK", chunkIndex, overLimit },
+    );
   },
 
   /**

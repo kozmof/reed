@@ -55,7 +55,7 @@ import { base64DecodedLength, decodeBase64 } from "../core/base64.js";
 import { inOrderPieces } from "../core/piece-table-stream.js";
 import { decodedCharLength, joinDecoded, type DecodedSummary } from "../core/decoded-metrics.js";
 import { utf8ByteLength } from "../core/encoding.js";
-import { keyFitsAt, loadedLengthAtOrBelow } from "../core/chunk-anchor.js";
+import { loadedLengthAtOrBelow } from "../core/chunk-anchor.js";
 import { pieceTableDelete, pieceTableInsertPlaceholder } from "../core/piece-table.js";
 import { selectionRange } from "./history-anchor.js";
 import { insertedLength, removedLength } from "./history-entry.js";
@@ -1049,17 +1049,18 @@ function assertStackReplays(
       length += insert - remove;
       if (!chunked) continue;
       if (remove > 0) doc = pieceTableDelete(doc, byteOffset(start), byteOffset(start + remove));
-      if (insert === 0) continue;
-      if (!keyFitsAt(doc, start, change.afterChunk)) {
+      // Only lengths and keys are checked, so the inserted text stands in as
+      // a placeholder: no bytes move. It throws when the key does not fit.
+      try {
+        doc = pieceTableInsertPlaceholder(doc, byteOffset(start), insert, change.afterChunk);
+      } catch (error) {
+        if (!(error instanceof RangeError)) throw error;
         fail(
           "HISTORY_INVALID",
           `${what}[${e}].changes[${i}] inserts text with placement key ${change.afterChunk} at ` +
             `offset ${start}, which would put placement keys out of document order`,
         );
       }
-      // Only lengths and keys are checked, so the inserted text stands in as
-      // a placeholder: no bytes move.
-      doc = pieceTableInsertPlaceholder(doc, byteOffset(start), insert, change.afterChunk);
     }
   }
 }
@@ -1084,7 +1085,12 @@ function restoreHistory(
   const evictionPolicy =
     source.evictionPolicy === undefined
       ? "pin"
-      : readEnum(source.evictionPolicy, ["pin", "drop"] as const, "history.evictionPolicy", budget);
+      : readEnum(
+          source.evictionPolicy,
+          ["pin", "drop", "pin-bounded"] as const,
+          "history.evictionPolicy",
+          budget,
+        );
 
   const rawUndo = readArray(source.undo, "history.undo", budget);
   const rawRedo = readArray(source.redo, "history.redo", budget);

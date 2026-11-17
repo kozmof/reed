@@ -87,8 +87,9 @@ export interface HistoryChangeEvent extends DocumentEvent {
 
 /**
  * Fired when EVICT_CHUNK discards history entries under the `"drop"` eviction
- * policy. Nothing is undone or redone and the selection is unchanged by it:
- * only the undo and redo counts drop.
+ * policy, or under `"pin-bounded"` with `overLimit`. Nothing is undone or
+ * redone and the selection is unchanged by it: only the undo and redo counts
+ * drop.
  */
 export interface HistoryDropEvent extends DocumentEvent {
   readonly type: "history-drop";

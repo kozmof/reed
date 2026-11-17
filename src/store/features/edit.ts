@@ -50,13 +50,20 @@ import {
   repairLineIndexWindow,
 } from "../core/line-index.js";
 import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
-import { contentDecoder, encodesTo, utf8ByteLength } from "../core/encoding.js";
+import {
+  contentDecoder,
+  decodeRun,
+  encodesTo,
+  isExactDecoding,
+  utf8ByteLength,
+} from "../core/encoding.js";
 import { NO_CHUNK, placementRuns } from "../core/chunk-anchor.js";
 import { codePointWindow, isSafeSplit } from "../core/utf8-seam.js";
 import type { KeyRun } from "../core/chunk-anchor.js";
 import {
   anchorAt,
   anchorSelection,
+  deferAnchorSelection,
   insertionKey,
   keepSameSelection,
   moveSelectionPastEdit,
@@ -391,21 +398,6 @@ function coalesceChanges(existing: HistoryChange, incoming: HistoryChange): Hist
   }
 }
 
-/**
- * True when `text`, the decoding of `length` bytes, is known to encode back to
- * them without comparing bytes.
- *
- * `contentDecoder` keeps a byte order mark, so decoding changes bytes only by
- * replacing malformed sequences with U+FFFD. Text `decoded` by it from those
- * very bytes is therefore exact when it has no U+FFFD, which one native scan
- * finds. Text from elsewhere must also have the right length. A replacement
- * can keep the length (three malformed bytes become one 3-byte U+FFFD), so
- * text containing U+FFFD has to be compared byte for byte.
- */
-function isExactDecoding(text: string, length: number, decoded: boolean): boolean {
-  return !text.includes("�") && (decoded || utf8ByteLength(text) === length);
-}
-
 /** Deleted text of one placement run, with its bytes when the text is inexact. */
 interface DeletedRun {
   readonly text: string;
@@ -446,11 +438,9 @@ function deletedRuns(
   const all = rangeBytes();
   return runs.map((run) => {
     const raw = all.subarray(run.start - base, run.end - base);
-    const text = contentDecoder.decode(raw);
+    const { text, exact } = decodeRun(raw);
     const length = run.end - run.start;
-    return isExactDecoding(text, length, true) || encodesTo(text, raw)
-      ? { text, length }
-      : { text, length, bytes: asReadonlyUint8Array(raw.slice()) };
+    return exact ? { text, length } : { text, length, bytes: asReadonlyUint8Array(raw.slice()) };
   });
 }
 
@@ -516,17 +506,20 @@ export function makeReplaceChange(
  * only called when a new entry is created: a coalesced entry keeps the
  * selection of the entry it extends. It must anchor the selection against the
  * document before the changes, which `state` no longer holds.
- * `selectionAfter` is the selection the edit left, anchored against `state`,
- * which redo restores.
+ * `selectionAfter` returns the selection the edit left, anchored against
+ * `state`, which redo restores. The entry calls it on first read (see
+ * `deferAnchorSelection`), so it must not depend on anything that changes.
  */
 export function historyPush(
   state: DocumentState,
   changes: NonEmptyReadonlyArray<HistoryChange>,
   now: number,
   selectionBefore: () => HistorySelectionState,
-  selectionAfter: HistorySelectionState,
+  selectionAfter: () => HistorySelectionState,
 ): DocumentState {
   const history = state.history;
+  // Derived on first read: an entry the next keystroke replaces never needs it.
+  let anchoredAfter: HistorySelectionState | undefined;
 
   // Try to coalesce with the last entry
   const change = changes[0];
@@ -547,7 +540,9 @@ export function historyPush(
         return (materialized ??= Object.freeze([...base.slice(0, -1), merged]));
       },
       selectionBefore: lastEntry.selectionBefore,
-      selectionAfter,
+      get selectionAfter() {
+        return (anchoredAfter ??= selectionAfter());
+      },
       timestamp: now,
     });
     coalescedTails.set(mergedEntry, { base, tail: merged });
@@ -564,7 +559,9 @@ export function historyPush(
   const entry: HistoryEntry = Object.freeze({
     changes: Object.freeze([...changes]),
     selectionBefore: selectionBefore(),
-    selectionAfter,
+    get selectionAfter() {
+      return (anchoredAfter ??= selectionAfter());
+    },
     timestamp: now,
   });
 
@@ -711,11 +708,17 @@ export type StructuralEditOperation =
       /** Raw bytes to insert in place of `insertText` encoded as UTF-8. */
       readonly insertBytes?: Uint8Array | undefined;
       /**
-       * Placement key for the inserted text. Defaults to the gap's key.
-       * Outside replay the caller derives it from the document, so it must fit
-       * there (see `keyFitsAt`). Only a replayed key is checked.
+       * Placement key for the inserted text. Defaults to the gap's key. A key
+       * that does not fit at `position` (see `keyFitsAt`) throws a RangeError.
        */
       readonly afterChunk?: number | undefined;
+      /**
+       * True when `afterChunk` was derived from this document, by
+       * `insertionKey` or `placementRuns`, which only return keys that fit.
+       * The check is then skipped (see `pieceTableInsertFitted`). Leave it
+       * unset for a key from anywhere else, such as a recorded history change.
+       */
+      readonly afterChunkFits?: boolean | undefined;
     }
   | {
       readonly kind: "delete";
@@ -736,11 +739,17 @@ export type StructuralEditOperation =
       /** Raw bytes to insert in place of `insertText` encoded as UTF-8. */
       readonly insertBytes?: Uint8Array | undefined;
       /**
-       * Placement key for the inserted text. Defaults to the gap's key.
-       * Outside replay the caller derives it from the document, so it must fit
-       * there (see `keyFitsAt`). Only a replayed key is checked.
+       * Placement key for the inserted text. Defaults to the gap's key. A key
+       * that does not fit at `position` (see `keyFitsAt`) throws a RangeError.
        */
       readonly afterChunk?: number | undefined;
+      /**
+       * True when `afterChunk` was derived from this document, by
+       * `insertionKey` or `placementRuns`, which only return keys that fit.
+       * The check is then skipped (see `pieceTableInsertFitted`). Leave it
+       * unset for a key from anywhere else, such as a recorded history change.
+       */
+      readonly afterChunkFits?: boolean | undefined;
     };
 
 export type EditOperation = StructuralEditOperation & {
@@ -810,7 +819,13 @@ export function applyUntrackedEdit(
   const insertContent = insertBytes ?? (op.kind !== "delete" ? op.insertText : "");
   if (op.kind !== "delete" && insertContent.length > 0) {
     // Without a key from the caller, the text takes the gap's key.
-    const result = pieceTableInsert(newState, op.position, insertContent, op.afterChunk, !replay);
+    const result = pieceTableInsert(
+      newState,
+      op.position,
+      insertContent,
+      op.afterChunk,
+      op.afterChunkFits === true,
+    );
     newState = result.state;
     if (!needsRebuild) {
       const readText = pieceTableReader(newState.pieceTable);
@@ -930,7 +945,7 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
     runs.length > 0 ? runs[0]!.key : insertionKey(pieceTable, selectionBefore, op.position);
   let newState = applyUntrackedEdit(
     state,
-    op.kind === "delete" ? op : { ...op, afterChunk: insertKey },
+    op.kind === "delete" ? op : { ...op, afterChunk: insertKey, afterChunkFits: true },
     nextRevision,
   );
 
@@ -1023,7 +1038,7 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
     () => anchorSelection(pieceTable, selectionBefore),
     // Redo restores the selection the edit left in the state, anchored in the
     // edited document like any other history selection.
-    anchorSelection(newState.pieceTable, selectionAfter),
+    deferAnchorSelection(newState.pieceTable, selectionAfter),
   );
 
   // Mark as dirty and increment revision

@@ -96,8 +96,8 @@ export function withEvents(
       prepare("selection-change", createSelectionChangeEvent(prevState, nextState));
     }
 
-    // History events. EVICT_CHUNK changes history only under the "drop"
-    // eviction policy, when it discards entries.
+    // History events. EVICT_CHUNK changes history only when it discards
+    // entries: under the "drop" eviction policy, or "pin-bounded" with overLimit.
     if (action.type === "UNDO" || action.type === "REDO") {
       prepare(
         "history-change",

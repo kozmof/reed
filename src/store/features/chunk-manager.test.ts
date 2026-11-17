@@ -271,6 +271,73 @@ describe("ChunkManager LRU eviction", () => {
   });
 });
 
+describe("ChunkManager with the 'pin-bounded' history policy", () => {
+  const chunks = { 0: "aaaaaaa\n", 1: "bbbbbbb\n", 2: "ccccccc\n" };
+  const setup = (historyEvictionPolicy: "pin" | "pin-bounded") => {
+    const store = createDocumentStore({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 3,
+      historyEvictionPolicy,
+      reconcileMode: "none",
+    });
+    const warn = vi.fn();
+    const manager = createChunkManager(store, makeLoader(chunks), {
+      maxLoadedChunks: 2,
+      logger: { warn },
+    });
+    return { store, manager, warn };
+  };
+  /** Type inside chunk 0 and undo, so the redo entry pins the pristine chunk. */
+  const pinChunk0 = (store: DocumentStore) => {
+    store.dispatch(DocumentActions.insert(byteOffset(2), "X"));
+    store.dispatch(DocumentActions.undo());
+  };
+
+  it("evicts a chunk history does not pin before dropping history", async () => {
+    const { store, manager } = setup("pin-bounded");
+    await manager.ensureLoaded(0);
+    pinChunk0(store);
+    await manager.ensureLoaded(1);
+    await manager.ensureLoaded(2);
+
+    const snap = store.getSnapshot();
+    // Chunk 1 was evictable without touching history, so chunk 0 stays.
+    expect([...snap.pieceTable.chunkMap.keys()].sort()).toEqual([0, 2]);
+    expect(snap.history.redoStack).not.toBeNull();
+    store.dispatch(DocumentActions.redo());
+    expect(store.getSnapshot().pieceTable.totalLength).toBe(17);
+    manager.dispose();
+  });
+
+  it("drops the pinning history once nothing else can be evicted", async () => {
+    const { store, manager, warn } = setup("pin-bounded");
+    await manager.ensureLoaded(0);
+    pinChunk0(store);
+    manager.setActiveChunks([1, 2]);
+    await manager.ensureLoaded(1);
+    await manager.ensureLoaded(2);
+
+    const snap = store.getSnapshot();
+    expect([...snap.pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
+    expect(snap.history.redoStack).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+
+  it("stays over the limit under 'pin' and says how to bound it", async () => {
+    const { store, manager, warn } = setup("pin");
+    await manager.ensureLoaded(0);
+    pinChunk0(store);
+    manager.setActiveChunks([1, 2]);
+    await manager.ensureLoaded(1);
+    await manager.ensureLoaded(2);
+
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"pin-bounded"'));
+    manager.dispose();
+  });
+});
+
 describe("ChunkManager.prefetch", () => {
   it("fires a background load without blocking", async () => {
     const store = makeStore();

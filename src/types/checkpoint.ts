@@ -182,7 +182,7 @@ export interface CheckpointHistory {
   readonly limit: number;
   readonly coalesceTimeout: number;
   /** History eviction policy. Absent means `"pin"`. */
-  readonly evictionPolicy?: "pin" | "drop";
+  readonly evictionPolicy?: "pin" | "drop" | "pin-bounded";
   readonly undo: readonly CheckpointHistoryEntry[];
   readonly redo: readonly CheckpointHistoryEntry[];
 }

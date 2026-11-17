@@ -566,13 +566,18 @@ export function pieceTableInsert(
   text: string | Uint8Array,
   afterChunk?: number,
 ): LinearCost<PieceTableInsertResult> {
-  if (text.length > 0 && afterChunk !== undefined && !keyFitsAt(state, position, afterChunk)) {
+  if (text.length > 0 && afterChunk !== undefined) assertKeyFits(state, position, afterChunk);
+  return pieceTableInsertFitted(state, position, text, afterChunk);
+}
+
+/** Throw a RangeError when `key` does not fit at `position` (see `keyFitsAt`). */
+function assertKeyFits(state: PieceTableState, position: number, key: number): void {
+  if (!keyFitsAt(state, position, key)) {
     throw new RangeError(
-      `placement key ${afterChunk} does not fit at offset ${position}: ` +
+      `placement key ${key} does not fit at offset ${position}: ` +
         `inserting there would put placement keys out of document order`,
     );
   }
-  return pieceTableInsertFitted(state, position, text, afterChunk);
 }
 
 /**
@@ -614,8 +619,8 @@ export function pieceTableInsertFitted(
  * `state` with a placeholder for `length` bytes at `position` under placement
  * key `afterChunk`: an add piece that reads no bytes, and no bytes move. Only
  * the lengths and keys of the result may be read. Checks that replay history
- * over a copy of a document, which need nothing else, use it. The key is not
- * checked (see `keyFitsAt`). O(log n).
+ * over a copy of a document, which need nothing else, use it. A key that does
+ * not fit at `position` throws a RangeError, as in `pieceTableInsert`. O(log n).
  */
 export function pieceTableInsertPlaceholder(
   state: PieceTableState,
@@ -624,6 +629,7 @@ export function pieceTableInsertPlaceholder(
   afterChunk: number,
 ): PieceTableState {
   if (length <= 0) return state;
+  assertKeyFits(state, position, afterChunk);
   return insertAddPiece(state, position, 0, length, afterChunk, state.addBuffer).state;
 }
 

@@ -38,8 +38,9 @@ import type {
 } from "../../types/state.js";
 import { pstackPush } from "../../types/state.js";
 import { anchoredCursor, historyForEviction } from "./history-anchor.js";
-import { makeDeleteChange, makeInsertChange } from "./edit.js";
+import { applyUntrackedEdit, makeDeleteChange, makeInsertChange } from "./edit.js";
 import type { DocumentAction } from "../../types/actions.js";
+import { validateAction } from "../../types/actions.js";
 import { makeDeterministicRng } from "../../../test-utils/large-content.js";
 
 const CHUNK_SIZE = 8;
@@ -214,6 +215,55 @@ describe("eviction while history points inside the chunk", () => {
     expect(text(s)).toBe("XBBBBBBB\n");
     load(s, 0);
     expect(text(s)).toBe("AAAAAAA\nXBBBBBBB\n");
+  });
+
+  it("under 'pin-bounded', refuses a plain eviction and drops history when over the limit", () => {
+    const s = makeStore(2, "pin-bounded");
+    load(s, 0);
+    load(s, 1);
+    s.dispatch(DocumentActions.insert(byteOffset(10), "1")); // inside chunk 1
+    s.dispatch(DocumentActions.insert(byteOffset(2), "2")); // inside chunk 0
+    s.dispatch(DocumentActions.undo());
+    // Chunk 0 is pristine, but the redo entry "2" points inside it.
+    const before = s.getSnapshot();
+    s.dispatch(DocumentActions.evictChunk(0));
+    expect(s.getSnapshot()).toBe(before);
+
+    s.dispatch(DocumentActions.evictChunk(0, true));
+    expect(text(s)).toBe("BB1BBBBB\n");
+    expect(getRedoCount(s.getSnapshot())).toBe(0);
+    expect(getUndoCount(s.getSnapshot())).toBe(1);
+    s.dispatch(DocumentActions.undo());
+    expect(text(s)).toBe("BBBBBBB\n");
+  });
+
+  it("ignores overLimit under 'pin'", () => {
+    const s = makeStore();
+    load(s, 0);
+    load(s, 1);
+    s.dispatch(DocumentActions.insert(byteOffset(2), "X"));
+    s.dispatch(DocumentActions.undo());
+    const before = s.getSnapshot();
+    s.dispatch(DocumentActions.evictChunk(0, true));
+    expect(s.getSnapshot()).toBe(before);
+  });
+
+  it("round-trips the 'pin-bounded' policy through a checkpoint", () => {
+    const s = makeStore(2, "pin-bounded");
+    load(s, 0);
+    const restored = restoreCheckpoint(
+      JSON.parse(JSON.stringify(createCheckpoint(s.getSnapshot()))),
+    );
+    expect(restored.history.evictionPolicy).toBe("pin-bounded");
+  });
+
+  it("validates overLimit as an optional boolean", () => {
+    expect(validateAction({ type: "EVICT_CHUNK", chunkIndex: 0, overLimit: true }).valid).toBe(
+      true,
+    );
+    expect(validateAction({ type: "EVICT_CHUNK", chunkIndex: 0, overLimit: "yes" }).valid).toBe(
+      false,
+    );
   });
 
   it("evicts under the 'drop' policy and discards the dependent entries", () => {
@@ -2135,11 +2185,110 @@ describe("twelfth review regressions", () => {
     expect(getValue(state.pieceTable)).toBe(chunks.join(""));
   });
 
+  describe("a migrated undo gives back a loaded chunk with no piece left", () => {
+    const capture = (steps: (s: Store) => void) => {
+      const s = makeStore(3);
+      steps(s);
+      return s.reconcileNow();
+    };
+    const restoreLoadUndo = (payload: Wire, loads: number[]) => {
+      let state = restoreCheckpoint(payload);
+      for (const i of loads) {
+        state = documentReducer(state, DocumentActions.loadChunk(i, enc(CHUNKS[i]!)));
+      }
+      return getValue(undoAll(state).pieceTable);
+    };
+    const ABC = CHUNKS.slice(0, 3).join("");
+
+    it("when no chunk piece is resident", () => {
+      const captured = capture((s) => {
+        load(s, 2);
+        s.dispatch(DocumentActions.delete(byteOffset(0), byteOffset(8)));
+      });
+      expect(getValue(captured.pieceTable)).toBe("");
+      for (const payload of [wireOf(captured), toV1(captured)]) {
+        expect(restoreLoadUndo(payload, [0, 1]), `version ${payload.version}`).toBe(ABC);
+      }
+    });
+
+    it("when the whole chunk was deleted next to another", () => {
+      const captured = capture((s) => {
+        load(s, 0);
+        load(s, 2);
+        s.dispatch(DocumentActions.delete(byteOffset(8), byteOffset(16)));
+      });
+      for (const payload of [wireOf(captured), toV1(captured)]) {
+        expect(restoreLoadUndo(payload, [1]), `version ${payload.version}`).toBe(ABC);
+      }
+    });
+
+    it("when the delete also took the end of the chunk before it", () => {
+      const captured = capture((s) => {
+        load(s, 0);
+        load(s, 2);
+        s.dispatch(DocumentActions.delete(byteOffset(4), byteOffset(16)));
+      });
+      for (const payload of [wireOf(captured), toV1(captured)]) {
+        expect(restoreLoadUndo(payload, [1]), `version ${payload.version}`).toBe(ABC);
+      }
+    });
+
+    // Distinct bytes, so where each deleted run came from is not a guess.
+    const DISTINCT = ["abcdef", "\nghijk", "lmnopq"];
+    const distinct = (steps: (s: ReturnType<typeof createDocumentStore>) => void) => {
+      const s = createDocumentStore({ chunkSize: 6, totalFileSize: 18, reconcileMode: "none" });
+      s.dispatch(DocumentActions.loadChunk(0, enc(DISTINCT[0]!)));
+      s.dispatch(DocumentActions.loadChunk(2, enc(DISTINCT[2]!)));
+      steps(s);
+      return s.reconcileNow();
+    };
+    const restoreLoadOneUndo = (payload: Wire) => {
+      let state = restoreCheckpoint(payload);
+      state = documentReducer(state, DocumentActions.loadChunk(1, enc(DISTINCT[1]!)));
+      return getValue(undoAll(state).pieceTable);
+    };
+
+    it("when the chunk was deleted in pieces, middle last", () => {
+      const captured = distinct((s) => {
+        s.dispatch(DocumentActions.delete(byteOffset(10), byteOffset(12)));
+        s.dispatch(DocumentActions.delete(byteOffset(6), byteOffset(8)));
+        s.dispatch(DocumentActions.delete(byteOffset(6), byteOffset(8)));
+      });
+      expect(getValue(captured.pieceTable)).toBe(DISTINCT[0]);
+      for (const payload of [wireOf(captured), toV1(captured)]) {
+        expect(restoreLoadOneUndo(payload), `version ${payload.version}`).toBe(DISTINCT.join(""));
+      }
+    });
+
+    it("when older deletes left holes in the bytes a later delete took", () => {
+      // "nop" first, then "m" and "q" together, then the rest.
+      const captured = distinct((s) => {
+        s.dispatch(DocumentActions.delete(byteOffset(8), byteOffset(11)));
+        s.dispatch(DocumentActions.delete(byteOffset(7), byteOffset(9)));
+        s.dispatch(DocumentActions.delete(byteOffset(6), byteOffset(7)));
+      });
+      expect(getValue(captured.pieceTable)).toBe(DISTINCT[0]);
+      for (const payload of [wireOf(captured), toV1(captured)]) {
+        expect(restoreLoadOneUndo(payload), `version ${payload.version}`).toBe(DISTINCT.join(""));
+      }
+    });
+  });
+
+  it("checks a placement key outside replay unless the operation says it fits", () => {
+    const s = makeStore(2);
+    load(s, 0);
+    load(s, 1);
+    const state = s.getSnapshot();
+    // Key 1 lies after chunk 1, so it cannot take offset 0, before chunk 0.
+    const op = { kind: "insert", position: byteOffset(0), insertText: "x", afterChunk: 1 } as const;
+    expect(() => applyUntrackedEdit(state, op, state.revision + 1)).toThrow(RangeError);
+    expect(() => applyUntrackedEdit(state, op, state.revision + 1, true)).toThrow(RangeError);
+  });
+
   describe("randomized version 1 checkpoints", () => {
     // ASCII, so version 1 text keeps every byte, and no byte twice: the
     // migration finds where deleted text came from by looking for it in the
-    // chunks, which repeated text leaves to a guess. Long next to the edits,
-    // so most runs still hold a byte of every loaded chunk (see `keyed`).
+    // chunks, which repeated text leaves to a guess.
     const FILE = Array.from({ length: 90 }, (_, i) => String.fromCharCode(33 + i)).join("");
     const SIZE = 15;
     const COUNT = FILE.length / SIZE;
@@ -2197,25 +2346,10 @@ describe("twelfth review regressions", () => {
       }
       return s.reconcileNow();
     };
-    /**
-     * Version 1 history has no keys, so where text that undo gives back
-     * belongs comes from the chunk pieces around it. With every byte of a
-     * loaded chunk deleted, nothing records where that chunk was.
-     */
-    const keyed = (state: DocumentState) => {
-      const resident = new Set(
-        collectPieces(state.pieceTable.root).flatMap((p) =>
-          p.bufferType === "chunk" ? [p.chunkIndex] : [],
-        ),
-      );
-      return [...state.pieceTable.chunkMap.keys()].every((i) => resident.has(i));
-    };
-
     for (let seed = 1; seed <= 50; seed++) {
       it(`deleted text comes back where it was, seed ${seed}`, () => {
         const captured = session(seed, false);
-        const payloads = keyed(captured) ? [wireOf(captured), toV1(captured)] : [wireOf(captured)];
-        for (const payload of payloads) {
+        for (const payload of [wireOf(captured), toV1(captured)]) {
           const where = `seed ${seed}, version ${payload.version}`;
           let state = restoreCheckpoint(payload);
           expect(getValue(state.pieceTable), where).toBe(getValue(captured.pieceTable));

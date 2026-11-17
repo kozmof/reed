@@ -328,7 +328,13 @@ export function evictChunk(state: DocumentState, action: EvictChunkAction): Docu
   }
 
   // History positions survive eviction except those inside the chunk.
-  const history = historyForEviction(state.pieceTable, state.history, chunkIndex, range.start);
+  const history = historyForEviction(
+    state.pieceTable,
+    state.history,
+    chunkIndex,
+    range.start,
+    action.overLimit === true,
+  );
   if (history === null) return state;
 
   const deleted = pieceTableDelete(state.pieceTable, range.start, range.end);

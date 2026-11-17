@@ -369,6 +369,23 @@ export function anchorSelection(
   );
 }
 
+/**
+ * `selection` anchored in `pieceTable`, as a function that returns it.
+ *
+ * Without chunks the anchored form depends only on the selection, so it is
+ * derived on the first call: a history entry that the next keystroke
+ * coalesces away never derives it. With chunks it depends on `pieceTable`,
+ * so it is derived now, and the function does not keep the document alive.
+ */
+export function deferAnchorSelection(
+  pieceTable: PieceTableState,
+  selection: SelectionState,
+): () => HistorySelectionState {
+  if (pieceTable.nextExpectedChunk === 0) return () => anchorUnchunked(selection);
+  const anchored = anchorSelection(pieceTable, selection);
+  return () => anchored;
+}
+
 /** A history selection holding one cursor at anchored `position` with key `key`. */
 export function anchoredCursor(key: number, position: number): HistorySelectionState {
   return freezeSelection(
@@ -702,7 +719,7 @@ interface EvictionCuts {
   readonly redoCut: number;
 }
 
-// Under "pin", a refused eviction leaves history unchanged, and ChunkManager
+// Under "pin" or "pin-bounded", a refused eviction leaves history unchanged, and ChunkManager
 // tries every refused candidate again on each load. The cuts depend only on
 // the history, the chunk, and the chunk's anchored start. Loading or evicting
 // other chunks leaves the anchored start unchanged, and every edit, undo, and
@@ -746,22 +763,25 @@ function evictionCuts(history: HistoryState, chunkIndex: number, anchoredStart: 
  * Entries older than the first such entry can only be replayed after it, so
  * dropping it means dropping all of them.
  *
- * Returns the history to keep, or `null` when the eviction must be refused
- * (policy `"pin"` with history pointing inside the chunk). Returns the same
- * history object when nothing points inside the chunk.
+ * Returns the history to keep, or `null` when the eviction must be refused:
+ * history points inside the chunk under policy `"pin"`, or under
+ * `"pin-bounded"` without `overLimit` (see `HistoryEvictionPolicy`). Returns
+ * the same history object when nothing points inside the chunk.
  */
 export function historyForEviction(
   pieceTable: PieceTableState,
   history: HistoryState,
   chunkIndex: number,
   start: number,
+  overLimit = false,
 ): HistoryState | null {
   if (history.undoStack === null && history.redoStack === null) return history;
   const key = chunkIndex - 1;
   const anchoredStart = toAnchoredOffset(pieceTable, key, start);
   const { undoCut, redoCut } = evictionCuts(history, chunkIndex, anchoredStart);
   if (undoCut < 0 && redoCut < 0) return history;
-  if (history.evictionPolicy === "pin") return null;
+  const policy = history.evictionPolicy;
+  if (policy === "pin" || (policy === "pin-bounded" && !overLimit)) return null;
   // Keep only the entries newer than the cut. The split shares structure.
   const keepNewerThan = (stack: HistoryState["undoStack"], cut: number) =>
     cut < 0 ? stack : pstackTrimToSize(stack, pstackSize(stack) - cut - 1);

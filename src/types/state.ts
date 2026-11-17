@@ -509,13 +509,22 @@ export interface HistorySelectionState {
 
 /**
  * What EVICT_CHUNK does when undo or redo history still points inside the chunk.
+ * Undo cannot replay a change inside a chunk that is not loaded, so the choice
+ * is between keeping the chunk and keeping the history.
  *
  * - `"pin"`: refuse the eviction. The chunk stays loaded until those entries
  *   leave history (HISTORY_CLEAR, a new edit clearing redo, or the history limit).
+ *   Every entry can pin a chunk, so only the history limit bounds how many
+ *   chunks stay loaded, whatever a ChunkManager's `maxLoadedChunks` is.
  * - `"drop"`: evict anyway and discard the entries that point inside the chunk,
  *   together with every entry that can only be undone or redone after them.
+ * - `"pin-bounded"`: as `"pin"`, except for an EVICT_CHUNK with `overLimit`,
+ *   which evicts as `"drop"` does. A ChunkManager sends that only when more
+ *   than `maxLoadedChunks` chunks would stay loaded otherwise, after evicting
+ *   every chunk it can without discarding history. History then keeps the
+ *   chunks it points into while memory allows.
  */
-export type HistoryEvictionPolicy = "pin" | "drop";
+export type HistoryEvictionPolicy = "pin" | "drop" | "pin-bounded";
 
 /**
  * A group of changes that form a single undo unit.

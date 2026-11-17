@@ -237,6 +237,13 @@ export interface EvictChunkAction {
   readonly type: "EVICT_CHUNK";
   /** Index of the chunk to evict */
   readonly chunkIndex: number;
+  /**
+   * True when the caller is over its limit of loaded chunks and has nothing
+   * else to evict. Under the `"pin-bounded"` history eviction policy, history
+   * pointing inside the chunk is then discarded instead of refusing the
+   * eviction (see `HistoryEvictionPolicy`). Other policies ignore it.
+   */
+  readonly overLimit?: boolean;
 }
 
 /**
@@ -639,6 +646,9 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
       const evictAction = action as Partial<EvictChunkAction>;
       if (!isNonNegativeInteger(evictAction.chunkIndex)) {
         errors.push('EVICT_CHUNK action requires a non-negative integer "chunkIndex" property');
+      }
+      if (evictAction.overLimit !== undefined && typeof evictAction.overLimit !== "boolean") {
+        errors.push('EVICT_CHUNK "overLimit" must be a boolean when present');
       }
       break;
     }

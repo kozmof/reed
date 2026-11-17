@@ -108,7 +108,7 @@ it("shares a large history prefix across coalescing while preserving snapshot ar
     [makeInsertChange(byteOffset(1), "y")],
     1,
     selectionBefore,
-    selectionBefore(),
+    selectionBefore,
   );
   const snapshot = state;
   for (let i = 2; i <= 100; i++)
@@ -117,7 +117,7 @@ it("shares a large history prefix across coalescing while preserving snapshot ar
       [makeInsertChange(byteOffset(i), "y")],
       i,
       selectionBefore,
-      selectionBefore(),
+      selectionBefore,
     );
   expect(reads).toBeLessThan(10);
   const latest = state.history.undoStack!.top.changes;

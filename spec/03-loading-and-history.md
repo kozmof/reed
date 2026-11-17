@@ -43,7 +43,7 @@ History is immutable and stored in `DocumentState.history`.
 - `redoStack`
 - `limit`
 - `coalesceTimeout`
-- `evictionPolicy` — `'pin'` (default) or `'drop'`, from the `historyEvictionPolicy` config
+- `evictionPolicy` — `'pin'` (default), `'drop'` or `'pin-bounded'`, from the `historyEvictionPolicy` config
 
 `HistoryEntry` stores:
 
@@ -106,8 +106,9 @@ Each entry is checked against the document as it was when that entry applies, no
 one. An edit before the chunk moves it, so an older entry inside the chunk can have a position
 outside the chunk's current span, and one outside it can have a position inside that span.
 
-- `'pin'` (default) — refuse the eviction. The chunk stays loaded until those entries leave history.
+- `'pin'` (default) — refuse the eviction. The chunk stays loaded until those entries leave history. Only the history limit bounds how many chunks this keeps loaded, whatever `maxLoadedChunks` a ChunkManager has.
 - `'drop'` — evict and discard those entries, along with every entry that can only be undone or redone after them.
+- `'pin-bounded'` — as `'pin'`, except that `EVICT_CHUNK` with `overLimit: true` evicts as `'drop'` does. ChunkManager first evicts every chunk it can without discarding history, and sends `overLimit` only when it is still above `maxLoadedChunks`.
 
 Positions on a chunk boundary do not block eviction.
 
@@ -157,7 +158,7 @@ History boundaries:
 - `content-change` for local text edits and `APPLY_REMOTE`
 - `selection-change` whenever an action moves the selection, including an edit, undo, redo, and a chunk load or eviction
 - `history-change` for undo and redo
-- `history-drop` when eviction discards entries under the `'drop'` policy
+- `history-drop` when eviction discards entries under the `'drop'` policy, or under `'pin-bounded'` with `overLimit`
 - `attention-change` when attention records are created, deleted, or migrated
 - `dirty-change`
 
