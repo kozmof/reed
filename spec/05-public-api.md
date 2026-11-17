@@ -62,7 +62,7 @@ Supported config fields (`DocumentStoreConfig`):
 - `encoding` — currently only `'utf-8'` is supported
 - `lineEnding`
 - `undoGroupTimeout`
-- `historyEvictionPolicy` — `'pin'` (default) refuses to evict a chunk that history points inside, `'drop'` evicts it and discards those entries, and `'pin-bounded'` refuses unless `EVICT_CHUNK` has `overLimit: true`, which ChunkManager sends only when nothing else brings it within `maxLoadedChunks`
+- `historyEvictionPolicy` — `'pin'` refuses to evict a chunk that history points inside, `'drop'` evicts it and discards those entries, and `'pin-bounded'` (default) refuses unless `EVICT_CHUNK` has `overLimit: true`, which ChunkManager sends only when nothing else brings it within `maxLoadedChunks`
 - `normalizeInsertedLineEndings` — coerce line endings on `INSERT`/`REPLACE` to match `lineEnding`
 - `totalFileSize` — pre-declared file size used for chunk sizing, and must be a non-negative safe integer
 - `maxDirtyRanges` — dirty-range count threshold before a full line-index rebuild is triggered
@@ -201,7 +201,7 @@ no transition that could emit them, and `isDirty` was only ever set to `true`.
 
 Primary selector namespace for O(1)/O(log n)/bounded operations:
 
-- `getText`, which rejects ranges that split UTF-8 code points
+- `getText`, which rejects ranges that split UTF-8 code points and keeps a U+FEFF at the start of the range, as the line index counts it
 - `getLength`, `isUtf8Boundary`, `getBufferStats`
 - `findPieceAtPosition`
 - `isReconciledState`

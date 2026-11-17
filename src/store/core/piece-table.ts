@@ -49,9 +49,10 @@ import {
   type InsertionPathEntry,
   type RootToLeafInsertPath,
 } from "./rb-tree.js";
-import { textEncoder, textDecoder } from "./encoding.js";
+import { textEncoder, textDecoder, contentDecoder } from "./encoding.js";
 import { GrowableBuffer } from "./growable-buffer.js";
-import { NO_CHUNK, keyFitsAt, pieceKey, placementKey } from "./chunk-anchor.js";
+import { NO_CHUNK, asFittedKey, keyFitsAt, pieceKey, placementKey } from "./chunk-anchor.js";
+import type { FittedKey } from "./chunk-anchor.js";
 import { lastPiece, pieceAt } from "./piece-search.js";
 import type { PathEntry } from "./piece-search.js";
 import { inOrderPieces } from "./piece-table-stream.js";
@@ -567,7 +568,12 @@ export function pieceTableInsert(
   afterChunk?: number,
 ): LinearCost<PieceTableInsertResult> {
   if (text.length > 0 && afterChunk !== undefined) assertKeyFits(state, position, afterChunk);
-  return pieceTableInsertFitted(state, position, text, afterChunk);
+  return pieceTableInsertFitted(
+    state,
+    position,
+    text,
+    afterChunk === undefined ? undefined : asFittedKey(afterChunk),
+  );
 }
 
 /** Throw a RangeError when `key` does not fit at `position` (see `keyFitsAt`). */
@@ -585,15 +591,16 @@ function assertKeyFits(state: PieceTableState, position: number, key: number): v
  *
  * For callers that derived the key from the document they insert into, such
  * as `insertionKey` or `placementRuns`, which only return keys that fit there.
- * Checking again would cost two more tree walks on every keystroke. A key that
- * does not fit breaks the key order, so a key that comes from outside the
- * document, such as a recorded history key, goes through `pieceTableInsert`.
+ * Checking again would cost two more tree walks on every keystroke. The key is
+ * a `FittedKey`, which only those derivations produce. A key that does not fit
+ * breaks the key order, so a key that comes from outside the document, such as
+ * a recorded history key, goes through `pieceTableInsert`.
  */
 export function pieceTableInsertFitted(
   state: PieceTableState,
   position: ByteOffset,
   text: string | Uint8Array,
-  afterChunk?: number,
+  afterChunk?: FittedKey,
 ): LinearCost<PieceTableInsertResult> {
   if (text.length === 0)
     return $proveCtx($beginCost("O(n)"), {
@@ -1055,6 +1062,10 @@ export function getValue(state: PieceTableState): LinearCost<string> {
 
 /**
  * Get text in the range [start, end).
+ *
+ * A U+FEFF at the start of the range is kept, as everywhere else in it: the
+ * line index and column math count it as content (see `contentDecoder`).
+ * Only `getValue` strips a byte order mark at the start of the document.
  */
 export function getText(
   state: PieceTableState,
@@ -1063,7 +1074,7 @@ export function getText(
 ): LinearCost<string> {
   // A negative start reads nothing, where getBytes clamps it to 0.
   if (start < 0) return $proveCtx($beginCost("O(n)"), "");
-  return $proveCtx($beginCost("O(n)"), textDecoder.decode(getBytes(state, start, end)));
+  return $proveCtx($beginCost("O(n)"), contentDecoder.decode(getBytes(state, start, end)));
 }
 
 /**

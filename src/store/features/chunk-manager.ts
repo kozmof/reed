@@ -15,7 +15,15 @@ import type { ReedLogger } from "../../types/state.js";
 import type { DocumentStore } from "../../types/store.js";
 import { isChunkByteLengthValid } from "../core/piece-table.js";
 import { DocumentActions } from "./actions.js";
+import { pstackSize } from "../../types/state.js";
 import { evictionHistoryLoss } from "./chunk-actions.js";
+import { historyLossAfterDrop } from "./history-anchor.js";
+import type { EvictionHistoryLoss } from "./history-anchor.js";
+
+/** Undo and redo entries an eviction discards in all. */
+function lostEntries(loss: EvictionHistoryLoss): number {
+  return loss.undo + loss.redo;
+}
 
 // =============================================================================
 // Public interfaces
@@ -185,6 +193,10 @@ export function createChunkManager(
   // Pinned chunks: never evicted.
   let activeChunks = new Set<number>();
 
+  // True while more chunks are loaded than maxLoadedChunks allows, as of the
+  // last eviction attempt. The pressure warning is logged when it turns true.
+  let underPressure = false;
+
   // When fetchStrategy is 'queue', serialise fetches through this promise chain.
   let fetchQueue: Promise<void> = Promise.resolve();
 
@@ -276,39 +288,60 @@ export function createChunkManager(
       return true;
     };
 
-    // Evict least recently used chunks until within the limit. A refused
-    // eviction (user edits overlap the chunk's byte range, or history points
-    // inside it) leaves the chunk, and the next candidate is tried.
+    // Evict least recently used chunks until within the limit, at first only
+    // those whose eviction discards no history, whatever the policy. A chunk
+    // that user edits or an attention keep cannot be evicted (its loss is
+    // null). A chunk history points inside is set aside, least recently used
+    // first, in case evicting the others is not enough.
+    const lossy: { readonly chunk: number; loss: EvictionHistoryLoss }[] = [];
     for (const candidate of candidates()) {
       if (loadedCount <= maxLoadedChunks || disposed) break;
-      evict(candidate, false);
+      const loss = evictionHistoryLoss(store.getSnapshot(), candidate);
+      if (loss === null) continue;
+      if (lostEntries(loss) === 0) evict(candidate, false);
+      else lossy.push({ chunk: candidate, loss });
     }
 
-    // Discard history only when evicting every other candidate was not enough.
-    // The "pin-bounded" policy then evicts with `overLimit`, which discards the
-    // history that points inside the chunk. Evicting the chunk that discards
-    // the fewest entries each time keeps as much undo as the limit allows; an
-    // eviction can shorten history, so the losses are measured again after it.
-    if (store.getSnapshot().history.evictionPolicy === "pin-bounded") {
-      const refused = new Set<number>();
-      while (loadedCount > maxLoadedChunks && !disposed) {
-        let best: number | undefined;
-        let bestLoss = Infinity;
-        for (const candidate of candidates()) {
-          if (refused.has(candidate)) continue;
-          const loss = evictionHistoryLoss(store.getSnapshot(), candidate);
-          // Ties go to the least recently used.
-          if (loss !== null && loss < bestLoss) {
-            best = candidate;
-            bestLoss = loss;
-          }
+    // Discard history only when evicting every other candidate was not enough,
+    // and never under "pin". "drop" keeps least recently used order.
+    // "pin-bounded" evicts the chunk that discards the fewest entries each
+    // time, which keeps as much undo as the limit allows; ties go to the least
+    // recently used. The losses were measured once: an eviction drops only
+    // the oldest entries, so the others' losses follow from what it dropped.
+    const policy = store.getSnapshot().history.evictionPolicy;
+    while (policy !== "pin" && lossy.length > 0 && loadedCount > maxLoadedChunks && !disposed) {
+      let at = 0;
+      if (policy === "pin-bounded") {
+        for (let i = 1; i < lossy.length; i++) {
+          if (lostEntries(lossy[i]!.loss) < lostEntries(lossy[at]!.loss)) at = i;
         }
-        if (best === undefined) break;
-        if (!evict(best, true)) refused.add(best);
+      }
+      const { chunk, loss } = lossy.splice(at, 1)[0]!;
+      const before = store.getSnapshot();
+      if (!evict(chunk, true)) continue;
+      const after = store.getSnapshot();
+      // A subscriber that changes the document while the chunk is evicted
+      // leaves the losses stale, so they are measured again.
+      const onlyThisEviction =
+        after.revision === before.revision + 1 &&
+        pstackSize(after.history.undoStack) === pstackSize(before.history.undoStack) - loss.undo &&
+        pstackSize(after.history.redoStack) === pstackSize(before.history.redoStack) - loss.redo;
+      for (let i = lossy.length - 1; i >= 0; i--) {
+        const entry = lossy[i]!;
+        const next = onlyThisEviction
+          ? historyLossAfterDrop(entry.loss, loss)
+          : evictionHistoryLoss(after, entry.chunk);
+        if (next === null || !after.pieceTable.chunkMap.has(entry.chunk)) lossy.splice(i, 1);
+        else entry.loss = next;
       }
     }
 
-    if (loadedCount > maxLoadedChunks) {
+    const overLimit = loadedCount > maxLoadedChunks;
+    // Warn when the cache goes over the limit, not on every load while it stays
+    // there: under "pin", history keeping chunks resident is a steady state.
+    const startedPressure = overLimit && !underPressure;
+    underPressure = overLimit;
+    if (startedPressure) {
       logger?.warn?.(
         `[ChunkManager] eviction pressure: ${loadedCount} chunks loaded but all non-pinned ` +
           `candidates hold user edits or undo history. Memory limit (${maxLoadedChunks}) exceeded.` +

@@ -21,11 +21,14 @@ import { byteLength, byteOffset } from "../../types/branded.js";
 import {
   collectPieces,
   getBytes,
+  getText,
   getValue,
   isUtf8Boundary,
   pieceTableInsert,
 } from "../core/piece-table.js";
 import { byteKey, pieceKey } from "../core/chunk-anchor.js";
+import { lineByteToChar, lineCharToByte } from "../core/line-offsets.js";
+import { rebuildLineIndexFromPieceTableState } from "./edit.js";
 import { CheckpointError } from "../../types/checkpoint.js";
 import { collectLines, rebuildLineIndex } from "../core/line-index.js";
 import { getUndoCount, getRedoCount } from "./history.js";
@@ -520,7 +523,7 @@ describe("checkpoints carry placement keys and anchors", () => {
     };
 
     let state: DocumentState = restoreCheckpoint(v1);
-    expect(state.history.evictionPolicy).toBe("pin");
+    expect(state.history.evictionPolicy).toBe("pin-bounded");
     state = documentReducer(state, DocumentActions.loadChunk(0, enc(CHUNK0)));
     expect(getValue(state.pieceTable)).toBe("AAAAAAA\nBBXBBBBB\n");
     state = documentReducer(state, DocumentActions.undo());
@@ -1037,7 +1040,7 @@ describe("fourth review regressions", () => {
     const v1 = { ...v2, version: 1, history };
 
     const pinned = createDocumentStoreFromCheckpoint(v1);
-    expect(pinned.getSnapshot().history.evictionPolicy).toBe("pin");
+    expect(pinned.getSnapshot().history.evictionPolicy).toBe("pin-bounded");
     pinned.dispatch(DocumentActions.evictChunk(1));
     expect(pinned.getSnapshot().pieceTable.chunkMap.has(1)).toBe(true);
     const restored = createDocumentStoreFromCheckpoint(v1, { historyEvictionPolicy: "drop" });
@@ -2464,5 +2467,28 @@ describe("deferred anchoring of the selection an edit leaves", () => {
     s.dispatch(DocumentActions.redo());
     // The caret after "Q", now that chunk 0's 8 bytes are gone.
     expect(s.getSnapshot().selection.ranges[0]).toMatchObject({ anchor: 11, head: 11 });
+  });
+});
+
+describe("fifteenth review regressions", () => {
+  it("keeps a U+FEFF that starts a range, as line columns count it", () => {
+    const s = makeStore(1);
+    // Line 1 is bytes 2..8: a 3-byte U+FEFF, then "abc".
+    s.dispatch(DocumentActions.loadChunk(0, enc("x\n\uFEFFabc")));
+    const pt = s.getSnapshot().pieceTable;
+    expect(getText(pt, byteOffset(2), byteOffset(8))).toBe("\uFEFFabc");
+    expect(lineByteToChar(pt, 2, 8, 6)).toBe(2);
+    expect(lineCharToByte(pt, 2, 8, 2)).toBe(6);
+  });
+
+  it("counts a U+FEFF that starts the document when the line index is rebuilt", () => {
+    const s = makeStore(1);
+    s.dispatch(DocumentActions.loadChunk(0, enc("\uFEFFabcd\n")));
+    const state = s.getSnapshot();
+    expect(getText(state.pieceTable, byteOffset(0), byteOffset(3))).toBe("\uFEFF");
+    // getValue still strips a byte order mark at the start of the document.
+    expect(getValue(state.pieceTable)).toBe("abcd\n");
+    const rebuilt = rebuildLineIndexFromPieceTableState(state);
+    expect(collectLines(rebuilt.lineIndex.root)[0]!.charLength).toBe(6);
   });
 });

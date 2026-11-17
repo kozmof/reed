@@ -59,7 +59,7 @@ import {
 } from "../core/encoding.js";
 import { NO_CHUNK, placementRuns } from "../core/chunk-anchor.js";
 import { codePointWindow, isSafeSplit } from "../core/utf8-seam.js";
-import type { KeyRun } from "../core/chunk-anchor.js";
+import type { FittedKey, KeyRun } from "../core/chunk-anchor.js";
 import {
   anchorAt,
   anchorSelection,
@@ -125,22 +125,21 @@ export function validateRange(
  * inserts (applyEdit, applyChange/undo-redo, APPLY_REMOTE) re-anchors points
  * automatically via the split records.
  *
- * `keyFits` is true when `afterChunk` was derived from `state` and so fits at
- * `position`, which skips checking it again (see `pieceTableInsertFitted`).
+ * The text takes `fittedAfterChunk`, a key derived from `state` that fits at
+ * `position` and is not checked again (see `pieceTableInsertFitted`), else
+ * `afterChunk`, which is checked, else the gap's key.
  */
 export function pieceTableInsert(
   state: DocumentState,
   position: ByteOffset,
   text: string | Uint8Array,
   afterChunk?: number,
-  keyFits = false,
+  fittedAfterChunk?: FittedKey,
 ): { state: DocumentState; insertedByteLength: number; splits: readonly SplitRecord[] } {
-  const result = (keyFits ? ptInsertFitted : ptInsert)(
-    state.pieceTable,
-    position,
-    text,
-    afterChunk,
-  );
+  const result =
+    fittedAfterChunk !== undefined
+      ? ptInsertFitted(state.pieceTable, position, text, fittedAfterChunk)
+      : ptInsert(state.pieceTable, position, text, afterChunk);
   const attention = migrateSplits(state.attention, result.splits);
   const nextState = withState(state, { pieceTable: result.state, attention });
   carryLineOffsetIndexes(
@@ -704,15 +703,16 @@ interface InsertFields {
   /**
    * Placement key for the inserted text. Defaults to the gap's key. A key
    * that does not fit at `position` (see `keyFitsAt`) throws a RangeError.
+   * Use it for a key from outside this document, such as a recorded history
+   * change.
    */
   readonly afterChunk?: number | undefined;
   /**
-   * True when `afterChunk` was derived from this document, by
-   * `insertionKey` or `placementRuns`, which only return keys that fit.
-   * The check is then skipped (see `pieceTableInsertFitted`). Leave it
-   * unset for a key from anywhere else, such as a recorded history change.
+   * Placement key derived from this document by `insertionKey` or
+   * `placementRuns`, which only return keys that fit. It takes precedence over
+   * `afterChunk`, and the check is skipped (see `pieceTableInsertFitted`).
    */
-  readonly afterChunkFits?: boolean | undefined;
+  readonly fittedAfterChunk?: FittedKey | undefined;
 }
 
 /** The delete phase of a delete or replace. */
@@ -808,7 +808,7 @@ export function applyUntrackedEdit(
       op.position,
       insertContent,
       op.afterChunk,
-      op.afterChunkFits === true,
+      op.fittedAfterChunk,
     );
     newState = result.state;
     if (!needsRebuild) {
@@ -929,7 +929,7 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
     runs.length > 0 ? runs[0]!.key : insertionKey(pieceTable, selectionBefore, op.position);
   let newState = applyUntrackedEdit(
     state,
-    op.kind === "delete" ? op : { ...op, afterChunk: insertKey, afterChunkFits: true },
+    op.kind === "delete" ? op : { ...op, afterChunk: undefined, fittedAfterChunk: insertKey },
     nextRevision,
   );
 

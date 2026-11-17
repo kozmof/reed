@@ -43,7 +43,7 @@ History is immutable and stored in `DocumentState.history`.
 - `redoStack`
 - `limit`
 - `coalesceTimeout`
-- `evictionPolicy` — `'pin'` (default), `'drop'` or `'pin-bounded'`, from the `historyEvictionPolicy` config
+- `evictionPolicy` — `'pin'`, `'drop'` or `'pin-bounded'` (default), from the `historyEvictionPolicy` config
 
 `HistoryEntry` stores:
 
@@ -106,9 +106,9 @@ Each entry is checked against the document as it was when that entry applies, no
 one. An edit before the chunk moves it, so an older entry inside the chunk can have a position
 outside the chunk's current span, and one outside it can have a position inside that span.
 
-- `'pin'` (default) — refuse the eviction. The chunk stays loaded until those entries leave history. Only the history limit bounds how many chunks this keeps loaded, whatever `maxLoadedChunks` a ChunkManager has.
-- `'drop'` — evict and discard those entries, along with every entry that can only be undone or redone after them.
-- `'pin-bounded'` — as `'pin'`, except that `EVICT_CHUNK` with `overLimit: true` evicts as `'drop'` does. ChunkManager first evicts every chunk it can without discarding history, and sends `overLimit` only when it is still above `maxLoadedChunks`. It then evicts, one at a time, the chunk whose eviction discards the fewest undo and redo entries, the least recently used on a tie.
+- `'pin'` — refuse the eviction. The chunk stays loaded until those entries leave history. Only the history limit bounds how many chunks this keeps loaded, whatever `maxLoadedChunks` a ChunkManager has.
+- `'drop'` — evict and discard those entries, along with every entry that can only be undone or redone after them. ChunkManager first evicts every chunk it can without discarding history, then the others, the least recently used first.
+- `'pin-bounded'` (default) — as `'pin'`, except that `EVICT_CHUNK` with `overLimit: true` evicts as `'drop'` does. ChunkManager first evicts every chunk it can without discarding history, and sends `overLimit` only when it is still above `maxLoadedChunks`. It then evicts, one at a time, the chunk whose eviction discards the fewest undo and redo entries, the least recently used on a tie.
 
 Positions on a chunk boundary do not block eviction.
 

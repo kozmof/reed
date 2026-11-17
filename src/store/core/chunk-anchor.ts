@@ -27,6 +27,22 @@ import { avlHeight, avlPut, avlRemove } from "./persistent-avl.js";
 /** Key for positions before every chunk, and for every position without chunking. */
 export const NO_CHUNK = -1;
 
+declare const fittedKeyBrand: unique symbol;
+
+/**
+ * A placement key derived from a document at an offset where it fits (see
+ * `keyFitsAt`). Only the derivations in this module and `insertionKey` produce
+ * one, so an insert given a `FittedKey` can skip checking it again. Use it on
+ * the document it was derived from, before that document changes near the
+ * offset.
+ */
+export type FittedKey = number & { readonly [fittedKeyBrand]: true };
+
+/** Brand `key`, which the caller derived to fit where it will be used. */
+export function asFittedKey(key: number): FittedKey {
+  return key as FittedKey;
+}
+
 /**
  * The parts of a piece table that placement keys are read from: the piece
  * tree and which chunks have ever loaded. It holds no text, so keeping it
@@ -157,10 +173,10 @@ export function placementKey(
   offset: number,
   stored: number | undefined,
   side: GapSide,
-): number {
-  if (pieceTable.nextExpectedChunk === 0) return NO_CHUNK;
-  if (stored !== undefined && keyFitsAt(pieceTable, offset, stored)) return stored;
-  return gapKey(pieceTable.root, offset, side);
+): FittedKey {
+  if (pieceTable.nextExpectedChunk === 0) return asFittedKey(NO_CHUNK);
+  if (stored !== undefined && keyFitsAt(pieceTable, offset, stored)) return asFittedKey(stored);
+  return asFittedKey(gapKey(pieceTable.root, offset, side));
 }
 
 // =============================================================================
@@ -303,10 +319,10 @@ export function toResidentOffset(
 }
 
 /** One run of resident bytes that share a placement key. */
-export interface KeyRun {
+export interface KeyRun<Key extends number = number> {
   readonly start: number;
   readonly end: number;
-  readonly key: number;
+  readonly key: Key;
 }
 
 /**
@@ -318,12 +334,17 @@ export interface KeyRun {
  * later bytes a smaller key, and an older change replayed among them would
  * then leave keys decreasing in document order. Usually there is one run.
  */
-export function placementRuns(pieceTable: PieceTableState, start: number, end: number): KeyRun[] {
-  const runs: KeyRun[] = [];
+export function placementRuns(
+  pieceTable: PieceTableState,
+  start: number,
+  end: number,
+): KeyRun<FittedKey>[] {
+  const runs: KeyRun<FittedKey>[] = [];
   if (end <= start) return runs;
   // Before any chunk has loaded, every key is NO_CHUNK and nothing can split.
-  if (pieceTable.nextExpectedChunk === 0) return [{ start, end, key: NO_CHUNK }];
-  const firstKey = byteKey(pieceTable.root, start);
+  if (pieceTable.nextExpectedChunk === 0) return [{ start, end, key: asFittedKey(NO_CHUNK) }];
+  // A run's key is the key of its own bytes, so it fits anywhere in the run.
+  const firstKey = asFittedKey(byteKey(pieceTable.root, start));
   // Keys never decrease, so equal first and last keys mean one run: O(log n).
   if (firstKey === byteKey(pieceTable.root, end - 1)) return [{ start, end, key: firstKey }];
   let runStart = start;
@@ -336,7 +357,7 @@ export function placementRuns(pieceTable: PieceTableState, start: number, end: n
     const nodeEnd = nodeStart + node.length;
     if (start < nodeStart) visit(node.left, base);
     if (nodeStart > start && nodeStart < end) {
-      const key = pieceKey(node);
+      const key = asFittedKey(pieceKey(node));
       if (key !== runKey) {
         runs.push({ start: runStart, end: nodeStart, key: runKey });
         runStart = nodeStart;

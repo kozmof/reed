@@ -9,8 +9,12 @@ import { createDocumentStore } from "./store.js";
 import { DocumentActions } from "./actions.js";
 import { byteOffset } from "../../types/branded.js";
 import type { DocumentStore } from "../../types/store.js";
-import { getRedoCount } from "./history.js";
+import { getRedoCount, getUndoCount } from "./history.js";
 import { getValue } from "../core/piece-table.js";
+import { documentReducer } from "./reducer.js";
+import { evictionHistoryLoss } from "./chunk-actions.js";
+import type { DocumentState, HistoryEvictionPolicy } from "../../types/state.js";
+import { makeDeterministicRng, randomInt } from "../../../test-utils/large-content.js";
 
 const CHUNK_SIZE = 8;
 
@@ -275,7 +279,7 @@ describe("ChunkManager LRU eviction", () => {
 
 describe("ChunkManager with the 'pin-bounded' history policy", () => {
   const chunks = { 0: "aaaaaaa\n", 1: "bbbbbbb\n", 2: "ccccccc\n" };
-  const setup = (historyEvictionPolicy: "pin" | "pin-bounded") => {
+  const setup = (historyEvictionPolicy: HistoryEvictionPolicy) => {
     const store = createDocumentStore({
       chunkSize: CHUNK_SIZE,
       totalFileSize: CHUNK_SIZE * 3,
@@ -349,6 +353,64 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     manager.dispose();
   });
 
+  it("evicts a chunk history does not pin first under 'drop' too", async () => {
+    const { store, manager } = setup("drop");
+    await manager.ensureLoaded(0);
+    pinChunk0(store);
+    await manager.ensureLoaded(1);
+    await manager.ensureLoaded(2);
+
+    const snap = store.getSnapshot();
+    // Chunk 0 is the least recently used, but evicting it would drop the redo.
+    expect([...snap.pieceTable.chunkMap.keys()].sort()).toEqual([0, 2]);
+    expect(getRedoCount(snap)).toBe(1);
+    manager.dispose();
+  });
+
+  it("defaults to 'pin-bounded', which keeps the cache within the limit", async () => {
+    const store = createDocumentStore({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 3,
+      reconcileMode: "none",
+    });
+    expect(store.getSnapshot().history.evictionPolicy).toBe("pin-bounded");
+    const manager = createChunkManager(store, makeLoader(chunks), { maxLoadedChunks: 2 });
+    await manager.ensureLoaded(0);
+    pinChunk0(store);
+    manager.setActiveChunks([1, 2]);
+    await manager.ensureLoaded(1);
+    await manager.ensureLoaded(2);
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(2);
+    manager.dispose();
+  });
+
+  it("warns once when the cache goes over the limit, and again if it returns", async () => {
+    const { store, manager, warn } = setup("pin");
+    await manager.ensureLoaded(0);
+    pinChunk0(store);
+    manager.setActiveChunks([1, 2]);
+    await manager.ensureLoaded(1);
+    await manager.ensureLoaded(2);
+    expect(warn).toHaveBeenCalledTimes(1);
+    // Still over the limit: no new warning.
+    manager.setActiveChunks([1, 2]);
+    manager.setActiveChunks([2, 1]);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    // Clearing history lets chunk 0 go, which ends the pressure.
+    store.dispatch(DocumentActions.historyClear());
+    manager.setActiveChunks([]);
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
+    // History pins chunk 1 (now at offset 0), and loading chunk 0 again goes over.
+    store.dispatch(DocumentActions.insert(byteOffset(2), "X"));
+    store.dispatch(DocumentActions.undo());
+    manager.setActiveChunks([1, 2]);
+    await manager.ensureLoaded(0);
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+    expect(warn).toHaveBeenCalledTimes(2);
+    manager.dispose();
+  });
+
   it("stays over the limit under 'pin' and says how to bound it", async () => {
     const { store, manager, warn } = setup("pin");
     await manager.ensureLoaded(0);
@@ -361,6 +423,105 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('"pin-bounded"'));
     manager.dispose();
   });
+});
+
+describe("ChunkManager eviction that discards history", () => {
+  const CHUNK_COUNT = 6;
+  const content = (i: number) => String.fromCharCode(97 + i).repeat(CHUNK_SIZE - 1) + "\n";
+  const lossOf = (state: DocumentState, chunk: number) => {
+    const loss = evictionHistoryLoss(state, chunk);
+    return loss === null ? null : loss.undo + loss.redo;
+  };
+
+  /**
+   * The eviction the manager should do, measuring every loss again after each
+   * eviction: chunks that cost no history first, least recently used first,
+   * then under "pin-bounded" the one that costs the fewest entries, and under
+   * "drop" the least recently used.
+   */
+  function referenceEviction(
+    start: DocumentState,
+    lru: readonly number[],
+    max: number,
+    policy: HistoryEvictionPolicy,
+  ): DocumentState {
+    let state = start;
+    for (const chunk of lru) {
+      if (state.pieceTable.chunkMap.size <= max) break;
+      if (lossOf(state, chunk) === 0) {
+        state = documentReducer(state, DocumentActions.evictChunk(chunk));
+      }
+    }
+    while (state.pieceTable.chunkMap.size > max) {
+      let best: number | undefined;
+      let bestLoss = Infinity;
+      for (const chunk of lru) {
+        if (!state.pieceTable.chunkMap.has(chunk)) continue;
+        const loss = lossOf(state, chunk);
+        if (loss === null) continue;
+        if (policy === "drop") {
+          best = chunk;
+          break;
+        }
+        if (loss < bestLoss) {
+          best = chunk;
+          bestLoss = loss;
+        }
+      }
+      if (best === undefined) break;
+      const next = documentReducer(state, DocumentActions.evictChunk(best, true));
+      if (next === state) break;
+      state = next;
+    }
+    return state;
+  }
+
+  it.each(["pin-bounded", "drop"] as const)(
+    "matches measuring every loss again after each eviction under '%s'",
+    async (policy) => {
+      for (let seed = 1; seed <= 40; seed++) {
+        const rng = makeDeterministicRng(seed);
+        const store = createDocumentStore({
+          chunkSize: CHUNK_SIZE,
+          totalFileSize: CHUNK_SIZE * CHUNK_COUNT,
+          historyEvictionPolicy: policy,
+          reconcileMode: "none",
+        });
+        const chunks = Object.fromEntries(
+          Array.from({ length: CHUNK_COUNT }, (_, i) => [i, content(i)]),
+        );
+        const max = randomInt(rng, 1, 3);
+        const manager = createChunkManager(store, makeLoader(chunks), { maxLoadedChunks: max });
+        const all = Array.from({ length: CHUNK_COUNT }, (_, i) => i);
+        // Pin everything while loading, so the LRU order is the load order.
+        manager.setActiveChunks(all);
+        for (const i of all) await manager.ensureLoaded(i);
+        // Type and delete inside random chunks: each chunk is pristine again,
+        // but undo entries point inside it. Undo some of them into redo.
+        const rounds = randomInt(rng, 1, 8);
+        for (let r = 0; r < rounds; r++) {
+          const at = byteOffset(
+            randomInt(rng, 0, CHUNK_COUNT - 1) * CHUNK_SIZE + randomInt(rng, 1, 6),
+          );
+          store.dispatch(DocumentActions.insert(at, "X"));
+          store.dispatch(DocumentActions.delete(at, byteOffset(at + 1)));
+        }
+        const undos = randomInt(rng, 0, rounds * 2);
+        for (let u = 0; u < undos; u++) store.dispatch(DocumentActions.undo());
+
+        const expected = referenceEviction(store.getSnapshot(), all, max, policy);
+        manager.setActiveChunks([]);
+        const actual = store.getSnapshot();
+        const context = `seed ${seed}, max ${max}`;
+        expect([...actual.pieceTable.chunkMap.keys()].sort(), context).toEqual(
+          [...expected.pieceTable.chunkMap.keys()].sort(),
+        );
+        expect(getUndoCount(actual), context).toBe(getUndoCount(expected));
+        expect(getRedoCount(actual), context).toBe(getRedoCount(expected));
+        manager.dispose();
+      }
+    },
+  );
 });
 
 describe("ChunkManager.prefetch", () => {

@@ -1113,7 +1113,7 @@ function restoreHistory(
 
   const evictionPolicy =
     source.evictionPolicy === undefined
-      ? "pin"
+      ? "pin-bounded"
       : readEnum(
           source.evictionPolicy,
           ["pin", "drop", "pin-bounded"] as const,

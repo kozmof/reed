@@ -62,7 +62,7 @@ Version 2 adds chunk placement keys and anchored history positions:
 - Undo and redo refuse, with a `RangeError`, to replay a change that resolves outside the document. Restore cannot rule this out, because each entry applies to a different revision of the document.
 - A history selection range is `[anchor, head]` or `[anchor, head, anchorAfterChunk, headAfterChunk]`.
 - A live selection range is `[anchor, head]` byte offsets, or `[anchor, head, anchorAfterChunk, headAfterChunk]` when it stores a placement key (see `SelectionRange.anchorAfterChunk`). `null` stands for a key the range does not store. Every action that changes the document moves the selection with it, so a captured key fits its offset. Restore ignores a key that does not fit, as the live selection does.
-- `history.evictionPolicy` is `'pin'`, `'drop'` or `'pin-bounded'`. Restore treats a missing value as `'pin'`.
+- `history.evictionPolicy` is `'pin'`, `'drop'` or `'pin-bounded'`. Restore treats a missing value as `'pin-bounded'`, the default.
 
 The version 1 to 2 step derives the keys from the captured layout. Each history offset is keyed in the document its entry applied to: the step follows the captured document back through the undo stack and forward through the redo stack, so an offset that later edits moved into another chunk keeps the chunk it was recorded in. Documents without chunks need no change.
 

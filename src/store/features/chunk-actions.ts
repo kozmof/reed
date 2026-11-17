@@ -30,6 +30,7 @@ import {
   historyForEviction,
   historyLossForEviction,
 } from "./history-anchor.js";
+import type { EvictionHistoryLoss } from "./history-anchor.js";
 import { repairChunkLines } from "../core/chunk-line-repair.js";
 import { summarizeBytes } from "../core/decoded-metrics.js";
 import { PersistentMap, PersistentSet } from "../core/persistent-map.js";
@@ -340,11 +341,15 @@ function evictableRange(
 }
 
 /**
- * How many undo and redo entries EVICT_CHUNK with `overLimit` discards to
- * evict `chunkIndex` under the `"pin-bounded"` policy, or null when it cannot
- * evict the chunk whatever happens to history (see `evictChunk`).
+ * How many undo and redo entries EVICT_CHUNK discards to evict `chunkIndex`
+ * when the policy lets it drop history (`"drop"`, or `"pin-bounded"` with
+ * `overLimit`), or null when it cannot evict the chunk whatever happens to
+ * history (see `evictChunk`). Under `"pin"`, only a chunk with no loss evicts.
  */
-export function evictionHistoryLoss(state: DocumentState, chunkIndex: number): number | null {
+export function evictionHistoryLoss(
+  state: DocumentState,
+  chunkIndex: number,
+): EvictionHistoryLoss | null {
   const range = evictableRange(state, chunkIndex);
   if (range === null) return null;
   return historyLossForEviction(state.pieceTable, state.history, chunkIndex, range.start);

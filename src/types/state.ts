@@ -518,11 +518,13 @@ export interface HistorySelectionState {
  *   chunks stay loaded, whatever a ChunkManager's `maxLoadedChunks` is.
  * - `"drop"`: evict anyway and discard the entries that point inside the chunk,
  *   together with every entry that can only be undone or redone after them.
- * - `"pin-bounded"`: as `"pin"`, except for an EVICT_CHUNK with `overLimit`,
- *   which evicts as `"drop"` does. A ChunkManager sends that only when more
- *   than `maxLoadedChunks` chunks would stay loaded otherwise, after evicting
- *   every chunk it can without discarding history. History then keeps the
- *   chunks it points into while memory allows.
+ *   A ChunkManager still evicts every chunk it can without discarding history
+ *   first, then the others least recently used first.
+ * - `"pin-bounded"` (the default): as `"pin"`, except for an EVICT_CHUNK with
+ *   `overLimit`, which evicts as `"drop"` does. A ChunkManager sends that only
+ *   when more than `maxLoadedChunks` chunks would stay loaded otherwise, after
+ *   evicting every chunk it can without discarding history. History then keeps
+ *   the chunks it points into while memory allows.
  */
 export type HistoryEvictionPolicy = "pin" | "drop" | "pin-bounded";
 
@@ -838,7 +840,7 @@ export type DocumentStoreRuntimeConfig = { logger?: ReedLogger } & ReconcileOpti
  * plus `historyEvictionPolicy`, which replaces the policy stored in the
  * checkpoint. The policy only decides what a later EVICT_CHUNK does, so it can
  * change on restore. A version 1 checkpoint stores none and restores with
- * `"pin"` unless this is set.
+ * `"pin-bounded"` unless this is set.
  */
 export type DocumentStoreRestoreConfig = DocumentStoreRuntimeConfig &
   Pick<DocumentStoreConfigBase, "historyEvictionPolicy">;
@@ -881,7 +883,8 @@ export interface DocumentStoreConfigBase {
   undoGroupTimeout?: number;
   /**
    * What EVICT_CHUNK does when undo or redo history still points inside the
-   * chunk (default: `"pin"`, refuse the eviction). See `HistoryEvictionPolicy`.
+   * chunk (default: `"pin-bounded"`, refuse the eviction unless a ChunkManager
+   * cannot otherwise stay within `maxLoadedChunks`). See `HistoryEvictionPolicy`.
    */
   historyEvictionPolicy?: HistoryEvictionPolicy;
   /**

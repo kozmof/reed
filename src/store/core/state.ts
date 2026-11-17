@@ -56,7 +56,7 @@ const DEFAULT_CONFIG: Required<Omit<DocumentStoreConfigBase, "logger">> & {
   encoding: "utf-8",
   lineEnding: "lf",
   undoGroupTimeout: 0,
-  historyEvictionPolicy: "pin",
+  historyEvictionPolicy: "pin-bounded",
   totalFileSize: 0,
   maxDirtyRanges: 32,
   reconcileMode: "idle",
@@ -664,7 +664,7 @@ export function createInitialSelectionState(): SelectionState {
 export function createInitialHistoryState(
   limit: number = 1000,
   coalesceTimeout: number = 0,
-  evictionPolicy: HistoryEvictionPolicy = "pin",
+  evictionPolicy: HistoryEvictionPolicy = "pin-bounded",
 ): HistoryState {
   return Object.freeze({
     undoStack: null,

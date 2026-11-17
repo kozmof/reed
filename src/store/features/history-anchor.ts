@@ -21,9 +21,10 @@ import type { NonEmptyReadonlyArray } from "../../types/utils.js";
 import { pstackSize, pstackTrimToSize } from "../../types/state.js";
 import type { ByteOffset } from "../../types/branded.js";
 import { byteOffset } from "../../types/branded.js";
-import type { GapSide, KeyLayout, LoadedNode } from "../core/chunk-anchor.js";
+import type { FittedKey, GapSide, KeyLayout, LoadedNode } from "../core/chunk-anchor.js";
 import {
   NO_CHUNK,
+  asFittedKey,
   gapKey,
   keyFitsAt,
   keySpan,
@@ -215,14 +216,18 @@ export function insertionKey(
   pieceTable: PieceTableState,
   selection: SelectionState,
   offset: number,
-): number {
-  if (pieceTable.nextExpectedChunk === 0) return NO_CHUNK;
+): FittedKey {
+  if (pieceTable.nextExpectedChunk === 0) return asFittedKey(NO_CHUNK);
   const fits = (key: number | undefined): key is number =>
     key !== undefined && keyFitsAt(pieceTable, offset, key);
-  const keyOf = (range: SelectionRange | undefined): number | undefined => {
+  const keyOf = (range: SelectionRange | undefined): FittedKey | undefined => {
     if (range === undefined) return undefined;
-    if (range.head === offset && fits(range.headAfterChunk)) return range.headAfterChunk;
-    if (range.anchor === offset && fits(range.anchorAfterChunk)) return range.anchorAfterChunk;
+    if (range.head === offset && fits(range.headAfterChunk)) {
+      return asFittedKey(range.headAfterChunk);
+    }
+    if (range.anchor === offset && fits(range.anchorAfterChunk)) {
+      return asFittedKey(range.anchorAfterChunk);
+    }
     return undefined;
   };
   // The primary range first: it is the one an edit usually comes from.
@@ -813,22 +818,51 @@ export function historyForEviction(
 }
 
 /**
+ * How many entries of each stack evicting a chunk discards when history may
+ * be dropped. Each count is a run of the oldest entries of its stack.
+ */
+export interface EvictionHistoryLoss {
+  readonly undo: number;
+  readonly redo: number;
+}
+
+/**
  * How many undo and redo entries evicting `chunkIndex`, whose first resident
  * byte is at `start`, discards when history may be dropped: the entries
- * `historyForEviction` leaves out, `0` when nothing points inside the chunk.
+ * `historyForEviction` leaves out, none when nothing points inside the chunk.
  */
 export function historyLossForEviction(
   pieceTable: PieceTableState,
   history: HistoryState,
   chunkIndex: number,
   start: number,
-): number {
-  if (history.undoStack === null && history.redoStack === null) return 0;
+): EvictionHistoryLoss {
+  if (history.undoStack === null && history.redoStack === null) return { undo: 0, redo: 0 };
   const { undoCut, redoCut } = evictionCuts(
     history,
     chunkIndex,
     toAnchoredOffset(pieceTable, chunkIndex - 1, start),
   );
   // Cutting at `cut` drops it and every entry older than it (see `keepNewerThan`).
-  return undoCut + 1 + (redoCut + 1);
+  return { undo: undoCut + 1, redo: redoCut + 1 };
+}
+
+/**
+ * The loss of evicting a chunk, `loss` before evicting another chunk that
+ * discarded `dropped`, measured afterwards.
+ *
+ * Both count oldest entries, and an eviction drops entries only from the old
+ * end. The entry a cut was found at is unchanged while it is kept, since the
+ * search for it starts from the newest entry and never reads older ones. So a
+ * loss shrinks by the entries dropped below its cut, and is none when the cut
+ * was dropped too. This saves measuring every loss again after each eviction.
+ */
+export function historyLossAfterDrop(
+  loss: EvictionHistoryLoss,
+  dropped: EvictionHistoryLoss,
+): EvictionHistoryLoss {
+  return {
+    undo: Math.max(0, loss.undo - dropped.undo),
+    redo: Math.max(0, loss.redo - dropped.redo),
+  };
 }
