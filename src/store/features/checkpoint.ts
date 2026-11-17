@@ -55,7 +55,8 @@ import { base64DecodedLength, decodeBase64 } from "../core/base64.js";
 import { inOrderPieces } from "../core/piece-table-stream.js";
 import { decodedCharLength, joinDecoded, type DecodedSummary } from "../core/decoded-metrics.js";
 import { utf8ByteLength } from "../core/encoding.js";
-import { loadedLengthAtOrBelow } from "../core/chunk-anchor.js";
+import { keyFitsAt, loadedLengthAtOrBelow } from "../core/chunk-anchor.js";
+import { pieceTableDelete, pieceTableInsertFitted } from "../core/piece-table.js";
 import { selectionRange } from "./history-anchor.js";
 import { insertedLength, removedLength } from "./history-entry.js";
 import { GrowableBuffer } from "../core/growable-buffer.js";
@@ -1007,9 +1008,16 @@ function restoreHistoryEntry(
 /**
  * Check that a stack replays inside the document: undo (`direction` -1) walks
  * changes last to first, and redo (1) first to last, both from the newest
- * entry. Each change applies to the document the newer ones left, so the
- * walk tracks only its length. A change whose range ends past that length
- * would make UNDO or REDO throw, so the checkpoint is rejected here instead.
+ * entry. Each change applies to the document the newer ones left. A change
+ * would make UNDO or REDO throw when its range ends past the end of that
+ * document, or when the text it inserts carries a placement key that does
+ * not fit where it lands (see `keyFitsAt`). The checkpoint is rejected here
+ * instead.
+ *
+ * Without chunks every key is NO_CHUNK and fits everywhere, so the walk
+ * tracks only the length. With chunks it replays each change on stand-in
+ * bytes, since whether a key fits depends on the keys around it. That costs
+ * O(log n) per change.
  *
  * Replay loads and evicts no chunks, so every position resolves against the
  * restored layout. `readAnchor` has already checked each against zero.
@@ -1020,6 +1028,8 @@ function assertStackReplays(
   direction: 1 | -1,
   what: string,
 ): void {
+  const chunked = pieceTable.nextExpectedChunk > 0;
+  let doc = pieceTable;
   let length = pieceTable.totalLength;
   for (let e = entries.length - 1; e >= 0; e--) {
     const { changes } = entries[e]!;
@@ -1037,6 +1047,22 @@ function assertStackReplays(
         );
       }
       length += insert - remove;
+      if (!chunked) continue;
+      if (remove > 0) doc = pieceTableDelete(doc, byteOffset(start), byteOffset(start + remove));
+      if (insert === 0) continue;
+      if (!keyFitsAt(doc, start, change.afterChunk)) {
+        fail(
+          "HISTORY_INVALID",
+          `${what}[${e}].changes[${i}] inserts text with placement key ${change.afterChunk} at ` +
+            `offset ${start}, which would put placement keys out of document order`,
+        );
+      }
+      doc = pieceTableInsertFitted(
+        doc,
+        byteOffset(start),
+        new Uint8Array(insert),
+        change.afterChunk,
+      ).state;
     }
   }
 }
@@ -1231,6 +1257,26 @@ function validateChunkLineIndex(
     }
   }
 }
+
+/**
+ * Bring an older payload to the current version. Migration runs before
+ * validation and returns malformed input as is for the validators to report,
+ * but any other error it raises still means the payload is not restorable,
+ * so it surfaces as `CheckpointError('MALFORMED')` as `restoreCheckpoint`
+ * promises.
+ */
+function migrate(source: Record<string, unknown>, version: number): Record<string, unknown> {
+  try {
+    return migrateCheckpointData(source, version).data;
+  } catch (error) {
+    if (error instanceof CheckpointError) throw error;
+    fail(
+      "MALFORMED",
+      `checkpoint version ${version} could not be migrated: ${(error as Error).message}`,
+    );
+  }
+}
+
 /**
  * Rebuild a document state from a checkpoint.
  *
@@ -1268,8 +1314,7 @@ export function restoreCheckpoint(
   if (version !== CHECKPOINT_VERSION && migrationPath(version) !== null) {
     assertMigrationLimits(source, limits);
   }
-  const migrated =
-    version === CHECKPOINT_VERSION ? source : migrateCheckpointData(source, version).data;
+  const migrated = version === CHECKPOINT_VERSION ? source : migrate(source, version);
   readEnum(migrated.mode, ["exact", "normalized"] as const, "checkpoint.mode", budget);
 
   const revision = readCount(migrated.revision, "checkpoint.revision");

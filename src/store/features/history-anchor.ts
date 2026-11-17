@@ -83,7 +83,7 @@ function freezeSelection<R extends SelectionRange | HistorySelectionRange>(
  * content before it, so a chunk that loads at either edge lands outside the
  * range (see `GapSide`).
  */
-function endpointSides(anchor: number, head: number): readonly [GapSide, GapSide] {
+export function endpointSides(anchor: number, head: number): readonly [GapSide, GapSide] {
   if (anchor === head) return ["before", "before"];
   return anchor < head ? ["after", "before"] : ["before", "after"];
 }
@@ -290,8 +290,10 @@ export function selectionAfterEdit(
  * `end`. That byte can be a continuation byte when `end` was 0, which is a
  * boundary however the document starts: the resident text can begin with the
  * tail of a character cut by an unloaded chunk. Such an endpoint moves past
- * those bytes (see `nextBoundary`) and drops its stored key, as a resolved
- * history selection does. Every other endpoint keeps the boundary it was on.
+ * those bytes (see `nextBoundary`), never back into the inserted text, even
+ * when they are a malformed run longer than any leftovers. It drops its stored
+ * key, as a resolved history selection does. Every other endpoint keeps the
+ * boundary it was on.
  *
  * Returns `selection` itself when no endpoint moves.
  */
@@ -310,7 +312,7 @@ export function moveSelectionPastEdit(
     if (offset < start) return { offset, key };
     const moved = offset >= end ? offset - (end - start) + inserted : landing;
     if (moved !== landing) return { offset: byteOffset(moved), key };
-    boundary ??= nextBoundary(pieceTable, landing);
+    boundary ??= nextBoundary(pieceTable, landing, true);
     return { offset: byteOffset(boundary), key: boundary === landing ? key : undefined };
   };
   // The end of a non-empty range: it stays before text inserted at `start`, and
@@ -424,8 +426,12 @@ const SCAN_BLOCK = 256;
  * moves to the nearer end of the run, the one after it on a tie, so it stays
  * as close as it can to where the chunk was. The run is read a block at a
  * time: O(log n) for leftovers, O(k + (k / SCAN_BLOCK) log n) for a run of k.
+ *
+ * With `forwardOnly`, the position moves to the end of the run after it
+ * whatever the distance. A caret that lands after inserted text uses this, as
+ * the bytes before it are that text.
  */
-function nextBoundary(pieceTable: PieceTableState, offset: number): number {
+function nextBoundary(pieceTable: PieceTableState, offset: number, forwardOnly = false): number {
   if (isUtf8Boundary(pieceTable, byteOffset(offset))) return offset;
   // `offset` is inside the document, on a continuation byte.
   const total = pieceTable.totalLength;
@@ -452,6 +458,10 @@ function nextBoundary(pieceTable: PieceTableState, offset: number): number {
       const i = block.findIndex((byte) => !isContinuationByte(byte));
       if (i >= 0) after = ahead + i;
       else if ((ahead += block.length) >= total) after = total;
+    }
+    if (forwardOnly) {
+      if (after !== undefined) return after;
+      continue;
     }
     if (before === undefined) {
       const from = Math.max(0, behind - SCAN_BLOCK);

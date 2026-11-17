@@ -20,20 +20,22 @@
  */
 
 import { CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
-import { base64DecodedLength } from "../core/base64.js";
-import type { GapSide } from "../core/chunk-anchor.js";
+import { base64DecodedLength, encodeBase64 } from "../core/base64.js";
+import type { GapSide, KeyRun } from "../core/chunk-anchor.js";
 import {
   buildLoadedChunks,
   byteKey,
   gapKey,
   keyFitsAt,
   loadedSumAtOrBelow,
+  placementRuns,
 } from "../core/chunk-anchor.js";
-import { utf8ByteLength } from "../core/encoding.js";
+import { contentDecoder, encodesTo, textEncoder, utf8ByteLength } from "../core/encoding.js";
 import { pieceTableDelete, pieceTableInsert } from "../core/piece-table.js";
 import type { PieceDescriptor } from "../core/state.js";
 import { buildPieceTree, createEmptyPieceTableState } from "../core/state.js";
 import type { PieceTableState } from "../../types/state.js";
+import { endpointSides } from "./history-anchor.js";
 import { byteLength, byteOffset, pieceID } from "../../types/branded.js";
 
 /** Raw, unvalidated checkpoint wire data. */
@@ -94,23 +96,40 @@ function removeBytes(doc: PieceTableState, offset: number, length: number): Piec
 }
 
 /**
- * The key `shape` takes in `before`, the document it applies to, and the
- * document after it. As `applyEdit` records it: the key of the first removed
- * byte, else the key of the gap that inserted text takes.
+ * The keys `shape` takes in `before`, the document it applies to, and the
+ * document after it, as `applyEdit` records them: the removed bytes split
+ * into runs that share a key (see `placementRuns`), and inserted text takes
+ * the key of the first run, else the key of the gap it lands in.
+ *
+ * `runs` is empty when nothing is removed, or when the removed range runs
+ * past the end of `before`, which restore then reports.
  */
-function applyShape(before: PieceTableState, shape: ChangeShape): [number, PieceTableState] {
+function applyShape(
+  before: PieceTableState,
+  shape: ChangeShape,
+): { key: number; runs: readonly KeyRun[]; after: PieceTableState } {
   const { offset, removed, inserted } = shape;
+  const runs =
+    removed > 0 && offset >= 0 && offset + removed <= before.totalLength
+      ? placementRuns(before, offset, offset + removed)
+      : [];
   const key =
-    removed > 0 && offset >= 0 && offset < before.totalLength
+    runs[0]?.key ??
+    (removed > 0 && offset >= 0 && offset < before.totalLength
       ? byteKey(before.root, offset)
-      : gapKey(before.root, clampTo(before, offset), "before");
-  return [key, insertStandIn(removeBytes(before, offset, removed), offset, inserted, key)];
+      : gapKey(before.root, clampTo(before, offset), "before"));
+  const after = insertStandIn(removeBytes(before, offset, removed), offset, inserted, key);
+  return { key, runs, after };
 }
 
 /**
  * The key `shape` takes in the document it applies to, and that document,
  * given `after`, the document it produced. Inserted text keeps the key it has
  * in `after`, and removed text comes back with that key.
+ *
+ * The removed bytes are not in `after`, so the keys they had are unknown, and
+ * one key is all there is to give them. Version 1 re-inserted them as one add
+ * piece, which one key reproduces.
  */
 function unapplyShape(after: PieceTableState, shape: ChangeShape): [number, PieceTableState] {
   const { offset, removed, inserted } = shape;
@@ -165,6 +184,10 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
   for (let i = 0; i < pieces.length; i++) {
     const piece = pieces[i]!;
     const chunk = chunkOf[i];
+    // The stand-in documents below need keys in document order, which a
+    // chunk piece with a bad index or out of order breaks. Leave those to the
+    // validators, which report MALFORMED or CHUNK_ORDER.
+    if (piece[1] === "c" && (chunk === null || chunk === undefined || chunk < 0)) return data;
     if (chunk !== null && chunk !== undefined) {
       previousChunk = chunk;
       keys.push(chunk - 1);
@@ -181,6 +204,7 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
       keys.push(-1);
       migratedPieces.push(piece);
     }
+    if (i > 0 && keys[i]! < keys[i - 1]!) return data;
   }
 
   // A piece tree with the derived keys, so anchoring uses the same `gapKey`
@@ -251,12 +275,14 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
       ...selection,
       ranges: selection.ranges.map((range: unknown) => {
         if (!isTuple(range)) return range;
-        // As live selections anchor (see `anchorSelection`): a range's start
-        // stays with the content after it and its end with the content before.
-        const forward = isInt(range[0]) && isInt(range[1]) && range[0] < range[1];
-        const backward = isInt(range[0]) && isInt(range[1]) && range[0] > range[1];
-        const [anchorPos, anchorKey] = anchor(doc, range[0], forward ? "after" : "before");
-        const [headPos, headKey] = anchor(doc, range[1], backward ? "after" : "before");
+        // Each endpoint takes the side a live selection gives it (see
+        // `endpointSides`). Malformed offsets are kept for restore to report.
+        const [anchorSide, headSide] =
+          isInt(range[0]) && isInt(range[1])
+            ? endpointSides(range[0], range[1])
+            : (["before", "before"] as const);
+        const [anchorPos, anchorKey] = anchor(doc, range[0], anchorSide);
+        const [headPos, headKey] = anchor(doc, range[1], headSide);
         return anchorKey === -1 && headKey === -1
           ? [anchorPos, headPos]
           : [anchorPos, headPos, anchorKey, headKey];
@@ -291,6 +317,39 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
     return key === -1 ? head : [...head, key];
   };
   /**
+   * A change whose removed bytes span several keys, split as `applyEdit`
+   * records it, so undo gives every byte back its key: one delete per run
+   * after the first, right to left, then the change itself over the first
+   * run. A run whose text does not encode back to its bytes, where a run
+   * edge cuts a character, keeps the bytes as well.
+   */
+  const splitChange = (raw: WireTuple, runs: readonly KeyRun[]): unknown[] => {
+    const removedText = raw[0] === "r" ? raw[3] : raw[2];
+    const all = textEncoder.encode(typeof removedText === "string" ? removedText : "");
+    const base = runs[0]!.start;
+    const runText = (run: KeyRun): unknown[] => {
+      const bytes = all.subarray(run.start - base, run.end - base);
+      const text = contentDecoder.decode(bytes);
+      return encodesTo(text, bytes) ? [text] : [text, encodeBase64(bytes)];
+    };
+    const changes: unknown[] = [];
+    for (let r = runs.length - 1; r >= 1; r--) {
+      const run = runs[r]!;
+      const [text, bytes] = runText(run);
+      const [position] = anchorWith(run.start, run.key);
+      changes.push(["d", position, text, run.key, ...(bytes === undefined ? [] : [bytes])]);
+    }
+    const { key } = runs[0]!;
+    const [position] = anchorWith(base, key);
+    const [text, bytes] = runText(runs[0]!);
+    changes.push(
+      raw[0] === "r"
+        ? ["r", position, raw[2], text, key, ...(bytes === undefined ? [] : [null, bytes])]
+        : ["d", position, text, key, ...(bytes === undefined ? [] : [bytes])],
+    );
+    return changes;
+  };
+  /**
    * Migrate one entry. `doc` is the document on the side the walk starts
    * from: after the entry for undo, before it for redo. Returns the migrated
    * entry and the document on the other side.
@@ -303,27 +362,35 @@ function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
     if (typeof raw !== "object" || raw === null) return [raw, doc];
     const entry = raw as Record<string, unknown>;
     const rawChanges = Array.isArray(entry.changes) ? entry.changes : [];
-    const changes: unknown[] = Array.from({ length: rawChanges.length });
+    // The wire changes each version 1 change becomes, in order.
+    const changes: unknown[][] = Array.from({ length: rawChanges.length });
     const start = doc;
     let current = doc;
     // Undo replays an entry's changes last to first, redo first to last.
     for (let n = 0; n < rawChanges.length; n++) {
       const i = direction === "undo" ? rawChanges.length - 1 - n : n;
-      const shape = shapeOf(rawChanges[i]);
+      const change = rawChanges[i];
+      const shape = shapeOf(change);
       if (shape === null) {
-        changes[i] = rawChanges[i];
-        continue;
+        changes[i] = [change];
+      } else if (direction === "undo") {
+        const [key, next] = unapplyShape(current, shape);
+        changes[i] = [migrateChange(change, key)];
+        current = next;
+      } else {
+        // Only a redo entry's removed bytes are in the document, so only
+        // they can be split by key.
+        const { key, runs, after } = applyShape(current, shape);
+        changes[i] =
+          runs.length > 1 ? splitChange(change as WireTuple, runs) : [migrateChange(change, key)];
+        current = after;
       }
-      const [key, next] =
-        direction === "undo" ? unapplyShape(current, shape) : applyShape(current, shape);
-      changes[i] = migrateChange(rawChanges[i], key);
-      current = next;
     }
     const [before, after] = direction === "undo" ? [current, start] : [start, current];
     return [
       {
         ...entry,
-        changes: Array.isArray(entry.changes) ? changes : entry.changes,
+        changes: Array.isArray(entry.changes) ? changes.flat() : entry.changes,
         selectionBefore: migrateSelection(entry.selectionBefore, before),
         selectionAfter: migrateSelection(entry.selectionAfter, after),
       },

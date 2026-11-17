@@ -25,7 +25,8 @@ import {
   isUtf8Boundary,
   pieceTableInsert,
 } from "../core/piece-table.js";
-import { pieceKey } from "../core/chunk-anchor.js";
+import { byteKey, pieceKey } from "../core/chunk-anchor.js";
+import { CheckpointError } from "../../types/checkpoint.js";
 import { collectLines, rebuildLineIndex } from "../core/line-index.js";
 import { getUndoCount, getRedoCount } from "./history.js";
 import type {
@@ -1912,5 +1913,137 @@ describe("ninth review regressions", () => {
     s.dispatch(DocumentActions.undo());
     s.dispatch(DocumentActions.redo());
     expect(cursor(s)).toEqual({ anchor: 13, head: 18 });
+  });
+});
+
+describe("tenth review regressions", () => {
+  type Wire = Record<string, any>;
+  const wireOf = (s: Store): Wire => JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow())));
+  /** A version 1 payload for the store's document, with `history` as given. */
+  const v1Of = (s: Store, history: { undo: unknown[]; redo: unknown[] }): Wire => {
+    const v2 = wireOf(s);
+    return {
+      ...v2,
+      version: 1,
+      pieceTable: {
+        ...v2.pieceTable,
+        pieces: v2.pieceTable.pieces.map((p: unknown[]) => (p[1] === "a" ? p.slice(0, 4) : p)),
+      },
+      history: { limit: v2.history.limit, coalesceTimeout: v2.history.coalesceTimeout, ...history },
+    };
+  };
+  const v1Entry = (change: unknown[], before: number, after: number) => ({
+    changes: [change],
+    selectionBefore: { ranges: [[before, before]], primaryIndex: 0 },
+    selectionAfter: { ranges: [[after, after]], primaryIndex: 0 },
+    timestamp: 0,
+  });
+  /** The CheckpointError `fn` throws. Any other error fails the test. */
+  const checkpointError = (fn: () => unknown): CheckpointError => {
+    try {
+      fn();
+    } catch (error) {
+      expect(error).toBeInstanceOf(CheckpointError);
+      return error as CheckpointError;
+    }
+    throw new Error("expected a CheckpointError");
+  };
+  const byteKeyAt = (state: DocumentState, offset: number) =>
+    byteKey(state.pieceTable.root, offset);
+
+  it("reports a malformed version 1 chunk piece as a CheckpointError", () => {
+    const s = makeStore();
+    load(s, 0);
+    load(s, 1);
+    const v1 = v1Of(s, { undo: [v1Entry(["d", 0, "x"], 0, 0)], redo: [] });
+    const chunkPiece = v1.pieceTable.pieces.findIndex((p: unknown[]) => p[1] === "c");
+    v1.pieceTable.pieces[chunkPiece][4] = -3;
+    expect(checkpointError(() => restoreCheckpoint(v1)).code).toBe("MALFORMED");
+
+    // Chunk pieces out of order.
+    const swapped = v1Of(s, { undo: [v1Entry(["d", 0, "x"], 0, 0)], redo: [] });
+    const chunks = swapped.pieceTable.pieces.filter((p: unknown[]) => p[1] === "c");
+    expect(chunks).toHaveLength(2);
+    [chunks[0][4], chunks[1][4]] = [chunks[1][4], chunks[0][4]];
+    expect(checkpointError(() => restoreCheckpoint(swapped)).code).toBe("CHUNK_ORDER");
+  });
+
+  it("refuses history whose undo would insert text under a key that does not fit", () => {
+    const s = makeStore(3);
+    for (let i = 0; i < 3; i++) load(s, i);
+    s.dispatch(DocumentActions.delete(byteOffset(10), byteOffset(11)));
+    const checkpoint = wireOf(s);
+    expect(checkpoint.history.undo[0].changes[0]).toEqual(["d", 2, "B", 0]);
+    // Undo re-inserts the byte at anchored 12 with key 0: resident 20, inside
+    // chunk 2, whose bytes have key 1.
+    checkpoint.history.undo[0].changes[0] = ["d", 12, "B", 0];
+    const error = checkpointError(() => restoreCheckpoint(checkpoint));
+    expect(error.code).toBe("HISTORY_INVALID");
+    expect(error.message).toMatch(/placement keys out of document order/);
+  });
+
+  it("does not emit selection-change for an edit with an inline selection that stays put", () => {
+    const s = createDocumentStoreWithEvents({ content: "0123456789abcdef", reconcileMode: "none" });
+    const caret = [{ anchor: byteOffset(10), head: byteOffset(10) }] as const;
+    s.dispatch(DocumentActions.setSelection(caret));
+    const before = s.getSnapshot().selection;
+    let fired = 0;
+    s.addEventListener("selection-change", () => fired++);
+    // A forward delete at the caret, passing the caret inline.
+    s.dispatch(DocumentActions.delete(byteOffset(10), byteOffset(11), caret));
+    expect(getValue(s.getSnapshot().pieceTable)).toBe("0123456789bcdef");
+    expect(s.getSnapshot().selection).toBe(before);
+    expect(fired).toBe(0);
+  });
+
+  it("splits a migrated redo delete that spans keys, as a live edit would", () => {
+    const s = makeStore();
+    load(s, 0);
+    load(s, 1);
+    // [6, 10) is "A\n" of chunk 0 (key -1) and "BB" of chunk 1 (key 0).
+    const v1 = v1Of(s, { undo: [], redo: [v1Entry(["d", 6, "A\nBB"], 6, 6)] });
+    let state: DocumentState = restoreCheckpoint(v1);
+    state = documentReducer(state, DocumentActions.redo());
+    expect(getValue(state.pieceTable)).toBe("AAAAAABBBBB\n");
+    state = documentReducer(state, DocumentActions.undo());
+    expect(getValue(state.pieceTable)).toBe(CHUNK0 + CHUNK1);
+    // Each re-inserted byte has back the key it had.
+    expect([6, 7, 8, 9].map((offset) => byteKeyAt(state, offset))).toEqual([-1, -1, 0, 0]);
+  });
+
+  it("keeps the exact bytes of a migrated run whose edge cuts a character", () => {
+    // Chunk 0 ends with the lead byte of 世, and chunk 1 starts with its two
+    // continuation bytes.
+    const split = enc("abcdefg世hijklmn");
+    const s = createDocumentStore({
+      chunkSize: 8,
+      totalFileSize: split.length,
+      reconcileMode: "none",
+    });
+    for (let i = 0; i < 3; i++) {
+      s.dispatch(DocumentActions.loadChunk(i, split.slice(i * 8, (i + 1) * 8)));
+    }
+    const v1 = v1Of(s, { undo: [], redo: [v1Entry(["d", 6, "g世"], 6, 6)] });
+    let state: DocumentState = restoreCheckpoint(v1);
+    state = documentReducer(state, DocumentActions.redo());
+    expect(getValue(state.pieceTable)).toBe("abcdefhijklmn");
+    state = documentReducer(state, DocumentActions.undo());
+    const { pieceTable } = state;
+    expect([...getBytes(pieceTable, byteOffset(0), byteOffset(pieceTable.totalLength))]).toEqual([
+      ...split,
+    ]);
+    expect([6, 7, 8, 9].map((offset) => byteKeyAt(state, offset))).toEqual([-1, -1, 0, 0]);
+  });
+
+  it("moves a caret typed at 0 past a malformed continuation run, not into the text", () => {
+    // Chunk 1 starts with five continuation bytes: more than any character
+    // cut by chunk 0 could leave, so the run is malformed text.
+    const chunk1 = Uint8Array.from([0x80, 0x80, 0x80, 0x80, 0x80, ...enc("xyz")]);
+    const s = makeStore();
+    s.dispatch(DocumentActions.loadChunk(1, chunk1));
+    s.dispatch(DocumentActions.insert(byteOffset(0), "ab"));
+    expect(bytesOf(s)).toEqual([...enc("ab"), ...chunk1]);
+    // Past the run, not between "a" and "b".
+    expect(cursor(s)).toEqual({ anchor: 7, head: 7 });
   });
 });

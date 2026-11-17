@@ -51,7 +51,7 @@ import {
 } from "./rb-tree.js";
 import { textEncoder, textDecoder } from "./encoding.js";
 import { GrowableBuffer } from "./growable-buffer.js";
-import { NO_CHUNK, gapKey, keyFitsAt, pieceKey } from "./chunk-anchor.js";
+import { NO_CHUNK, keyFitsAt, pieceKey, placementKey } from "./chunk-anchor.js";
 import { lastPiece, pieceAt } from "./piece-search.js";
 import type { PathEntry } from "./piece-search.js";
 import { inOrderPieces } from "./piece-table-stream.js";
@@ -551,9 +551,9 @@ export interface PieceTableInsertResult {
  * `HistoryDeleteChange.bytes`).
  *
  * `afterChunk` defaults to the gap key at `position` that inserted text takes
- * (see `gapKey`). An empty tree has no gap to read, so the default there is
- * `-1`. Pass the key when the caller knows where the text belongs in the file:
- * the document reducer passes the key a cursor at `position` holds.
+ * (see `placementKey`). An empty tree has no gap to read, so the default there
+ * is `-1`. Pass the key when the caller knows where the text belongs in the
+ * file: the document reducer passes the key a cursor at `position` holds.
  *
  * Keys never decrease in document order, and loading, reload placement and
  * anchored positions all rely on it. A given key that would break that order at
@@ -566,6 +566,30 @@ export function pieceTableInsert(
   text: string | Uint8Array,
   afterChunk?: number,
 ): LinearCost<PieceTableInsertResult> {
+  if (text.length > 0 && afterChunk !== undefined && !keyFitsAt(state, position, afterChunk)) {
+    throw new RangeError(
+      `placement key ${afterChunk} does not fit at offset ${position}: ` +
+        `inserting there would put placement keys out of document order`,
+    );
+  }
+  return pieceTableInsertFitted(state, position, text, afterChunk);
+}
+
+/**
+ * `pieceTableInsert` without the check that `afterChunk` fits at `position`.
+ *
+ * For callers that derived the key from the document they insert into, such
+ * as `insertionKey` or `placementRuns`, which only return keys that fit there.
+ * Checking again would cost two more tree walks on every keystroke. A key that
+ * does not fit breaks the key order, so a key that comes from outside the
+ * document, such as a recorded history key, goes through `pieceTableInsert`.
+ */
+export function pieceTableInsertFitted(
+  state: PieceTableState,
+  position: ByteOffset,
+  text: string | Uint8Array,
+  afterChunk?: number,
+): LinearCost<PieceTableInsertResult> {
   if (text.length === 0)
     return $proveCtx($beginCost("O(n)"), {
       state,
@@ -573,13 +597,7 @@ export function pieceTableInsert(
       splits: [],
     });
 
-  if (afterChunk !== undefined && !keyFitsAt(state, position, afterChunk)) {
-    throw new RangeError(
-      `placement key ${afterChunk} does not fit at offset ${position}: ` +
-        `inserting there would put placement keys out of document order`,
-    );
-  }
-  const givenKey = afterChunk;
+  const key = afterChunk ?? placementKey(state, position, undefined, "before");
 
   const textBytes = typeof text === "string" ? textEncoder.encode(text) : text;
   let nextPieceID = state.nextPieceID;
@@ -599,7 +617,7 @@ export function pieceTableInsert(
       null,
       null,
       allocatePieceID(),
-      givenKey ?? NO_CHUNK,
+      key,
     );
     return $proveCtx($beginCost("O(n)"), {
       state: freezePieceTableState({
@@ -616,17 +634,6 @@ export function pieceTableInsert(
 
   const location: LogCost<PieceLocation | null> =
     findPieceAtPosition(state.root, position) ?? $proveCtx($beginCost("O(log n)"), null);
-  // Inside a piece, the gap key is the key of the piece the lookup above
-  // already found. Only a piece boundary needs gapKey.
-  const root = state.root;
-  const keyAt = (resolved: PieceLocation | null): number =>
-    givenKey ??
-    (state.nextExpectedChunk === 0
-      ? NO_CHUNK
-      : resolved !== null && resolved.offsetInPiece > 0
-        ? pieceKey(resolved.node)
-        : gapKey(root, position, "before"));
-
   // Capture the split reported by the $andThen callback.
   let capturedSplit: SplitRecord | null = null;
 
@@ -636,7 +643,6 @@ export function pieceTableInsert(
       $pipe(
         $from(location),
         $andThen((resolvedLocation) => {
-          const key = keyAt(resolvedLocation);
           if (resolvedLocation === null) {
             return $from(
               rbInsertPiece(

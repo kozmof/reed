@@ -32,6 +32,7 @@ import { byteOffset, byteLength } from "../../types/branded.js";
 import { withState, withLineIndexState } from "../core/state.js";
 import {
   pieceTableInsert as ptInsert,
+  pieceTableInsertFitted as ptInsertFitted,
   pieceTableDelete as ptDelete,
   getText,
   getRawByte,
@@ -57,6 +58,7 @@ import {
   anchorAt,
   anchorSelection,
   insertionKey,
+  keepSameSelection,
   moveSelectionPastEdit,
   residentOffset,
   selectionRangesWithKeys,
@@ -115,14 +117,23 @@ export function validateRange(
  * Centralizing attention migration here means every content-edit path that
  * inserts (applyEdit, applyChange/undo-redo, APPLY_REMOTE) re-anchors points
  * automatically via the split records.
+ *
+ * `keyFits` is true when `afterChunk` was derived from `state` and so fits at
+ * `position`, which skips checking it again (see `pieceTableInsertFitted`).
  */
 export function pieceTableInsert(
   state: DocumentState,
   position: ByteOffset,
   text: string | Uint8Array,
   afterChunk?: number,
+  keyFits = false,
 ): { state: DocumentState; insertedByteLength: number; splits: readonly SplitRecord[] } {
-  const result = ptInsert(state.pieceTable, position, text, afterChunk);
+  const result = (keyFits ? ptInsertFitted : ptInsert)(
+    state.pieceTable,
+    position,
+    text,
+    afterChunk,
+  );
   const attention = migrateSplits(state.attention, result.splits);
   const nextState = withState(state, { pieceTable: result.state, attention });
   carryLineOffsetIndexes(
@@ -699,7 +710,11 @@ export type StructuralEditOperation =
       readonly insertText: string;
       /** Raw bytes to insert in place of `insertText` encoded as UTF-8. */
       readonly insertBytes?: Uint8Array | undefined;
-      /** Placement key for the inserted text. Defaults to the gap's key. */
+      /**
+       * Placement key for the inserted text. Defaults to the gap's key.
+       * Outside replay the caller derives it from the document, so it must fit
+       * there (see `keyFitsAt`). Only a replayed key is checked.
+       */
       readonly afterChunk?: number | undefined;
     }
   | {
@@ -720,7 +735,11 @@ export type StructuralEditOperation =
       readonly insertText: string;
       /** Raw bytes to insert in place of `insertText` encoded as UTF-8. */
       readonly insertBytes?: Uint8Array | undefined;
-      /** Placement key for the inserted text. Defaults to the gap's key. */
+      /**
+       * Placement key for the inserted text. Defaults to the gap's key.
+       * Outside replay the caller derives it from the document, so it must fit
+       * there (see `keyFitsAt`). Only a replayed key is checked.
+       */
       readonly afterChunk?: number | undefined;
     };
 
@@ -791,7 +810,7 @@ export function applyUntrackedEdit(
   const insertContent = insertBytes ?? (op.kind !== "delete" ? op.insertText : "");
   if (op.kind !== "delete" && insertContent.length > 0) {
     // Without a key from the caller, the text takes the gap's key.
-    const result = pieceTableInsert(newState, op.position, insertContent, op.afterChunk);
+    const result = pieceTableInsert(newState, op.position, insertContent, op.afterChunk, !replay);
     newState = result.state;
     if (!needsRebuild) {
       const readText = pieceTableReader(newState.pieceTable);
@@ -925,12 +944,18 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
     newState.pieceTable.totalLength - state.pieceTable.totalLength + deletedLength;
   // Move the selection the edit comes from past the edit, so the state holds a
   // selection of the edited document. History records it as it was before.
-  const selectionAfter = moveSelectionPastEdit(
-    newState.pieceTable,
-    selectionBefore,
-    op.position,
-    op.position + deletedLength,
-    insertedLength,
+  // An inline selection is always a new object, so keep the current one when
+  // the result matches it: an edit that leaves the selection in place must
+  // not fire 'selection-change'.
+  const selectionAfter = keepSameSelection(
+    newState.selection,
+    moveSelectionPastEdit(
+      newState.pieceTable,
+      selectionBefore,
+      op.position,
+      op.position + deletedLength,
+      insertedLength,
+    ),
   );
   if (selectionAfter !== newState.selection) {
     newState = withState(newState, { selection: selectionAfter });
