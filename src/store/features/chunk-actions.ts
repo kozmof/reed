@@ -421,6 +421,7 @@ function lostEntries(loss: EvictionHistoryLoss): number {
  * under `"pin"`: `"drop"` takes them in the order given, and `"pin-bounded"`
  * takes the one that discards the fewest entries each time, which keeps as
  * much undo as the limit allows, with ties going to the earlier candidate.
+ * With `keepHistory`, it stops after the first pass.
  *
  * Each candidate's loss is measured once. An eviction drops only the oldest
  * entries, so the other losses follow from what it dropped
@@ -439,6 +440,7 @@ export function evictChunks(state: DocumentState, action: EvictChunksAction): Do
     else lossy.push({ chunk, loss });
   }
 
+  if (action.keepHistory === true) return next;
   const policy = next.history.evictionPolicy;
   while (policy !== "pin" && lossy.length > 0 && next.pieceTable.chunkMap.size > maxLoaded) {
     let at = 0;
@@ -450,7 +452,11 @@ export function evictChunks(state: DocumentState, action: EvictChunksAction): Do
     const { chunk, loss } = lossy.splice(at, 1)[0]!;
     // Evicting other chunks moved this one, so its range is read again. They
     // cannot have made it unevictable: eviction adds no edits or attention.
-    next = tryEvict(next, chunk, true) ?? next;
+    // Should it be refused anyway, no history was dropped, so the other
+    // losses stay as measured.
+    const evicted = tryEvict(next, chunk, true);
+    if (evicted === null) continue;
+    next = evicted;
     for (const entry of lossy) entry.loss = historyLossAfterDrop(entry.loss, loss);
   }
   return next;

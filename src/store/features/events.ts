@@ -47,10 +47,10 @@ export interface ContentChangeEvent extends DocumentEvent {
  * Fired when the selection changes: on SET_SELECTION, and whenever another
  * action moves the selection, such as INSERT, DELETE, REPLACE, or APPLY_REMOTE
  * moving it past the edited text, UNDO or REDO restoring it, or LOAD_CHUNK,
- * LOAD_CHUNKS, or EVICT_CHUNK shifting it. An action that leaves the selection
- * in place fires nothing, including a SET_SELECTION with the ranges the
- * selection already has. An editor that sets the caret an edit already moved
- * to therefore gets one event per edit.
+ * LOAD_CHUNKS, EVICT_CHUNK, or EVICT_CHUNKS shifting it. An action that leaves
+ * the selection in place fires nothing, including a SET_SELECTION with the
+ * ranges the selection already has. An editor that sets the caret an edit
+ * already moved to therefore gets one event per edit.
  */
 export interface SelectionChangeEvent extends DocumentEvent {
   readonly type: "selection-change";

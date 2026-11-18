@@ -246,18 +246,35 @@ export function createChunkManager(
         ? chunkIndex === protectedChunkIndices
         : protectedChunkIndices?.has(chunkIndex) === true;
 
-    if (store.getSnapshot().pieceTable.chunkMap.size > maxLoadedChunks) {
+    const excess = store.getSnapshot().pieceTable.chunkMap.size - maxLoadedChunks;
+    if (excess > 0) {
       // Least recently used first: chunks the manager may evict that are still
       // in memory. Pinned chunks and the chunks just loaded for the caller
       // stay. The reducer chooses among them (see EVICT_CHUNKS): every chunk
       // whose eviction costs no history first, then as the policy allows.
-      const candidates: number[] = [];
+      const evictable = (chunkIndex: number) =>
+        !activeChunks.has(chunkIndex) && !isProtected(chunkIndex);
+      // Usually the least recently used chunks cost no history, so try just
+      // as many as must go, evicting only those that cost none. That is what
+      // the full pass would evict first, so offering every candidate only
+      // when this falls short chooses the same chunks.
+      const head: number[] = [];
       for (const candidate of lruOrder) {
-        if (activeChunks.has(candidate) || isProtected(candidate)) continue;
-        candidates.push(candidate);
+        if (head.length === excess) break;
+        if (evictable(candidate)) head.push(candidate);
       }
-      if (candidates.length > 0) {
-        store.dispatch(DocumentActions.evictChunks(candidates, maxLoadedChunks));
+      if (head.length > 0) {
+        store.dispatch(DocumentActions.evictChunks(head, maxLoadedChunks, true));
+      }
+      if (store.getSnapshot().pieceTable.chunkMap.size > maxLoadedChunks) {
+        const candidates: number[] = [];
+        const { chunkMap } = store.getSnapshot().pieceTable;
+        for (const candidate of lruOrder) {
+          if (evictable(candidate) && chunkMap.has(candidate)) candidates.push(candidate);
+        }
+        if (candidates.length > 0) {
+          store.dispatch(DocumentActions.evictChunks(candidates, maxLoadedChunks));
+        }
       }
     }
 

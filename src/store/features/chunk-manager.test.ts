@@ -436,7 +436,8 @@ describe("ChunkManager eviction transition", () => {
     // Unpinning puts all three over the limit of one.
     manager.setActiveChunks([]);
     const evictions = dispatch.mock.calls.filter(([action]) => action.type.startsWith("EVICT"));
-    expect(evictions).toEqual([[DocumentActions.evictChunks([0, 1, 2], 1)]]);
+    // Two must go, and the two least recently used cost no history.
+    expect(evictions).toEqual([[DocumentActions.evictChunks([0, 1], 1, true)]]);
     expect([...store.getSnapshot().pieceTable.chunkMap.keys()]).toEqual([2]);
     manager.dispose();
   });

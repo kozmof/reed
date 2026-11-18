@@ -58,7 +58,7 @@ import {
   utf8ByteLength,
 } from "../core/encoding.js";
 import { NO_CHUNK, placementRuns } from "../core/chunk-anchor.js";
-import { codePointWindow, isSafeSplit } from "../core/utf8-seam.js";
+import { codePointWindow, isSafeSplice, isSafeSplit } from "../core/utf8-seam.js";
 import type { FittedKey, KeyRun } from "../core/chunk-anchor.js";
 import {
   anchorAt,
@@ -785,9 +785,11 @@ export type EditOperation = StructuralEditOperation & {
  * miscount them. Without chunks, history replays into the document it was
  * recorded in, so only a chunked replay checks its edges. When an edge is not
  * a safe split (see `isSafeSplit`), before the edit or after it, the lines
- * around the edit are re-read instead (see `codePointWindow`). The check costs
- * a few byte reads, where re-reading costs the length of those lines, which
- * in a minified file can be the whole chunk.
+ * around the edit are re-read instead (see `codePointWindow`). The edges after
+ * the edit are read ahead of it (see `isSafeSplice`), so the fast update runs
+ * only when it is kept. The check costs a few byte reads and a scan of the
+ * inserted text's length, where re-reading costs the length of those lines,
+ * which in a minified file can be the whole chunk.
  */
 export function applyUntrackedEdit(
   state: DocumentState,
@@ -813,7 +815,16 @@ export function applyUntrackedEdit(
       (op.deletedTextInexact === true ||
         shouldRebuildLineIndexForDelete(op.deletedText, deleteContext))) ||
     (chunkedReplay &&
-      !(isSafeSplit(state.pieceTable, op.position) && isSafeSplit(state.pieceTable, deleteEnd)));
+      !(
+        isSafeSplit(state.pieceTable, op.position) &&
+        isSafeSplit(state.pieceTable, deleteEnd) &&
+        isSafeSplice(
+          state.pieceTable,
+          op.position,
+          deleteEnd,
+          op.kind === "delete" ? "" : op.insertText,
+        )
+      ));
 
   if (op.kind !== "insert") {
     if (needsRebuild) {
@@ -848,20 +859,9 @@ export function applyUntrackedEdit(
     }
   }
 
-  const insertedLength =
-    newState.pieceTable.totalLength - state.pieceTable.totalLength + (deleteEnd - op.position);
-  // The fast update also counted the inserted text apart from the bytes after
-  // it, so a replayed edit re-reads its lines when that edge is not a safe
-  // split. The repair starts from `state.lineIndex`, so the fast update's
-  // result is simply dropped.
-  const rebuild =
-    needsRebuild ||
-    (chunkedReplay &&
-      !(
-        isSafeSplit(newState.pieceTable, op.position) &&
-        isSafeSplit(newState.pieceTable, op.position + insertedLength)
-      ));
-  if (rebuild) {
+  if (needsRebuild) {
+    const insertedLength =
+      newState.pieceTable.totalLength - state.pieceTable.totalLength + (deleteEnd - op.position);
     const window = codePointWindow(newState.pieceTable, op.position, deleteEnd, insertedLength);
     return withState(newState, {
       lineIndex: repairLineIndexWindow(

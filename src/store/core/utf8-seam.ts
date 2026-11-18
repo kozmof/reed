@@ -7,6 +7,7 @@
 import type { PieceTableState } from "../../types/state.js";
 import { byteOffset, type ByteOffset } from "../../types/branded.js";
 import { getRawByte } from "./piece-table.js";
+import { textEncoder, utf8ByteLength } from "./encoding.js";
 
 /** Bytes a UTF-8 lead byte can own after it. */
 export const MAX_CONTINUATION_BYTES = 3;
@@ -27,13 +28,69 @@ export function isContinuationByte(byte: number): boolean {
  * no lead byte can own it, so it decodes to U+FFFD on its own either way.
  */
 export function isSafeSplit(pieceTable: PieceTableState, offset: number): boolean {
-  if (offset <= 0 || offset >= pieceTable.totalLength) return true;
-  const continuationAt = (at: number) => isContinuationByte(getRawByte(pieceTable, byteOffset(at)));
-  if (!continuationAt(offset)) return true;
+  return isSafeSplitOf(
+    (at) => getRawByte(pieceTable, byteOffset(at)),
+    pieceTable.totalLength,
+    offset,
+  );
+}
+
+/** `isSafeSplit` over the `length` bytes that `byteAt` reads. */
+function isSafeSplitOf(byteAt: (at: number) => number, length: number, offset: number): boolean {
+  if (offset <= 0 || offset >= length) return true;
+  if (!isContinuationByte(byteAt(offset))) return true;
   for (let back = 1; back <= MAX_CONTINUATION_BYTES; back++) {
-    if (offset - back < 0 || !continuationAt(offset - back)) return false;
+    if (offset - back < 0 || !isContinuationByte(byteAt(offset - back))) return false;
   }
   return true;
+}
+
+/**
+ * True when both edges of the splice that replaces [start, end) of
+ * `pieceTable` with `text` will be safe splits (see `isSafeSplit`) of the
+ * document after it. It reads the splice without applying it, so a caller can
+ * pick how to update lines before editing.
+ *
+ * `text` encodes to well-formed UTF-8, so its first byte is never a
+ * continuation byte and its last character is complete. A split checks the
+ * continuation byte at the offset, then up to three bytes before it, stopping
+ * at the first byte that is not a continuation byte. Inside the text that is
+ * the lead byte of its last character at the latest, so only the bytes of
+ * that last character are read. The rest of the text reads as a lead byte,
+ * which is what a split checks of its first byte.
+ */
+export function isSafeSplice(
+  pieceTable: PieceTableState,
+  start: number,
+  end: number,
+  text: string,
+): boolean {
+  const length = utf8ByteLength(text);
+  const lastUnits =
+    text.length >= 2 &&
+    isLowSurrogate(text.charCodeAt(text.length - 1)) &&
+    isHighSurrogate(text.charCodeAt(text.length - 2))
+      ? 2
+      : 1;
+  const tail = textEncoder.encode(text.slice(-lastUnits));
+  const tailStart = start + length - tail.length;
+  const shift = end - start - length;
+  const byteAt = (at: number): number => {
+    if (at < start) return getRawByte(pieceTable, byteOffset(at));
+    if (at >= start + length) return getRawByte(pieceTable, byteOffset(at + shift));
+    // Any byte that is not a continuation byte reads the same to a split.
+    return at >= tailStart ? tail[at - tailStart]! : 0;
+  };
+  const total = pieceTable.totalLength - shift;
+  return isSafeSplitOf(byteAt, total, start) && isSafeSplitOf(byteAt, total, start + length);
+}
+
+function isHighSurrogate(unit: number): boolean {
+  return unit >= 0xd800 && unit <= 0xdbff;
+}
+
+function isLowSurrogate(unit: number): boolean {
+  return unit >= 0xdc00 && unit <= 0xdfff;
 }
 
 /**

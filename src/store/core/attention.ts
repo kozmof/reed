@@ -38,7 +38,7 @@ import {
   pieceTableDelete,
   findPieceAtPosition,
   findLastPiece,
-  getText,
+  getContentText,
   inOrderPieces,
 } from "./piece-table.js";
 import {
@@ -412,6 +412,10 @@ export function resolveAllAttentions(
  * Extract the text covered by an Attention.
  * Returns null when the Attention ID is unknown or a point is dangling.
  *
+ * The text is read as the line index counts it (see `getContentText`): a byte
+ * order mark at the start of the document is kept, so the text lines up with
+ * line 0 columns.
+ *
  * Identity lookup plus the bytes read. Cold indexing is expected O(P) for
  * bounded-length IDs with well-distributed hashes.
  */
@@ -425,7 +429,7 @@ export function getTextForAttention(
   if (offsets.startOffset >= offsets.endOffset) return $proveCtx($beginCost("O(n log n)"), "");
   return $proveCtx(
     $beginCost("O(n log n)"),
-    getText(pieceTableState, offsets.startOffset, offsets.endOffset) as string,
+    getContentText(pieceTableState, offsets.startOffset, offsets.endOffset) as string,
   );
 }
 

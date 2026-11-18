@@ -1026,7 +1026,31 @@ export function pieceTableDelete(
 // =============================================================================
 
 /**
+ * True when resident offset 0 is the start of the file, so a U+FEFF there is a
+ * byte order mark. In chunk mode the first resident byte belongs to a later
+ * chunk while chunk 0 is not loaded, and a U+FEFF there is file content. The
+ * first byte starts the file exactly when its placement key puts no chunk
+ * before it.
+ */
+function residentStartIsFileStart(state: PieceTableState): boolean {
+  const first = pieceAt(state.root, 0)?.node;
+  return first === undefined || pieceKey(first) === NO_CHUNK;
+}
+
+/**
+ * Decoder for resident bytes read from offset 0. It strips a byte order mark
+ * only when that offset is the start of the file (see `residentStartIsFileStart`).
+ */
+function decoderFromStart(state: PieceTableState): TextDecoder {
+  return residentStartIsFileStart(state) ? textDecoder : contentDecoder;
+}
+
+/**
  * Get the entire document content as a string.
+ *
+ * A byte order mark at the start of the file is stripped. In chunk mode, while
+ * chunk 0 is not loaded, a U+FEFF that starts the resident text belongs to a
+ * later chunk and is kept.
  */
 export function getValue(state: PieceTableState): LinearCost<string> {
   if (state.root === null) return $proveCtx($beginCost("O(n)"), "");
@@ -1053,7 +1077,7 @@ export function getValue(state: PieceTableState): LinearCost<string> {
             offset += piece.length;
           }
 
-          return textDecoder.decode(result);
+          return decoderFromStart(state).decode(result);
         }),
       ),
     ),
@@ -1063,10 +1087,11 @@ export function getValue(state: PieceTableState): LinearCost<string> {
 /**
  * Get text in the range [start, end).
  *
- * Reads the document as `getValue` does: a byte order mark at document offset
- * 0 is stripped, so `getText(state, 0, totalLength)` equals `getValue(state)`.
- * A U+FEFF anywhere else is kept as content, including one at the start of a
- * range that begins past offset 0.
+ * Reads the document as `getValue` does: a byte order mark at the start of the
+ * file is stripped, so `getText(state, 0, totalLength)` equals `getValue(state)`.
+ * A U+FEFF anywhere else is kept as content. That includes one at the start of
+ * a range that begins past offset 0, and one that starts the resident text in
+ * chunk mode while chunk 0 is not loaded.
  *
  * The line index counts a byte order mark as a character. Code that measures
  * columns against the line index reads with `getContentText` instead.
@@ -1078,7 +1103,7 @@ export function getText(
 ): LinearCost<string> {
   // A negative start reads nothing, where getBytes clamps it to 0.
   if (start < 0) return $proveCtx($beginCost("O(n)"), "");
-  const decoder = start === 0 ? textDecoder : contentDecoder;
+  const decoder = start === 0 ? decoderFromStart(state) : contentDecoder;
   return $proveCtx($beginCost("O(n)"), decoder.decode(getBytes(state, start, end)));
 }
 

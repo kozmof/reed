@@ -201,7 +201,8 @@ no transition that could emit them, and `isDirty` was only ever set to `true`.
 
 Primary selector namespace for O(1)/O(log n)/bounded operations:
 
-- `getText`, which rejects ranges that split UTF-8 code points and reads the document as `getValue` does: a byte order mark at offset 0 is stripped, so `getText(state, 0, length)` equals `getValue(state)`, and a U+FEFF anywhere else is kept. The line index counts a leading byte order mark as a character, so line 0 columns from `rendering` include it
+- `getText`, which rejects ranges that split UTF-8 code points and reads the document as `getValue` does: a byte order mark at the start of the file is stripped, so `getText(state, 0, length)` equals `getValue(state)`, and a U+FEFF anywhere else is kept. In chunk mode, while chunk 0 is not loaded, a U+FEFF that starts the resident text belongs to a later chunk and is kept
+- `getContentText`, which takes the same ranges as `getText` but reads the text as the line index counts it: a leading byte order mark is kept as a character. Use it when mapping char positions from `getCharStartOffset`, `findLineAtCharPosition` or `rendering` onto text, since line 0 columns include the byte order mark
 - `getLength`, `isUtf8Boundary`, `getBufferStats`
 - `findPieceAtPosition`
 - `isReconciledState`

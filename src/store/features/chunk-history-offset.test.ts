@@ -25,9 +25,13 @@ import {
   getText,
   getValue,
   isUtf8Boundary,
+  pieceTableDelete,
   pieceTableInsert,
 } from "../core/piece-table.js";
 import { byteKey, pieceKey } from "../core/chunk-anchor.js";
+import { isSafeSplice, isSafeSplit } from "../core/utf8-seam.js";
+import { getTextForAttention } from "../core/attention.js";
+import { query } from "../../api/query.js";
 import { lineByteToChar, lineCharToByte } from "../core/line-offsets.js";
 import { rebuildLineIndexFromPieceTableState } from "./edit.js";
 import { CheckpointError } from "../../types/checkpoint.js";
@@ -2730,5 +2734,125 @@ describe("EVICT_CHUNKS", () => {
     ]) {
       expect(validateAction(bad).valid, JSON.stringify(bad)).toBe(false);
     }
+  });
+});
+
+describe("nineteenth review regressions", () => {
+  // A U+FEFF that starts chunk 1: file content, not a byte order mark.
+  const BOM_CHUNK1 = "﻿BBBB\n";
+
+  it("keeps a U+FEFF that starts the resident text while chunk 0 is not loaded", () => {
+    const s = makeStore(2);
+    s.dispatch(DocumentActions.loadChunk(1, enc(BOM_CHUNK1)));
+    const pt = s.getSnapshot().pieceTable;
+    expect(getValue(pt)).toBe(BOM_CHUNK1);
+    expect(getText(pt, byteOffset(0), byteOffset(pt.totalLength))).toBe(BOM_CHUNK1);
+    expect(getText(pt, byteOffset(0), byteOffset(3))).toBe("﻿");
+    expect(collectLines(s.reconcileNow().lineIndex.root)[0]!.charLength).toBe(6);
+  });
+
+  it("keeps it once chunk 0 loads before it, and after chunk 0 is evicted", () => {
+    const s = makeStore(2);
+    s.dispatch(DocumentActions.loadChunk(1, enc(BOM_CHUNK1)));
+    load(s, 0);
+    expect(text(s)).toBe(CHUNK0 + BOM_CHUNK1);
+    s.dispatch(DocumentActions.evictChunk(0));
+    expect(text(s)).toBe(BOM_CHUNK1);
+  });
+
+  it("still strips a byte order mark that starts chunk 0", () => {
+    const s = makeStore(2);
+    s.dispatch(DocumentActions.loadChunk(0, enc("﻿AAAA\n")));
+    load(s, 1);
+    const pt = s.getSnapshot().pieceTable;
+    expect(getValue(pt)).toBe("AAAA\n" + CHUNK1);
+    expect(getText(pt, byteOffset(0), byteOffset(pt.totalLength))).toBe(getValue(pt));
+  });
+
+  it("keeps one typed at resident offset 0 while chunk 0 is not loaded", () => {
+    // The text goes with chunk 1, so chunk 0 loads before it.
+    const s = makeStore(2);
+    load(s, 1);
+    s.dispatch(DocumentActions.insert(byteOffset(0), "﻿x"));
+    expect(text(s)).toBe("﻿x" + CHUNK1);
+    load(s, 0);
+    expect(text(s)).toBe(CHUNK0 + "﻿x" + CHUNK1);
+  });
+
+  it("strips one typed at the start of the file", () => {
+    const s = makeStore(2);
+    load(s, 0);
+    s.dispatch(DocumentActions.insert(byteOffset(0), "﻿x"));
+    expect(text(s)).toBe("x" + CHUNK0);
+  });
+
+  it("reads attention text as the line index counts it", () => {
+    const s = createDocumentStore({ content: "﻿abc\n", reconcileMode: "none" });
+    s.dispatch(DocumentActions.createAttention(byteOffset(0), byteOffset(5)));
+    const snap = s.getSnapshot();
+    const [id] = [...snap.attention.attentions.keys()];
+    expect(getTextForAttention(snap.pieceTable, snap.attention, id!)).toBe("﻿ab");
+  });
+
+  it("exposes getContentText on the query API, matching line char offsets", () => {
+    const s = createDocumentStore({ content: "﻿ab\ncd", reconcileMode: "none" });
+    const state = s.reconcileNow();
+    const lineEnd = byteOffset(6);
+    expect(query.getText(state.pieceTable, byteOffset(0), lineEnd)).toBe("ab\n");
+    const content = query.getContentText(state.pieceTable, byteOffset(0), lineEnd);
+    expect(content).toBe("﻿ab\n");
+    expect(query.getCharStartOffset(state, 1)).toBe(content.length);
+    expect(() => query.getContentText(state.pieceTable, byteOffset(1), lineEnd)).toThrow(
+      RangeError,
+    );
+  });
+
+  it("predicts the safe splits a splice leaves, matching the splice once applied", () => {
+    const rng = makeDeterministicRng(19);
+    const pick = <T>(items: readonly T[]) => items[Math.floor(rng() * items.length)]!;
+    const bytePool = [0x41, 0x0a, 0x80, 0xbf, 0xc3, 0xe2, 0xef, 0xf0, 0x9f, 0xbb];
+    const textPool = ["", "a", "é", "€", "😀", "﻿", "a😀", "😀a", "\uD83D", "\uDE00", "x\uDE00"];
+    for (let round = 0; round < 2000; round++) {
+      const bytes = Uint8Array.from({ length: 1 + Math.floor(rng() * 7) }, () => pick(bytePool));
+      const s = createDocumentStore({
+        chunkSize: bytes.length,
+        totalFileSize: bytes.length,
+        reconcileMode: "none",
+      });
+      s.dispatch(DocumentActions.loadChunk(0, bytes));
+      const pt = s.getSnapshot().pieceTable;
+      const start = Math.floor(rng() * (bytes.length + 1));
+      const end = start + Math.floor(rng() * (bytes.length - start + 1));
+      const insert = pick(textPool);
+      const deleted = pieceTableDelete(pt, byteOffset(start), byteOffset(end));
+      const after = pieceTableInsert(deleted, byteOffset(start), insert).state;
+      const insertedLength = after.totalLength - deleted.totalLength;
+      const expected = isSafeSplit(after, start) && isSafeSplit(after, start + insertedLength);
+      expect(
+        isSafeSplice(pt, start, end, insert),
+        JSON.stringify({ bytes: [...bytes], start, end, insert }),
+      ).toBe(expected);
+    }
+  });
+
+  it("with keepHistory evicts only candidates that cost no history, whatever the policy", () => {
+    for (const policy of ["pin-bounded", "drop"] as const) {
+      const s = makeStore(3, policy);
+      for (const i of [0, 1, 2]) load(s, i);
+      s.dispatch(DocumentActions.insert(byteOffset(2), "X"));
+      s.dispatch(DocumentActions.undo());
+      s.dispatch(DocumentActions.evictChunks([0, 1, 2], 0, true));
+      expect([...s.getSnapshot().pieceTable.chunkMap.keys()]).toEqual([0]);
+      expect(getRedoCount(s.getSnapshot())).toBe(1);
+    }
+  });
+
+  it("validates keepHistory and round-trips it", () => {
+    const action = DocumentActions.evictChunks([1, 0], 1, true);
+    expect(validateAction(action).valid).toBe(true);
+    expect(deserializeAction(serializeAction(action))).toEqual(action);
+    expect(DocumentActions.evictChunks([0], 1)).not.toHaveProperty("keepHistory");
+    const bad = { type: "EVICT_CHUNKS", chunkIndices: [0], maxLoaded: 1, keepHistory: "yes" };
+    expect(validateAction(bad).valid).toBe(false);
   });
 });

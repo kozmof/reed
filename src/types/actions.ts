@@ -269,6 +269,12 @@ export interface EvictChunkAction {
  * fewest history entries each time, ties going to the earlier candidate.
  * Eviction stops as soon as the limit is met, so it may leave candidates
  * loaded.
+ *
+ * With `keepHistory`, only the first pass runs: no candidate whose eviction
+ * discards history is evicted, whatever the policy. ChunkManager first sends
+ * just enough least recently used candidates this way, which is what the full
+ * pass would evict first, and sends every candidate only when that falls
+ * short. Each load then carries a short list unless history keeps chunks.
  */
 export interface EvictChunksAction {
   readonly type: "EVICT_CHUNKS";
@@ -276,6 +282,8 @@ export interface EvictChunksAction {
   readonly chunkIndices: readonly number[];
   /** Most chunks to leave loaded */
   readonly maxLoaded: number;
+  /** Evict only candidates whose eviction discards no history */
+  readonly keepHistory?: boolean;
 }
 
 /**
@@ -700,6 +708,9 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
       }
       if (!isNonNegativeInteger(evictAction.maxLoaded)) {
         errors.push('EVICT_CHUNKS action requires a non-negative integer "maxLoaded" property');
+      }
+      if (evictAction.keepHistory !== undefined && typeof evictAction.keepHistory !== "boolean") {
+        errors.push('EVICT_CHUNKS "keepHistory" must be a boolean when present');
       }
       break;
     }

@@ -102,7 +102,7 @@ function normalizeDeserializedAction(action: DocumentAction): DocumentAction {
     case "EVICT_CHUNK":
       return DocumentActions.evictChunk(action.chunkIndex, action.overLimit);
     case "EVICT_CHUNKS":
-      return DocumentActions.evictChunks(action.chunkIndices, action.maxLoaded);
+      return DocumentActions.evictChunks(action.chunkIndices, action.maxLoaded, action.keepHistory);
     case "DECLARE_CHUNK_METADATA":
       return DocumentActions.declareChunkMetadata(action.metadata);
   }
@@ -343,13 +343,19 @@ export const DocumentActions = {
    *
    * @param chunkIndices - Chunks that may be evicted, in the order to try them
    * @param maxLoaded - Most chunks to leave loaded
+   * @param keepHistory - Evict only candidates whose eviction discards no history
    */
-  evictChunks(chunkIndices: readonly number[], maxLoaded: number): EvictChunksAction {
-    return Object.freeze({
-      type: "EVICT_CHUNKS",
+  evictChunks(
+    chunkIndices: readonly number[],
+    maxLoaded: number,
+    keepHistory?: boolean,
+  ): EvictChunksAction {
+    const action = {
+      type: "EVICT_CHUNKS" as const,
       chunkIndices: Object.freeze([...chunkIndices]),
       maxLoaded,
-    });
+    };
+    return Object.freeze(keepHistory === undefined ? action : { ...action, keepHistory });
   },
 
   /**

@@ -9,6 +9,7 @@ import type { ByteOffset } from "../types/branded.js";
 import { $uncostedFn } from "../types/cost-doc.js";
 import {
   getText,
+  getContentText,
   getLength,
   isUtf8Boundary,
   findPieceAtPosition,
@@ -27,18 +28,35 @@ import {
 import { asEagerLineIndex } from "../store/core/state.js";
 import type { QueryApi } from "./interfaces.js";
 
-function getTextAtBoundaries(
+function assertTextBoundaries(
   state: Parameters<typeof getText>[0],
   start: Parameters<typeof getText>[1],
   end: Parameters<typeof getText>[2],
-) {
+): void {
   if (!isUtf8Boundary(state, start)) {
     throw new RangeError(`text start (${start}) must be a UTF-8 code-point boundary`);
   }
   if (!isUtf8Boundary(state, end)) {
     throw new RangeError(`text end (${end}) must be a UTF-8 code-point boundary`);
   }
+}
+
+function getTextAtBoundaries(
+  state: Parameters<typeof getText>[0],
+  start: Parameters<typeof getText>[1],
+  end: Parameters<typeof getText>[2],
+) {
+  assertTextBoundaries(state, start, end);
   return getText(state, start, end);
+}
+
+function getContentTextAtBoundaries(
+  state: Parameters<typeof getContentText>[0],
+  start: Parameters<typeof getContentText>[1],
+  end: Parameters<typeof getContentText>[2],
+) {
+  assertTextBoundaries(state, start, end);
+  return getContentText(state, start, end);
 }
 
 function isReconciledState(state: DocumentState): state is DocumentState<"eager"> {
@@ -141,6 +159,13 @@ function getSelectionHead(state: DocumentState): ByteOffset | undefined {
 export const query: QueryApi = {
   /** @complexity O(log n + m) — tree traversal to collect byte range */
   getText: $uncostedFn(getTextAtBoundaries),
+  /**
+   * Text as the line index counts it: a byte order mark at the start of the
+   * document is kept, so char positions from `getCharStartOffset` and
+   * `findLineAtCharPosition` index into it.
+   * @complexity O(log n + m) — tree traversal to collect byte range
+   */
+  getContentText: $uncostedFn(getContentTextAtBoundaries),
   /** @complexity O(1) — cached totalLength on piece table state */
   getLength: $uncostedFn(getLength),
   /** @complexity O(log n) — checks the byte at the requested document position */

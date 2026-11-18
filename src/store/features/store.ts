@@ -584,7 +584,7 @@ function createStoreOverState(
  *   REDO, or a chunk load or eviction moves the selection. An edit moves it past the edit, so
  *   typing at the cursor fires it, and so does a remote edit before the cursor
  * - 'history-change': On UNDO and REDO
- * - 'history-drop': On EVICT_CHUNK that drops history entries
+ * - 'history-drop': On EVICT_CHUNK or EVICT_CHUNKS that drops history entries
  * - 'attention-change': When the attention layer changes
  * - 'save': On MARK_SAVED
  * - 'dirty-change': When isDirty state changes
