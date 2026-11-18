@@ -121,6 +121,65 @@ export interface ChunkManager {
 }
 
 // =============================================================================
+// Refused candidates
+// =============================================================================
+
+/** Chunks an eviction pass could not evict, and the state it measured them in. */
+interface Stuck {
+  readonly history: DocumentState["history"];
+  readonly attention: DocumentState["attention"];
+  readonly chunkMap: DocumentState["pieceTable"]["chunkMap"];
+  readonly chunks: ReadonlySet<number>;
+}
+
+/**
+ * The chunks of `stuck` that still cannot be evicted in `state`, or null when
+ * that is unknown.
+ *
+ * A chunk is kept by history pointing inside it, an attention anchored to it,
+ * or edits splitting or touching it (see `evictionCandidate`). Every edit,
+ * undo, redo, and history clear replaces the history object, and every
+ * attention change the attention object. So while both are the ones measured,
+ * the text has changed only by chunks loaded or evicted, which leave what
+ * history points inside a chunk as it was. Evicting a chunk only brings text
+ * together. Loading one puts its text between the loaded chunks on either
+ * side, which can part one of them from an add piece that touched it, so
+ * those two are measured again.
+ *
+ * Finding them costs O(L log k) for k chunks loaded since, and nothing when
+ * none was.
+ */
+function stillStuck(stuck: Stuck, state: DocumentState): ReadonlySet<number> | null {
+  if (state.history !== stuck.history || state.attention !== stuck.attention) return null;
+  const { chunkMap } = state.pieceTable;
+  const loaded: number[] = [];
+  for (const chunk of chunkMap.keys()) if (!stuck.chunkMap.has(chunk)) loaded.push(chunk);
+  if (loaded.length === 0) return stuck.chunks;
+  loaded.sort((a, b) => a - b);
+  // The nearest loaded chunk below and above each one loaded since. A chunk
+  // with one loaded since between it and another is not the other's nearest.
+  const below = loaded.map(() => -Infinity);
+  const above = loaded.map(() => Infinity);
+  for (const chunk of chunkMap.keys()) {
+    // The first chunk loaded since that lies above `chunk`.
+    let lo = 0;
+    let hi = loaded.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (loaded[mid]! > chunk) hi = mid;
+      else lo = mid + 1;
+    }
+    if (lo < loaded.length) below[lo] = Math.max(below[lo]!, chunk);
+    const under = loaded[lo - 1] === chunk ? lo - 2 : lo - 1;
+    if (under >= 0) above[under] = Math.min(above[under]!, chunk);
+  }
+  const chunks = new Set(stuck.chunks);
+  for (const chunk of below) chunks.delete(chunk);
+  for (const chunk of above) chunks.delete(chunk);
+  return chunks;
+}
+
+// =============================================================================
 // Factory
 // =============================================================================
 
@@ -189,13 +248,12 @@ export function createChunkManager(
   // last eviction attempt. The pressure warning is logged when it turns true.
   let underPressure = false;
 
-  // Candidates the last eviction pass left resident, though over the limit,
-  // and the state it left. Under "pin", history keeping chunks resident is a
-  // steady state, and offering them again on every load would cost O(L log n)
-  // to evict nothing. A load adds no edits, attention, or history, so while
-  // only the manager's own loads have run since (see `unchangedSince`), they
-  // still cannot go, and a pass skips them.
-  let stuck: { readonly state: DocumentState; readonly chunks: ReadonlySet<number> } | null = null;
+  // Candidates the last eviction pass measured and could not evict, though
+  // over the limit, and the state it measured them in. Under "pin", history
+  // keeping chunks resident is a steady state, and offering them again on
+  // every load would cost O(L log n) to evict nothing. A pass skips the ones
+  // that still cannot go (see `stillStuck`).
+  let stuck: Stuck | null = null;
 
   // When fetchStrategy is 'queue', serialise fetches through this promise chain.
   let fetchQueue: Promise<void> = Promise.resolve();
@@ -249,39 +307,24 @@ export function createChunkManager(
   // ── Eviction ──────────────────────────────────────────────────────────────
 
   /**
-   * True when `baseline` has the same text, edits, attention, and history as
-   * `state`. Other parts can differ: line-index reconciliation replaces the
-   * state object without changing which chunks can be evicted.
-   */
-  function unchangedSince(state: DocumentState, baseline: DocumentState): boolean {
-    return (
-      state.pieceTable === baseline.pieceTable &&
-      state.history === baseline.history &&
-      state.attention === baseline.attention
-    );
-  }
-
-  /**
    * Evict least recently used chunks until at most maxLoadedChunks remain, or
-   * none that may go is left. `baseline` is the state before the caller's own
-   * loads, if any: while it matches the state the last pass left, the chunks
-   * that pass could not evict are skipped (see `stuck`).
+   * none that may go is left. The chunks the last pass could not evict are
+   * skipped while they still cannot go (see `stuck`).
    */
-  function evictIfOverLimit(
-    baseline: DocumentState,
-    protectedChunkIndices?: number | ReadonlySet<number>,
-  ): void {
+  function evictIfOverLimit(protectedChunkIndices?: number | ReadonlySet<number>): void {
     if (disposed) return;
     const isProtected = (chunkIndex: number) =>
       typeof protectedChunkIndices === "number"
         ? chunkIndex === protectedChunkIndices
         : protectedChunkIndices?.has(chunkIndex) === true;
-    const known = stuck !== null && unchangedSince(stuck.state, baseline) ? stuck.chunks : null;
+    const previous = stuck;
     stuck = null;
 
-    const resident = store.getSnapshot().pieceTable.chunkMap;
+    const start = store.getSnapshot();
+    const resident = start.pieceTable.chunkMap;
     const excess = resident.size - maxLoadedChunks;
     if (excess > 0) {
+      let known = previous === null ? null : stillStuck(previous, start);
       // Least recently used first: chunks the manager may evict that are still
       // in memory. Pinned chunks and the chunks just loaded for the caller
       // stay. The reducer chooses among them (see EVICT_CHUNKS): every chunk
@@ -305,6 +348,20 @@ export function createChunkManager(
         store.dispatch(DocumentActions.evictChunks(head, maxLoadedChunks, true));
       }
       const before = store.getSnapshot();
+      // A store listener can dispatch while the eviction notifies it, so check
+      // the skipped chunks again against the state the full pass starts from.
+      // The eviction itself keeps history and attention, and only evicts.
+      if (known !== null && before !== start) {
+        known = stillStuck(
+          {
+            history: start.history,
+            attention: start.attention,
+            chunkMap: resident,
+            chunks: known,
+          },
+          before,
+        );
+      }
       const remaining = before.pieceTable.chunkMap;
       if (remaining.size > maxLoadedChunks) {
         const candidates: number[] = [];
@@ -328,14 +385,26 @@ export function createChunkManager(
           }
         }
         // Still over the limit, so every candidate was offered: those left,
-        // and the known ones skipped, cannot go until something changes.
+        // and the known ones skipped, cannot go in the state they were
+        // measured in, `before`. That holds only while history and attention
+        // are the ones `before` had: when the pass discarded history, or a
+        // listener changed either while the pass notified it, nothing is kept.
         const after = store.getSnapshot();
         const left = after.pieceTable.chunkMap;
-        if (left.size > maxLoadedChunks) {
+        if (
+          left.size > maxLoadedChunks &&
+          after.history === before.history &&
+          after.attention === before.attention
+        ) {
           const chunks = new Set<number>();
           for (const chunk of known ?? []) if (left.has(chunk)) chunks.add(chunk);
           for (const chunk of candidates) if (left.has(chunk)) chunks.add(chunk);
-          stuck = { state: after, chunks };
+          stuck = {
+            history: before.history,
+            attention: before.attention,
+            chunkMap: remaining,
+            chunks,
+          };
         }
       }
     }
@@ -387,8 +456,7 @@ export function createChunkManager(
               // Reject lengths that contradict the declared file geometry before dispatch.
               // Otherwise the reducer drops the load and the retention check
               // below reports a misleading error.
-              const baseline = store.getSnapshot();
-              const { pieceTable } = baseline;
+              const { pieceTable } = store.getSnapshot();
               if (!isChunkByteLengthValid(pieceTable, chunkIndex, data.length)) {
                 const declared = pieceTable.chunkMetadata.get(chunkIndex);
                 throw new Error(
@@ -408,7 +476,7 @@ export function createChunkManager(
                 );
               }
               lruTouch(chunkIndex);
-              evictIfOverLimit(baseline, chunkIndex);
+              evictIfOverLimit(chunkIndex);
             })
             .catch((error: unknown) => {
               // Manager-owned cancellation settles pending calls without loading.
@@ -556,7 +624,6 @@ export function createChunkManager(
           ready = [];
           commit = undefined;
           if (disposed || chunks.length === 0) return;
-          const baseline = store.getSnapshot();
           store.dispatch(DocumentActions.loadChunks(chunks));
           const after = store.getSnapshot();
           for (const chunk of chunks) {
@@ -567,7 +634,7 @@ export function createChunkManager(
             }
             lruTouch(chunk.chunkIndex);
           }
-          evictIfOverLimit(baseline, protectedChunks);
+          evictIfOverLimit(protectedChunks);
         }));
       }
       let cursor = 0;
@@ -617,7 +684,7 @@ export function createChunkManager(
 
   function setActiveChunks(chunkIndices: readonly number[]): void {
     activeChunks = new Set(chunkIndices);
-    evictIfOverLimit(store.getSnapshot());
+    evictIfOverLimit();
   }
 
   function cancelPendingOutside(chunkIndices: readonly number[]): void {

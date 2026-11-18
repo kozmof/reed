@@ -29,10 +29,10 @@ import { deriveLoadedChunks, keySpan } from "../core/chunk-anchor.js";
 import {
   carrySelectionAcrossChunks,
   historyForEviction,
-  historyLossAfterDrop,
   historyLossForEviction,
 } from "./history-anchor.js";
 import type { EvictionHistoryLoss } from "./history-anchor.js";
+import { createFewestLossQueue } from "./fewest-loss-queue.js";
 import { repairChunkLines } from "../core/chunk-line-repair.js";
 import { summarizeBytes } from "../core/decoded-metrics.js";
 import { PersistentMap, PersistentSet } from "../core/persistent-map.js";
@@ -336,7 +336,20 @@ export function evictionCandidate(
 }
 
 export function evictChunk(state: DocumentState, action: EvictChunkAction): DocumentState {
-  return tryEvict(state, action.chunkIndex, action.overLimit === true) ?? state;
+  const next = tryEvict(state, action.chunkIndex, action.overLimit === true);
+  return next === null ? state : withSelectionCarried(state, next);
+}
+
+/**
+ * `next`, which evicted chunks from `state`, with the selection of `state`
+ * carried across: an offset inside an evicted chunk lands where the chunk was.
+ * Carrying it once for a whole batch gives the selection carrying it across
+ * each eviction would, since each endpoint keeps its chunk key.
+ */
+function withSelectionCarried(state: DocumentState, next: DocumentState): DocumentState {
+  if (next === state) return state;
+  const selection = carrySelectionAcrossChunks(state.pieceTable, next.pieceTable, state.selection);
+  return selection === next.selection ? next : withState(next, { selection });
 }
 
 /**
@@ -359,7 +372,11 @@ function tryEvict(state: DocumentState, chunkIndex: number, overLimit: boolean) 
   return evictRange(state, chunkIndex, range, history);
 }
 
-/** Remove `chunkIndex`, which lies at `range`, keeping `history`. */
+/**
+ * Remove `chunkIndex`, which lies at `range`, keeping `history`. The selection
+ * is left as it was, for the caller to carry across (see
+ * `withSelectionCarried`).
+ */
 function evictRange(
   state: DocumentState,
   chunkIndex: number,
@@ -393,14 +410,10 @@ function evictRange(
     );
   }
 
-  // An offset inside the chunk lands where the chunk was.
-  const selection = carrySelectionAcrossChunks(state.pieceTable, nextPieceTable, state.selection);
-
   return withState(state, {
     revision: nextRevision,
     pieceTable: nextPieceTable,
     lineIndex,
-    selection,
     history,
   });
 }
@@ -419,19 +432,20 @@ function lostEntries(loss: EvictionHistoryLoss): number {
  * skipped. Only if that is not enough does history decide the rest, and never
  * under `"pin"`: `"drop"` takes them in the order given, and `"pin-bounded"`
  * takes the one that discards the fewest entries each time, which keeps as
- * much undo as the limit allows, with ties going to the earlier candidate.
- * With `keepHistory`, it stops after the first pass.
+ * much undo as the limit allows, with ties going to the earlier candidate
+ * (see `createFewestLossQueue`). With `keepHistory`, it stops after the first
+ * pass.
  *
- * Each candidate's loss is measured once. An eviction drops only the oldest
- * entries, so the other losses follow from what it dropped
- * (see `historyLossAfterDrop`).
+ * Each candidate's loss is measured once, and the selection is carried across
+ * once, after the last eviction.
  */
 export function evictChunks(state: DocumentState, action: EvictChunksAction): DocumentState {
   const { maxLoaded } = action;
   let next = state;
-  const lossy: { readonly chunk: number; loss: EvictionHistoryLoss }[] = [];
+  const overLimit = () => next.pieceTable.chunkMap.size > maxLoaded;
+  const lossy: { readonly chunk: number; readonly loss: EvictionHistoryLoss }[] = [];
   for (const chunk of new Set(action.chunkIndices)) {
-    if (next.pieceTable.chunkMap.size <= maxLoaded) return next;
+    if (!overLimit()) break;
     const candidate = evictionCandidate(next, chunk);
     if (candidate === null) continue;
     const { range, loss } = candidate;
@@ -439,25 +453,29 @@ export function evictChunks(state: DocumentState, action: EvictChunksAction): Do
     else lossy.push({ chunk, loss });
   }
 
-  if (action.keepHistory === true) return next;
   const policy = next.history.evictionPolicy;
-  while (policy !== "pin" && lossy.length > 0 && next.pieceTable.chunkMap.size > maxLoaded) {
-    let at = 0;
-    // Anything other than "drop" here gets the default "pin-bounded".
-    if (policy !== "drop") {
-      for (let i = 1; i < lossy.length; i++) {
-        if (lostEntries(lossy[i]!.loss) < lostEntries(lossy[at]!.loss)) at = i;
+  if (action.keepHistory !== true && policy !== "pin" && lossy.length > 0) {
+    // Evicting other chunks moved each candidate, so tryEvict reads its range
+    // again. They cannot have made it unevictable: eviction adds no edits or
+    // attention. Should it be refused anyway, no history was dropped, so the
+    // other losses stay as measured.
+    if (policy === "drop") {
+      for (const { chunk } of lossy) {
+        if (!overLimit()) break;
+        next = tryEvict(next, chunk, true) ?? next;
+      }
+    } else {
+      // Anything other than "drop" here gets the default "pin-bounded".
+      const queue = createFewestLossQueue(lossy.map(({ loss }) => loss));
+      while (overLimit()) {
+        const pick = queue.take();
+        if (pick === undefined) break;
+        const evicted = tryEvict(next, lossy[pick.index]!.chunk, true);
+        if (evicted === null) continue;
+        next = evicted;
+        queue.dropped(pick.loss);
       }
     }
-    const { chunk, loss } = lossy.splice(at, 1)[0]!;
-    // Evicting other chunks moved this one, so its range is read again. They
-    // cannot have made it unevictable: eviction adds no edits or attention.
-    // Should it be refused anyway, no history was dropped, so the other
-    // losses stay as measured.
-    const evicted = tryEvict(next, chunk, true);
-    if (evicted === null) continue;
-    next = evicted;
-    for (const entry of lossy) entry.loss = historyLossAfterDrop(entry.loss, loss);
   }
-  return next;
+  return withSelectionCarried(state, next);
 }

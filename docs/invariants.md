@@ -284,9 +284,10 @@ prev.revision + 1` after a single dispatch; compare with `>` instead.
 
 An `UNDO` or `REDO` whose entry no longer resolves against the current chunk
 layout drops that entry and returns a new state with changed `history` but the
-same `revision`. The event store relies on this to report a `history-drop`
-rather than a `history-change`. To catch every history change, compare
-`state.history !== prev.history`.
+same `revision`. The event store reports it as a `history-drop` rather than a
+`history-change`, reading the outcome the step recorded for the state it ran
+on, so a listener that dispatches during notification does not change it. To
+catch every history change, compare `state.history !== prev.history`.
 
 Because it moves on selection and history actions too, `revision` alone cannot
 tell you that content changed. To detect a content change, compare piece-table

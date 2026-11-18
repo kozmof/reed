@@ -793,11 +793,13 @@ interface EvictionCuts {
   readonly redoCut: number;
 }
 
-// Under "pin" or "pin-bounded", a refused eviction leaves history unchanged, and ChunkManager
-// offers every refused candidate again on each load (EVICT_CHUNKS). The cuts depend only on
-// the history, the chunk, and the chunk's anchored start. Loading or evicting
-// other chunks leaves the anchored start unchanged, and every edit, undo, and
-// redo replaces the history object, so the cuts are kept per history object.
+// The same history is often measured against the same chunk more than once:
+// ChunkManager offers a candidate to its keepHistory pass and then to its full
+// pass (EVICT_CHUNKS), and offers a refused candidate again once a load next to
+// it may have freed it. The cuts depend only on the history, the chunk, and
+// the chunk's anchored start. Loading or evicting other chunks leaves the
+// anchored start unchanged, and every edit, undo, and redo replaces the
+// history object, so the cuts are kept per history object.
 const evictionCutCache = new WeakMap<HistoryState, Map<number, EvictionCuts>>();
 
 function evictionCuts(history: HistoryState, chunkIndex: number, anchoredStart: number) {
@@ -906,24 +908,4 @@ export function historyLossForEviction(
   const { undoCut, redoCut } = evictionCutsAt(pieceTable, history, chunkIndex, start);
   // Cutting at `cut` drops it and every entry older than it (see `keepNewerThan`).
   return { undo: undoCut + 1, redo: redoCut + 1 };
-}
-
-/**
- * The loss of evicting a chunk, `loss` before evicting another chunk that
- * discarded `dropped`, measured afterwards.
- *
- * Both count oldest entries, and an eviction drops entries only from the old
- * end. The entry a cut was found at is unchanged while it is kept, since the
- * search for it starts from the newest entry and never reads older ones. So a
- * loss shrinks by the entries dropped below its cut, and is none when the cut
- * was dropped too. This saves measuring every loss again after each eviction.
- */
-export function historyLossAfterDrop(
-  loss: EvictionHistoryLoss,
-  dropped: EvictionHistoryLoss,
-): EvictionHistoryLoss {
-  return {
-    undo: Math.max(0, loss.undo - dropped.undo),
-    redo: Math.max(0, loss.redo - dropped.redo),
-  };
 }

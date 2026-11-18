@@ -2937,6 +2937,38 @@ describe("twentieth review regressions", () => {
     expect(seen).toEqual(["drop"]);
   });
 
+  it.each([
+    ["UNDO", "undoStack"],
+    ["REDO", "redoStack"],
+  ] as const)(
+    "reports a dropped %s as history-drop when a listener dispatches during it",
+    (type, stack) => {
+      let state = withStaleTop(stack);
+      const base = createDocumentStore();
+      const store = withEvents(
+        Object.assign(Object.create(base), {
+          getSnapshot: () => state,
+          // A store listener moves the caret while the store notifies it, so
+          // dispatch returns a later state than the one the step returned.
+          dispatch: (action: DocumentAction) => {
+            state = documentReducer(state, action);
+            state = documentReducer(
+              state,
+              DocumentActions.setSelection([{ anchor: byteOffset(1), head: byteOffset(1) }]),
+            );
+            return state;
+          },
+        }),
+        undefined,
+      );
+      const seen: string[] = [];
+      store.addEventListener("history-change", () => seen.push("change"));
+      store.addEventListener("history-drop", () => seen.push("drop"));
+      store.dispatch(type === "UNDO" ? DocumentActions.undo() : DocumentActions.redo());
+      expect(seen).toEqual(["drop"]);
+    },
+  );
+
   it("drops a remote-insert caret's key once text under another key lands after it", () => {
     const s = makeStore(4);
     load(s, 0);

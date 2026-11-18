@@ -104,24 +104,37 @@ export interface HistoryStepResult {
   readonly state: DocumentState;
 }
 
-/** States that an undo or redo step produced by dropping a stale entry. */
-const droppedStepStates = new WeakSet<DocumentState>();
+/**
+ * States an undo, or a redo, ran on and dropped a stale entry instead of
+ * replaying it. A step is a pure function of the state it runs on, so the
+ * outcome is the same every time it runs on that state.
+ */
+const droppedStepInputs = {
+  undo: new WeakSet<DocumentState>(),
+  redo: new WeakSet<DocumentState>(),
+} as const;
 
-/** A `"dropped"` step result, its state marked for {@link isDroppedHistoryStep}. */
-function droppedStep(state: DocumentState): HistoryStepResult {
-  droppedStepStates.add(state);
+/** A `"dropped"` step result, recorded for {@link isDroppedHistoryStep}. */
+function droppedStep(
+  direction: "undo" | "redo",
+  input: DocumentState,
+  state: DocumentState,
+): HistoryStepResult {
+  droppedStepInputs[direction].add(input);
   return { outcome: "dropped", state };
 }
 
 /**
- * True when `state` is the state an UNDO or REDO returned after dropping a
- * stale entry instead of replaying it. The event layer uses this to emit
- * `history-drop` rather than `history-change`: the document is unchanged
- * either way when an entry changes no bytes, so the step's outcome is the only
- * reliable signal.
+ * True when an undo, or a redo, run on `input` drops a stale entry instead of
+ * replaying it, as far as a step has run on `input`. The event layer uses this
+ * to emit `history-drop` rather than `history-change`: the document is
+ * unchanged either way when an entry changes no bytes, so the step's outcome
+ * is the only reliable signal. It asks about the state the step ran on, not
+ * the one it returned, since a store listener can dispatch again before the
+ * event layer looks, leaving the store at a later state.
  */
-export function isDroppedHistoryStep(state: DocumentState): boolean {
-  return droppedStepStates.has(state);
+export function isDroppedHistoryStep(direction: "undo" | "redo", input: DocumentState): boolean {
+  return droppedStepInputs[direction].has(input);
 }
 
 /**
@@ -146,6 +159,8 @@ export function historyUndo(state: DocumentState, _revision: number): HistorySte
   const replayed = replayEntry(state, entry, applyInverseChange, true);
   if (replayed === null) {
     return droppedStep(
+      "undo",
+      state,
       withState(state, { history: Object.freeze({ ...history, undoStack: null }) }),
     );
   }
@@ -192,6 +207,8 @@ export function historyRedo(state: DocumentState, _revision: number): HistorySte
   const replayed = replayEntry(state, entry, applyChange, false);
   if (replayed === null) {
     return droppedStep(
+      "redo",
+      state,
       withState(state, { history: Object.freeze({ ...history, redoStack: null }) }),
     );
   }
