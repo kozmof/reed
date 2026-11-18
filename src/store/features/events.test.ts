@@ -783,8 +783,8 @@ describe("Store event transaction guards", () => {
     store.dispatch(DocumentActions.setSelection(caret(6)));
     expect(store.getSnapshot().selection).toBe(moved);
     expect(handler).toHaveBeenCalledTimes(1);
-    // SET_SELECTION still counts as a selection dispatch.
-    expect(store.getSnapshot().selectionRevision).toBe(2);
+    // The echo changes nothing, so selectionRevision agrees with the event.
+    expect(store.getSnapshot().selectionRevision).toBe(1);
   });
 
   it("dispatching UNDO emits history-change event", () => {

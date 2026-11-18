@@ -326,7 +326,10 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     const snap = store.getSnapshot();
     expect([...snap.pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
     expect(snap.history.redoStack).toBeNull();
-    expect(warn).not.toHaveBeenCalled();
+    // The drop is reported, but the cache is within the limit: no pressure warning.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toContain("discarded 0 undo and 1 redo entries");
+    expect(warn.mock.calls[0]![0]).toContain('"pin-bounded"');
     manager.dispose();
   });
 

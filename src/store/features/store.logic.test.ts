@@ -661,13 +661,24 @@ describe("Document Reducer", () => {
     });
 
     it("should increment revision", () => {
+      const state = createInitialState({ content: "hello" });
+      const newState = documentReducer(
+        state,
+        DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(3) }]),
+      );
+
+      expect(newState.revision).toBe(1);
+      expect(newState.selectionRevision).toBe(1);
+    });
+
+    it("returns the same state for the current selection", () => {
       const state = createInitialState();
       const newState = documentReducer(
         state,
         DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(0) }]),
       );
 
-      expect(newState.revision).toBe(1);
+      expect(newState).toBe(state);
     });
 
     it("should not mark dirty", () => {

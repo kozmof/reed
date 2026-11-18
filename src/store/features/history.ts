@@ -94,22 +94,14 @@ function replayEntry(
 }
 
 /**
- * True when an undo (or redo) step from `prev` to `next` dropped a stale entry
- * instead of replaying it. A replayed step always pushes the entry onto the
- * other stack, while a dropped step keeps that stack as it was. This holds even
- * for an entry whose replay changes no bytes, which leaves the piece table
- * untouched. A step with nothing to undo or redo returns `prev` itself and is
- * not a drop.
+ * What an undo or redo step did. `"empty"` means there was nothing to undo or
+ * redo and `state` is the input. `"applied"` means the top entry replayed.
+ * `"dropped"` means it no longer replayed and was discarded together with the
+ * entries that depend on it, so only history changed.
  */
-export function historyStepDropped(
-  prev: DocumentState,
-  next: DocumentState,
-  direction: "undo" | "redo",
-): boolean {
-  if (prev.history === next.history) return false;
-  return direction === "undo"
-    ? prev.history.redoStack === next.history.redoStack
-    : prev.history.undoStack === next.history.undoStack;
+export interface HistoryStepResult {
+  readonly outcome: "empty" | "applied" | "dropped";
+  readonly state: DocumentState;
 }
 
 /**
@@ -122,18 +114,21 @@ export function historyStepDropped(
  *
  * @param state - Current document state
  * @param revision - Next revision number (caller is responsible for incrementing)
- * @returns New state with undo applied, or the same state if no undo is available
+ * @returns The step's outcome and resulting state
  */
-export function historyUndo(state: DocumentState, _revision: number): DocumentState {
+export function historyUndo(state: DocumentState, _revision: number): HistoryStepResult {
   const history = state.history;
-  if (history.undoStack === null) return state;
+  if (history.undoStack === null) return { outcome: "empty", state };
 
   const [entry, newUndoStack] = pstackPop(history.undoStack);
 
   // Apply inverse of each change (in reverse order) with lazy line index updates
   const replayed = replayEntry(state, entry, applyInverseChange, true);
   if (replayed === null) {
-    return withState(state, { history: Object.freeze({ ...history, undoStack: null }) });
+    return {
+      outcome: "dropped",
+      state: withState(state, { history: Object.freeze({ ...history, undoStack: null }) }),
+    };
   }
 
   let newState = withState(replayed, {
@@ -153,7 +148,7 @@ export function historyUndo(state: DocumentState, _revision: number): DocumentSt
     metadata: Object.freeze({ ...newState.metadata, isDirty: true }),
   });
 
-  return newState;
+  return { outcome: "applied", state: newState };
 }
 
 /**
@@ -166,18 +161,21 @@ export function historyUndo(state: DocumentState, _revision: number): DocumentSt
  *
  * @param state - Current document state
  * @param revision - Next revision number (caller is responsible for incrementing)
- * @returns New state with redo applied, or the same state if no redo is available
+ * @returns The step's outcome and resulting state
  */
-export function historyRedo(state: DocumentState, _revision: number): DocumentState {
+export function historyRedo(state: DocumentState, _revision: number): HistoryStepResult {
   const history = state.history;
-  if (history.redoStack === null) return state;
+  if (history.redoStack === null) return { outcome: "empty", state };
 
   const [entry, newRedoStack] = pstackPop(history.redoStack);
 
   // Apply each change with lazy line index updates
   const replayed = replayEntry(state, entry, applyChange, false);
   if (replayed === null) {
-    return withState(state, { history: Object.freeze({ ...history, redoStack: null }) });
+    return {
+      outcome: "dropped",
+      state: withState(state, { history: Object.freeze({ ...history, redoStack: null }) }),
+    };
   }
 
   let newState = withState(replayed, {
@@ -197,5 +195,5 @@ export function historyRedo(state: DocumentState, _revision: number): DocumentSt
     metadata: Object.freeze({ ...newState.metadata, isDirty: true }),
   });
 
-  return newState;
+  return { outcome: "applied", state: newState };
 }

@@ -15,6 +15,7 @@ import type { ReedLogger } from "../../types/state.js";
 import type { DocumentStore } from "../../types/store.js";
 import { isChunkByteLengthValid } from "../core/piece-table.js";
 import { DocumentActions } from "./actions.js";
+import { getRedoCount, getUndoCount } from "./history.js";
 
 // =============================================================================
 // Public interfaces
@@ -276,7 +277,21 @@ export function createChunkManager(
           if (evictable(candidate) && chunkMap.has(candidate)) candidates.push(candidate);
         }
         if (candidates.length > 0) {
+          // Without keepHistory this pass may discard history, as the policy
+          // allows. Undo then stops short with no other sign, so say so.
+          const before = store.getSnapshot();
           store.dispatch(DocumentActions.evictChunks(candidates, maxLoadedChunks));
+          const after = store.getSnapshot();
+          if (after.history !== before.history) {
+            const undoDropped = getUndoCount(before) - getUndoCount(after);
+            const redoDropped = getRedoCount(before) - getRedoCount(after);
+            logger?.warn?.(
+              `[ChunkManager] evicting chunks to stay within the memory limit (${maxLoadedChunks}) ` +
+                `discarded ${undoDropped} undo and ${redoDropped} redo entries that pointed into them, ` +
+                `under the "${after.history.evictionPolicy}" history eviction policy. ` +
+                `Raise maxLoadedChunks, or use "pin" to keep history at the cost of memory.`,
+            );
+          }
         }
       }
     }

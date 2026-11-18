@@ -507,6 +507,9 @@ export interface HistorySelectionState {
   readonly primaryIndex: number;
 }
 
+/** Every `HistoryEvictionPolicy`, for validating values that arrive at runtime. */
+export const HISTORY_EVICTION_POLICIES = ["pin", "drop", "pin-bounded"] as const;
+
 /**
  * What EVICT_CHUNK does when undo or redo history still points inside the chunk.
  * Undo cannot replay a change inside a chunk that is not loaded, so the choice
@@ -526,9 +529,6 @@ export interface HistorySelectionState {
  *   it then evicts the one that discards the fewest entries each time. History
  *   then keeps the chunks it points into while a ChunkManager's limit allows.
  */
-/** Every `HistoryEvictionPolicy`, for validating values that arrive at runtime. */
-export const HISTORY_EVICTION_POLICIES = ["pin", "drop", "pin-bounded"] as const;
-
 export type HistoryEvictionPolicy = (typeof HISTORY_EVICTION_POLICIES)[number];
 
 /**
@@ -780,7 +780,9 @@ export interface DocumentState<M extends EvaluationMode = EvaluationMode> {
    */
   readonly revision: number;
   /**
-   * Counter incremented by each SET_SELECTION action, and by nothing else.
+   * Counter incremented by each SET_SELECTION action that changes the
+   * selection, and by nothing else. A SET_SELECTION with the current ranges
+   * returns the same state and moves neither counter.
    *
    * `revision` also changes for content edits, so use `selectionRevision` to
    * detect SET_SELECTION actions. To skip content recomputation, compare

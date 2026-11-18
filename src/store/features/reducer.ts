@@ -12,12 +12,11 @@ import { isUtf8Boundary } from "../core/piece-table.js";
 import {
   validatePosition,
   validateRange,
-  getTextRange,
   readDeletedRange,
   applyEdit,
   applyUntrackedEdit,
 } from "./edit.js";
-import { historyUndo, historyRedo, historyStepDropped } from "./history.js";
+import { historyUndo, historyRedo } from "./history.js";
 import {
   insertionKey,
   keepSameSelection,
@@ -70,6 +69,10 @@ function validateBoundaryPosition(state: DocumentState, position: number, what: 
  * included, keeps the current object, so an editor that echoes back the
  * selection an edit already moved to does not report a second change.
  */
+/**
+ * Apply SET_SELECTION. Ranges equal to the current selection return `state`
+ * itself, so neither revision moves and no listener or event fires.
+ */
 function setSelection(state: DocumentState, ranges: readonly SelectionRange[]): DocumentState {
   if (ranges.length === 0) {
     throw new Error("SET_SELECTION: ranges must be non-empty");
@@ -81,7 +84,13 @@ function setSelection(state: DocumentState, ranges: readonly SelectionRange[]): 
     ),
     primaryIndex: 0,
   });
-  return withState(state, { selection: keepSameSelection(state.selection, selection) });
+  const next = keepSameSelection(state.selection, selection);
+  if (next === state.selection) return state;
+  return withState(state, {
+    selection: next,
+    revision: state.revision + 1,
+    selectionRevision: state.selectionRevision + 1,
+  });
 }
 
 // =============================================================================
@@ -152,31 +161,29 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       });
     }
 
-    case "SET_SELECTION": {
-      return withState(setSelection(state, action.ranges), {
-        revision: state.revision + 1,
-        selectionRevision: state.selectionRevision + 1,
-      });
-    }
+    case "SET_SELECTION":
+      return setSelection(state, action.ranges);
 
     case "UNDO": {
       const nextRevision = state.revision + 1;
-      const newState = historyUndo(state, nextRevision);
-      if (newState === state) return state; // No undo available
+      const step = historyUndo(state, nextRevision);
+      if (step.outcome === "empty") return state;
       // Dropping a stale entry changes only history, so the revision stays.
-      if (historyStepDropped(state, newState, "undo")) return newState;
-      return withState(newState, {
+      // event-store relies on this to tell a drop from a replayed step.
+      if (step.outcome === "dropped") return step.state;
+      return withState(step.state, {
         revision: nextRevision,
       });
     }
 
     case "REDO": {
       const nextRevision = state.revision + 1;
-      const newState = historyRedo(state, nextRevision);
-      if (newState === state) return state; // No redo available
+      const step = historyRedo(state, nextRevision);
+      if (step.outcome === "empty") return state;
       // Dropping a stale entry changes only history, so the revision stays.
-      if (historyStepDropped(state, newState, "redo")) return newState;
-      return withState(newState, {
+      // event-store relies on this to tell a drop from a replayed step.
+      if (step.outcome === "dropped") return step.state;
+      return withState(step.state, {
         revision: nextRevision,
       });
     }
@@ -270,7 +277,8 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
           validateBoundaryPosition(newState, start, "APPLY_REMOTE delete start");
           validateBoundaryPosition(newState, end, "APPLY_REMOTE delete end");
           didApplyChange = true;
-          const deletedText = getTextRange(newState, start, end);
+          // Untracked edits keep no history, so only the text is needed.
+          const { deletedText } = readDeletedRange(newState, start, end);
           newState = applyUntrackedEdit(
             newState,
             { kind: "delete", position: start, deleteEnd: end, deletedText },

@@ -295,8 +295,10 @@ Describe these operations as producing a new immutable state reference without i
 
 ### 5.3 `selectionRevision`
 
-Increments only on `SET_SELECTION`. Inline selections carried by a content edit do
-not move it. It strictly tracks `SET_SELECTION` dispatches.
+Increments only on a `SET_SELECTION` that changes the selection. One with the
+current ranges returns the same state, so neither `revision` nor
+`selectionRevision` moves and no `selection-change` event fires. Inline
+selections carried by a content edit do not move it.
 
 The selection itself also moves on edits, `UNDO`/`REDO`, and chunk loads and
 evictions, none of which move `selectionRevision`. Detect any selection change by

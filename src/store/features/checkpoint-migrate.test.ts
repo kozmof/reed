@@ -16,7 +16,7 @@ import {
 } from "./checkpoint-migrate.js";
 import { CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
 import { createCheckpoint, restoreCheckpoint } from "./checkpoint.js";
-import { createDocumentStore } from "./store.js";
+import { createDocumentStore, createDocumentStoreFromCheckpoint } from "./store.js";
 import { DocumentActions } from "./actions.js";
 import { byteOffset } from "../../types/branded.js";
 import type { DocumentState } from "../../types/state.js";
@@ -176,6 +176,41 @@ describe("restore limits before migration", () => {
     }
     throw new Error("expected a CheckpointError");
   };
+
+  it("ignores extra elements in v1 selection ranges, as v1 restore did", () => {
+    const checkpoint = v1Checkpoint();
+    const padded = (raw: unknown, extra: readonly unknown[]) => {
+      const selection = raw as { ranges: unknown[][] };
+      return { ...selection, ranges: selection.ranges.map((range) => [...range, ...extra]) };
+    };
+    const history = checkpoint.history as { undo: Record<string, unknown>[] };
+    const payload = {
+      ...checkpoint,
+      // A third element alone, and a pair v2 would read as chunk keys.
+      selection: padded(checkpoint.selection, ["stray"]),
+      history: {
+        ...history,
+        undo: history.undo.map((entry) => ({
+          ...entry,
+          selectionBefore: padded(entry.selectionBefore, [7, 9]),
+          selectionAfter: padded(entry.selectionAfter, [7, 9]),
+        })),
+      },
+    };
+
+    // Restores exactly as the same payload without the extras does.
+    expect(restoreCheckpoint(payload).selection).toEqual(restoreCheckpoint(checkpoint).selection);
+    const undoOnce = (raw: unknown) => {
+      const store = createDocumentStoreFromCheckpoint(raw);
+      store.dispatch(DocumentActions.undo());
+      const { pieceTable, selection } = store.getSnapshot();
+      store.dispose();
+      return { text: getValue(pieceTable), selection };
+    };
+    const undone = undoOnce(payload);
+    expect(undone.text).toBe("reed");
+    expect(undone).toEqual(undoOnce(checkpoint));
+  });
 
   it("rejects too many pieces or history entries in a v1 payload", () => {
     const checkpoint = v1Checkpoint();

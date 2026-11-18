@@ -630,6 +630,62 @@ function unapplyShape(
  * is for the validators to report.
  */
 function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
+  return anchorV1Positions(trimV1Selections(data));
+}
+
+/**
+ * Cut every version 1 selection range, live and in history, to its
+ * [anchor, head]. Version 1 restore read only those two elements and ignored
+ * the rest, while version 2 reads a third and fourth as chunk keys, so a range
+ * that carried extras would fail to restore or take wrong keys.
+ */
+function trimV1Selections(data: CheckpointWireData): CheckpointWireData {
+  const trim = (raw: unknown): unknown => {
+    if (typeof raw !== "object" || raw === null) return raw;
+    const selection = raw as Record<string, unknown>;
+    const { ranges } = selection;
+    if (!Array.isArray(ranges) || !ranges.some((range) => isTuple(range) && range.length > 2)) {
+      return raw;
+    }
+    return {
+      ...selection,
+      ranges: ranges.map((range: unknown) =>
+        isTuple(range) && range.length > 2 ? range.slice(0, 2) : range,
+      ),
+    };
+  };
+  // Rebuild only what changes, so other input reaches restore as it was.
+  const trimEntry = (entry: unknown): unknown => {
+    if (typeof entry !== "object" || entry === null) return entry;
+    const { selectionBefore, selectionAfter } = entry as Record<string, unknown>;
+    const before = trim(selectionBefore);
+    const after = trim(selectionAfter);
+    return before === selectionBefore && after === selectionAfter
+      ? entry
+      : { ...entry, selectionBefore: before, selectionAfter: after };
+  };
+  const trimEntries = (raw: unknown): unknown => {
+    if (!Array.isArray(raw)) return raw;
+    const entries = raw.map(trimEntry);
+    return entries.every((entry, i) => entry === raw[i]) ? raw : entries;
+  };
+  let result = data;
+  const selection = trim(data.selection);
+  if (selection !== data.selection) result = { ...result, selection };
+  const rawHistory = data.history;
+  if (typeof rawHistory === "object" && rawHistory !== null) {
+    const { undo, redo } = rawHistory as Record<string, unknown>;
+    const newUndo = trimEntries(undo);
+    const newRedo = trimEntries(redo);
+    if (newUndo !== undo || newRedo !== redo) {
+      result = { ...result, history: { ...rawHistory, undo: newUndo, redo: newRedo } };
+    }
+  }
+  return result;
+}
+
+/** Key every version 1 offset to the chunk it lies in; see `migrateV1ToV2`. */
+function anchorV1Positions(data: CheckpointWireData): CheckpointWireData {
   const pieceTable = data.pieceTable;
   if (typeof pieceTable !== "object" || pieceTable === null) return data;
   const table = pieceTable as Record<string, unknown>;
