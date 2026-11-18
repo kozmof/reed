@@ -104,32 +104,29 @@ export interface HistoryStepResult {
   readonly state: DocumentState;
 }
 
+// States an UNDO or REDO produced by dropping a stale entry. States are
+// immutable and replaced on every change, so the mark stays with exactly the
+// state the step returned.
+const droppedHistorySteps = new WeakSet<DocumentState>();
+
 /**
- * True when an undo, or a redo, that took `prev` to `next` dropped a stale
- * entry instead of replaying it. The event layer uses this to emit
- * `history-drop` rather than `history-change`: when an entry changes no bytes
- * the document is unchanged either way, so the outcome is read from the
- * stacks instead.
- *
- * The two outcomes leave the stacks in shapes the other cannot:
- * - An applied undo pushes its entry onto the redo stack, so `redoStack` is a
- *   new node. A dropped undo empties the undo stack and keeps `redoStack`.
- * - An applied redo pushes onto the undo stack. A dropped redo empties the
- *   redo stack and keeps `undoStack`.
- *
- * It depends only on the two states' history, not on which objects the step
- * ran on, so a caller comparing copies of those states gets the same answer.
+ * Record that the reducer produced `state` by dropping a stale undo or redo
+ * entry (outcome `"dropped"`) instead of replaying it. Returns `state`.
  */
-export function isDroppedHistoryStep(
-  direction: "undo" | "redo",
-  prev: DocumentState,
-  next: DocumentState,
-): boolean {
-  const before = prev.history;
-  const after = next.history;
-  return direction === "undo"
-    ? before.undoStack !== null && after.undoStack === null && after.redoStack === before.redoStack
-    : before.redoStack !== null && after.redoStack === null && after.undoStack === before.undoStack;
+export function markDroppedHistoryStep(state: DocumentState): DocumentState {
+  droppedHistorySteps.add(state);
+  return state;
+}
+
+/**
+ * True when `state` is the state an UNDO or REDO returned after dropping a
+ * stale entry (see `markDroppedHistoryStep`). The event layer uses this to
+ * emit `history-drop` rather than `history-change`. When an entry changes no
+ * bytes, the document looks the same either way, so the reducer records the
+ * step's outcome instead of leaving it to be inferred from the states.
+ */
+export function isDroppedHistoryStep(state: DocumentState): boolean {
+  return droppedHistorySteps.has(state);
 }
 
 /**

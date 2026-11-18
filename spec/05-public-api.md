@@ -218,7 +218,7 @@ Primary selector namespace for O(1)/O(log n)/bounded operations:
 
 Traversal namespace for O(n) operations:
 
-- `getValue`, `getValueStream`
+- `getValue`, `getValueStream`. Both decode U+FEFF as `query.getText` does: a byte order mark is stripped only when the text starts at offset 0 and that offset is the start of the file. A stream that starts past offset 0 keeps a U+FEFF at its start, so its joined content equals `getText` over the same range
 - `collectPieces`, `collectLines`
 - `rebuildLineIndex`
 

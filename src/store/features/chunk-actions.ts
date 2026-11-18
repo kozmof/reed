@@ -130,7 +130,7 @@ function hasAddPieceTouchingRange(
   );
 }
 
-function hasAttentionAnchoredToChunk(state: DocumentState, chunkIndex: number): boolean {
+export function hasAttentionAnchoredToChunk(state: DocumentState, chunkIndex: number): boolean {
   if (state.attention.attentions.size === 0) return false;
   return visitChunk(state.pieceTable.root, chunkIndex, (node) =>
     hasAttentionForPiece(state.attention, node.id),

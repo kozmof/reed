@@ -215,6 +215,8 @@ export interface LoadedNode {
   readonly right: LoadedNode | null;
   readonly height: number;
   readonly sum: number;
+  /** Number of chunks in the subtree. */
+  readonly count: number;
 }
 
 function loadedNode(
@@ -230,6 +232,7 @@ function loadedNode(
     right,
     height: avlHeight(left, right),
     sum: length + (left?.sum ?? 0) + (right?.sum ?? 0),
+    count: 1 + (left?.count ?? 0) + (right?.count ?? 0),
   };
 }
 
@@ -266,6 +269,21 @@ export function loadedSumAtOrBelow(root: LoadedNode | null, key: number): number
     }
   }
   return sum;
+}
+
+/** Number of loaded chunks with index <= key. O(log L). */
+function loadedCountAtOrBelow(root: LoadedNode | null, key: number): number {
+  let count = 0;
+  let node = root;
+  while (node !== null) {
+    if (node.key <= key) {
+      count += 1 + (node.left?.count ?? 0);
+      node = node.right;
+    } else {
+      node = node.left;
+    }
+  }
+  return count;
 }
 
 type ChunkMap = PieceTableState["chunkMap"];
@@ -314,6 +332,26 @@ export function loadedLengthAtOrBelow(pieceTable: PieceTableState, key: number):
  */
 export function loadedChunkLengths(pieceTable: PieceTableState): LoadedNode | null {
   return pieceTable.chunkMap.size === 0 ? null : loadedTree(pieceTable.chunkMap);
+}
+
+/**
+ * True when resident offset 0 is the start of the file, so a U+FEFF there is a
+ * byte order mark. The first resident byte's placement key K puts chunks
+ * 0..K before it. It starts the file when none of those chunks has bytes that
+ * are not resident: K is NO_CHUNK, or every chunk 0..K is loaded (their bytes
+ * were all deleted). While one of them is not loaded, a U+FEFF at resident
+ * offset 0 belongs to a later chunk and is file content.
+ *
+ * Chunk indices are distinct and non-negative, so chunks 0..K are all loaded
+ * exactly when K + 1 loaded chunks have an index <= K. O(log n + log L).
+ */
+export function residentStartIsFileStart(state: PieceTableState): boolean {
+  const first = pieceAt(state.root, 0)?.node;
+  if (first === undefined) return true;
+  const key = pieceKey(first);
+  if (key < 0) return true;
+  if (key >= state.chunkMap.size) return false;
+  return loadedCountAtOrBelow(loadedTree(state.chunkMap), key) === key + 1;
 }
 
 // =============================================================================

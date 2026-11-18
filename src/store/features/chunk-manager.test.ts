@@ -439,6 +439,22 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     manager.dispose();
   });
 
+  it("names an attention anchor, not history, when one keeps a chunk resident", async () => {
+    const { store, manager, warn } = setup("pin-bounded");
+    await manager.ensureLoaded(0);
+    // No edits and no history: only the attention keeps chunk 0.
+    store.dispatch(DocumentActions.createAttention(byteOffset(1), byteOffset(3)));
+    manager.setActiveChunks([1, 2]);
+    await manager.ensureLoaded(1);
+    await manager.ensureLoaded(2);
+
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toContain("1 hold an attention anchor");
+    expect(warn.mock.calls[0]![0]).not.toContain("undo history");
+    manager.dispose();
+  });
+
   it("does not offer chunks history pins again until the document changes", async () => {
     const { store, manager } = setup("pin");
     await manager.ensureLoaded(0);

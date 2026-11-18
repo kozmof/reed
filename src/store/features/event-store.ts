@@ -48,33 +48,56 @@ export function withEvents(
 
   // Events reach handlers in the order their actions committed. A store
   // listener or an event handler can dispatch while events are delivered.
-  // Each dispatch reserves its place in this queue before it commits, so the
-  // events of an action dispatched from inside another queue behind it, and
-  // only the outermost call delivers.
-  const deliveryQueue: Array<Array<() => void>> = [];
+  // Each dispatch, and each outermost transaction commit, reserves its place
+  // in this queue before it commits, so the events of an action dispatched
+  // from inside another queue behind it, and only the outermost call delivers.
+  //
+  // `depth` counts how many event deliveries led to the dispatch: 0 for one
+  // made outside delivery, n + 1 for one an event handler made while slot n's
+  // events were delivered. The re-entrancy limit bounds this depth, so a
+  // handler that dispatches many actions in one go is not mistaken for a cycle.
+  interface DeliverySlot {
+    readonly depth: number;
+    readonly events: Array<() => void>;
+  }
+  const deliveryQueue: DeliverySlot[] = [];
   let committing = 0;
   let delivering = false;
+  let deliveringDepth = 0;
+
+  function reserveSlot(): DeliverySlot {
+    const slot: DeliverySlot = { depth: delivering ? deliveringDepth + 1 : 0, events: [] };
+    deliveryQueue.push(slot);
+    return slot;
+  }
 
   function deliver(): void {
     if (committing > 0 || delivering) return;
     delivering = true;
+    let reported = false;
     try {
       for (let i = 0; i < deliveryQueue.length; i++) {
-        if (i >= MAX_OBSERVER_REENTRANT_STEPS) {
-          reportCaughtError(
-            logger,
-            "Document event cycle exceeded the re-entrancy limit",
-            new Error(
-              `Event handlers dispatched more than ${MAX_OBSERVER_REENTRANT_STEPS} synchronous actions`,
-            ),
-          );
-          break;
+        const slot = deliveryQueue[i]!;
+        if (slot.depth >= MAX_OBSERVER_REENTRANT_STEPS) {
+          if (!reported) {
+            reported = true;
+            reportCaughtError(
+              logger,
+              "Document event cycle exceeded the re-entrancy limit",
+              new Error(
+                `Event handlers dispatched actions more than ${MAX_OBSERVER_REENTRANT_STEPS} levels deep`,
+              ),
+            );
+          }
+          continue;
         }
-        for (const emit of deliveryQueue[i]!) emit();
+        deliveringDepth = slot.depth;
+        for (const emit of slot.events) emit();
       }
     } finally {
       deliveryQueue.length = 0;
       delivering = false;
+      deliveringDepth = 0;
     }
   }
 
@@ -128,10 +151,9 @@ export function withEvents(
     // UNDO and REDO discard entries instead of applying one that no longer
     // replays; the document is then unchanged. The piece table cannot tell
     // that apart from replaying an entry that changes no bytes, so the
-    // outcome is read from how the history stacks changed.
+    // reducer marks the state a drop returns.
     const historyDiscarded =
-      (action.type === "UNDO" || action.type === "REDO") &&
-      isDroppedHistoryStep(action.type === "UNDO" ? "undo" : "redo", prevState, nextState);
+      (action.type === "UNDO" || action.type === "REDO") && isDroppedHistoryStep(nextState);
     if ((action.type === "UNDO" || action.type === "REDO") && !historyDiscarded) {
       prepare(
         "history-change",
@@ -182,8 +204,7 @@ export function withEvents(
   function dispatch(action: DocumentAction): DocumentState {
     if (disposed) return baseStore.getSnapshot();
     const prevState = baseStore.getSnapshot();
-    const slot: Array<() => void> = [];
-    deliveryQueue.push(slot);
+    const slot = reserveSlot();
     try {
       let nextState: DocumentState;
       committing++;
@@ -197,7 +218,7 @@ export function withEvents(
         try {
           const events = prepareEventsForAction(action, prevState, nextState);
           const level = pendingEventLevels[pendingEventLevels.length - 1];
-          (level ?? slot).push(...events);
+          (level ?? slot.events).push(...events);
         } catch (error) {
           // The state transition has already committed. Event metadata is
           // observational and must not make callers believe the edit failed.
@@ -226,6 +247,11 @@ export function withEvents(
    * On inner commit, merges buffered events into the parent level.
    * With no active transaction, this is a no-op to match base store semantics.
    * On throw (from base store), clears all pending event levels.
+   *
+   * The level is closed before the base store commits. The outermost commit
+   * notifies store listeners synchronously, and a listener can dispatch; its
+   * action commits after the transaction, so it gets its own delivery slot
+   * behind the transaction's instead of joining the closed level.
    */
   function commitTransaction(): void {
     if (disposed) return;
@@ -234,21 +260,30 @@ export function withEvents(
       return;
     }
 
-    const isOutermost = pendingEventLevels.length === 1;
-    const events = pendingEventLevels[pendingEventLevels.length - 1]!;
-    try {
-      baseStore.commitTransaction();
-      pendingEventLevels.pop();
-      if (isOutermost) {
-        if (!disposed) deliveryQueue.push(events);
-        deliver();
-      } else {
-        pendingEventLevels[pendingEventLevels.length - 1]!.push(...events);
+    const events = pendingEventLevels.pop()!;
+    if (pendingEventLevels.length > 0) {
+      try {
+        baseStore.commitTransaction();
+      } catch (e) {
+        // Clear our buffer to match the emergencyReset already performed by baseStore.
+        pendingEventLevels.length = 0;
+        throw e;
       }
-    } catch (e) {
-      // Clear our buffer to match the emergencyReset already performed by baseStore.
-      pendingEventLevels.length = 0;
-      throw e;
+      pendingEventLevels[pendingEventLevels.length - 1]!.push(...events);
+      return;
+    }
+
+    const slot = reserveSlot();
+    try {
+      committing++;
+      try {
+        baseStore.commitTransaction();
+      } finally {
+        committing--;
+      }
+      slot.events.push(...events);
+    } finally {
+      deliver();
     }
   }
 

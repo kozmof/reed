@@ -16,6 +16,7 @@ import type { DocumentStore } from "../../types/store.js";
 import { isChunkByteLengthValid } from "../core/piece-table.js";
 import { DocumentActions } from "./actions.js";
 import { getRedoCount, getUndoCount } from "./history.js";
+import { hasAttentionAnchoredToChunk } from "./chunk-actions.js";
 
 // =============================================================================
 // Public interfaces
@@ -129,18 +130,27 @@ export interface ChunkManager {
  * eviction pass:
  * - `"pinned"`: in the active set (`setActiveChunks`).
  * - `"requested"`: just loaded for the call that ran the pass.
+ * - `"anchored"`: offered for eviction and refused, since an attention is
+ *   anchored inside it.
  * - `"held"`: offered for eviction and refused, since user edits or undo
  *   history point into it.
  * - `"untracked"`: loaded without this manager, so it never offers it.
  */
-type PressureCause = "pinned" | "requested" | "held" | "untracked";
+type PressureCause = "pinned" | "requested" | "anchored" | "held" | "untracked";
 
 /** Every `PressureCause`, in the order the pressure warning lists them. */
-const PRESSURE_CAUSES: readonly PressureCause[] = ["pinned", "requested", "held", "untracked"];
+const PRESSURE_CAUSES: readonly PressureCause[] = [
+  "pinned",
+  "requested",
+  "anchored",
+  "held",
+  "untracked",
+];
 
 const PRESSURE_CAUSE_TEXT: Readonly<Record<PressureCause, string>> = {
   pinned: "pinned as active",
   requested: "just loaded for the current request",
+  anchored: "hold an attention anchor",
   held: "hold user edits or undo history",
   untracked: "loaded outside this ChunkManager",
 };
@@ -456,14 +466,17 @@ export function createChunkManager(
     // since then keeps chunks resident, not on every load while it stays
     // over: under "pin", history keeping chunks resident is a steady state.
     const counts = new Map<PressureCause, number>();
+    const current = store.getSnapshot();
     for (const chunkIndex of chunkMap.keys()) {
       const cause: PressureCause = activeChunks.has(chunkIndex)
         ? "pinned"
         : isProtected(chunkIndex)
           ? "requested"
-          : lruOrder.has(chunkIndex)
-            ? "held"
-            : "untracked";
+          : !lruOrder.has(chunkIndex)
+            ? "untracked"
+            : hasAttentionAnchoredToChunk(current, chunkIndex)
+              ? "anchored"
+              : "held";
       counts.set(cause, (counts.get(cause) ?? 0) + 1);
     }
     const seen = pressureCauses ?? new Set<PressureCause>();

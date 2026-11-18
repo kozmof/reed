@@ -24,9 +24,11 @@ import {
   getBytes,
   getText,
   getValue,
+  getValueStream,
   isUtf8Boundary,
   pieceTableDelete,
   pieceTableInsert,
+  residentStartIsFileStart,
 } from "../core/piece-table.js";
 import { byteKey, keyFitsAfterRemoving, keyFitsAt, pieceKey } from "../core/chunk-anchor.js";
 import { isSafeSplice, isSafeSplit } from "../core/utf8-seam.js";
@@ -3292,5 +3294,51 @@ describe("twenty-sixth review regressions", () => {
     // The event's state is the eviction's, without the listener's edit.
     expect(getUndoCount(nextState!)).toBe(0);
     expect(nextState!.pieceTable.totalLength).toBe(CHUNK1.length);
+  });
+});
+
+describe("twenty-ninth review regressions", () => {
+  const streamed = (s: Store, start = 0, chunkSize = 2) =>
+    [...getValueStream(s.getSnapshot().pieceTable, { start, chunkSize })]
+      .map((chunk) => chunk.content)
+      .join("");
+
+  it("streams a U+FEFF that starts the resident text while chunk 0 is not loaded", () => {
+    const s = makeStore(2);
+    s.dispatch(DocumentActions.loadChunk(1, enc("﻿BBBB\n")));
+    expect(streamed(s)).toBe("﻿BBBB\n");
+    expect(streamed(s)).toBe(text(s));
+  });
+
+  it("streams a U+FEFF at the start of a range past offset 0, as getText reads it", () => {
+    const s = createDocumentStore({ content: "ab﻿cd", reconcileMode: "none" });
+    const pt = s.getSnapshot().pieceTable;
+    expect(streamed(s, 2)).toBe("﻿cd");
+    expect(streamed(s, 2)).toBe(query.getText(pt, byteOffset(2), byteOffset(pt.totalLength)));
+  });
+
+  it("still strips a byte order mark that starts the file from a stream at offset 0", () => {
+    const s = createDocumentStore({ content: "﻿abc", reconcileMode: "none" });
+    expect(streamed(s)).toBe("abc");
+    expect(streamed(s)).toBe(text(s));
+  });
+
+  it("keeps a U+FEFF after a gap in the loaded chunks that does not shrink the map", () => {
+    // Chunks 0 and 2 are loaded and chunk 0's bytes deleted, so chunk 2 is
+    // resident offset 0 with key 1. Two chunks are loaded, but chunk 1 is not.
+    const s = makeStore(3);
+    load(s, 0);
+    s.dispatch(DocumentActions.loadChunk(2, enc("﻿CCCC\n")));
+    s.dispatch(DocumentActions.delete(byteOffset(0), byteOffset(CHUNK0.length)));
+    const pt = s.getSnapshot().pieceTable;
+    expect(pt.chunkMap.size).toBe(2);
+    expect(residentStartIsFileStart(pt)).toBe(false);
+    expect(text(s)).toBe("﻿CCCC\n");
+    expect(streamed(s)).toBe(text(s));
+
+    load(s, 1);
+    s.dispatch(DocumentActions.delete(byteOffset(0), byteOffset(CHUNK1.length)));
+    expect(residentStartIsFileStart(s.getSnapshot().pieceTable)).toBe(true);
+    expect(text(s)).toBe("CCCC\n");
   });
 });

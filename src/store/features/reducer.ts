@@ -16,7 +16,7 @@ import {
   applyEdit,
   applyUntrackedEdit,
 } from "./edit.js";
-import { historyUndo, historyRedo } from "./history.js";
+import { historyUndo, historyRedo, markDroppedHistoryStep } from "./history.js";
 import {
   insertionKey,
   moveSelectionPastEdit,
@@ -166,19 +166,17 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       if (step.outcome === "empty") return state;
       // Dropping a stale entry changes only history, but still moves the
       // revision, as HISTORY_CLEAR does, so code keyed on it sees the drop.
-      // The event layer tells a drop apart with isDroppedHistoryStep.
-      return withState(step.state, {
-        revision: nextRevision,
-      });
+      // The mark tells the event layer the step was a drop.
+      const next = withState(step.state, { revision: nextRevision });
+      return step.outcome === "dropped" ? markDroppedHistoryStep(next) : next;
     }
 
     case "REDO": {
       const nextRevision = state.revision + 1;
       const step = historyRedo(state, nextRevision);
       if (step.outcome === "empty") return state;
-      return withState(step.state, {
-        revision: nextRevision,
-      });
+      const next = withState(step.state, { revision: nextRevision });
+      return step.outcome === "dropped" ? markDroppedHistoryStep(next) : next;
     }
 
     case "HISTORY_CLEAR": {

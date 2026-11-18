@@ -722,6 +722,45 @@ describe("Store event ordering under nested dispatch", () => {
     expect(order).toEqual(["content 1", "dirty 1", "content 2"]);
   });
 
+  it("delivers a transaction's events before those of an action a store listener dispatches on commit", () => {
+    const store = createDocumentStoreWithEvents({ content: "", reconcileMode: "none" });
+    const seen = revisions(store);
+    let once = true;
+    store.subscribe(() => {
+      if (!once) return;
+      once = false;
+      store.dispatch(DocumentActions.insert(byteOffset(1), "B"));
+    });
+
+    store.batch([DocumentActions.insert(byteOffset(0), "A")]);
+
+    expect(seen).toEqual(["0->1", "1->2"]);
+    expect(store.getSnapshot().revision).toBe(2);
+  });
+
+  it("delivers every event of a handler that dispatches many actions in one go", () => {
+    const error = vi.fn();
+    const store = createDocumentStoreWithEvents({
+      content: "",
+      reconcileMode: "none",
+      logger: { error, warn: vi.fn() },
+    });
+    const fanOut = MAX_OBSERVER_REENTRANT_STEPS + 50;
+    let calls = 0;
+    let once = true;
+    store.addEventListener("content-change", () => {
+      calls++;
+      if (!once) return;
+      once = false;
+      for (let i = 0; i < fanOut; i++) store.dispatch(DocumentActions.insert(byteOffset(0), "y"));
+    });
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "x"));
+
+    expect(calls).toBe(fanOut + 1);
+    expect(error).not.toHaveBeenCalled();
+  });
+
   it("bounds an event handler that dispatches indefinitely", () => {
     const error = vi.fn();
     const store = createDocumentStoreWithEvents({

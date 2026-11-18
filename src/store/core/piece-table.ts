@@ -51,13 +51,21 @@ import {
 } from "./rb-tree.js";
 import { textEncoder, textDecoder, contentDecoder } from "./encoding.js";
 import { GrowableBuffer } from "./growable-buffer.js";
-import { NO_CHUNK, asFittedKey, keyFitsAt, pieceKey, placementKey } from "./chunk-anchor.js";
+import {
+  NO_CHUNK,
+  asFittedKey,
+  keyFitsAt,
+  pieceKey,
+  placementKey,
+  residentStartIsFileStart,
+} from "./chunk-anchor.js";
 import type { FittedKey } from "./chunk-anchor.js";
 import { lastPiece, pieceAt } from "./piece-search.js";
 import type { PathEntry } from "./piece-search.js";
 import { inOrderPieces } from "./piece-table-stream.js";
 
 export { getValueStream, inOrderPieces } from "./piece-table-stream.js";
+export { residentStartIsFileStart } from "./chunk-anchor.js";
 export type { DocumentChunk, StreamOptions } from "./piece-table-stream.js";
 
 // =============================================================================
@@ -1024,26 +1032,6 @@ export function pieceTableDelete(
 // =============================================================================
 // Read Operations
 // =============================================================================
-
-/**
- * True when resident offset 0 is the start of the file, so a U+FEFF there is a
- * byte order mark. The first resident byte's placement key K puts chunks
- * 0..K before it. It starts the file when none of those chunks has bytes that
- * are not resident: K is NO_CHUNK, or every chunk 0..K is loaded (their bytes
- * were all deleted). While one of them is not loaded, a U+FEFF at resident
- * offset 0 belongs to a later chunk and is file content.
- */
-export function residentStartIsFileStart(state: PieceTableState): boolean {
-  const first = pieceAt(state.root, 0)?.node;
-  if (first === undefined) return true;
-  const key = pieceKey(first);
-  // Chunks 0..key are key + 1 distinct indices, so a smaller map lacks one.
-  if (key >= state.chunkMap.size) return false;
-  for (let chunk = 0; chunk <= key; chunk++) {
-    if (!state.chunkMap.has(chunk)) return false;
-  }
-  return true;
-}
 
 /**
  * Decoder for resident bytes read from offset 0. It strips a byte order mark
