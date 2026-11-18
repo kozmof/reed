@@ -704,6 +704,10 @@ function anchorV1Positions(data: CheckpointWireData): CheckpointWireData {
       }
     }
   }
+  // Without chunk pieces or loaded chunks, every key is -1. A loaded chunk
+  // with no piece left can still be where text that undo gives back came from.
+  if (chunkBase64.size === 0 && !pieces.some((piece) => piece[1] === "c")) return data;
+
   // Decoded only for chunks missing where undo gives bytes back.
   const decoded = new Map<number, Uint8Array | undefined>();
   const bytes = (chunk: number) => {
@@ -747,10 +751,6 @@ function anchorV1Positions(data: CheckpointWireData): CheckpointWireData {
       remaining: SEARCH_WORK_PER_BYTE * inputBytes + SEARCH_WORK_FLOOR,
     },
   };
-
-  // Without chunk pieces or loaded chunks, every key is -1. A loaded chunk
-  // with no piece left can still be where text that undo gives back came from.
-  if (chunkBase64.size === 0 && !pieces.some((piece) => piece[1] === "c")) return data;
 
   // Chunk index of each chunk piece, or null for other pieces.
   const chunkOf = pieces.map((piece) => (piece[1] === "c" && isInt(piece[4]) ? piece[4] : null));

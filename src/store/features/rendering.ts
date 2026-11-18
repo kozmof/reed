@@ -28,7 +28,7 @@ import {
   getLineCountFromIndex,
   getResidentLineCountFromIndex,
 } from "../core/line-index.js";
-import { getContentText, getRawByte, isUtf8Boundary } from "../core/piece-table.js";
+import { getText, getRawByte, isUtf8Boundary } from "../core/piece-table.js";
 
 import { iterateLineRange } from "../core/line-index-query.js";
 
@@ -210,7 +210,7 @@ export const getLineContent: CostFn<"linear", [DocumentState, number], string | 
         $from(range),
         $andThen((resolvedRange) =>
           $from(
-            getContentText(
+            getText(
               state.pieceTable,
               resolvedRange.start,
               addByteOffset(resolvedRange.start, resolvedRange.length),
@@ -294,7 +294,7 @@ export function getVisibleLines(
           lineNumber: line.lineNumber,
           startOffset: line.startOffset,
           endOffset: line.endOffset,
-          content: getContentText(
+          content: getText(
             state.pieceTable,
             byteOffset(clippedStart),
             byteOffset(Math.max(clippedStart, end)),
@@ -313,7 +313,7 @@ export function getVisibleLines(
   } else if (requested.length > 0) {
     const first = requested[0]!;
     const last = requested[requested.length - 1]!;
-    const viewportText = getContentText(state.pieceTable, first.startOffset, last.endOffset);
+    const viewportText = getText(state.pieceTable, first.startOffset, last.endOffset);
     let charCursor = 0;
     for (const line of requested) {
       const rawContent = viewportText.slice(charCursor, charCursor + line.charLength);
@@ -363,7 +363,7 @@ export function getVisibleLine(
         $andThen((resolvedRange) =>
           $pipe(
             $from(
-              getContentText(
+              getText(
                 state.pieceTable,
                 resolvedRange.start,
                 addByteOffset(resolvedRange.start, resolvedRange.length),
@@ -640,7 +640,7 @@ function byteOffsetToCharOffset(state: DocumentState, position: ByteOffset): Lin
   const location = findLineAtPosition(state.lineIndex.root, position);
   if (location === null) {
     // Read from the start if the position lookup fails.
-    const text = getContentText(state.pieceTable, byteOffset(0), position);
+    const text = getText(state.pieceTable, byteOffset(0), position);
     return $proveCtx(
       "O(n)",
       $pipe(

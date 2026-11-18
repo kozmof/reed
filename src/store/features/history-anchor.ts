@@ -26,6 +26,7 @@ import {
   NO_CHUNK,
   asFittedKey,
   gapKey,
+  keyFitsAfterRemoving,
   keyFitsAt,
   keySpan,
   loadedChunkLengths,
@@ -55,6 +56,33 @@ export function anchorAt(pieceTable: PieceTableState, key: number, offset: numbe
 /** Resident offset of an anchored position in `pieceTable`. */
 export function residentOffset(pieceTable: PieceTableState, anchor: HistoryAnchor): ByteOffset {
   return byteOffset(toResidentOffset(pieceTable, anchor.afterChunk, anchor.position));
+}
+
+/**
+ * Why a history change does not replay at resident `start` in `layout`, or
+ * null when it does. UNDO and REDO apply this rule (see `applyChange`) and
+ * checkpoint restore checks stacks with it (see `findStackReplayFailure`), so
+ * restore accepts exactly the histories that replay.
+ *
+ * `"range"`: the bytes the change removes, [start, start + removed), do not lie
+ * inside the document. `"key"`: the recorded key `key` does not fit at `start`
+ * once those bytes are gone (see `keyFitsAfterRemoving`). Text that this
+ * direction inserts takes that key there, and so do the removed bytes when the
+ * other direction inserts them back, so a change that only removes is checked
+ * too. One whose key no longer fits would remove bytes it never recorded.
+ */
+export function changeReplayFailure(
+  layout: KeyLayout,
+  start: number,
+  removed: number,
+  inserted: number,
+  key: number,
+): "range" | "key" | null {
+  if (start < 0 || start + removed > layout.totalLength) return "range";
+  if ((removed > 0 || inserted > 0) && !keyFitsAfterRemoving(layout, start, start + removed, key)) {
+    return "key";
+  }
+  return null;
 }
 
 /**
@@ -571,11 +599,27 @@ function sameRange(a: SelectionRange, b: SelectionRange): boolean {
  */
 export function keepSameSelection(current: SelectionState, next: SelectionState): SelectionState {
   return current === next ||
-    (current.primaryIndex === next.primaryIndex &&
-      current.ranges.length === next.ranges.length &&
-      current.ranges.every((range, i) => sameRange(range, next.ranges[i]!)))
+    (current.primaryIndex === next.primaryIndex && sameRanges(current.ranges, next.ranges))
     ? current
     : next;
+}
+
+/** True when two range lists have the same offsets and stored keys, in order. */
+function sameRanges(a: readonly SelectionRange[], b: readonly SelectionRange[]): boolean {
+  return a === b || (a.length === b.length && a.every((range, i) => sameRange(range, b[i]!)));
+}
+
+/**
+ * The selection that SET_SELECTION or an edit selection with `ranges` sets.
+ * Actions carry no primary index, so the first range is primary, except when
+ * `ranges` repeat the current ranges: then `current` itself is returned, so a
+ * selection echoed back keeps its primary range and changes nothing.
+ */
+export function selectionFromRanges(
+  current: SelectionState,
+  ranges: NonEmptyReadonlyArray<SelectionRange>,
+): SelectionState {
+  return sameRanges(current.ranges, ranges) ? current : Object.freeze({ ranges, primaryIndex: 0 });
 }
 
 /**

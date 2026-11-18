@@ -9,7 +9,7 @@ import type { ByteOffset } from "../types/branded.js";
 import { $uncostedFn } from "../types/cost-doc.js";
 import {
   getText,
-  getContentText,
+  residentStartIsFileStart,
   getLength,
   isUtf8Boundary,
   findPieceAtPosition,
@@ -41,22 +41,32 @@ function assertTextBoundaries(
   }
 }
 
+/**
+ * Text in [start, end) as `getValue` reads it: a byte order mark that starts
+ * the file is stripped. A U+FEFF anywhere else is content and is kept, such as
+ * at the start of a range past offset 0, or at resident offset 0 in chunk mode
+ * while chunk 0 is not loaded.
+ */
 function getTextAtBoundaries(
   state: Parameters<typeof getText>[0],
   start: Parameters<typeof getText>[1],
   end: Parameters<typeof getText>[2],
 ) {
   assertTextBoundaries(state, start, end);
-  return getText(state, start, end);
+  const text = getText(state, start, end);
+  return start === 0 && text.charCodeAt(0) === 0xfeff && residentStartIsFileStart(state)
+    ? text.slice(1)
+    : text;
 }
 
+/** Text in [start, end) as the line index counts it, every U+FEFF kept. */
 function getContentTextAtBoundaries(
-  state: Parameters<typeof getContentText>[0],
-  start: Parameters<typeof getContentText>[1],
-  end: Parameters<typeof getContentText>[2],
+  state: Parameters<typeof getText>[0],
+  start: Parameters<typeof getText>[1],
+  end: Parameters<typeof getText>[2],
 ) {
   assertTextBoundaries(state, start, end);
-  return getContentText(state, start, end);
+  return getText(state, start, end);
 }
 
 function isReconciledState(state: DocumentState): state is DocumentState<"eager"> {

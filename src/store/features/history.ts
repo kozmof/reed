@@ -104,6 +104,26 @@ export interface HistoryStepResult {
   readonly state: DocumentState;
 }
 
+/** States that an undo or redo step produced by dropping a stale entry. */
+const droppedStepStates = new WeakSet<DocumentState>();
+
+/** A `"dropped"` step result, its state marked for {@link isDroppedHistoryStep}. */
+function droppedStep(state: DocumentState): HistoryStepResult {
+  droppedStepStates.add(state);
+  return { outcome: "dropped", state };
+}
+
+/**
+ * True when `state` is the state an UNDO or REDO returned after dropping a
+ * stale entry instead of replaying it. The event layer uses this to emit
+ * `history-drop` rather than `history-change`: the document is unchanged
+ * either way when an entry changes no bytes, so the step's outcome is the only
+ * reliable signal.
+ */
+export function isDroppedHistoryStep(state: DocumentState): boolean {
+  return droppedStepStates.has(state);
+}
+
 /**
  * Perform undo operation.
  * Keeps aggregate-based queries accurate and defers cached offset repair.
@@ -125,10 +145,9 @@ export function historyUndo(state: DocumentState, _revision: number): HistorySte
   // Apply inverse of each change (in reverse order) with lazy line index updates
   const replayed = replayEntry(state, entry, applyInverseChange, true);
   if (replayed === null) {
-    return {
-      outcome: "dropped",
-      state: withState(state, { history: Object.freeze({ ...history, undoStack: null }) }),
-    };
+    return droppedStep(
+      withState(state, { history: Object.freeze({ ...history, undoStack: null }) }),
+    );
   }
 
   let newState = withState(replayed, {
@@ -172,10 +191,9 @@ export function historyRedo(state: DocumentState, _revision: number): HistorySte
   // Apply each change with lazy line index updates
   const replayed = replayEntry(state, entry, applyChange, false);
   if (replayed === null) {
-    return {
-      outcome: "dropped",
-      state: withState(state, { history: Object.freeze({ ...history, redoStack: null }) }),
-    };
+    return droppedStep(
+      withState(state, { history: Object.freeze({ ...history, redoStack: null }) }),
+    );
   }
 
   let newState = withState(replayed, {

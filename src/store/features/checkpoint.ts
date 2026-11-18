@@ -55,9 +55,9 @@ import { base64DecodedLength, decodeBase64 } from "../core/base64.js";
 import { inOrderPieces } from "../core/piece-table-stream.js";
 import { decodedCharLength, joinDecoded, type DecodedSummary } from "../core/decoded-metrics.js";
 import { utf8ByteLength } from "../core/encoding.js";
-import { keyFitsAt, loadedLengthAtOrBelow } from "../core/chunk-anchor.js";
+import { loadedLengthAtOrBelow } from "../core/chunk-anchor.js";
 import { pieceTableDelete, pieceTableInsertPlaceholder } from "../core/piece-table.js";
-import { selectionRange } from "./history-anchor.js";
+import { changeReplayFailure, selectionRange } from "./history-anchor.js";
 import { insertedLength, removedLength } from "./history-entry.js";
 import { GrowableBuffer } from "../core/growable-buffer.js";
 import {
@@ -1038,17 +1038,16 @@ function restoreHistoryEntry(
  * Check that a stack replays inside the document: undo (`direction` -1) walks
  * changes last to first, and redo (1) first to last, both from the newest
  * entry. Each change applies to the document the newer ones left. A change
- * would make UNDO or REDO throw when its range ends past the end of that
- * document, or when the text it inserts carries a placement key that does
- * not fit where it lands (see `keyFitsAt`). Restore catches that here
- * instead.
+ * would make UNDO or REDO drop the entry when it does not replay there by the
+ * rule `applyChange` applies (see `changeReplayFailure`). Restore catches
+ * that here instead.
  *
  * A replayed entry moves to the other stack, and the next replay applies it in
  * the other direction, so the key must also fit for the text that direction
  * inserts. Undoing changes n-1 down to i leaves the document that redoing
  * change i starts from, and the other way round. Both directions insert at the
  * same offset, into the document left once this direction's removed bytes are
- * gone, so one check there covers both.
+ * gone, so the one rule covers both.
  *
  * Without chunks every key is NO_CHUNK and fits everywhere, so the walk
  * tracks only the length. With chunks it replays each change on stand-in
@@ -1078,7 +1077,10 @@ function findStackReplayFailure(
       const remove = removedLength(change, direction);
       const insert = insertedLength(change, direction);
       const start = change.position + loadedLengthAtOrBelow(pieceTable, change.afterChunk);
-      if (start + remove > length) {
+      // Without chunks only the length matters, and every key is NO_CHUNK.
+      const layout = chunked ? doc : { root: null, totalLength: length, nextExpectedChunk: 0 };
+      const failure = changeReplayFailure(layout, start, remove, insert, change.afterChunk);
+      if (failure === "range") {
         return {
           index: e,
           message:
@@ -1086,11 +1088,7 @@ function findStackReplayFailure(
             `end of the ${length}-byte document it applies to`,
         };
       }
-      length += insert - remove;
-      if (!chunked) continue;
-      if (remove > 0) doc = pieceTableDelete(doc, byteOffset(start), byteOffset(start + remove));
-      // `remove` bytes are what the other direction inserts back here.
-      if ((insert > 0 || remove > 0) && !keyFitsAt(doc, start, change.afterChunk)) {
+      if (failure === "key") {
         return {
           index: e,
           message:
@@ -1099,6 +1097,9 @@ function findStackReplayFailure(
             `document order`,
         };
       }
+      length += insert - remove;
+      if (!chunked) continue;
+      if (remove > 0) doc = pieceTableDelete(doc, byteOffset(start), byteOffset(start + remove));
       // Only lengths and keys are checked, so the inserted text stands in as
       // a placeholder: no bytes move.
       doc = pieceTableInsertPlaceholder(doc, byteOffset(start), insert, change.afterChunk);

@@ -246,13 +246,10 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
   let unloadedLineCount = state.lineIndex.unloadedLineCount;
 
   for (const chunk of prepared) {
-    const isFirstLoad = !loadedChunks.has(chunk.chunkIndex);
-    const isSequentialFirst = isFirstLoad && chunk.chunkIndex === nextExpectedChunk;
-    const insertionPos = isSequentialFirst
-      ? byteOffset(totalLength)
-      : // Before the first piece whose key is >= the chunk index: the first
-        // piece of a higher chunk, or text recorded as lying after the chunk.
-        byteOffset(keySpan(root, chunk.chunkIndex).start);
+    // Before the first piece whose key is >= the chunk index: the first piece
+    // of a higher chunk, or text recorded as lying after the chunk. For the
+    // next chunk in order every key is below it, so that is the end.
+    const insertionPos = byteOffset(keySpan(root, chunk.chunkIndex).start);
     const id = pieceID(`p${nextPieceID++}`);
     root = insertChunkPieceAt(root, insertionPos, chunk.chunkIndex, chunk.data.length, id);
     summarizeBytes(chunk.data); // Prepare reusable decoder summaries once during loading.

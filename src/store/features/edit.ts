@@ -34,7 +34,7 @@ import {
   pieceTableInsert as ptInsert,
   pieceTableInsertFitted as ptInsertFitted,
   pieceTableDelete as ptDelete,
-  getContentText,
+  getText,
   getRawByte,
   getBytes,
   isUtf8Boundary,
@@ -57,17 +57,19 @@ import {
   isExactDecoding,
   utf8ByteLength,
 } from "../core/encoding.js";
-import { NO_CHUNK, keyFitsAfterRemoving, placementRuns } from "../core/chunk-anchor.js";
+import { NO_CHUNK, placementRuns } from "../core/chunk-anchor.js";
 import { codePointWindow, isSafeSplice, isSafeSplit } from "../core/utf8-seam.js";
 import type { FittedKey, KeyRun } from "../core/chunk-anchor.js";
 import {
   anchorAt,
   anchorSelection,
+  changeReplayFailure,
   deferAnchorSelection,
   insertionKey,
   keepSameSelection,
   moveSelectionPastEdit,
   residentOffset,
+  selectionFromRanges,
   selectionRangesWithKeys,
 } from "./history-anchor.js";
 import {
@@ -200,10 +202,10 @@ export function pieceTableDelete(
  * with the bytes it was decoded from. Local and remote deletes both read it
  * here. `applyEdit` keeps those bytes in history when the text does not encode
  * back to them, so passing them on saves reading the range a second time. It
- * decodes with `contentDecoder`, as `getContentText` does; it cannot call
- * `getContentText` without reading the bytes twice.
+ * decodes with `contentDecoder`, as `getText` does; it cannot call
+ * `getText` without reading the bytes twice.
  *
- * A U+FEFF at the start of the range is kept, as `getContentText` keeps it. The
+ * A U+FEFF at the start of the range is kept, as `getText` keeps it. The
  * line index counts it as a character, so deleted text without it would leave
  * the line one character too long, and undo could not restore it from the text.
  */
@@ -295,7 +297,7 @@ export function shouldRebuildLineIndexForDelete(
 }
 
 export function rebuildLineIndexFromPieceTableState(state: DocumentState): DocumentState {
-  const content = getContentText(
+  const content = getText(
     state.pieceTable,
     byteOffset(0),
     byteOffset(state.pieceTable.totalLength),
@@ -419,7 +421,7 @@ interface DeletedRun {
 /**
  * Text and, where needed, raw bytes of each run of a delete. `deletedText` is
  * the decoding of the whole range, which a single run reuses. Several runs
- * decode each run from the range's bytes, the way `getContentText` decodes a range.
+ * decode each run from the range's bytes, the way `getText` decodes a range.
  * `deletedBytes`, when given, holds the range's bytes, so they are not read
  * again. Otherwise they are read once, and only when needed.
  */
@@ -666,28 +668,25 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
   // A position is recorded in the document the change applies to, so a valid
   // history always resolves inside it. Insert would append an out-of-range
   // position at the end and delete would remove other bytes, so refuse instead.
+  // The recorded key must also fit, the rule checkpoint restore applies (see
+  // `changeReplayFailure`). Inserted text is checked again when it goes in,
+  // which throws a plain RangeError, so checking here drops the entry like an
+  // out-of-range position does.
   const removed = removedLength(change, 1);
-  if (position < 0 || position + removed > state.pieceTable.totalLength) {
+  const failure = changeReplayFailure(
+    state.pieceTable,
+    position,
+    removed,
+    insertedLength(change, 1),
+    change.afterChunk,
+  );
+  if (failure !== null) {
     throw new StaleHistoryChangeError(
       `history ${change.type} at anchored position ${change.position} with placement key ` +
-        `${change.afterChunk} resolves to [${position}, ${position + removed}), outside the ` +
-        `${state.pieceTable.totalLength}-byte document`,
-    );
-  }
-  // The recorded key must fit once the removed bytes are gone, the same rule
-  // checkpoint validation applies. Removed bytes are what the other direction
-  // inserts back with this key, so a delete is checked too: one whose key no
-  // longer fits would remove bytes it never recorded. Inserted text is checked
-  // again when it goes in, which throws a plain RangeError, so checking here
-  // drops the entry like an out-of-range position does.
-  if (
-    (removed > 0 || insertedLength(change, 1) > 0) &&
-    !keyFitsAfterRemoving(state.pieceTable, position, position + removed, change.afterChunk)
-  ) {
-    throw new StaleHistoryChangeError(
-      `history ${change.type} at anchored position ${change.position} with placement key ` +
-        `${change.afterChunk} resolves to [${position}, ${position + removed}), where the ` +
-        `key no longer fits`,
+        `${change.afterChunk} resolves to [${position}, ${position + removed}), ` +
+        (failure === "range"
+          ? `outside the ${state.pieceTable.totalLength}-byte document`
+          : "where the key no longer fits"),
     );
   }
   const insertBytes =
@@ -921,8 +920,9 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   // code-point boundary there. A range that repeats the current one keeps its
   // placement keys (see `selectionRangesWithKeys`).
   const selectionBefore: SelectionState = op.selection
-    ? Object.freeze({
-        ranges: selectionRangesWithKeys(
+    ? selectionFromRanges(
+        state.selection,
+        selectionRangesWithKeys(
           pieceTable,
           state.selection,
           op.selection,
@@ -936,8 +936,7 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
             return position;
           },
         ),
-        primaryIndex: 0,
-      })
+      )
     : state.selection;
   // Split deleted text into runs that share a placement key, so undo gives
   // every byte back its key. Usually there is a single run.

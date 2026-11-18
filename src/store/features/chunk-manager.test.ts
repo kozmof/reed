@@ -414,6 +414,26 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     manager.dispose();
   });
 
+  it("does not offer chunks history pins again until the document changes", async () => {
+    const { store, manager } = setup("pin");
+    await manager.ensureLoaded(0);
+    pinChunk0(store);
+    manager.setActiveChunks([1, 2]);
+    await manager.ensureLoaded(1);
+    await manager.ensureLoaded(2);
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+
+    // History still pins chunk 0, so a pass would evict nothing.
+    const dispatch = vi.spyOn(store, "dispatch");
+    manager.setActiveChunks([2, 1]);
+    expect(dispatch.mock.calls.filter(([action]) => action.type.startsWith("EVICT"))).toEqual([]);
+
+    // Once history changes, chunk 0 is offered again and goes.
+    store.dispatch(DocumentActions.historyClear());
+    manager.setActiveChunks([1, 2]);
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
+    manager.dispose();
+  });
   it("stays over the limit under 'pin' and says how to bound it", async () => {
     const { store, manager, warn } = setup("pin");
     await manager.ensureLoaded(0);

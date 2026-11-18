@@ -22,7 +22,6 @@ import { byteLength, byteOffset } from "../../types/branded.js";
 import {
   collectPieces,
   getBytes,
-  getContentText,
   getText,
   getValue,
   isUtf8Boundary,
@@ -2514,12 +2513,12 @@ describe("fifteenth review regressions", () => {
     const s = makeStore(1);
     s.dispatch(DocumentActions.loadChunk(0, enc("\uFEFFabcd\n")));
     const state = s.getSnapshot();
-    expect(getContentText(state.pieceTable, byteOffset(0), byteOffset(3))).toBe("\uFEFF");
-    // getText reads the document as getValue does, stripping the byte order mark.
+    expect(getText(state.pieceTable, byteOffset(0), byteOffset(3))).toBe("\uFEFF");
+    // query.getText reads the document as getValue does, stripping the byte order mark.
     expect(getValue(state.pieceTable)).toBe("abcd\n");
     const total = byteOffset(state.pieceTable.totalLength);
-    expect(getText(state.pieceTable, byteOffset(0), total)).toBe(getValue(state.pieceTable));
-    expect(getText(state.pieceTable, byteOffset(0), byteOffset(3))).toBe("");
+    expect(query.getText(state.pieceTable, byteOffset(0), total)).toBe(getValue(state.pieceTable));
+    expect(query.getText(state.pieceTable, byteOffset(0), byteOffset(3))).toBe("");
     const rebuilt = rebuildLineIndexFromPieceTableState(state);
     expect(collectLines(rebuilt.lineIndex.root)[0]!.charLength).toBe(6);
   });
@@ -2762,8 +2761,8 @@ describe("nineteenth review regressions", () => {
     s.dispatch(DocumentActions.loadChunk(1, enc(BOM_CHUNK1)));
     const pt = s.getSnapshot().pieceTable;
     expect(getValue(pt)).toBe(BOM_CHUNK1);
-    expect(getText(pt, byteOffset(0), byteOffset(pt.totalLength))).toBe(BOM_CHUNK1);
-    expect(getText(pt, byteOffset(0), byteOffset(3))).toBe("﻿");
+    expect(query.getText(pt, byteOffset(0), byteOffset(pt.totalLength))).toBe(BOM_CHUNK1);
+    expect(query.getText(pt, byteOffset(0), byteOffset(3))).toBe("﻿");
     expect(collectLines(s.reconcileNow().lineIndex.root)[0]!.charLength).toBe(6);
   });
 
@@ -2782,7 +2781,7 @@ describe("nineteenth review regressions", () => {
     load(s, 1);
     const pt = s.getSnapshot().pieceTable;
     expect(getValue(pt)).toBe("AAAA\n" + CHUNK1);
-    expect(getText(pt, byteOffset(0), byteOffset(pt.totalLength))).toBe(getValue(pt));
+    expect(query.getText(pt, byteOffset(0), byteOffset(pt.totalLength))).toBe(getValue(pt));
   });
 
   it("keeps one typed at resident offset 0 while chunk 0 is not loaded", () => {
@@ -3143,5 +3142,52 @@ describe("twenty-first review regressions", () => {
     // Clamped to offset 400, inside the run 82 AC 80 80 that ends the
     // document. The lead byte E2 at 399 is 1 byte back, the end 4 ahead.
     expect(cursor(s)).toEqual({ anchor: SIZE - 1, head: SIZE - 1 });
+  });
+});
+
+describe("twenty-fourth review regressions", () => {
+  /** A 6-byte document with two carets, the second primary. */
+  const twoCarets = (): DocumentState => {
+    const state = createInitialState({ content: "abcdef" });
+    return Object.freeze({
+      ...state,
+      selection: Object.freeze({
+        ranges: Object.freeze([
+          Object.freeze({ anchor: byteOffset(1), head: byteOffset(1) }),
+          Object.freeze({ anchor: byteOffset(4), head: byteOffset(4) }),
+        ]),
+        primaryIndex: 1,
+      }),
+    }) as DocumentState;
+  };
+
+  it("SET_SELECTION with the current ranges keeps the primary range and changes nothing", () => {
+    const state = twoCarets();
+    const next = documentReducer(state, DocumentActions.setSelection(state.selection.ranges));
+    expect(next).toBe(state);
+    expect(next.selection.primaryIndex).toBe(1);
+  });
+
+  it("SET_SELECTION with other ranges makes the first range primary", () => {
+    const state = twoCarets();
+    const next = documentReducer(
+      state,
+      DocumentActions.setSelection([
+        { anchor: byteOffset(2), head: byteOffset(2) },
+        { anchor: byteOffset(4), head: byteOffset(4) },
+      ]),
+    );
+    expect(next.selection.primaryIndex).toBe(0);
+    expect(next.selectionRevision).toBe(state.selectionRevision + 1);
+  });
+
+  it("an edit selection with the current ranges keeps the primary range", () => {
+    const state = twoCarets();
+    const next = documentReducer(
+      state,
+      DocumentActions.insert(byteOffset(0), "X", state.selection.ranges),
+    );
+    expect(next.selection.primaryIndex).toBe(1);
+    expect(pstackPeek(next.history.undoStack)!.selectionBefore.primaryIndex).toBe(1);
   });
 });

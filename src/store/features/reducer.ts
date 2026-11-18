@@ -4,7 +4,7 @@
  * Route text edits to `edit.ts` and undo/redo to `history.ts`.
  */
 
-import type { DocumentState, SelectionRange, SelectionState } from "../../types/state.js";
+import type { DocumentState, SelectionRange } from "../../types/state.js";
 import type { DocumentAction } from "../../types/actions.js";
 import { byteOffset } from "../../types/branded.js";
 import { withState } from "../core/state.js";
@@ -19,8 +19,8 @@ import {
 import { historyUndo, historyRedo } from "./history.js";
 import {
   insertionKey,
-  keepSameSelection,
   moveSelectionPastEdit,
+  selectionFromRanges,
   selectionRangesWithKeys,
 } from "./history-anchor.js";
 import { createPoint, createAttention, deleteAttention } from "../core/attention.js";
@@ -75,13 +75,12 @@ function setSelection(state: DocumentState, ranges: readonly SelectionRange[]): 
     throw new Error("SET_SELECTION: ranges must be non-empty");
   }
   // Keep the side of an unloaded chunk each unmoved endpoint is on.
-  const selection: SelectionState = Object.freeze({
-    ranges: selectionRangesWithKeys(state.pieceTable, state.selection, ranges, (offset, end) =>
+  const next = selectionFromRanges(
+    state.selection,
+    selectionRangesWithKeys(state.pieceTable, state.selection, ranges, (offset, end) =>
       validateBoundaryPosition(state, offset, `selection ${end}`),
     ),
-    primaryIndex: 0,
-  });
-  const next = keepSameSelection(state.selection, selection);
+  );
   if (next === state.selection) return state;
   return withState(state, {
     selection: next,
@@ -166,7 +165,8 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       const step = historyUndo(state, nextRevision);
       if (step.outcome === "empty") return state;
       // Dropping a stale entry changes only history, so the revision stays.
-      // event-store relies on this to tell a drop from a replayed step.
+      // The event layer reads the outcome from isDroppedHistoryStep, so this
+      // state must be returned as is.
       if (step.outcome === "dropped") return step.state;
       return withState(step.state, {
         revision: nextRevision,
@@ -177,8 +177,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       const nextRevision = state.revision + 1;
       const step = historyRedo(state, nextRevision);
       if (step.outcome === "empty") return state;
-      // Dropping a stale entry changes only history, so the revision stays.
-      // event-store relies on this to tell a drop from a replayed step.
+      // See UNDO.
       if (step.outcome === "dropped") return step.state;
       return withState(step.state, {
         revision: nextRevision,
