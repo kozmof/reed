@@ -78,8 +78,8 @@ wholly before the piece, and higher chunks lie after it.
 - add piece — its stored `afterChunk`
 - original piece — `-1`
 
-Keys never decrease in document order. `findReloadInsertionPos` places a
-loaded chunk `c` before the first piece whose key is at least `c`.
+Keys never decrease in document order. Loading places a chunk `c` at
+`keySpan(root, c).start`, before the first piece whose key is at least `c`.
 `pieceTableInsert` enforces the order: a given key that does not fit the
 insertion point (see `keyFitsAt`) means the caller computed it wrongly, so the
 insert throws a `RangeError` instead of placing the text under another key.

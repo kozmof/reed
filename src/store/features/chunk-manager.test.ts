@@ -425,6 +425,23 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
   });
 });
 
+describe("ChunkManager eviction transition", () => {
+  it("evicts down to the limit with a single EVICT_CHUNKS dispatch", async () => {
+    const store = createDocumentStore({ chunkSize: CHUNK_SIZE, totalFileSize: CHUNK_SIZE * 3 });
+    const chunks = { 0: "aaaaaaa\n", 1: "bbbbbbb\n", 2: "ccccccc\n" };
+    const manager = createChunkManager(store, makeLoader(chunks), { maxLoadedChunks: 1 });
+    manager.setActiveChunks([0, 1, 2]);
+    for (const i of [0, 1, 2]) await manager.ensureLoaded(i);
+    const dispatch = vi.spyOn(store, "dispatch");
+    // Unpinning puts all three over the limit of one.
+    manager.setActiveChunks([]);
+    const evictions = dispatch.mock.calls.filter(([action]) => action.type.startsWith("EVICT"));
+    expect(evictions).toEqual([[DocumentActions.evictChunks([0, 1, 2], 1)]]);
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()]).toEqual([2]);
+    manager.dispose();
+  });
+});
+
 describe("ChunkManager eviction that discards history", () => {
   const CHUNK_COUNT = 6;
   const content = (i: number) => String.fromCharCode(97 + i).repeat(CHUNK_SIZE - 1) + "\n";

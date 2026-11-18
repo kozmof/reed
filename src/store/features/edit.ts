@@ -34,7 +34,7 @@ import {
   pieceTableInsert as ptInsert,
   pieceTableInsertFitted as ptInsertFitted,
   pieceTableDelete as ptDelete,
-  getText,
+  getContentText,
   getRawByte,
   getBytes,
   isUtf8Boundary,
@@ -58,7 +58,7 @@ import {
   utf8ByteLength,
 } from "../core/encoding.js";
 import { NO_CHUNK, placementRuns } from "../core/chunk-anchor.js";
-import { codePointWindow } from "../core/utf8-seam.js";
+import { codePointWindow, isSafeSplit } from "../core/utf8-seam.js";
 import type { FittedKey, KeyRun } from "../core/chunk-anchor.js";
 import {
   anchorAt,
@@ -118,6 +118,21 @@ export function validateRange(
 // =============================================================================
 
 /**
+ * Placement key for inserted text, tagged with where it came from.
+ *
+ * - `"fitted"`: derived from the document being edited by `insertionKey` or
+ *   `placementRuns`, which only return keys that fit at the insertion point.
+ *   It is not checked again (see `pieceTableInsertFitted`), which saves two
+ *   tree walks per keystroke.
+ * - `"checked"`: from outside the document, such as a recorded history change.
+ *   A key that does not fit at the insertion point (see `keyFitsAt`) throws a
+ *   RangeError.
+ */
+export type InsertKey =
+  | { readonly kind: "fitted"; readonly key: FittedKey }
+  | { readonly kind: "checked"; readonly key: number };
+
+/**
  * Insert text into piece table at position, migrating the attention layer.
  * Returns new document state, the inserted byte length, and the piece splits.
  *
@@ -125,21 +140,19 @@ export function validateRange(
  * inserts (applyEdit, applyChange/undo-redo, APPLY_REMOTE) re-anchors points
  * automatically via the split records.
  *
- * The text takes `fittedAfterChunk`, a key derived from `state` that fits at
- * `position` and is not checked again (see `pieceTableInsertFitted`), else
- * `afterChunk`, which is checked, else the gap's key.
+ * The text takes the key `placement` gives (see `InsertKey`), else the gap's
+ * key.
  */
 export function pieceTableInsert(
   state: DocumentState,
   position: ByteOffset,
   text: string | Uint8Array,
-  afterChunk?: number,
-  fittedAfterChunk?: FittedKey,
+  placement?: InsertKey,
 ): { state: DocumentState; insertedByteLength: number; splits: readonly SplitRecord[] } {
   const result =
-    fittedAfterChunk !== undefined
-      ? ptInsertFitted(state.pieceTable, position, text, fittedAfterChunk)
-      : ptInsert(state.pieceTable, position, text, afterChunk);
+    placement?.kind === "fitted"
+      ? ptInsertFitted(state.pieceTable, position, text, placement.key)
+      : ptInsert(state.pieceTable, position, text, placement?.key);
   const attention = migrateSplits(state.attention, result.splits);
   const nextState = withState(state, { pieceTable: result.state, attention });
   carryLineOffsetIndexes(
@@ -181,20 +194,20 @@ export function pieceTableDelete(
  * Get text in a range from the piece table, as the edit pipeline counts it.
  * Used for capturing deleted text for undo and for the line-index update.
  *
- * A U+FEFF at the start of the range is kept, as `getText` keeps it. The line
+ * A U+FEFF at the start of the range is kept, as `getContentText` keeps it. The line
  * index counts it as a character, so deleted text without it would leave the
  * line one character too long, and undo could not restore it from the text.
  */
 export function getTextRange(state: DocumentState, start: ByteOffset, end: ByteOffset): string {
-  return getText(state.pieceTable, start, end);
+  return getContentText(state.pieceTable, start, end);
 }
 
 /**
  * The text a local edit deletes from [start, end), with the bytes it was
  * decoded from. `applyEdit` keeps those bytes in history when the text does
  * not encode back to them, so passing them on saves reading the range a
- * second time. It decodes with `contentDecoder`, as `getText` does; it cannot
- * call `getText` without reading the bytes twice.
+ * second time. It decodes with `contentDecoder`, as `getContentText` does; it cannot
+ * call `getContentText` without reading the bytes twice.
  */
 export function readDeletedRange(
   state: DocumentState,
@@ -284,7 +297,7 @@ export function shouldRebuildLineIndexForDelete(
 }
 
 export function rebuildLineIndexFromPieceTableState(state: DocumentState): DocumentState {
-  const content = getText(
+  const content = getContentText(
     state.pieceTable,
     byteOffset(0),
     byteOffset(state.pieceTable.totalLength),
@@ -408,7 +421,7 @@ interface DeletedRun {
 /**
  * Text and, where needed, raw bytes of each run of a delete. `deletedText` is
  * the decoding of the whole range, which a single run reuses. Several runs
- * decode each run from the range's bytes, the way `getText` decodes a range.
+ * decode each run from the range's bytes, the way `getContentText` decodes a range.
  * `deletedBytes`, when given, holds the range's bytes, so they are not read
  * again. Otherwise they are read once, and only when needed.
  */
@@ -666,7 +679,7 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
           position,
           insertText: change.text,
           ...insertBytes,
-          afterChunk: change.afterChunk,
+          placement: { kind: "checked", key: change.afterChunk },
         },
         state.revision + 1,
         true,
@@ -695,7 +708,7 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
           ...(change.oldBytes !== undefined && { deletedTextInexact: true }),
           insertText: change.text,
           ...insertBytes,
-          afterChunk: change.afterChunk,
+          placement: { kind: "checked", key: change.afterChunk },
         },
         state.revision + 1,
         true,
@@ -716,19 +729,8 @@ interface InsertFields {
   readonly insertText: string;
   /** Raw bytes to insert in place of `insertText` encoded as UTF-8. */
   readonly insertBytes?: Uint8Array | undefined;
-  /**
-   * Placement key for the inserted text. Defaults to the gap's key. A key
-   * that does not fit at `position` (see `keyFitsAt`) throws a RangeError.
-   * Use it for a key from outside this document, such as a recorded history
-   * change.
-   */
-  readonly afterChunk?: number | undefined;
-  /**
-   * Placement key derived from this document by `insertionKey` or
-   * `placementRuns`, which only return keys that fit. It takes precedence over
-   * `afterChunk`, and the check is skipped (see `pieceTableInsertFitted`).
-   */
-  readonly fittedAfterChunk?: FittedKey | undefined;
+  /** Placement key for the inserted text (see `InsertKey`). Defaults to the gap's key. */
+  readonly placement?: InsertKey | undefined;
 }
 
 /** The delete phase of a delete or replace. */
@@ -781,8 +783,11 @@ export type EditOperation = StructuralEditOperation & {
  * characters across its edges, before or after it applies, and the fast line
  * update, which counts the edit's text apart from the text around it, would
  * miscount them. Without chunks, history replays into the document it was
- * recorded in, so a chunked replay alone re-reads the lines around the edit
- * instead (see `codePointWindow`).
+ * recorded in, so only a chunked replay checks its edges. When an edge is not
+ * a safe split (see `isSafeSplit`), before the edit or after it, the lines
+ * around the edit are re-read instead (see `codePointWindow`). The check costs
+ * a few byte reads, where re-reading costs the length of those lines, which
+ * in a minified file can be the whole chunk.
  */
 export function applyUntrackedEdit(
   state: DocumentState,
@@ -800,12 +805,15 @@ export function applyUntrackedEdit(
   // Line updates read the edit's text. When that text is not the bytes being
   // deleted or inserted, re-read the affected lines from the piece table.
   const insertBytes = op.kind !== "delete" ? op.insertBytes : undefined;
+  const deleteEnd = op.kind === "insert" ? op.position : op.deleteEnd;
+  const chunkedReplay = replay && state.pieceTable.nextExpectedChunk > 0;
   const needsRebuild =
     insertBytes !== undefined ||
     (op.kind !== "insert" &&
       (op.deletedTextInexact === true ||
         shouldRebuildLineIndexForDelete(op.deletedText, deleteContext))) ||
-    (replay && state.pieceTable.nextExpectedChunk > 0);
+    (chunkedReplay &&
+      !(isSafeSplit(state.pieceTable, op.position) && isSafeSplit(state.pieceTable, deleteEnd)));
 
   if (op.kind !== "insert") {
     if (needsRebuild) {
@@ -826,13 +834,7 @@ export function applyUntrackedEdit(
   const insertContent = insertBytes ?? (op.kind !== "delete" ? op.insertText : "");
   if (op.kind !== "delete" && insertContent.length > 0) {
     // Without a key from the caller, the text takes the gap's key.
-    const result = pieceTableInsert(
-      newState,
-      op.position,
-      insertContent,
-      op.afterChunk,
-      op.fittedAfterChunk,
-    );
+    const result = pieceTableInsert(newState, op.position, insertContent, op.placement);
     newState = result.state;
     if (!needsRebuild) {
       const readText = pieceTableReader(newState.pieceTable);
@@ -846,10 +848,20 @@ export function applyUntrackedEdit(
     }
   }
 
-  const deleteEnd = op.kind === "insert" ? op.position : op.deleteEnd;
   const insertedLength =
     newState.pieceTable.totalLength - state.pieceTable.totalLength + (deleteEnd - op.position);
-  if (needsRebuild) {
+  // The fast update also counted the inserted text apart from the bytes after
+  // it, so a replayed edit re-reads its lines when that edge is not a safe
+  // split. The repair starts from `state.lineIndex`, so the fast update's
+  // result is simply dropped.
+  const rebuild =
+    needsRebuild ||
+    (chunkedReplay &&
+      !(
+        isSafeSplit(newState.pieceTable, op.position) &&
+        isSafeSplit(newState.pieceTable, op.position + insertedLength)
+      ));
+  if (rebuild) {
     const window = codePointWindow(newState.pieceTable, op.position, deleteEnd, insertedLength);
     return withState(newState, {
       lineIndex: repairLineIndexWindow(
@@ -914,7 +926,7 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
     runs.length > 0 ? runs[0]!.key : insertionKey(pieceTable, selectionBefore, op.position);
   let newState = applyUntrackedEdit(
     state,
-    op.kind === "delete" ? op : { ...op, afterChunk: undefined, fittedAfterChunk: insertKey },
+    op.kind === "delete" ? op : { ...op, placement: { kind: "fitted", key: insertKey } },
     nextRevision,
   );
 

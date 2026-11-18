@@ -226,6 +226,15 @@ export interface LoadChunksAction {
  * - Structural queries that include pre-declared metadata for unloaded chunks.
  * - Loading the chunk again via `LOAD_CHUNK` to restore text access.
  *
+ * EVICT_CHUNK leaves the state unchanged when the chunk is not loaded, has
+ * edits inside or touching it, has attention anchored inside it, or has undo
+ * or redo history pointing inside it and the history eviction policy keeps it
+ * (see `HistoryEvictionPolicy`). Under the default `"pin-bounded"` policy, a
+ * plain EVICT_CHUNK is refused while history points inside the chunk, even
+ * after the edit there was undone, since redo history still points there. Set
+ * `overLimit` to evict it anyway and discard that history. Check the outcome
+ * with `store.didEvict`.
+ *
  * What callers must do before evicting:
  * - Ensure no in-progress edit (open transaction) spans the chunk's byte range.
  * - Persist unsaved chunk changes before eviction. Eviction does not write
@@ -244,6 +253,29 @@ export interface EvictChunkAction {
    * eviction (see `HistoryEvictionPolicy`). Other policies ignore it.
    */
   readonly overLimit?: boolean;
+}
+
+/**
+ * Evict chunks until at most `maxLoaded` stay loaded, choosing among
+ * `chunkIndices` in one reducer transition. ChunkManager sends this to stay
+ * within `maxLoadedChunks`, with its unpinned chunks least recently used first.
+ *
+ * Each eviction follows the EVICT_CHUNK contract (see {@link EvictChunkAction}).
+ * Candidates that edits or attention keep are skipped. Among the rest, every
+ * candidate whose eviction discards no undo or redo history goes first, in the
+ * order given. Only if more must go does the history eviction policy decide
+ * (see `HistoryEvictionPolicy`): `"pin"` evicts no more, `"drop"` evicts in
+ * the order given, and `"pin-bounded"` evicts the candidate that discards the
+ * fewest history entries each time, ties going to the earlier candidate.
+ * Eviction stops as soon as the limit is met, so it may leave candidates
+ * loaded.
+ */
+export interface EvictChunksAction {
+  readonly type: "EVICT_CHUNKS";
+  /** Chunks that may be evicted, in the order to try them */
+  readonly chunkIndices: readonly number[];
+  /** Most chunks to leave loaded */
+  readonly maxLoaded: number;
 }
 
 /**
@@ -280,6 +312,7 @@ export type DocumentAction =
   | LoadChunkAction
   | LoadChunksAction
   | EvictChunkAction
+  | EvictChunksAction
   | DeclareChunkMetadataAction;
 
 /**
@@ -304,6 +337,7 @@ export const DocumentActionTypes = strEnum([
   "LOAD_CHUNK",
   "LOAD_CHUNKS",
   "EVICT_CHUNK",
+  "EVICT_CHUNKS",
   "DECLARE_CHUNK_METADATA",
 ]);
 
@@ -649,6 +683,23 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
       }
       if (evictAction.overLimit !== undefined && typeof evictAction.overLimit !== "boolean") {
         errors.push('EVICT_CHUNK "overLimit" must be a boolean when present');
+      }
+      break;
+    }
+
+    case "EVICT_CHUNKS": {
+      const evictAction = action as Partial<EvictChunksAction>;
+      if (!Array.isArray(evictAction.chunkIndices)) {
+        errors.push('EVICT_CHUNKS action requires an array "chunkIndices" property');
+      } else {
+        for (let i = 0; i < evictAction.chunkIndices.length; i++) {
+          if (!isNonNegativeInteger(evictAction.chunkIndices[i])) {
+            errors.push(`EVICT_CHUNKS chunkIndices[${i}] must be a non-negative integer`);
+          }
+        }
+      }
+      if (!isNonNegativeInteger(evictAction.maxLoaded)) {
+        errors.push('EVICT_CHUNKS action requires a non-negative integer "maxLoaded" property');
       }
       break;
     }

@@ -7,13 +7,13 @@
  * carry a placement key, so undo/redo and re-loading land on the right bytes.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   createDocumentStore,
   createDocumentStoreFromCheckpoint,
   createDocumentStoreWithEvents,
 } from "./store.js";
-import { DocumentActions } from "./actions.js";
+import { DocumentActions, deserializeAction, serializeAction } from "./actions.js";
 import { documentReducer } from "./reducer.js";
 import { createCheckpoint, restoreCheckpoint } from "./checkpoint.js";
 import { createInitialState } from "../core/state.js";
@@ -21,6 +21,7 @@ import { byteLength, byteOffset } from "../../types/branded.js";
 import {
   collectPieces,
   getBytes,
+  getContentText,
   getText,
   getValue,
   isUtf8Boundary,
@@ -31,6 +32,7 @@ import { lineByteToChar, lineCharToByte } from "../core/line-offsets.js";
 import { rebuildLineIndexFromPieceTableState } from "./edit.js";
 import { CheckpointError } from "../../types/checkpoint.js";
 import { collectLines, rebuildLineIndex } from "../core/line-index.js";
+import * as lineIndexModule from "../core/line-index.js";
 import { getUndoCount, getRedoCount } from "./history.js";
 import type {
   DocumentState,
@@ -2285,7 +2287,12 @@ describe("twelfth review regressions", () => {
     load(s, 1);
     const state = s.getSnapshot();
     // Key 1 lies after chunk 1, so it cannot take offset 0, before chunk 0.
-    const op = { kind: "insert", position: byteOffset(0), insertText: "x", afterChunk: 1 } as const;
+    const op = {
+      kind: "insert",
+      position: byteOffset(0),
+      insertText: "x",
+      placement: { kind: "checked", key: 1 },
+    } as const;
     expect(() => applyUntrackedEdit(state, op, state.revision + 1)).toThrow(RangeError);
     expect(() => applyUntrackedEdit(state, op, state.revision + 1, true)).toThrow(RangeError);
   });
@@ -2487,9 +2494,12 @@ describe("fifteenth review regressions", () => {
     const s = makeStore(1);
     s.dispatch(DocumentActions.loadChunk(0, enc("\uFEFFabcd\n")));
     const state = s.getSnapshot();
-    expect(getText(state.pieceTable, byteOffset(0), byteOffset(3))).toBe("\uFEFF");
-    // getValue still strips a byte order mark at the start of the document.
+    expect(getContentText(state.pieceTable, byteOffset(0), byteOffset(3))).toBe("\uFEFF");
+    // getText reads the document as getValue does, stripping the byte order mark.
     expect(getValue(state.pieceTable)).toBe("abcd\n");
+    const total = byteOffset(state.pieceTable.totalLength);
+    expect(getText(state.pieceTable, byteOffset(0), total)).toBe(getValue(state.pieceTable));
+    expect(getText(state.pieceTable, byteOffset(0), byteOffset(3))).toBe("");
     const rebuilt = rebuildLineIndexFromPieceTableState(state);
     expect(collectLines(rebuilt.lineIndex.root)[0]!.charLength).toBe(6);
   });
@@ -2588,5 +2598,137 @@ describe("seventeenth review regressions", () => {
     expect(below!.selectionAfter).toEqual(anchoredCursor(-1, 0));
     expect(below!.selectionAfter).toBe(below!.selectionAfter);
     expect(derived).toBe(3);
+  });
+});
+
+describe("chunked replay line updates", () => {
+  const replayRepairs = (s: ReturnType<typeof makeStore>, actions: DocumentAction[]) => {
+    const repair = vi.spyOn(lineIndexModule, "repairLineIndexWindow");
+    try {
+      for (const action of actions) s.dispatch(action);
+      return repair.mock.calls.length;
+    } finally {
+      repair.mockRestore();
+    }
+  };
+
+  it("updates lines without re-reading them when no edge of a replay cuts a character", () => {
+    const s = makeStore();
+    s.dispatch(DocumentActions.loadChunk(0, enc("ABCDEFGH")));
+    s.dispatch(DocumentActions.loadChunk(1, enc("IJKLMN\n\n")));
+    s.dispatch(DocumentActions.insert(byteOffset(10), "é"));
+    s.dispatch(DocumentActions.delete(byteOffset(3), byteOffset(5)));
+    expect(
+      replayRepairs(s, [
+        DocumentActions.undo(),
+        DocumentActions.undo(),
+        DocumentActions.redo(),
+        DocumentActions.redo(),
+      ]),
+    ).toBe(0);
+    expect(text(s)).toBe("ABCFGHIJéKLMN\n\n");
+    const lines = (root: Parameters<typeof collectLines>[0]) =>
+      collectLines(root).map((line) => `${line.lineLength}:${line.charLength}`);
+    const reconciled = s.reconcileNow();
+    expect(lines(reconciled.lineIndex.root)).toEqual(lines(rebuildLineIndex(text(s)).root));
+  });
+
+  it("re-reads the lines when a replay joins a character cut at its edge", () => {
+    // An emoji split across the edge of chunks 0 and 1.
+    const bytes = new Uint8Array([
+      0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0xf0, 0x9f, 0x98, 0x80, 0x0a, 0x58, 0x59, 0x5a,
+      0x0a,
+    ]);
+    const s = makeStore();
+    s.dispatch(DocumentActions.loadChunk(0, bytes.slice(0, 8)));
+    s.dispatch(DocumentActions.replace(byteOffset(1), byteOffset(8), "#"));
+    s.dispatch(DocumentActions.loadChunk(1, bytes.slice(8)));
+    expect(replayRepairs(s, [DocumentActions.undo()])).toBeGreaterThan(0);
+    expect(text(s)).toBe("ABCDEFG\u{1F600}\nXYZ\n");
+  });
+});
+
+describe("EVICT_CHUNKS", () => {
+  /** Three loaded chunks; undo and redo history points inside chunk 0 only. */
+  function storeWithHistoryInChunk0(policy: HistoryEvictionPolicy) {
+    const s = makeStore(3, policy);
+    for (let i = 0; i < 3; i++) load(s, i);
+    s.dispatch(DocumentActions.insert(byteOffset(2), "X"));
+    s.dispatch(DocumentActions.insert(byteOffset(4), "Y"));
+    s.dispatch(DocumentActions.undo());
+    s.dispatch(DocumentActions.undo());
+    return s;
+  }
+  const loaded = (s: Store) => [...s.getSnapshot().pieceTable.chunkMap.keys()].sort();
+
+  it.each([
+    ["pin", [0], 2],
+    ["pin-bounded", [], 0],
+    ["drop", [], 0],
+  ] as const)(
+    "evicts candidates that cost no history first, then as '%s' allows, in one transition",
+    (policy, kept, redo) => {
+      const s = storeWithHistoryInChunk0(policy);
+      const revision = s.getSnapshot().revision;
+      let notified = 0;
+      s.subscribe(() => notified++);
+      s.dispatch(DocumentActions.evictChunks([0, 1, 2], 0));
+      expect(loaded(s)).toEqual(kept);
+      expect(getRedoCount(s.getSnapshot())).toBe(redo);
+      expect(notified).toBe(1);
+      expect(s.getSnapshot().revision).toBe(revision + 3 - kept.length);
+    },
+  );
+
+  it("stops as soon as the limit is met, skipping candidates that cost history", () => {
+    const s = storeWithHistoryInChunk0("drop");
+    s.dispatch(DocumentActions.evictChunks([0, 2, 1], 2));
+    expect(loaded(s)).toEqual([0, 1]);
+    expect(getRedoCount(s.getSnapshot())).toBe(2);
+  });
+
+  it("leaves the state unchanged when nothing needs evicting or nothing can be", () => {
+    const s = storeWithHistoryInChunk0("pin");
+    const before = s.getSnapshot();
+    s.dispatch(DocumentActions.evictChunks([0, 1, 2], 3));
+    s.dispatch(DocumentActions.evictChunks([0], 0));
+    s.dispatch(DocumentActions.evictChunks([], 0));
+    expect(s.getSnapshot()).toBe(before);
+  });
+
+  it("emits history-drop when it discards entries", () => {
+    const s = createDocumentStoreWithEvents({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 2,
+      reconcileMode: "none",
+      historyEvictionPolicy: "pin-bounded",
+    });
+    s.dispatch(DocumentActions.loadChunk(0, enc(CHUNK0)));
+    s.dispatch(DocumentActions.loadChunk(1, enc(CHUNK1)));
+    s.dispatch(DocumentActions.insert(byteOffset(2), "X"));
+    s.dispatch(DocumentActions.undo());
+    let drops = 0;
+    s.addEventListener("history-drop", () => drops++);
+    s.dispatch(DocumentActions.evictChunks([0, 1], 1));
+    // Chunk 1 costs no history, so it goes and chunk 0 keeps its redo entry.
+    expect(drops).toBe(0);
+    expect(getRedoCount(s.getSnapshot())).toBe(1);
+    s.dispatch(DocumentActions.evictChunks([0], 0));
+    expect(drops).toBe(1);
+    expect(getRedoCount(s.getSnapshot())).toBe(0);
+  });
+
+  it("validates and round-trips through serialization", () => {
+    const action = DocumentActions.evictChunks([2, 0], 1);
+    expect(validateAction(action).valid).toBe(true);
+    expect(deserializeAction(serializeAction(action))).toEqual(action);
+    for (const bad of [
+      { type: "EVICT_CHUNKS", chunkIndices: [0], maxLoaded: -1 },
+      { type: "EVICT_CHUNKS", chunkIndices: [0.5], maxLoaded: 1 },
+      { type: "EVICT_CHUNKS", chunkIndices: 0, maxLoaded: 1 },
+      { type: "EVICT_CHUNKS", chunkIndices: [0] },
+    ]) {
+      expect(validateAction(bad).valid, JSON.stringify(bad)).toBe(false);
+    }
   });
 });

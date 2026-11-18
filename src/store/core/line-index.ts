@@ -208,9 +208,12 @@ function repairWindowWithMetrics(
       .map((line) => ({ offset: 0, ...line }));
   } else {
     let insertedText = readText(start, suffixStart);
-    // A reader that decodes with a default TextDecoder drops a U+FEFF that
-    // starts the range, which line columns count: three bytes that count as
-    // one character but read as nothing. The built-in reader keeps it.
+    // Only a caller-supplied reader without `scanLines` gets here: the
+    // built-in reader (`pieceTableReader`) takes the branch above. Such a
+    // reader may decode with a default TextDecoder, which drops a U+FEFF that
+    // starts the range, though line columns count it: three bytes that count
+    // as one character but read as nothing. The check decodes 3 bytes, and
+    // counts them only when they read as nothing.
     const bomEnd = byteOffset(start + 3);
     if (
       bomEnd <= suffixStart &&

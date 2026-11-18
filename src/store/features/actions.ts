@@ -24,6 +24,7 @@ import type {
   LoadChunksAction,
   ChunkLoad,
   EvictChunkAction,
+  EvictChunksAction,
   DeclareChunkMetadataAction,
 } from "../../types/actions.js";
 import type { AttentionID } from "../../types/branded.js";
@@ -100,6 +101,8 @@ function normalizeDeserializedAction(action: DocumentAction): DocumentAction {
       return DocumentActions.loadChunks(action.chunks);
     case "EVICT_CHUNK":
       return DocumentActions.evictChunk(action.chunkIndex, action.overLimit);
+    case "EVICT_CHUNKS":
+      return DocumentActions.evictChunks(action.chunkIndices, action.maxLoaded);
     case "DECLARE_CHUNK_METADATA":
       return DocumentActions.declareChunkMetadata(action.metadata);
   }
@@ -317,9 +320,13 @@ export const DocumentActions = {
    *
    * Dispatching this action removes the chunk's pieces and backing bytes from the
    * current in-memory document. Loading it again restores the chunk in index order.
-   * See {@link EvictChunkAction} for the full eviction contract.
+   * See {@link EvictChunkAction} for the full eviction contract, including when
+   * eviction is refused.
    *
    * @param chunkIndex - Zero-based index of the chunk to evict
+   * @param overLimit - Under the default `"pin-bounded"` history eviction
+   *   policy, evict even when undo or redo history points inside the chunk,
+   *   discarding that history. Without it such an eviction is refused.
    */
   evictChunk(chunkIndex: number, overLimit?: boolean): EvictChunkAction {
     return Object.freeze(
@@ -327,6 +334,22 @@ export const DocumentActions = {
         ? { type: "EVICT_CHUNK", chunkIndex }
         : { type: "EVICT_CHUNK", chunkIndex, overLimit },
     );
+  },
+
+  /**
+   * Create an action that evicts chunks until at most `maxLoaded` stay loaded,
+   * choosing among `chunkIndices` in one transition.
+   * See {@link EvictChunksAction} for how candidates are chosen.
+   *
+   * @param chunkIndices - Chunks that may be evicted, in the order to try them
+   * @param maxLoaded - Most chunks to leave loaded
+   */
+  evictChunks(chunkIndices: readonly number[], maxLoaded: number): EvictChunksAction {
+    return Object.freeze({
+      type: "EVICT_CHUNKS",
+      chunkIndices: Object.freeze([...chunkIndices]),
+      maxLoaded,
+    });
   },
 
   /**

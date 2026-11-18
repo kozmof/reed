@@ -7,15 +7,11 @@
  * the chunk lifecycle a focused test boundary.
  */
 
-import type {
-  DocumentState,
-  LineIndexState,
-  PieceNode,
-  PieceTableState,
-} from "../../types/state.js";
+import type { DocumentState, LineIndexState, PieceNode } from "../../types/state.js";
 import type {
   DeclareChunkMetadataAction,
   EvictChunkAction,
+  EvictChunksAction,
   LoadChunkAction,
   LoadChunksAction,
 } from "../../types/actions.js";
@@ -29,10 +25,11 @@ import {
   pieceTableDelete,
 } from "../core/piece-table.js";
 import { hasAttentionForPiece } from "../core/attention.js";
-import { deriveLoadedChunks, pieceKey } from "../core/chunk-anchor.js";
+import { deriveLoadedChunks, keySpan } from "../core/chunk-anchor.js";
 import {
   carrySelectionAcrossChunks,
   historyForEviction,
+  historyLossAfterDrop,
   historyLossForEviction,
 } from "./history-anchor.js";
 import type { EvictionHistoryLoss } from "./history-anchor.js";
@@ -44,15 +41,12 @@ import { asReadonlyMap, asReadonlySet, asReadonlyUint8Array } from "../core/runt
 interface ChunkSummary {
   min: number;
   max: number;
-  /** Highest placement key in the subtree (see core/chunk-anchor.ts). */
-  maxKey: number;
   hasAdd: boolean;
 }
 const chunkSummaries = new WeakMap<PieceNode, ChunkSummary>();
 const emptySummary: ChunkSummary = {
   min: Infinity,
   max: -Infinity,
-  maxKey: -Infinity,
   hasAdd: false,
 };
 
@@ -67,7 +61,6 @@ function summarizeChunks(root: PieceNode | null): ChunkSummary {
   const summary = {
     min: Math.min(left.min, right.min, chunk ?? Infinity),
     max: Math.max(left.max, right.max, chunk ?? -Infinity),
-    maxKey: Math.max(left.maxKey, right.maxKey, pieceKey(root)),
     hasAdd: left.hasAdd || right.hasAdd || root.bufferType === "add",
   };
   chunkSummaries.set(root, summary);
@@ -91,24 +84,6 @@ function visitChunk(
       visit(root, ownStart) === true) ||
     visitChunk(root.right, chunkIndex, visit, ownStart + root.length)
   );
-}
-
-/**
- * Resident offset where chunk `targetChunkIndex` belongs: before the first
- * piece whose placement key is >= the chunk index. That is the first piece of a
- * higher chunk, or text recorded as lying after the chunk. Keys never decrease
- * in document order, so everything before that point lies before the chunk.
- */
-function findReloadInsertionPos(root: PieceNode | null, targetChunkIndex: number): number {
-  function find(node: PieceNode | null, offset: number): number | null {
-    if (!node || summarizeChunks(node).maxKey < targetChunkIndex) return null;
-    const ownStart = offset + (node.left?.subtreeLength ?? 0);
-    const left = find(node.left, offset);
-    if (left !== null) return left;
-    if (pieceKey(node) >= targetChunkIndex) return ownStart;
-    return find(node.right, ownStart + node.length);
-  }
-  return find(root, 0) ?? root?.subtreeLength ?? 0;
 }
 
 function findPristineChunkRange(
@@ -275,7 +250,9 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
     const isSequentialFirst = isFirstLoad && chunk.chunkIndex === nextExpectedChunk;
     const insertionPos = isSequentialFirst
       ? byteOffset(totalLength)
-      : byteOffset(findReloadInsertionPos(root, chunk.chunkIndex));
+      : // Before the first piece whose key is >= the chunk index: the first
+        // piece of a higher chunk, or text recorded as lying after the chunk.
+        byteOffset(keySpan(root, chunk.chunkIndex).start);
     const id = pieceID(`p${nextPieceID++}`);
     root = insertChunkPieceAt(root, insertionPos, chunk.chunkIndex, chunk.data.length, id);
     summarizeBytes(chunk.data); // Prepare reusable decoder summaries once during loading.
@@ -328,35 +305,12 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
 
 type EvictableRange = { readonly start: ByteOffset; readonly end: ByteOffset } | null;
 
-// ChunkManager measures a candidate's loss (`evictionHistoryLoss`) and then
-// dispatches EVICT_CHUNK on the same state, and both need the range. It
-// depends only on the piece table, the attention state, and the chunk, all
-// immutable, so it is kept per piece table and checked against the attention.
-const evictableRangeCache = new WeakMap<
-  PieceTableState,
-  Map<number, { readonly attention: DocumentState["attention"]; readonly range: EvictableRange }>
->();
-
 /**
  * The resident range of `chunkIndex` when only history could keep it from
  * being evicted, else null: it is not loaded, an attention is anchored to it,
  * or edits have split or touched it.
  */
 function evictableRange(state: DocumentState, chunkIndex: number): EvictableRange {
-  const { pieceTable, attention } = state;
-  let byChunk = evictableRangeCache.get(pieceTable);
-  const cached = byChunk?.get(chunkIndex);
-  if (cached !== undefined && cached.attention === attention) return cached.range;
-  const range = measureEvictableRange(state, chunkIndex);
-  if (byChunk === undefined) {
-    byChunk = new Map();
-    evictableRangeCache.set(pieceTable, byChunk);
-  }
-  byChunk.set(chunkIndex, { attention, range });
-  return range;
-}
-
-function measureEvictableRange(state: DocumentState, chunkIndex: number): EvictableRange {
   const chunkBytes = state.pieceTable.chunkMap.get(chunkIndex);
   if (chunkBytes === undefined) return null;
   if (hasAttentionAnchoredToChunk(state, chunkIndex)) return null;
@@ -383,20 +337,36 @@ export function evictionHistoryLoss(
 }
 
 export function evictChunk(state: DocumentState, action: EvictChunkAction): DocumentState {
-  const { chunkIndex } = action;
-  const range = evictableRange(state, chunkIndex);
-  if (range === null) return state;
+  return tryEvict(state, action.chunkIndex, action.overLimit === true) ?? state;
+}
 
+/**
+ * Evict `chunkIndex` as EVICT_CHUNK does, or return null when it is refused:
+ * the chunk cannot be evicted (see `evictableRange`), or history points
+ * inside it and the policy keeps it (see `historyForEviction`).
+ */
+function tryEvict(state: DocumentState, chunkIndex: number, overLimit: boolean) {
+  const range = evictableRange(state, chunkIndex);
+  if (range === null) return null;
   // History positions survive eviction except those inside the chunk.
   const history = historyForEviction(
     state.pieceTable,
     state.history,
     chunkIndex,
     range.start,
-    action.overLimit === true,
+    overLimit,
   );
-  if (history === null) return state;
+  if (history === null) return null;
+  return evictRange(state, chunkIndex, range, history);
+}
 
+/** Remove `chunkIndex`, which lies at `range`, keeping `history`. */
+function evictRange(
+  state: DocumentState,
+  chunkIndex: number,
+  range: { readonly start: ByteOffset; readonly end: ByteOffset },
+  history: DocumentState["history"],
+): DocumentState {
   const deleted = pieceTableDelete(state.pieceTable, range.start, range.end);
   const nextChunkMap = PersistentMap.from(state.pieceTable.chunkMap).without(chunkIndex);
   const nextPieceTable = Object.freeze({ ...deleted, chunkMap: asReadonlyMap(nextChunkMap) });
@@ -434,4 +404,54 @@ export function evictChunk(state: DocumentState, action: EvictChunkAction): Docu
     selection,
     history,
   });
+}
+
+/** Undo and redo entries an eviction discards in all. */
+function lostEntries(loss: EvictionHistoryLoss): number {
+  return loss.undo + loss.redo;
+}
+
+/**
+ * Evict chunks from `chunkIndices` until at most `maxLoaded` chunks stay
+ * loaded (see `EvictChunksAction`).
+ *
+ * First every candidate whose eviction discards no history, in the order
+ * given, whatever the policy. A candidate that edits or an attention keep is
+ * skipped. Only if that is not enough does history decide the rest, and never
+ * under `"pin"`: `"drop"` takes them in the order given, and `"pin-bounded"`
+ * takes the one that discards the fewest entries each time, which keeps as
+ * much undo as the limit allows, with ties going to the earlier candidate.
+ *
+ * Each candidate's loss is measured once. An eviction drops only the oldest
+ * entries, so the other losses follow from what it dropped
+ * (see `historyLossAfterDrop`).
+ */
+export function evictChunks(state: DocumentState, action: EvictChunksAction): DocumentState {
+  const { maxLoaded } = action;
+  let next = state;
+  const lossy: { readonly chunk: number; loss: EvictionHistoryLoss }[] = [];
+  for (const chunk of new Set(action.chunkIndices)) {
+    if (next.pieceTable.chunkMap.size <= maxLoaded) return next;
+    const range = evictableRange(next, chunk);
+    if (range === null) continue;
+    const loss = historyLossForEviction(next.pieceTable, next.history, chunk, range.start);
+    if (lostEntries(loss) === 0) next = evictRange(next, chunk, range, next.history);
+    else lossy.push({ chunk, loss });
+  }
+
+  const policy = next.history.evictionPolicy;
+  while (policy !== "pin" && lossy.length > 0 && next.pieceTable.chunkMap.size > maxLoaded) {
+    let at = 0;
+    if (policy === "pin-bounded") {
+      for (let i = 1; i < lossy.length; i++) {
+        if (lostEntries(lossy[i]!.loss) < lostEntries(lossy[at]!.loss)) at = i;
+      }
+    }
+    const { chunk, loss } = lossy.splice(at, 1)[0]!;
+    // Evicting other chunks moved this one, so its range is read again. They
+    // cannot have made it unevictable: eviction adds no edits or attention.
+    next = tryEvict(next, chunk, true) ?? next;
+    for (const entry of lossy) entry.loss = historyLossAfterDrop(entry.loss, loss);
+  }
+  return next;
 }

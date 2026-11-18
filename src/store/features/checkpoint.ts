@@ -394,7 +394,7 @@ function restorePieces(
         );
       }
       // Invariants §1.4: chunk pieces appear in ascending chunkIndex order, which
-      // findReloadInsertionPos relies on to place a re-loaded chunk.
+      // loading relies on to place a re-loaded chunk.
       if (chunkIndex < lastChunkIndex) {
         fail(
           "CHUNK_ORDER",
@@ -1269,7 +1269,9 @@ function restoreAttention(
  * Use this envelope check to route values before restoring them. It accepts
  * every version `restoreCheckpoint` can migrate, so a true result may be an
  * older format: read the sections only through `restoreCheckpoint`, which
- * migrates the payload and validates its internal consistency.
+ * migrates the payload and validates its internal consistency. Code that
+ * reads sections directly must also check `value.version === CHECKPOINT_VERSION`.
+ * Before 5.0 this guard accepted only the current version.
  */
 export function isCheckpoint(value: unknown): value is CheckpointEnvelope {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;

@@ -62,7 +62,7 @@ Supported config fields (`DocumentStoreConfig`):
 - `encoding` — currently only `'utf-8'` is supported
 - `lineEnding`
 - `undoGroupTimeout`
-- `historyEvictionPolicy` — `'pin'` refuses to evict a chunk that history points inside, `'drop'` evicts it and discards those entries, and `'pin-bounded'` (default) refuses unless `EVICT_CHUNK` has `overLimit: true`, which ChunkManager sends only when nothing else brings it within `maxLoadedChunks`
+- `historyEvictionPolicy` — `'pin'` refuses to evict a chunk that history points inside, `'drop'` evicts it and discards those entries, and `'pin-bounded'` (default) refuses unless `EVICT_CHUNK` has `overLimit: true`, or `EVICT_CHUNKS` (which ChunkManager sends) finds nothing else brings it within its limit
 - `normalizeInsertedLineEndings` — coerce line endings on `INSERT`/`REPLACE` to match `lineEnding`
 - `totalFileSize` — pre-declared file size used for chunk sizing, and must be a non-negative safe integer
 - `maxDirtyRanges` — dirty-range count threshold before a full line-index rebuild is triggered
@@ -153,9 +153,9 @@ Supported event types:
 Auto-emitted by `store.createDocumentStoreWithEvents`:
 
 - `content-change` (`INSERT/DELETE/REPLACE/APPLY_REMOTE`)
-- `selection-change` (`SET_SELECTION`, and any other action that moves the selection: `INSERT`/`DELETE`/`REPLACE`/`APPLY_REMOTE` moving it past the edit, `UNDO`/`REDO`, `LOAD_CHUNK`/`LOAD_CHUNKS`/`EVICT_CHUNK`)
+- `selection-change` (`SET_SELECTION`, and any other action that moves the selection: `INSERT`/`DELETE`/`REPLACE`/`APPLY_REMOTE` moving it past the edit, `UNDO`/`REDO`, `LOAD_CHUNK`/`LOAD_CHUNKS`/`EVICT_CHUNK`/`EVICT_CHUNKS`)
 - `history-change` (`UNDO/REDO`)
-- `history-drop` (`EVICT_CHUNK` when the `'drop'` policy, or `'pin-bounded'` with `overLimit`, discards entries)
+- `history-drop` (`EVICT_CHUNK` or `EVICT_CHUNKS` when the `'drop'` policy, or `'pin-bounded'` with `overLimit` or through `EVICT_CHUNKS`, discards entries)
 - `attention-change` (create, delete, or content edits that rewrite stored points)
 - `save` (`MARK_SAVED`)
 - `dirty-change` (when dirty flag changes)
@@ -201,7 +201,7 @@ no transition that could emit them, and `isDirty` was only ever set to `true`.
 
 Primary selector namespace for O(1)/O(log n)/bounded operations:
 
-- `getText`, which rejects ranges that split UTF-8 code points and keeps a U+FEFF at the start of the range, as the line index counts it
+- `getText`, which rejects ranges that split UTF-8 code points and reads the document as `getValue` does: a byte order mark at offset 0 is stripped, so `getText(state, 0, length)` equals `getValue(state)`, and a U+FEFF anywhere else is kept. The line index counts a leading byte order mark as a character, so line 0 columns from `rendering` include it
 - `getLength`, `isUtf8Boundary`, `getBufferStats`
 - `findPieceAtPosition`
 - `isReconciledState`
@@ -280,8 +280,9 @@ Anchored history positions (chunk-safe undo and redo) change the meaning of expo
 - `AddPieceNode` gains `afterChunk`.
 - `SelectionRange` gains optional `anchorAfterChunk` and `headAfterChunk`, present on a range next to a chunk that is not loaded. A test that compares a selection range with `toEqual({ anchor, head })` sees them there.
 - `HistoryState` gains `evictionPolicy`.
+- `EVICT_CHUNK` can be refused because of history. Under the default `historyEvictionPolicy` (`"pin-bounded"`), it leaves a chunk loaded while undo or redo history points inside it, including after the edit there has been undone. In 4.x it evicted such a chunk regardless of history. Code that evicts chunks itself, without a ChunkManager, should check `store.didEvict` and either pass `overLimit: true` (`DocumentActions.evictChunk(index, true)`) to evict anyway and discard that history, or set `historyEvictionPolicy: "drop"`. Code that evicts to stay within a limit of loaded chunks can send `EVICT_CHUNKS` (`DocumentActions.evictChunks(candidates, maxLoaded)`), which ChunkManager uses: it evicts candidates that cost no history first and applies the policy to the rest.
 - `INSERT`, `DELETE`, and `REPLACE` move `state.selection` past the edit. An endpoint before the edit stays, and one after the removed range shifts by the change in length. A caret, or the start of a range, at the edit's start or inside the removed range goes after the inserted text. The end of a non-empty range at the edit's start or inside the removed range stays at the start, before the inserted text, so a range never grows to take in text inserted at its edge: with `{ anchor: 2, head: 5 }`, inserting 2 bytes at 5 leaves the head at 5. A range wholly inside the removed range collapses to a caret after the inserted text. The inline `selection` of an edit is the selection the edit comes from, not the one stored: it is moved the same way. In 4.x an edit stored the inline selection as given and otherwise left `state.selection` alone, so a caret at 20 now becomes 23 after inserting 3 bytes at 10. Callers that set the selection after each edit can keep doing so. Callers that relied on it staying put must save and restore it themselves.
 - `APPLY_REMOTE` moves `state.selection` past each remote change the same way, except that a caret where a change inserts text stays before that text. In 4.x it left `state.selection` alone.
 - `REDO` restores the selection the edit left, not a caret at the end of the redone change. `UNDO` still restores the selection the edit came from.
 - `selection-change` fires whenever an action replaces the selection, including `INSERT`, `DELETE`, `REPLACE`, `APPLY_REMOTE`, `UNDO`, and `REDO`.
-- Checkpoints are written as version 2. Restore still reads version 1, and `isCheckpoint` accepts both.
+- Checkpoints are written as version 2. Restore still reads version 1, and `isCheckpoint` accepts both. In 4.x `isCheckpoint` returned true only for the version the library wrote, so a true result also meant the current layout. It now means only that `restore` can read the value: a stored version 1 checkpoint passes, and its history positions are unanchored offsets without placement keys. Code that reads checkpoint sections directly, rather than through `restore`, must also check `value.version === CHECKPOINT_VERSION`.

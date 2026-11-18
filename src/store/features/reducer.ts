@@ -25,7 +25,13 @@ import {
   selectionRangesWithKeys,
 } from "./history-anchor.js";
 import { createPoint, createAttention, deleteAttention } from "../core/attention.js";
-import { declareChunkMetadata, evictChunk, loadChunk, loadChunks } from "./chunk-actions.js";
+import {
+  declareChunkMetadata,
+  evictChunk,
+  evictChunks,
+  loadChunk,
+  loadChunks,
+} from "./chunk-actions.js";
 
 /**
  * Normalize line endings in `text` to match `lineEnding`.
@@ -241,7 +247,12 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
           const before = newState.pieceTable.totalLength;
           newState = applyUntrackedEdit(
             newState,
-            { kind: "insert", position, insertText, fittedAfterChunk: afterChunk },
+            {
+              kind: "insert",
+              position,
+              insertText,
+              placement: { kind: "fitted", key: afterChunk },
+            },
             nextRevision,
           );
           moveSelection(position, position, newState.pieceTable.totalLength - before);
@@ -293,6 +304,9 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
 
     case "EVICT_CHUNK":
       return evictChunk(state, action);
+
+    case "EVICT_CHUNKS":
+      return evictChunks(state, action);
 
     case "CREATE_ATTENTION": {
       const root = state.pieceTable.root;

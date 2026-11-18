@@ -1063,9 +1063,13 @@ export function getValue(state: PieceTableState): LinearCost<string> {
 /**
  * Get text in the range [start, end).
  *
- * A U+FEFF at the start of the range is kept, as everywhere else in it: the
- * line index and column math count it as content (see `contentDecoder`).
- * Only `getValue` strips a byte order mark at the start of the document.
+ * Reads the document as `getValue` does: a byte order mark at document offset
+ * 0 is stripped, so `getText(state, 0, totalLength)` equals `getValue(state)`.
+ * A U+FEFF anywhere else is kept as content, including one at the start of a
+ * range that begins past offset 0.
+ *
+ * The line index counts a byte order mark as a character. Code that measures
+ * columns against the line index reads with `getContentText` instead.
  */
 export function getText(
   state: PieceTableState,
@@ -1073,6 +1077,22 @@ export function getText(
   end: ByteOffset,
 ): LinearCost<string> {
   // A negative start reads nothing, where getBytes clamps it to 0.
+  if (start < 0) return $proveCtx($beginCost("O(n)"), "");
+  const decoder = start === 0 ? textDecoder : contentDecoder;
+  return $proveCtx($beginCost("O(n)"), decoder.decode(getBytes(state, start, end)));
+}
+
+/**
+ * Get text in the range [start, end) as the line index counts it: every
+ * U+FEFF is kept, a byte order mark at document offset 0 included (see
+ * `contentDecoder`). Column math, history capture and line-index updates read
+ * with this, so their character counts match the line index.
+ */
+export function getContentText(
+  state: PieceTableState,
+  start: ByteOffset,
+  end: ByteOffset,
+): LinearCost<string> {
   if (start < 0) return $proveCtx($beginCost("O(n)"), "");
   return $proveCtx($beginCost("O(n)"), contentDecoder.decode(getBytes(state, start, end)));
 }
@@ -1153,7 +1173,7 @@ export function getLineLinearScan(state: PieceTableState, lineNumber: number): L
         $from(findLineOffsets(state, lineNumber)),
         $andThen((lineOffsets) => {
           if (lineOffsets === null) return $lift("O(n)", "");
-          return $from(getText(state, lineOffsets.start, lineOffsets.end));
+          return $from(getContentText(state, lineOffsets.start, lineOffsets.end));
         }),
       ),
     ),

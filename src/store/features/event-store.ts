@@ -96,14 +96,17 @@ export function withEvents(
       prepare("selection-change", createSelectionChangeEvent(prevState, nextState));
     }
 
-    // History events. EVICT_CHUNK changes history only when it discards
-    // entries: under the "drop" eviction policy, or "pin-bounded" with overLimit.
+    // History events. EVICT_CHUNK and EVICT_CHUNKS change history only when they discard
+    // entries: under "drop", or "pin-bounded" with overLimit or through EVICT_CHUNKS.
     if (action.type === "UNDO" || action.type === "REDO") {
       prepare(
         "history-change",
         createHistoryChangeEvent(action.type === "UNDO" ? "undo" : "redo", prevState, nextState),
       );
-    } else if (action.type === "EVICT_CHUNK" && prevState.history !== nextState.history) {
+    } else if (
+      (action.type === "EVICT_CHUNK" || action.type === "EVICT_CHUNKS") &&
+      prevState.history !== nextState.history
+    ) {
       prepare("history-drop", createHistoryDropEvent(prevState, nextState));
     }
 

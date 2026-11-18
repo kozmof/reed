@@ -746,7 +746,7 @@ interface EvictionCuts {
 }
 
 // Under "pin" or "pin-bounded", a refused eviction leaves history unchanged, and ChunkManager
-// tries every refused candidate again on each load. The cuts depend only on
+// offers every refused candidate again on each load (EVICT_CHUNKS). The cuts depend only on
 // the history, the chunk, and the chunk's anchored start. Loading or evicting
 // other chunks leaves the anchored start unchanged, and every edit, undo, and
 // redo replaces the history object, so the cuts are kept per history object.
@@ -778,7 +778,7 @@ const NO_CUTS = Object.freeze({ undoCut: -1, redoCut: -1 });
  * Where each stack must be cut to evict `chunkIndex`, whose first resident
  * byte is at `start`: -1 for a stack nothing in which points inside the chunk.
  * `historyForEviction` and `historyLossForEviction` both read the cuts here,
- * so the loss ChunkManager measures is what EVICT_CHUNK drops.
+ * so the loss EVICT_CHUNKS measures is what the eviction drops.
  */
 function evictionCutsAt(
   pieceTable: PieceTableState,

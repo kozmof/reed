@@ -518,13 +518,13 @@ export interface HistorySelectionState {
  *   chunks stay loaded, whatever a ChunkManager's `maxLoadedChunks` is.
  * - `"drop"`: evict anyway and discard the entries that point inside the chunk,
  *   together with every entry that can only be undone or redone after them.
- *   A ChunkManager still evicts every chunk it can without discarding history
- *   first, then the others least recently used first.
+ *   EVICT_CHUNKS, which a ChunkManager sends, still evicts every candidate it
+ *   can without discarding history first, then the others in the order given.
  * - `"pin-bounded"` (the default): as `"pin"`, except for an EVICT_CHUNK with
- *   `overLimit`, which evicts as `"drop"` does. A ChunkManager sends that only
- *   when more than `maxLoadedChunks` chunks would stay loaded otherwise, after
- *   evicting every chunk it can without discarding history. History then keeps
- *   the chunks it points into while memory allows.
+ *   `overLimit`, which evicts as `"drop"` does, and for EVICT_CHUNKS once
+ *   evicting every candidate it can without discarding history is not enough:
+ *   it then evicts the one that discards the fewest entries each time. History
+ *   then keeps the chunks it points into while a ChunkManager's limit allows.
  */
 export type HistoryEvictionPolicy = "pin" | "drop" | "pin-bounded";
 

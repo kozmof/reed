@@ -17,8 +17,8 @@
 
 Fully implemented:
 
-- Action types and creators: `LOAD_CHUNK`, `EVICT_CHUNK`, `DECLARE_CHUNK_METADATA`
-- Reducer handles `LOAD_CHUNK` (byte decode, first-load vs re-load, piece-table insertion, line-index update) and `EVICT_CHUNK` (range finding, add-piece overlap detection, tree pruning, line-index cleanup)
+- Action types and creators: `LOAD_CHUNK`, `LOAD_CHUNKS`, `EVICT_CHUNK`, `EVICT_CHUNKS`, `DECLARE_CHUNK_METADATA`
+- Reducer handles `LOAD_CHUNK` (byte decode, first-load vs re-load, piece-table insertion, line-index update) and `EVICT_CHUNK` (range finding, add-piece overlap detection, tree pruning, line-index cleanup). `EVICT_CHUNKS` evicts among candidates until a loaded-chunk limit is met, choosing them by history cost in the same transition
 - `createChunkManager(store, loader, config)` runtime sits above the store and coordinates:
   - Async chunk loading via user-supplied `ChunkLoader`
   - In-flight deduplication (concurrent `ensureLoaded` calls for the same chunk share one fetch)
@@ -107,8 +107,8 @@ one. An edit before the chunk moves it, so an older entry inside the chunk can h
 outside the chunk's current span, and one outside it can have a position inside that span.
 
 - `'pin'` — refuse the eviction. The chunk stays loaded until those entries leave history. Only the history limit bounds how many chunks this keeps loaded, whatever `maxLoadedChunks` a ChunkManager has.
-- `'drop'` — evict and discard those entries, along with every entry that can only be undone or redone after them. ChunkManager first evicts every chunk it can without discarding history, then the others, the least recently used first.
-- `'pin-bounded'` (default) — as `'pin'`, except that `EVICT_CHUNK` with `overLimit: true` evicts as `'drop'` does. ChunkManager first evicts every chunk it can without discarding history, and sends `overLimit` only when it is still above `maxLoadedChunks`. It then evicts, one at a time, the chunk whose eviction discards the fewest undo and redo entries, the least recently used on a tie.
+- `'drop'` — evict and discard those entries, along with every entry that can only be undone or redone after them. `EVICT_CHUNKS`, which ChunkManager sends, first evicts every candidate it can without discarding history, then the others in the order given (least recently used first).
+- `'pin-bounded'` (default) — as `'pin'`, except that `EVICT_CHUNK` with `overLimit: true` evicts as `'drop'` does. ChunkManager sends `EVICT_CHUNKS` with its unpinned chunks, least recently used first, and `maxLoadedChunks`. The reducer first evicts every candidate it can without discarding history. Only if it is still above the limit does it evict, one at a time, the candidate whose eviction discards the fewest undo and redo entries, the earlier candidate on a tie.
 
 Positions on a chunk boundary do not block eviction.
 
@@ -158,7 +158,7 @@ History boundaries:
 - `content-change` for local text edits and `APPLY_REMOTE`
 - `selection-change` whenever an action moves the selection, including an edit, undo, redo, and a chunk load or eviction
 - `history-change` for undo and redo
-- `history-drop` when eviction discards entries under the `'drop'` policy, or under `'pin-bounded'` with `overLimit`
+- `history-drop` when eviction discards entries under the `'drop'` policy, or under `'pin-bounded'` with `overLimit` or through `EVICT_CHUNKS`
 - `attention-change` when attention records are created, deleted, or migrated
 - `dirty-change`
 

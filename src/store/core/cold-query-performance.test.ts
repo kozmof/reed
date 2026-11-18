@@ -126,7 +126,7 @@ it("retains column checkpoints across more than 64 chunk-backed long lines", asy
     expect(lineCharToByte(state.pieceTable, i * width, (i + 1) * width, column)).toBe(
       i * width + 12000,
     );
-  const reads = vi.spyOn(pieces, "getText");
+  const reads = vi.spyOn(pieces, "getContentText");
   for (let i = 0; i < 80; i++)
     expect(lineCharToByte(state.pieceTable, i * width, (i + 1) * width, column)).toBe(
       i * width + 12000,
@@ -151,7 +151,7 @@ it("evicts the least recently queried lines when the checkpoint budget fills", a
   for (let line = 0; line < 8192; line++) query(line);
   query(0); // Keep the oldest line hot before creating another checkpoint.
   query(8192);
-  const reads = vi.spyOn(pieces, "getText");
+  const reads = vi.spyOn(pieces, "getContentText");
   query(0);
   expect(reads).not.toHaveBeenCalled();
   query(1);
@@ -177,7 +177,7 @@ it("preserves lazy column indexes across edit chains, compaction, and snapshot b
   let state = original;
   for (let i = 0; i < 40; i++)
     state = documentReducer(state, DocumentActions.insert(byteOffset(0), "x"));
-  const reads = vi.spyOn(pieces, "getText");
+  const reads = vi.spyOn(pieces, "getContentText");
   expect(lineCharToByte(state.pieceTable, 3 * width + 40, 4 * width + 40, column)).toBe(
     3 * width + 24040,
   );

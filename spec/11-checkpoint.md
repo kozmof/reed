@@ -229,7 +229,9 @@ store.createDocumentStoreWithEventsFromCheckpoint(checkpoint, config?, restoreOp
 
 `isCheckpoint` checks the format, a supported version (including older versions that restore
 migrates), and non-null object sections. It narrows to
-`CheckpointEnvelope`, whose section contents remain unvalidated and may use an older layout. Pass the value to
+`CheckpointEnvelope`, whose section contents remain unvalidated and may use an older layout. Before 5.0 it
+accepted only the current version; code that reads sections directly must also check
+`value.version === CHECKPOINT_VERSION`. Pass the value to
 `restore` for full validation. Restore entry points accept `unknown` input and check
 line boundaries and UTF-16 lengths against the resident document bytes.
 

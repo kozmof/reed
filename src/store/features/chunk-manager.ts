@@ -15,15 +15,6 @@ import type { ReedLogger } from "../../types/state.js";
 import type { DocumentStore } from "../../types/store.js";
 import { isChunkByteLengthValid } from "../core/piece-table.js";
 import { DocumentActions } from "./actions.js";
-import { pstackSize } from "../../types/state.js";
-import { evictionHistoryLoss } from "./chunk-actions.js";
-import { historyLossAfterDrop } from "./history-anchor.js";
-import type { EvictionHistoryLoss } from "./history-anchor.js";
-
-/** Undo and redo entries an eviction discards in all. */
-function lostEntries(loss: EvictionHistoryLoss): number {
-  return loss.undo + loss.redo;
-}
 
 // =============================================================================
 // Public interfaces
@@ -250,92 +241,33 @@ export function createChunkManager(
 
   function evictIfOverLimit(protectedChunkIndices?: number | ReadonlySet<number>): void {
     if (disposed) return;
-    let loadedCount = store.getSnapshot().pieceTable.chunkMap.size;
+    const isProtected = (chunkIndex: number) =>
+      typeof protectedChunkIndices === "number"
+        ? chunkIndex === protectedChunkIndices
+        : protectedChunkIndices?.has(chunkIndex) === true;
 
-    // Least recently used first: chunks the manager may evict and that are
-    // still in memory. Drops chunks that another path has evicted.
-    const candidates = (): number[] => {
-      const found: number[] = [];
+    if (store.getSnapshot().pieceTable.chunkMap.size > maxLoadedChunks) {
+      // Least recently used first: chunks the manager may evict that are still
+      // in memory. Pinned chunks and the chunks just loaded for the caller
+      // stay. The reducer chooses among them (see EVICT_CHUNKS): every chunk
+      // whose eviction costs no history first, then as the policy allows.
+      const candidates: number[] = [];
       for (const candidate of lruOrder) {
-        // Skip pinned chunks.
-        if (activeChunks.has(candidate)) continue;
-        // Keep the just-loaded chunk resident for the ensureLoaded()/prefetch caller.
-        if (
-          typeof protectedChunkIndices === "number"
-            ? candidate === protectedChunkIndices
-            : protectedChunkIndices?.has(candidate)
-        ) {
-          continue;
-        }
-        // Skip chunks no longer in memory (evicted by another path).
-        if (!store.getSnapshot().pieceTable.chunkMap.has(candidate)) {
-          lruRemove(candidate);
-          continue;
-        }
-        found.push(candidate);
+        if (activeChunks.has(candidate) || isProtected(candidate)) continue;
+        candidates.push(candidate);
       }
-      return found;
-    };
-    const evict = (candidate: number, overLimit: boolean): boolean => {
-      if (!store.getSnapshot().pieceTable.chunkMap.has(candidate)) {
-        lruRemove(candidate);
-        return false;
-      }
-      store.dispatch(DocumentActions.evictChunk(candidate, overLimit || undefined));
-      if (store.getSnapshot().pieceTable.chunkMap.has(candidate)) return false;
-      lruRemove(candidate);
-      loadedCount = store.getSnapshot().pieceTable.chunkMap.size;
-      return true;
-    };
-
-    // Evict least recently used chunks until within the limit, at first only
-    // those whose eviction discards no history, whatever the policy. A chunk
-    // that user edits or an attention keep cannot be evicted (its loss is
-    // null). A chunk history points inside is set aside, least recently used
-    // first, in case evicting the others is not enough.
-    const lossy: { readonly chunk: number; loss: EvictionHistoryLoss }[] = [];
-    for (const candidate of candidates()) {
-      if (loadedCount <= maxLoadedChunks || disposed) break;
-      const loss = evictionHistoryLoss(store.getSnapshot(), candidate);
-      if (loss === null) continue;
-      if (lostEntries(loss) === 0) evict(candidate, false);
-      else lossy.push({ chunk: candidate, loss });
-    }
-
-    // Discard history only when evicting every other candidate was not enough,
-    // and never under "pin". "drop" keeps least recently used order.
-    // "pin-bounded" evicts the chunk that discards the fewest entries each
-    // time, which keeps as much undo as the limit allows; ties go to the least
-    // recently used. The losses were measured once: an eviction drops only
-    // the oldest entries, so the others' losses follow from what it dropped.
-    const policy = store.getSnapshot().history.evictionPolicy;
-    while (policy !== "pin" && lossy.length > 0 && loadedCount > maxLoadedChunks && !disposed) {
-      let at = 0;
-      if (policy === "pin-bounded") {
-        for (let i = 1; i < lossy.length; i++) {
-          if (lostEntries(lossy[i]!.loss) < lostEntries(lossy[at]!.loss)) at = i;
-        }
-      }
-      const { chunk, loss } = lossy.splice(at, 1)[0]!;
-      const before = store.getSnapshot();
-      if (!evict(chunk, true)) continue;
-      const after = store.getSnapshot();
-      // A subscriber that changes the document while the chunk is evicted
-      // leaves the losses stale, so they are measured again.
-      const onlyThisEviction =
-        after.revision === before.revision + 1 &&
-        pstackSize(after.history.undoStack) === pstackSize(before.history.undoStack) - loss.undo &&
-        pstackSize(after.history.redoStack) === pstackSize(before.history.redoStack) - loss.redo;
-      for (let i = lossy.length - 1; i >= 0; i--) {
-        const entry = lossy[i]!;
-        const next = onlyThisEviction
-          ? historyLossAfterDrop(entry.loss, loss)
-          : evictionHistoryLoss(after, entry.chunk);
-        if (next === null || !after.pieceTable.chunkMap.has(entry.chunk)) lossy.splice(i, 1);
-        else entry.loss = next;
+      if (candidates.length > 0) {
+        store.dispatch(DocumentActions.evictChunks(candidates, maxLoadedChunks));
       }
     }
 
+    // Forget chunks no longer in memory, evicted here or by another path.
+    const { chunkMap } = store.getSnapshot().pieceTable;
+    for (const chunkIndex of lruOrder) {
+      if (!chunkMap.has(chunkIndex)) lruRemove(chunkIndex);
+    }
+
+    const loadedCount = chunkMap.size;
     const overLimit = loadedCount > maxLoadedChunks;
     // Warn when the cache goes over the limit, not on every load while it stays
     // there: under "pin", history keeping chunks resident is a steady state.

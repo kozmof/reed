@@ -10,8 +10,8 @@
  * - A byte of chunk `i` has key `i - 1`.
  * - A byte of an add piece has the key stored on the piece (`afterChunk`).
  * - A byte of the original buffer has key `-1`.
- * Keys never decrease in document order. `findReloadInsertionPos` relies on that
- * to place a loaded chunk `c` before the first piece whose key is >= c.
+ * Keys never decrease in document order. Loading relies on that to place a
+ * chunk `c` before the first piece whose key is >= c (`keySpan(root, c).start`).
  *
  * Anchored position: the pair (K, n) with
  *   n = residentOffset - (sum of original lengths of loaded chunks with index <= K).
