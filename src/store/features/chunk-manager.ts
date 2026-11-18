@@ -247,7 +247,8 @@ export function createChunkManager(
         ? chunkIndex === protectedChunkIndices
         : protectedChunkIndices?.has(chunkIndex) === true;
 
-    const excess = store.getSnapshot().pieceTable.chunkMap.size - maxLoadedChunks;
+    const resident = store.getSnapshot().pieceTable.chunkMap;
+    const excess = resident.size - maxLoadedChunks;
     if (excess > 0) {
       // Least recently used first: chunks the manager may evict that are still
       // in memory. Pinned chunks and the chunks just loaded for the caller
@@ -260,7 +261,6 @@ export function createChunkManager(
       // the full pass would evict first, so offering every candidate only
       // when this falls short chooses the same chunks.
       const head: number[] = [];
-      const resident = store.getSnapshot().pieceTable.chunkMap;
       for (const candidate of lruOrder) {
         if (head.length === excess) break;
         // lruOrder can still list chunks another path evicted; skip them so
@@ -270,16 +270,16 @@ export function createChunkManager(
       if (head.length > 0) {
         store.dispatch(DocumentActions.evictChunks(head, maxLoadedChunks, true));
       }
-      if (store.getSnapshot().pieceTable.chunkMap.size > maxLoadedChunks) {
+      const before = store.getSnapshot();
+      const remaining = before.pieceTable.chunkMap;
+      if (remaining.size > maxLoadedChunks) {
         const candidates: number[] = [];
-        const { chunkMap } = store.getSnapshot().pieceTable;
         for (const candidate of lruOrder) {
-          if (evictable(candidate) && chunkMap.has(candidate)) candidates.push(candidate);
+          if (evictable(candidate) && remaining.has(candidate)) candidates.push(candidate);
         }
         if (candidates.length > 0) {
           // Without keepHistory this pass may discard history, as the policy
           // allows. Undo then stops short with no other sign, so say so.
-          const before = store.getSnapshot();
           store.dispatch(DocumentActions.evictChunks(candidates, maxLoadedChunks));
           const after = store.getSnapshot();
           if (after.history !== before.history) {

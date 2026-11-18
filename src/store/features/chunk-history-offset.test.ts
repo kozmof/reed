@@ -3035,6 +3035,32 @@ describe("twenty-first review regressions", () => {
     },
   );
 
+  it.each([
+    ["UNDO", "undoStack", "redoStack"],
+    ["REDO", "redoStack", "undoStack"],
+  ] as const)(
+    "%s drops a delete whose placement key no longer fits instead of removing other bytes",
+    (type, stack, other) => {
+      const state = twoChunks();
+      // [12, 13) is inside chunk 1, whose bytes have key 0, so it is in range
+      // but key -1 does not fit there. Undo of an insert and redo of a delete
+      // both remove those bytes.
+      const stale = entryOf(
+        stack === "undoStack" ? makeInsertChange(12, "Y", -1) : makeDeleteChange(12, "Y", -1),
+      );
+      const withStale: DocumentState = Object.freeze({
+        ...state,
+        history: Object.freeze({ ...state.history, [stack]: pstackPush(null, stale) }),
+      });
+      const action = type === "UNDO" ? DocumentActions.undo() : DocumentActions.redo();
+      const next = documentReducer(withStale, action);
+      expect(next.pieceTable).toBe(withStale.pieceTable);
+      expect(next.history[stack]).toBeNull();
+      expect(next.history[other]).toBe(withStale.history[other]);
+      expect(next.revision).toBe(withStale.revision);
+    },
+  );
+
   it("reports undo and redo of an entry that changes no bytes as history-change", () => {
     const s = createDocumentStoreWithEvents({ content: "hello world", reconcileMode: "none" });
     s.dispatch(DocumentActions.replace(byteOffset(5), byteOffset(5), ""));

@@ -772,10 +772,12 @@ export interface DocumentMetadata {
 export interface DocumentState<M extends EvaluationMode = EvaluationMode> {
   /**
    * State revision. Increments by 1 for content edits
-   * (INSERT/DELETE/REPLACE/APPLY_REMOTE), SET_SELECTION,
+   * (INSERT/DELETE/REPLACE/APPLY_REMOTE), SET_SELECTION, MARK_SAVED,
    * HISTORY_CLEAR, UNDO/REDO, and LOAD_CHUNK/EVICT_CHUNK when they change state.
-   * Reconciliation, CREATE_ATTENTION/DELETE_ATTENTION, and DECLARE_CHUNK_METADATA
-   * can return a new state reference without incrementing the revision. See the "Revision
+   * LOAD_CHUNKS and EVICT_CHUNKS increment it by 1 per chunk loaded or evicted.
+   * Reconciliation, CREATE_ATTENTION/DELETE_ATTENTION, DECLARE_CHUNK_METADATA,
+   * and an UNDO/REDO that drops a stale entry can return a new state reference
+   * without incrementing the revision. See the "Revision
    * semantics" section in docs/invariants.md for the full contract.
    */
   readonly revision: number;

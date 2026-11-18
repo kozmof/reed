@@ -273,9 +273,20 @@ increments by exactly 1 for the following actions when they change state.
 
 - content edits — `INSERT`, `DELETE`, `REPLACE`, `APPLY_REMOTE`
 - `SET_SELECTION`
-- `HISTORY_CLEAR`, `UNDO`, `REDO`
+- `HISTORY_CLEAR`, `UNDO`, `REDO` (except the drop described below)
 - `MARK_SAVED`
 - `LOAD_CHUNK`, `EVICT_CHUNK`
+
+`LOAD_CHUNKS` and `EVICT_CHUNKS` increment it by 1 for each chunk they load
+or evict, so one dispatch can raise it by more than 1, as dispatching the
+single-chunk actions one by one would. Do not assume `next.revision ===
+prev.revision + 1` after a single dispatch; compare with `>` instead.
+
+An `UNDO` or `REDO` whose entry no longer resolves against the current chunk
+layout drops that entry and returns a new state with changed `history` but the
+same `revision`. The event store relies on this to report a `history-drop`
+rather than a `history-change`. To catch every history change, compare
+`state.history !== prev.history`.
 
 Because it moves on selection and history actions too, `revision` alone cannot
 tell you that content changed. To detect a content change, compare piece-table
@@ -290,6 +301,8 @@ The following operations can produce a new immutable state reference and notify 
 - `CREATE_ATTENTION` / `DELETE_ATTENTION` — mutate the piece-anchored reference
   layer only
 - `DECLARE_CHUNK_METADATA` — registers line counts for unloaded chunks
+- an `UNDO` or `REDO` that drops a stale entry — changes `history` only
+  (see 5.1)
 
 Describe these operations as producing a new immutable state reference without incrementing `revision`.
 

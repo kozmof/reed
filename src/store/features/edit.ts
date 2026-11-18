@@ -70,7 +70,12 @@ import {
   residentOffset,
   selectionRangesWithKeys,
 } from "./history-anchor.js";
-import { coalescedTails, lastHistoryChange, removedLength } from "./history-entry.js";
+import {
+  coalescedTails,
+  insertedLength,
+  lastHistoryChange,
+  removedLength,
+} from "./history-entry.js";
 
 // =============================================================================
 // Position Validation
@@ -669,17 +674,20 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
         `${state.pieceTable.totalLength}-byte document`,
     );
   }
-  // The recorded key is checked again when the text goes in, which throws a
-  // plain RangeError. Check it here, after the removed bytes, so a key that no
-  // longer fits drops the entry like an out-of-range position does.
+  // The recorded key must fit once the removed bytes are gone, the same rule
+  // checkpoint validation applies. Removed bytes are what the other direction
+  // inserts back with this key, so a delete is checked too: one whose key no
+  // longer fits would remove bytes it never recorded. Inserted text is checked
+  // again when it goes in, which throws a plain RangeError, so checking here
+  // drops the entry like an out-of-range position does.
   if (
-    change.type !== "delete" &&
-    change.byteLength > 0 &&
+    (removed > 0 || insertedLength(change, 1) > 0) &&
     !keyFitsAfterRemoving(state.pieceTable, position, position + removed, change.afterChunk)
   ) {
     throw new StaleHistoryChangeError(
-      `history ${change.type} at anchored position ${change.position} inserts text with ` +
-        `placement key ${change.afterChunk} at offset ${position}, where it no longer fits`,
+      `history ${change.type} at anchored position ${change.position} with placement key ` +
+        `${change.afterChunk} resolves to [${position}, ${position + removed}), where the ` +
+        `key no longer fits`,
     );
   }
   const insertBytes =

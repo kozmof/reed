@@ -65,13 +65,10 @@ function validateBoundaryPosition(state: DocumentState, position: number, what: 
 // =============================================================================
 
 /**
- * Update selection state. A selection equal to the current one, stored keys
- * included, keeps the current object, so an editor that echoes back the
- * selection an edit already moved to does not report a second change.
- */
-/**
- * Apply SET_SELECTION. Ranges equal to the current selection return `state`
- * itself, so neither revision moves and no listener or event fires.
+ * Apply SET_SELECTION. Ranges equal to the current selection, stored keys
+ * included, return `state` itself, so neither revision moves and no listener
+ * or event fires. An editor that echoes back the selection an edit already
+ * moved to does not report a second change.
  */
 function setSelection(state: DocumentState, ranges: readonly SelectionRange[]): DocumentState {
   if (ranges.length === 0) {
