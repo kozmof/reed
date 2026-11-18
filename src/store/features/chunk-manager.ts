@@ -124,6 +124,27 @@ export interface ChunkManager {
 // Refused candidates
 // =============================================================================
 
+/**
+ * Why a chunk stays resident while the cache is over the limit after an
+ * eviction pass:
+ * - `"pinned"`: in the active set (`setActiveChunks`).
+ * - `"requested"`: just loaded for the call that ran the pass.
+ * - `"held"`: offered for eviction and refused, since user edits or undo
+ *   history point into it.
+ * - `"untracked"`: loaded without this manager, so it never offers it.
+ */
+type PressureCause = "pinned" | "requested" | "held" | "untracked";
+
+/** Every `PressureCause`, in the order the pressure warning lists them. */
+const PRESSURE_CAUSES: readonly PressureCause[] = ["pinned", "requested", "held", "untracked"];
+
+const PRESSURE_CAUSE_TEXT: Readonly<Record<PressureCause, string>> = {
+  pinned: "pinned as active",
+  requested: "just loaded for the current request",
+  held: "hold user edits or undo history",
+  untracked: "loaded outside this ChunkManager",
+};
+
 /** Chunks an eviction pass could not evict, and the state it measured them in. */
 interface Stuck {
   readonly history: DocumentState["history"];
@@ -247,9 +268,12 @@ export function createChunkManager(
   // Pinned chunks: never evicted.
   let activeChunks = new Set<number>();
 
-  // True while more chunks are loaded than maxLoadedChunks allows, as of the
-  // last eviction attempt. The pressure warning is logged when it turns true.
-  let underPressure = false;
+  // While more chunks are loaded than maxLoadedChunks allows, as of the last
+  // eviction attempt, the reasons chunks have stayed resident since the cache
+  // went over (see `PressureCause`); null while within the limit. The pressure
+  // warning is logged when a reason is new, so once per cause rather than on
+  // every load while the cache stays over.
+  let pressureCauses: Set<PressureCause> | null = null;
 
   // Candidates the last eviction pass measured and could not evict, though
   // over the limit, and the state it measured them in. Under "pin", history
@@ -424,16 +448,41 @@ export function createChunkManager(
     }
 
     const loadedCount = chunkMap.size;
-    const overLimit = loadedCount > maxLoadedChunks;
-    // Warn when the cache goes over the limit, not on every load while it stays
-    // there: under "pin", history keeping chunks resident is a steady state.
-    const startedPressure = overLimit && !underPressure;
-    underPressure = overLimit;
-    if (startedPressure) {
+    if (loadedCount <= maxLoadedChunks) {
+      pressureCauses = null;
+      return;
+    }
+    // Warn when the cache goes over the limit, and when a reason not seen
+    // since then keeps chunks resident, not on every load while it stays
+    // over: under "pin", history keeping chunks resident is a steady state.
+    const counts = new Map<PressureCause, number>();
+    for (const chunkIndex of chunkMap.keys()) {
+      const cause: PressureCause = activeChunks.has(chunkIndex)
+        ? "pinned"
+        : isProtected(chunkIndex)
+          ? "requested"
+          : lruOrder.has(chunkIndex)
+            ? "held"
+            : "untracked";
+      counts.set(cause, (counts.get(cause) ?? 0) + 1);
+    }
+    const seen = pressureCauses ?? new Set<PressureCause>();
+    pressureCauses = seen;
+    let newCause = false;
+    for (const cause of counts.keys()) {
+      if (!seen.has(cause)) {
+        seen.add(cause);
+        newCause = true;
+      }
+    }
+    if (newCause) {
+      const reasons = PRESSURE_CAUSES.filter((cause) => counts.has(cause)).map(
+        (cause) => `${counts.get(cause)} ${PRESSURE_CAUSE_TEXT[cause]}`,
+      );
       logger?.warn?.(
-        `[ChunkManager] eviction pressure: ${loadedCount} chunks loaded but all non-pinned ` +
-          `candidates hold user edits or undo history. Memory limit (${maxLoadedChunks}) exceeded.` +
-          (store.getSnapshot().history.evictionPolicy === "pin"
+        `[ChunkManager] eviction pressure: ${loadedCount} chunks loaded, over the memory ` +
+          `limit (${maxLoadedChunks}), and none can be evicted: ${reasons.join("; ")}.` +
+          (counts.has("held") && store.getSnapshot().history.evictionPolicy === "pin"
             ? ` The "pin" history eviction policy keeps chunks undo history points into; ` +
               `"pin-bounded" or "drop" lets eviction discard that history.`
             : ""),

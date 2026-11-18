@@ -2784,6 +2784,22 @@ describe("nineteenth review regressions", () => {
     expect(query.getText(pt, byteOffset(0), byteOffset(pt.totalLength))).toBe(getValue(pt));
   });
 
+  it("strips one that starts chunk 1 once loaded chunk 0's bytes are all deleted", () => {
+    // Nothing unloaded comes before chunk 1, so it starts the file, as it
+    // does in an unchunked document with the same bytes.
+    const s = makeStore(2);
+    load(s, 0);
+    s.dispatch(DocumentActions.loadChunk(1, enc(BOM_CHUNK1)));
+    s.dispatch(DocumentActions.delete(byteOffset(0), byteOffset(CHUNK0.length)));
+    const pt = s.getSnapshot().pieceTable;
+    expect(getValue(pt)).toBe("BBBB\n");
+    expect(query.getText(pt, byteOffset(0), byteOffset(pt.totalLength))).toBe("BBBB\n");
+
+    const plain = createDocumentStore({ content: CHUNK0 + BOM_CHUNK1 });
+    plain.dispatch(DocumentActions.delete(byteOffset(0), byteOffset(CHUNK0.length)));
+    expect(getValue(plain.getSnapshot().pieceTable)).toBe(getValue(pt));
+  });
+
   it("keeps one typed at resident offset 0 while chunk 0 is not loaded", () => {
     // The text goes with chunk 1, so chunk 0 loads before it.
     const s = makeStore(2);
@@ -2934,6 +2950,29 @@ describe("twentieth review regressions", () => {
     store.dispatch(DocumentActions.undo());
     expect(seen).toEqual(["drop"]);
   });
+
+  it.each([
+    ["UNDO", "undoStack"],
+    ["REDO", "redoStack"],
+  ] as const)(
+    "reports a dropped %s as history-drop when the step runs on a copy",
+    (type, stack) => {
+      // The step runs on a copy of the snapshot, not on the object the event
+      // layer compares against, so the outcome must come from the states alone.
+      let state = withStaleTop(stack);
+      const base = createDocumentStore();
+      const store = withEvents(
+        Object.assign(Object.create(base), { getSnapshot: () => state }),
+        (action: DocumentAction) => (state = documentReducer(Object.freeze({ ...state }), action)),
+        undefined,
+      );
+      const seen: string[] = [];
+      store.addEventListener("history-change", () => seen.push("change"));
+      store.addEventListener("history-drop", () => seen.push("drop"));
+      store.dispatch(type === "UNDO" ? DocumentActions.undo() : DocumentActions.redo());
+      expect(seen).toEqual(["drop"]);
+    },
+  );
 
   it.each([
     ["UNDO", "undoStack"],

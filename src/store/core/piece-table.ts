@@ -1027,14 +1027,22 @@ export function pieceTableDelete(
 
 /**
  * True when resident offset 0 is the start of the file, so a U+FEFF there is a
- * byte order mark. In chunk mode the first resident byte belongs to a later
- * chunk while chunk 0 is not loaded, and a U+FEFF there is file content. The
- * first byte starts the file exactly when its placement key puts no chunk
- * before it.
+ * byte order mark. The first resident byte's placement key K puts chunks
+ * 0..K before it. It starts the file when none of those chunks has bytes that
+ * are not resident: K is NO_CHUNK, or every chunk 0..K is loaded (their bytes
+ * were all deleted). While one of them is not loaded, a U+FEFF at resident
+ * offset 0 belongs to a later chunk and is file content.
  */
 export function residentStartIsFileStart(state: PieceTableState): boolean {
   const first = pieceAt(state.root, 0)?.node;
-  return first === undefined || pieceKey(first) === NO_CHUNK;
+  if (first === undefined) return true;
+  const key = pieceKey(first);
+  // Chunks 0..key are key + 1 distinct indices, so a smaller map lacks one.
+  if (key >= state.chunkMap.size) return false;
+  for (let chunk = 0; chunk <= key; chunk++) {
+    if (!state.chunkMap.has(chunk)) return false;
+  }
+  return true;
 }
 
 /**
@@ -1049,8 +1057,8 @@ function decoderFromStart(state: PieceTableState): TextDecoder {
  * Get the entire document content as a string.
  *
  * A byte order mark at the start of the file is stripped. In chunk mode, while
- * chunk 0 is not loaded, a U+FEFF that starts the resident text belongs to a
- * later chunk and is kept.
+ * a chunk before the first resident byte is not loaded, a U+FEFF that starts
+ * the resident text belongs to a later chunk and is kept.
  */
 export function getValue(state: PieceTableState): LinearCost<string> {
   if (state.root === null) return $proveCtx($beginCost("O(n)"), "");

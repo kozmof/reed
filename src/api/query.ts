@@ -45,7 +45,7 @@ function assertTextBoundaries(
  * Text in [start, end) as `getValue` reads it: a byte order mark that starts
  * the file is stripped. A U+FEFF anywhere else is content and is kept, such as
  * at the start of a range past offset 0, or at resident offset 0 in chunk mode
- * while chunk 0 is not loaded.
+ * while a chunk before the first resident byte is not loaded.
  */
 function getTextAtBoundaries(
   state: Parameters<typeof getText>[0],

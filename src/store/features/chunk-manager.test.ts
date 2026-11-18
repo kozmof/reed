@@ -414,6 +414,31 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     manager.dispose();
   });
 
+  it("names what keeps chunks resident, and warns again when a new reason does", async () => {
+    const { store, manager, warn } = setup("pin");
+    // Every chunk was just requested, so none can go; history holds none.
+    await manager.ensureLoadedMany([0, 1, 2]);
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toContain("3 just loaded for the current request");
+    expect(warn.mock.calls[0]![0]).not.toContain("undo history");
+
+    // Still over the limit, now because history holds chunk 0 and the others
+    // are pinned: both reasons are new, so it warns again and names them.
+    pinChunk0(store);
+    manager.setActiveChunks([1, 2]);
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls[1]![0]).toContain("2 pinned as active");
+    expect(warn.mock.calls[1]![0]).toContain("1 hold user edits or undo history");
+    expect(warn.mock.calls[1]![0]).toContain('"pin-bounded"');
+
+    // The same reasons again: no new warning.
+    manager.setActiveChunks([2, 1]);
+    expect(warn).toHaveBeenCalledTimes(2);
+    manager.dispose();
+  });
+
   it("does not offer chunks history pins again until the document changes", async () => {
     const { store, manager } = setup("pin");
     await manager.ensureLoaded(0);

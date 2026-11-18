@@ -126,13 +126,12 @@ export function withEvents(
     // History events. EVICT_CHUNK and EVICT_CHUNKS change history only when they discard
     // entries: under "drop", or "pin-bounded" with overLimit or through EVICT_CHUNKS.
     // UNDO and REDO discard entries instead of applying one that no longer
-    // replays; the document is then unchanged. The history step records a
-    // drop against the state it ran on, prevState, so read the outcome from
-    // there. The piece table cannot tell them apart, since replaying an entry
-    // that changes no bytes keeps it too.
+    // replays; the document is then unchanged. The piece table cannot tell
+    // that apart from replaying an entry that changes no bytes, so the
+    // outcome is read from how the history stacks changed.
     const historyDiscarded =
       (action.type === "UNDO" || action.type === "REDO") &&
-      isDroppedHistoryStep(action.type === "UNDO" ? "undo" : "redo", prevState);
+      isDroppedHistoryStep(action.type === "UNDO" ? "undo" : "redo", prevState, nextState);
     if ((action.type === "UNDO" || action.type === "REDO") && !historyDiscarded) {
       prepare(
         "history-change",

@@ -792,8 +792,10 @@ export interface DocumentState<M extends EvaluationMode = EvaluationMode> {
    * O(1) identity check, including across selection-only changes.
    *
    * Other actions move the selection without changing this counter: edits,
-   * UNDO and REDO, and LOAD_CHUNK, LOAD_CHUNKS, or EVICT_CHUNK, which shift
-   * offsets after the loaded or evicted chunk. To redraw the caret on every
+   * UNDO and REDO, and LOAD_CHUNK, LOAD_CHUNKS, EVICT_CHUNK, or EVICT_CHUNKS,
+   * which shift offsets after the loaded or evicted chunks. An eviction also
+   * collapses an endpoint inside an evicted chunk to where that chunk was.
+   * To redraw the caret on every
    * selection change, compare `state.selection !== prev.selection` (or listen
    * for 'selection-change'). An action that leaves the selection in place
    * keeps the same selection object.
