@@ -118,25 +118,44 @@ function captureLineIndex(lineIndex: LineIndexState<"eager">): CheckpointLineInd
  * moves the selection with it, so a stored key fits its offset.
  */
 function captureSelection(selection: SelectionState): CheckpointSelection {
+  return captureRanges(selection, null);
+}
+
+/** Capture a history selection, whose key -1 means no chunk (see `HistoryAnchor`). */
+function captureHistorySelection(selection: HistorySelectionState): CheckpointHistorySelection {
+  return captureRanges(selection, -1);
+}
+
+/**
+ * Capture a live or history selection as `[anchor, head]` ranges, followed by
+ * both placement keys unless both are `none`. A key the range does not store
+ * is written as `none`. Both selection formats share this one wire shape and
+ * differ only in what stands for "no key".
+ */
+function captureRanges<N extends null | -1>(
+  selection: {
+    readonly ranges: readonly {
+      readonly anchor: number;
+      readonly head: number;
+      readonly anchorAfterChunk?: number | undefined;
+      readonly headAfterChunk?: number | undefined;
+    }[];
+    readonly primaryIndex: number;
+  },
+  none: N,
+): {
+  ranges: (readonly [number, number] | readonly [number, number, number | N, number | N])[];
+  primaryIndex: number;
+} {
   return {
     ranges: selection.ranges.map((range) => {
-      const anchorKey = range.anchorAfterChunk ?? null;
-      const headKey = range.headAfterChunk ?? null;
-      return anchorKey === null && headKey === null
+      const anchorKey: number | N = range.anchorAfterChunk ?? none;
+      const headKey: number | N = range.headAfterChunk ?? none;
+      const keyless = anchorKey === none && headKey === none;
+      return keyless
         ? ([range.anchor, range.head] as const)
         : ([range.anchor, range.head, anchorKey, headKey] as const);
     }),
-    primaryIndex: selection.primaryIndex,
-  };
-}
-
-function captureHistorySelection(selection: HistorySelectionState): CheckpointHistorySelection {
-  return {
-    ranges: selection.ranges.map((range) =>
-      range.anchorAfterChunk === -1 && range.headAfterChunk === -1
-        ? ([range.anchor, range.head] as const)
-        : ([range.anchor, range.head, range.anchorAfterChunk, range.headAfterChunk] as const),
-    ),
     primaryIndex: selection.primaryIndex,
   };
 }

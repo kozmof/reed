@@ -22,48 +22,59 @@ import {
   type EventHandler,
   type DocumentEventMap,
 } from "./events.js";
-import { reportCaughtError } from "./diagnostics.js";
+import { MAX_OBSERVER_REENTRANT_STEPS, reportCaughtError } from "./diagnostics.js";
 import { isDroppedHistoryStep } from "./history.js";
 
 /**
  * Wrap a store in the typed event layer. Shared by the config-built and
  * checkpoint-built entry points.
+ *
+ * `commit` applies an action to `baseStore` and returns the state the reducer
+ * produced for it. A store listener can dispatch again while the action
+ * notifies it, so `baseStore.getSnapshot()` afterwards can already include
+ * that listener's actions; the events describe the reducer's state instead.
  */
 export function withEvents(
   baseStore: ReconcilableDocumentStore,
+  commit: (action: DocumentAction) => DocumentState,
   logger: DocumentStoreRuntimeConfig["logger"],
 ): DocumentStoreWithEvents {
   const emitter = createEventEmitter(logger);
   let disposed = false;
 
-  // The state the reducer returned for the dispatch now notifying, which the
-  // events describe. A store listener can dispatch again while it is
-  // notified, so the state `baseStore.dispatch` returns can already include
-  // that listener's actions. This listener is the base store's first (both
-  // callers pass a fresh store), so it runs before any listener that could
-  // dispatch. A dispatch that notifies no one, inside a transaction or from a
-  // listener, returns the reducer's state itself.
-  let awaitingCommit = false;
-  let committed: DocumentState | null = null;
-  baseStore.subscribe(() => {
-    if (!awaitingCommit) return;
-    awaitingCommit = false;
-    committed = baseStore.getSnapshot();
-  });
-
   // Depth-indexed event buffer. Each entry corresponds to one open transaction level.
   // Index 0 = outermost open transaction, last = innermost.
   const pendingEventLevels: Array<Array<() => void>> = [];
 
-  /**
-   * Buffer event delivery during a transaction. Otherwise, emit immediately.
-   */
-  function bufferOrEmit(fn: () => void): void {
-    if (disposed) return;
-    if (pendingEventLevels.length > 0) {
-      pendingEventLevels[pendingEventLevels.length - 1]!.push(fn);
-    } else {
-      fn();
+  // Events reach handlers in the order their actions committed. A store
+  // listener or an event handler can dispatch while events are delivered.
+  // Each dispatch reserves its place in this queue before it commits, so the
+  // events of an action dispatched from inside another queue behind it, and
+  // only the outermost call delivers.
+  const deliveryQueue: Array<Array<() => void>> = [];
+  let committing = 0;
+  let delivering = false;
+
+  function deliver(): void {
+    if (committing > 0 || delivering) return;
+    delivering = true;
+    try {
+      for (let i = 0; i < deliveryQueue.length; i++) {
+        if (i >= MAX_OBSERVER_REENTRANT_STEPS) {
+          reportCaughtError(
+            logger,
+            "Document event cycle exceeded the re-entrancy limit",
+            new Error(
+              `Event handlers dispatched more than ${MAX_OBSERVER_REENTRANT_STEPS} synchronous actions`,
+            ),
+          );
+          break;
+        }
+        for (const emit of deliveryQueue[i]!) emit();
+      }
+    } finally {
+      deliveryQueue.length = 0;
+      delivering = false;
     }
   }
 
@@ -172,33 +183,33 @@ export function withEvents(
   function dispatch(action: DocumentAction): DocumentState {
     if (disposed) return baseStore.getSnapshot();
     const prevState = baseStore.getSnapshot();
-    const outerAwaiting = awaitingCommit;
-    const outerCommitted = committed;
-    awaitingCommit = true;
-    committed = null;
-    let currentState: DocumentState;
-    let nextState: DocumentState;
+    const slot: Array<() => void> = [];
+    deliveryQueue.push(slot);
     try {
-      currentState = baseStore.dispatch(action);
-      nextState = committed ?? currentState;
-    } finally {
-      awaitingCommit = outerAwaiting;
-      committed = outerCommitted;
-    }
-
-    if (nextState !== prevState) {
+      let nextState: DocumentState;
+      committing++;
       try {
-        for (const emit of prepareEventsForAction(action, prevState, nextState)) {
-          bufferOrEmit(emit);
-        }
-      } catch (error) {
-        // The state transition has already committed. Event metadata is
-        // observational and must not make callers believe the edit failed.
-        reportCaughtError(logger, "Event preparation threw an error", error);
+        nextState = commit(action);
+      } finally {
+        committing--;
       }
+
+      if (nextState !== prevState) {
+        try {
+          const events = prepareEventsForAction(action, prevState, nextState);
+          const level = pendingEventLevels[pendingEventLevels.length - 1];
+          (level ?? slot).push(...events);
+        } catch (error) {
+          // The state transition has already committed. Event metadata is
+          // observational and must not make callers believe the edit failed.
+          reportCaughtError(logger, "Event preparation threw an error", error);
+        }
+      }
+    } finally {
+      deliver();
     }
 
-    return currentState;
+    return baseStore.getSnapshot();
   }
 
   /**
@@ -230,7 +241,8 @@ export function withEvents(
       baseStore.commitTransaction();
       pendingEventLevels.pop();
       if (isOutermost) {
-        for (const fn of events) fn();
+        if (!disposed) deliveryQueue.push(events);
+        deliver();
       } else {
         pendingEventLevels[pendingEventLevels.length - 1]!.push(...events);
       }

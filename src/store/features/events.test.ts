@@ -661,6 +661,89 @@ describe("Store event integration", () => {
   });
 });
 
+describe("Store event ordering under nested dispatch", () => {
+  const revisions = (store: ReturnType<typeof createDocumentStoreWithEvents>) => {
+    const seen: string[] = [];
+    store.addEventListener("content-change", (e) =>
+      seen.push(`${e.prevState.revision}->${e.nextState.revision}`),
+    );
+    return seen;
+  };
+
+  it("delivers an action's events before those of an action a store listener dispatches", () => {
+    const store = createDocumentStoreWithEvents({ content: "", reconcileMode: "none" });
+    const seen = revisions(store);
+    let once = true;
+    store.subscribe(() => {
+      if (!once) return;
+      once = false;
+      store.dispatch(DocumentActions.insert(byteOffset(1), "B"));
+    });
+
+    const returned = store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+
+    expect(seen).toEqual(["0->1", "1->2"]);
+    expect(returned).toBe(store.getSnapshot());
+    expect(returned.revision).toBe(2);
+  });
+
+  it("orders events the same for a store listener subscribed before any event handler", () => {
+    const store = createDocumentStoreWithEvents({ content: "", reconcileMode: "none" });
+    let once = true;
+    store.subscribe(() => {
+      if (!once) return;
+      once = false;
+      store.batch([
+        DocumentActions.insert(byteOffset(1), "B"),
+        DocumentActions.insert(byteOffset(2), "C"),
+      ]);
+    });
+    const seen = revisions(store);
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+
+    expect(seen).toEqual(["0->1", "1->2", "2->3"]);
+  });
+
+  it("delivers all of an action's events before those of an action a handler dispatches", () => {
+    const store = createDocumentStoreWithEvents({ content: "", reconcileMode: "none" });
+    const order: string[] = [];
+    let once = true;
+    store.addEventListener("content-change", (e) => {
+      order.push(`content ${e.nextState.revision}`);
+      if (!once) return;
+      once = false;
+      store.dispatch(DocumentActions.insert(byteOffset(1), "B"));
+    });
+    store.addEventListener("dirty-change", (e) => order.push(`dirty ${e.state.revision}`));
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+
+    expect(order).toEqual(["content 1", "dirty 1", "content 2"]);
+  });
+
+  it("bounds an event handler that dispatches indefinitely", () => {
+    const error = vi.fn();
+    const store = createDocumentStoreWithEvents({
+      content: "",
+      reconcileMode: "none",
+      logger: { error, warn: vi.fn() },
+    });
+    let calls = 0;
+    store.addEventListener("content-change", () => {
+      calls++;
+      store.dispatch(DocumentActions.insert(byteOffset(0), "x"));
+    });
+
+    expect(() => store.dispatch(DocumentActions.insert(byteOffset(0), "x"))).not.toThrow();
+    expect(calls).toBe(MAX_OBSERVER_REENTRANT_STEPS);
+    expect(error).toHaveBeenCalledWith(
+      "Document event cycle exceeded the re-entrancy limit",
+      expect.any(Error),
+    );
+  });
+});
+
 describe("Store event transaction guards", () => {
   it("treats commit without an active transaction as a no-op", () => {
     const store = createDocumentStoreWithEvents();

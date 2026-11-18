@@ -339,8 +339,7 @@ export function moveSelectionPastEdit(
       : offset > start && offset < end
         ? { offset: byteOffset(start), key: undefined }
         : move(offset, key);
-  let changed = false;
-  const ranges = selection.ranges.map((range) => {
+  const moveRange = (range: SelectionRange): SelectionRange => {
     const forward = range.anchor < range.head;
     const backward = range.anchor > range.head;
     const remoteCaret = remote && range.anchor === range.head;
@@ -361,10 +360,23 @@ export function moveSelectionPastEdit(
     ) {
       return range;
     }
-    changed = true;
     return selectionRange(pieceTable, anchor.offset, head.offset, anchor.key, head.key);
-  });
-  return changed ? freezeSelection(ranges, selection.primaryIndex) : selection;
+  };
+  // APPLY_REMOTE calls this once per change, so skip what cannot move and copy
+  // the ranges only once one does.
+  let ranges: SelectionRange[] | undefined;
+  for (let i = 0; i < selection.ranges.length; i++) {
+    const range = selection.ranges[i]!;
+    // A range wholly before the edit stays, and its stored keys still fit:
+    // the bytes before `start` keep their keys, and text inserted at `start`
+    // takes a key no lower than the bytes after them.
+    if (range.anchor < start && range.head < start) continue;
+    const moved = moveRange(range);
+    if (moved === range) continue;
+    ranges ??= selection.ranges.slice();
+    ranges[i] = moved;
+  }
+  return ranges ? freezeSelection(ranges, selection.primaryIndex) : selection;
 }
 
 // =============================================================================
@@ -475,7 +487,11 @@ const SCAN_BLOCK = 256;
  * whatever the distance. A caret that lands after inserted text uses this, as
  * the bytes before it are that text.
  */
-function nextBoundary(pieceTable: PieceTableState, offset: number, forwardOnly = false): number {
+export function nextBoundary(
+  pieceTable: PieceTableState,
+  offset: number,
+  forwardOnly = false,
+): number {
   if (isUtf8Boundary(pieceTable, byteOffset(offset))) return offset;
   // `offset` is inside the document, on a continuation byte.
   const total = pieceTable.totalLength;

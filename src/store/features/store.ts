@@ -58,7 +58,18 @@ const AUTO_COMPACT_MIN_BYTES = 16384; // 16 KB
  * @returns A new DocumentStore instance
  */
 export function createDocumentStore(config: DocumentStoreConfig = {}): ReconcilableDocumentStore {
-  return createStoreOverState(createInitialState(config), config);
+  return createStoreOverState(createInitialState(config), config).store;
+}
+
+/**
+ * A store together with its commit function. `commit` applies an action like
+ * `dispatch` but returns the state the reducer produced for it, before any
+ * listener notified by it dispatches again. The event layer describes that
+ * state, so it does not depend on the order of the store's listeners.
+ */
+interface StoreCore {
+  readonly store: ReconcilableDocumentStore;
+  readonly commit: (action: DocumentAction) => DocumentState;
 }
 
 /**
@@ -72,7 +83,7 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
 function createStoreOverState(
   initialState: DocumentState,
   config: DocumentStoreRuntimeConfig,
-): ReconcilableDocumentStore {
+): StoreCore {
   // Internal mutable state
   let state = initialState;
   const whenReconciledWaiters: Array<{
@@ -343,6 +354,15 @@ function createStoreOverState(
    * During a transaction, defer notification until the outermost commit or rollback.
    */
   function dispatch(action: DocumentAction): DocumentState {
+    commit(action);
+    return state;
+  }
+
+  /**
+   * Apply an action and return the reducer's state for it. A listener the
+   * action notifies can dispatch again, so `state` can already be later.
+   */
+  function commit(action: DocumentAction): DocumentState {
     if (disposed) return state;
     const newState = documentReducer(state, action);
     if (newState !== state) {
@@ -354,7 +374,7 @@ function createStoreOverState(
         }
       }
     }
-    return state;
+    return newState;
   }
 
   /**
@@ -553,7 +573,7 @@ function createStoreOverState(
   }
 
   // Return the store interface
-  return {
+  const store: ReconcilableDocumentStore = {
     subscribe,
     getSnapshot,
     getServerSnapshot,
@@ -572,6 +592,7 @@ function createStoreOverState(
     whenReconciled,
     dispose,
   };
+  return { store, commit };
 }
 
 /**
@@ -613,7 +634,8 @@ function createStoreOverState(
 export function createDocumentStoreWithEvents(
   config: DocumentStoreConfig = {},
 ): DocumentStoreWithEvents {
-  return withEvents(createDocumentStore(config), config.logger);
+  const { store, commit } = createStoreOverState(createInitialState(config), config);
+  return withEvents(store, commit, config.logger);
 }
 
 /**
@@ -675,6 +697,14 @@ export function createDocumentStoreFromCheckpoint(
   config: DocumentStoreRestoreConfig = {},
   restoreOptions: CheckpointRestoreOptions = {},
 ): ReconcilableDocumentStore {
+  return restoreStoreCore(checkpoint, config, restoreOptions).store;
+}
+
+function restoreStoreCore(
+  checkpoint: unknown,
+  config: DocumentStoreRestoreConfig,
+  restoreOptions: CheckpointRestoreOptions,
+): StoreCore {
   assertValidDocumentStoreRuntimeConfig(config);
   assertValidHistoryEvictionPolicy(config.historyEvictionPolicy);
   assertRuntimeOnlyConfig(config);
@@ -706,10 +736,8 @@ export function createDocumentStoreWithEventsFromCheckpoint(
   config: DocumentStoreRestoreConfig = {},
   restoreOptions: CheckpointRestoreOptions = {},
 ): DocumentStoreWithEvents {
-  return withEvents(
-    createDocumentStoreFromCheckpoint(checkpoint, config, restoreOptions),
-    config.logger,
-  );
+  const { store, commit } = restoreStoreCore(checkpoint, config, restoreOptions);
+  return withEvents(store, commit, config.logger);
 }
 
 /**

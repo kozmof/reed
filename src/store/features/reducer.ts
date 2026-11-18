@@ -164,9 +164,9 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       const nextRevision = state.revision + 1;
       const step = historyUndo(state, nextRevision);
       if (step.outcome === "empty") return state;
-      // Dropping a stale entry changes only history, so the revision stays.
+      // Dropping a stale entry changes only history, but still moves the
+      // revision, as HISTORY_CLEAR does, so code keyed on it sees the drop.
       // The event layer reads the outcome from isDroppedHistoryStep.
-      if (step.outcome === "dropped") return step.state;
       return withState(step.state, {
         revision: nextRevision,
       });
@@ -176,8 +176,6 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       const nextRevision = state.revision + 1;
       const step = historyRedo(state, nextRevision);
       if (step.outcome === "empty") return state;
-      // See UNDO.
-      if (step.outcome === "dropped") return step.state;
       return withState(step.state, {
         revision: nextRevision,
       });

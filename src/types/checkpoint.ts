@@ -216,16 +216,17 @@ export interface CheckpointAttentionLayer {
 }
 
 /**
- * Envelope accepted by isCheckpoint. Section contents have not been validated.
+ * Envelope accepted by isCheckpoint and isRestorableCheckpoint. Section
+ * contents have not been validated.
  *
- * `version` is any version `restoreCheckpoint` accepts, which includes
- * versions older than `CHECKPOINT_VERSION`. Their sections use that version's
- * layout, so do not read them as a `DocumentCheckpoint`: pass the value to
- * `restoreCheckpoint`, which migrates and validates it.
+ * After `isCheckpoint`, `version` is `CHECKPOINT_VERSION`. After
+ * `isRestorableCheckpoint` it can be an older version whose sections use that
+ * version's layout, so do not read them as a `DocumentCheckpoint`: pass the
+ * value to `restoreCheckpoint`, which migrates and validates it.
  */
 export interface CheckpointEnvelope {
   readonly format: CheckpointFormat;
-  /** A supported version, possibly older than `CHECKPOINT_VERSION`. */
+  /** `CHECKPOINT_VERSION`, or after `isRestorableCheckpoint` possibly an older supported version. */
   readonly version: number;
   readonly pieceTable: object;
   readonly lineIndex: object;

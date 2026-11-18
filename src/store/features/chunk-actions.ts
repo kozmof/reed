@@ -8,6 +8,7 @@
  */
 
 import type { DocumentState, LineIndexState, PieceNode } from "../../types/state.js";
+import { pstackSize } from "../../types/state.js";
 import type {
   DeclareChunkMetadataAction,
   EvictChunkAction,
@@ -468,8 +469,14 @@ export function evictChunks(state: DocumentState, action: EvictChunksAction): Do
         if (pick === undefined) break;
         const evicted = tryEvict(next, lossy[pick.index]!.chunk, true);
         if (evicted === null) continue;
+        // Report what the eviction dropped, not the predicted loss, so the
+        // queue stays exact even if a prediction is off.
+        const before = next.history;
         next = evicted;
-        queue.dropped(pick.loss);
+        queue.dropped({
+          undo: pstackSize(before.undoStack) - pstackSize(next.history.undoStack),
+          redo: pstackSize(before.redoStack) - pstackSize(next.history.redoStack),
+        });
       }
     }
   }

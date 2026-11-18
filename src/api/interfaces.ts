@@ -268,4 +268,5 @@ export interface CheckpointApi {
   encode(state: DocumentState<"eager">, options?: CheckpointOptions): string;
   decode(json: string, options?: CheckpointRestoreOptions): DocumentState<"eager">;
   isCheckpoint(value: unknown): value is CheckpointEnvelope;
+  isRestorableCheckpoint(value: unknown): value is CheckpointEnvelope;
 }

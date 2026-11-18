@@ -2924,10 +2924,8 @@ describe("twentieth review regressions", () => {
     let state = withStaleTop("undoStack");
     const base = createDocumentStore();
     const store = withEvents(
-      Object.assign(Object.create(base), {
-        getSnapshot: () => state,
-        dispatch: (action: DocumentAction) => (state = documentReducer(state, action)),
-      }),
+      Object.assign(Object.create(base), { getSnapshot: () => state }),
+      (action: DocumentAction) => (state = documentReducer(state, action)),
       undefined,
     );
     const seen: string[] = [];
@@ -2946,19 +2944,17 @@ describe("twentieth review regressions", () => {
       let state = withStaleTop(stack);
       const base = createDocumentStore();
       const store = withEvents(
-        Object.assign(Object.create(base), {
-          getSnapshot: () => state,
-          // A store listener moves the caret while the store notifies it, so
-          // dispatch returns a later state than the one the step returned.
-          dispatch: (action: DocumentAction) => {
-            state = documentReducer(state, action);
-            state = documentReducer(
-              state,
-              DocumentActions.setSelection([{ anchor: byteOffset(1), head: byteOffset(1) }]),
-            );
-            return state;
-          },
-        }),
+        Object.assign(Object.create(base), { getSnapshot: () => state }),
+        // A store listener moves the caret while the store notifies it, so
+        // the snapshot is later than the state the step returned.
+        (action: DocumentAction) => {
+          const committed = documentReducer(state, action);
+          state = documentReducer(
+            committed,
+            DocumentActions.setSelection([{ anchor: byteOffset(1), head: byteOffset(1) }]),
+          );
+          return committed;
+        },
         undefined,
       );
       const seen: string[] = [];
@@ -3045,7 +3041,7 @@ describe("twenty-first review regressions", () => {
     ["UNDO", "undoStack", "redoStack"],
     ["REDO", "redoStack", "undoStack"],
   ] as const)(
-    "%s drops an entry whose placement key no longer fits, keeping the revision",
+    "%s drops an entry whose placement key no longer fits, moving the revision",
     (type, stack, other) => {
       const state = twoChunks();
       // Offset 12 is inside chunk 1, where key -1 does not fit. Undo of a
@@ -3062,7 +3058,7 @@ describe("twenty-first review regressions", () => {
       expect(next.pieceTable).toBe(withStale.pieceTable);
       expect(next.history[stack]).toBeNull();
       expect(next.history[other]).toBe(withStale.history[other]);
-      expect(next.revision).toBe(withStale.revision);
+      expect(next.revision).toBe(withStale.revision + 1);
     },
   );
 
@@ -3088,7 +3084,7 @@ describe("twenty-first review regressions", () => {
       expect(next.pieceTable).toBe(withStale.pieceTable);
       expect(next.history[stack]).toBeNull();
       expect(next.history[other]).toBe(withStale.history[other]);
-      expect(next.revision).toBe(withStale.revision);
+      expect(next.revision).toBe(withStale.revision + 1);
     },
   );
 
@@ -3120,10 +3116,8 @@ describe("twenty-first review regressions", () => {
     });
     const base = createDocumentStore();
     const store = withEvents(
-      Object.assign(Object.create(base), {
-        getSnapshot: () => state,
-        dispatch: (action: DocumentAction) => (state = documentReducer(state, action)),
-      }),
+      Object.assign(Object.create(base), { getSnapshot: () => state }),
+      (action: DocumentAction) => (state = documentReducer(state, action)),
       undefined,
     );
     const seen: string[] = [];

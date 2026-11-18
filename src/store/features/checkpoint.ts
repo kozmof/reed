@@ -57,7 +57,7 @@ import { decodedCharLength, joinDecoded, type DecodedSummary } from "../core/dec
 import { utf8ByteLength } from "../core/encoding.js";
 import { loadedLengthAtOrBelow } from "../core/chunk-anchor.js";
 import { pieceTableDelete, pieceTableInsertPlaceholder } from "../core/piece-table.js";
-import { changeReplayFailure, selectionRange } from "./history-anchor.js";
+import { changeReplayFailure, nextBoundary, selectionRange } from "./history-anchor.js";
 import { insertedLength, removedLength } from "./history-entry.js";
 import { GrowableBuffer } from "../core/growable-buffer.js";
 import {
@@ -829,7 +829,12 @@ function restoreSelectionShape<R>(
   };
 }
 
-/** Restore the live selection. Every offset must lie within the document. */
+/**
+ * Restore the live selection. Every offset must lie within the document. An
+ * offset inside a character moves to a code-point boundary, as a history
+ * selection does (see `nextBoundary`), since edits and SET_SELECTION reject
+ * it; a key stored for an endpoint that moved is dropped.
+ */
 function restoreSelection(
   raw: unknown,
   what: string,
@@ -855,12 +860,16 @@ function restoreSelection(
         if (value === null || value === undefined) return undefined;
         return readPlacementKey(value, `${rangeWhat}[${index}]`);
       };
+      const anchorKey = readKey(2);
+      const headKey = readKey(3);
+      const anchorAt = nextBoundary(pieceTable, anchor);
+      const headAt = nextBoundary(pieceTable, head);
       return selectionRange(
         pieceTable,
-        byteOffset(anchor),
-        byteOffset(head),
-        readKey(2),
-        readKey(3),
+        byteOffset(anchorAt),
+        byteOffset(headAt),
+        anchorAt === anchor ? anchorKey : undefined,
+        headAt === head ? headKey : undefined,
       );
     }),
   );
@@ -1265,34 +1274,55 @@ function restoreAttention(
 }
 
 /**
- * Check the format tag, supported version, and required checkpoint sections.
+ * Check the format tag, the current version, and required checkpoint sections.
  *
- * Use this envelope check to route values before restoring them. It accepts
- * every version `restoreCheckpoint` can migrate, so a true result may be an
- * older format: read the sections only through `restoreCheckpoint`, which
- * migrates the payload and validates its internal consistency. Code that
- * reads sections directly must also check `value.version === CHECKPOINT_VERSION`.
- * Before 5.0 this guard accepted only the current version.
+ * Use this envelope check to route values before restoring them.
+ * `restoreCheckpoint` validates the payload's internal consistency. An older
+ * checkpoint that restore can still migrate fails this check; use
+ * `isRestorableCheckpoint` to accept those too.
  */
 export function isCheckpoint(value: unknown): value is CheckpointEnvelope {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return envelopeVersion(value) === CHECKPOINT_VERSION;
+}
+
+/**
+ * Check the format tag, a version `restoreCheckpoint` can read, and required
+ * checkpoint sections.
+ *
+ * Unlike `isCheckpoint`, this accepts the older versions restore migrates
+ * forward, so a true result may be an older layout: read the sections only
+ * through `restoreCheckpoint`, or check `value.version === CHECKPOINT_VERSION`
+ * first.
+ */
+export function isRestorableCheckpoint(value: unknown): value is CheckpointEnvelope {
+  const version = envelopeVersion(value);
+  return version !== null && version >= minimumSupportedVersion();
+}
+
+/**
+ * The version of a checkpoint envelope no newer than this build, or null when
+ * `value` is not one.
+ */
+function envelopeVersion(value: unknown): number | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
-  if (candidate.format !== CHECKPOINT_FORMAT) return false;
-  // Accept every version restore can migrate forward.
-  if (
-    typeof candidate.version !== "number" ||
-    !Number.isInteger(candidate.version) ||
-    candidate.version < minimumSupportedVersion() ||
-    candidate.version > CHECKPOINT_VERSION
-  ) {
-    return false;
+  if (candidate.format !== CHECKPOINT_FORMAT) return null;
+  const version = candidate.version;
+  if (typeof version !== "number" || !Number.isInteger(version) || version > CHECKPOINT_VERSION) {
+    return null;
   }
-  return ["pieceTable", "lineIndex", "selection", "history", "metadata", "attention"].every(
-    (key) => {
-      const section = candidate[key];
-      return typeof section === "object" && section !== null && !Array.isArray(section);
-    },
-  );
+  const sectionsPresent = [
+    "pieceTable",
+    "lineIndex",
+    "selection",
+    "history",
+    "metadata",
+    "attention",
+  ].every((key) => {
+    const section = candidate[key];
+    return typeof section === "object" && section !== null && !Array.isArray(section);
+  });
+  return sectionsPresent ? version : null;
 }
 
 function validateChunkLineIndex(

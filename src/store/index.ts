@@ -18,6 +18,7 @@ export {
   encodeCheckpoint,
   decodeCheckpoint,
   isCheckpoint,
+  isRestorableCheckpoint,
 } from "./features/checkpoint.js";
 
 // Action creators

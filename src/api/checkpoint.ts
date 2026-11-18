@@ -35,6 +35,7 @@ import {
   encodeCheckpoint,
   decodeCheckpoint,
   isCheckpoint,
+  isRestorableCheckpoint,
 } from "../store/features/checkpoint.js";
 import type { CheckpointApi } from "./interfaces.js";
 
@@ -49,4 +50,6 @@ export const checkpoint: CheckpointApi = {
   decode: decodeCheckpoint,
   /** @complexity O(1) envelope check. Restore performs full validation */
   isCheckpoint,
+  /** @complexity O(1) envelope check, accepting older versions restore migrates */
+  isRestorableCheckpoint,
 };

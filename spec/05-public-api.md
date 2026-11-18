@@ -251,7 +251,8 @@ Capture a `DocumentState<'eager'>` as JSON-safe data and load it back:
 - `checkpoint.create(state, options?)`: state to `DocumentCheckpoint`
 - `checkpoint.restore(checkpoint, restoreOptions?)`: `DocumentCheckpoint` to `DocumentState<'eager'>`
 - `checkpoint.encode(state, options?)` / `checkpoint.decode(json, restoreOptions?)`: the same round trip through a string
-- `checkpoint.isCheckpoint(value)`: envelope guard, not full validation
+- `checkpoint.isCheckpoint(value)`: envelope guard for the current version, not full validation
+- `checkpoint.isRestorableCheckpoint(value)`: the same guard, also accepting older versions `restore` migrates
 
 Options (`CheckpointOptions`): `mode` (`'exact'` default, `'normalized'`), `compact` (default true).
 
@@ -288,4 +289,4 @@ Anchored history positions (chunk-safe undo and redo) change the meaning of expo
 - `selection-change` fires whenever an action replaces the selection, including `INSERT`, `DELETE`, `REPLACE`, `APPLY_REMOTE`, `UNDO`, and `REDO`.
 - `rendering` (`getLineContent`, `getVisibleLines`, `getVisibleLine`) keeps a byte order mark at the start of the file as a U+FEFF at line 0, column 0, so line content agrees with the columns the line index counts. In 4.x it was stripped from line 0. Code that copies rendered line text or measures its width and does not want the mark should drop a leading U+FEFF from line 0 itself.
 - `UNDO` and `REDO` never apply an entry that no longer resolves inside the document. They drop it, together with the entries behind it on the same stack, leave the document unchanged, and emit `history-drop` instead of `history-change`. In 4.x such an entry was clamped to the document and applied.
-- Checkpoints are written as version 2. Restore still reads version 1, and `isCheckpoint` accepts both. In 4.x `isCheckpoint` returned true only for the version the library wrote, so a true result also meant the current layout. It now means only that `restore` can read the value: a stored version 1 checkpoint passes, and its history positions are unanchored offsets without placement keys. Code that reads checkpoint sections directly, rather than through `restore`, must also check `value.version === CHECKPOINT_VERSION`.
+- Checkpoints are written as version 2. Restore still reads version 1. `isCheckpoint` still accepts only the version the library writes, so a stored version 1 checkpoint now fails it; use `isRestorableCheckpoint` to accept every version `restore` can read.
