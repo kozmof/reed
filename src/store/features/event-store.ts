@@ -23,6 +23,7 @@ import {
   type DocumentEventMap,
 } from "./events.js";
 import { reportCaughtError } from "./diagnostics.js";
+import { historyStepDropped } from "./history.js";
 
 /**
  * Wrap a store in the typed event layer. Shared by the config-built and
@@ -99,9 +100,11 @@ export function withEvents(
     // History events. EVICT_CHUNK and EVICT_CHUNKS change history only when they discard
     // entries: under "drop", or "pin-bounded" with overLimit or through EVICT_CHUNKS.
     // UNDO and REDO discard entries instead of applying one that no longer
-    // replays; the document is then unchanged.
+    // replays; the document is then unchanged. The piece table cannot tell a
+    // drop apart, since replaying an entry that changes no bytes keeps it too.
     const historyDiscarded =
-      prevState.history !== nextState.history && prevState.pieceTable === nextState.pieceTable;
+      (action.type === "UNDO" || action.type === "REDO") &&
+      historyStepDropped(prevState, nextState, action.type === "UNDO" ? "undo" : "redo");
     if ((action.type === "UNDO" || action.type === "REDO") && !historyDiscarded) {
       prepare(
         "history-change",

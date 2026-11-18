@@ -94,6 +94,25 @@ function replayEntry(
 }
 
 /**
+ * True when an undo (or redo) step from `prev` to `next` dropped a stale entry
+ * instead of replaying it. A replayed step always pushes the entry onto the
+ * other stack, while a dropped step keeps that stack as it was. This holds even
+ * for an entry whose replay changes no bytes, which leaves the piece table
+ * untouched. A step with nothing to undo or redo returns `prev` itself and is
+ * not a drop.
+ */
+export function historyStepDropped(
+  prev: DocumentState,
+  next: DocumentState,
+  direction: "undo" | "redo",
+): boolean {
+  if (prev.history === next.history) return false;
+  return direction === "undo"
+    ? prev.history.redoStack === next.history.redoStack
+    : prev.history.undoStack === next.history.undoStack;
+}
+
+/**
  * Perform undo operation.
  * Keeps aggregate-based queries accurate and defers cached offset repair.
  *

@@ -526,7 +526,10 @@ export interface HistorySelectionState {
  *   it then evicts the one that discards the fewest entries each time. History
  *   then keeps the chunks it points into while a ChunkManager's limit allows.
  */
-export type HistoryEvictionPolicy = "pin" | "drop" | "pin-bounded";
+/** Every `HistoryEvictionPolicy`, for validating values that arrive at runtime. */
+export const HISTORY_EVICTION_POLICIES = ["pin", "drop", "pin-bounded"] as const;
+
+export type HistoryEvictionPolicy = (typeof HISTORY_EVICTION_POLICIES)[number];
 
 /**
  * A group of changes that form a single undo unit.

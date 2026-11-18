@@ -281,10 +281,15 @@ export function createChunkManager(
       }
     }
 
-    // Forget chunks no longer in memory, evicted here or by another path.
+    // Forget chunks no longer in memory, evicted here or by another path. The
+    // scan is O(L), so it runs only after an eviction pass, or once lruOrder
+    // lists more chunks than are resident and must hold stale ones. A stale
+    // entry left in between costs nothing: every pass above skips it.
     const { chunkMap } = store.getSnapshot().pieceTable;
-    for (const chunkIndex of lruOrder) {
-      if (!chunkMap.has(chunkIndex)) lruRemove(chunkIndex);
+    if (excess > 0 || lruOrder.size > chunkMap.size) {
+      for (const chunkIndex of lruOrder) {
+        if (!chunkMap.has(chunkIndex)) lruRemove(chunkIndex);
+      }
     }
 
     const loadedCount = chunkMap.size;

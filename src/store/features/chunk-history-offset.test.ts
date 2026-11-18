@@ -29,7 +29,7 @@ import {
   pieceTableDelete,
   pieceTableInsert,
 } from "../core/piece-table.js";
-import { byteKey, keyFitsAt, pieceKey } from "../core/chunk-anchor.js";
+import { byteKey, keyFitsAfterRemoving, keyFitsAt, pieceKey } from "../core/chunk-anchor.js";
 import { isSafeSplice, isSafeSplit } from "../core/utf8-seam.js";
 import { getTextForAttention } from "../core/attention.js";
 import { query } from "../../api/query.js";
@@ -2971,5 +2971,151 @@ describe("twentieth review regressions", () => {
         if (key !== undefined) expect(keyFitsAt(pieceTable, offset, key)).toBe(true);
       }
     }
+  });
+});
+
+describe("twenty-first review regressions", () => {
+  /** An entry holding one change, with cursors that resolve anywhere. */
+  const entryOf = (change: HistoryChange): HistoryEntry =>
+    Object.freeze({
+      changes: Object.freeze([change]),
+      selectionBefore: anchoredCursor(-1, 0),
+      selectionAfter: anchoredCursor(-1, 0),
+      timestamp: 0,
+    });
+  /** Chunks 0 and 1 loaded: chunk 0 bytes have key -1, chunk 1 bytes key 0. */
+  const twoChunks = () => {
+    const s = makeStore(2, "pin-bounded");
+    load(s, 0);
+    load(s, 1);
+    return s.getSnapshot();
+  };
+
+  it("checks a key against the document left once the replaced bytes are removed", () => {
+    const { pieceTable } = twoChunks();
+    // Key 0 belongs after chunk 0, so it fits at offset 4 only once the rest
+    // of chunk 0 after it is removed.
+    expect(keyFitsAt(pieceTable, 4, 0)).toBe(false);
+    expect(keyFitsAfterRemoving(pieceTable, 4, 8, 0)).toBe(true);
+    expect(keyFitsAfterRemoving(pieceTable, 4, 7, 0)).toBe(false);
+    // Key -1 belongs before chunk 1, so offset 12 never fits it.
+    expect(keyFitsAfterRemoving(pieceTable, 12, 16, -1)).toBe(false);
+    expect(keyFitsAfterRemoving(pieceTable, 12, 17, -1)).toBe(false);
+    for (let offset = 0; offset <= 16; offset++) {
+      for (const key of [-1, 0, 1]) {
+        expect(keyFitsAfterRemoving(pieceTable, offset, offset, key)).toBe(
+          keyFitsAt(pieceTable, offset, key),
+        );
+      }
+    }
+  });
+
+  it.each([
+    ["UNDO", "undoStack", "redoStack"],
+    ["REDO", "redoStack", "undoStack"],
+  ] as const)(
+    "%s drops an entry whose placement key no longer fits, keeping the revision",
+    (type, stack, other) => {
+      const state = twoChunks();
+      // Offset 12 is inside chunk 1, where key -1 does not fit. Undo of a
+      // delete and redo of an insert both insert there.
+      const stale = entryOf(
+        stack === "undoStack" ? makeDeleteChange(12, "Y", -1) : makeInsertChange(12, "Y", -1),
+      );
+      const withStale: DocumentState = Object.freeze({
+        ...state,
+        history: Object.freeze({ ...state.history, [stack]: pstackPush(null, stale) }),
+      });
+      const action = type === "UNDO" ? DocumentActions.undo() : DocumentActions.redo();
+      const next = documentReducer(withStale, action);
+      expect(next.pieceTable).toBe(withStale.pieceTable);
+      expect(next.history[stack]).toBeNull();
+      expect(next.history[other]).toBe(withStale.history[other]);
+      expect(next.revision).toBe(withStale.revision);
+    },
+  );
+
+  it("reports undo and redo of an entry that changes no bytes as history-change", () => {
+    const s = createDocumentStoreWithEvents({ content: "hello world", reconcileMode: "none" });
+    s.dispatch(DocumentActions.replace(byteOffset(5), byteOffset(5), ""));
+    expect(getUndoCount(s.getSnapshot())).toBe(1);
+    const seen: string[] = [];
+    s.addEventListener("history-change", ({ direction }) => seen.push(direction));
+    s.addEventListener("history-drop", () => seen.push("drop"));
+    const before = s.getSnapshot().revision;
+    s.dispatch(DocumentActions.undo());
+    s.dispatch(DocumentActions.redo());
+    expect(seen).toEqual(["undo", "redo"]);
+    expect(s.getSnapshot().revision).toBe(before + 2);
+    expect(getUndoCount(s.getSnapshot())).toBe(1);
+  });
+
+  it("reports a replayed entry that leaves the piece table untouched as history-change", () => {
+    const initial = createInitialState({ content: "abc" });
+    // Replaying an entry with no changes keeps the same piece table object.
+    const empty: HistoryEntry = Object.freeze({
+      ...entryOf(makeInsertChange(0, "X")),
+      changes: [],
+    });
+    let state: DocumentState = Object.freeze({
+      ...initial,
+      history: Object.freeze({ ...initial.history, undoStack: pstackPush(null, empty) }),
+    });
+    const base = createDocumentStore();
+    const store = withEvents(
+      Object.assign(Object.create(base), {
+        getSnapshot: () => state,
+        dispatch: (action: DocumentAction) => (state = documentReducer(state, action)),
+      }),
+      undefined,
+    );
+    const seen: string[] = [];
+    store.addEventListener("history-change", ({ direction }) => seen.push(direction));
+    store.addEventListener("history-drop", () => seen.push("drop"));
+    store.dispatch(DocumentActions.undo());
+    store.dispatch(DocumentActions.redo());
+    expect(seen).toEqual(["undo", "redo"]);
+    expect(state.revision).toBe(initial.revision + 2);
+  });
+
+  it("treats history without an eviction policy as 'pin-bounded'", () => {
+    const s = makeStore(2, "pin-bounded");
+    load(s, 0);
+    load(s, 1);
+    s.dispatch(DocumentActions.insert(byteOffset(10), "X"));
+    s.dispatch(DocumentActions.undo());
+    // History built by hand, with no evictionPolicy field.
+    const { evictionPolicy: _, ...history } = s.getSnapshot().history;
+    const state: DocumentState = Object.freeze({
+      ...s.getSnapshot(),
+      history: Object.freeze(history) as HistoryState,
+    });
+    // The redo entry points inside chunk 1, so a plain eviction is refused.
+    expect(documentReducer(state, DocumentActions.evictChunk(1))).toBe(state);
+    expect(historyForEviction(state.pieceTable, state.history, 1, 8)).toBeNull();
+    // Over the limit, it evicts and drops the entry as "pin-bounded" does.
+    const over = documentReducer(state, DocumentActions.evictChunk(1, true));
+    expect(over.pieceTable.chunkMap.has(1)).toBe(false);
+    expect(getRedoCount(over)).toBe(0);
+  });
+
+  it("moves a cursor on a 4-byte run at the document's end to the nearer lead byte", () => {
+    const SIZE = 400;
+    const tail = Uint8Array.of(0x82, 0xac, 0x80, 0x80);
+    const s = createDocumentStore({
+      chunkSize: SIZE,
+      totalFileSize: SIZE * 2 + tail.length,
+      reconcileMode: "none",
+    });
+    const chunk0 = new Uint8Array(SIZE).fill(0x41);
+    chunk0[SIZE - 1] = 0xe2;
+    s.dispatch(DocumentActions.loadChunk(0, chunk0));
+    s.dispatch(DocumentActions.loadChunk(1, new Uint8Array(SIZE).fill(0x42)));
+    s.dispatch(DocumentActions.loadChunk(2, tail));
+    s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(500), head: byteOffset(500) }]));
+    s.dispatch(DocumentActions.evictChunk(1));
+    // Clamped to offset 400, inside the run 82 AC 80 80 that ends the
+    // document. The lead byte E2 at 399 is 1 byte back, the end 4 ahead.
+    expect(cursor(s)).toEqual({ anchor: SIZE - 1, head: SIZE - 1 });
   });
 });

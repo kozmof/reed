@@ -27,7 +27,7 @@ import type {
   DocumentMetadata,
   ChunkMetadata,
 } from "../../types/state.js";
-import { pstackFromArray } from "../../types/state.js";
+import { HISTORY_EVICTION_POLICIES, pstackFromArray } from "../../types/state.js";
 import type { NonEmptyReadonlyArray } from "../../types/utils.js";
 import type { AttentionLayerState, Attention } from "../../types/attention.js";
 import type { PieceID, AttentionID, ReadonlyUint8Array } from "../../types/branded.js";
@@ -1140,7 +1140,7 @@ function restoreHistory(
       ? "pin-bounded"
       : readEnum(
           source.evictionPolicy,
-          ["pin", "drop", "pin-bounded"] as const,
+          HISTORY_EVICTION_POLICIES,
           "history.evictionPolicy",
           budget,
         );

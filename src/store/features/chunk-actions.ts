@@ -446,7 +446,8 @@ export function evictChunks(state: DocumentState, action: EvictChunksAction): Do
   const policy = next.history.evictionPolicy;
   while (policy !== "pin" && lossy.length > 0 && next.pieceTable.chunkMap.size > maxLoaded) {
     let at = 0;
-    if (policy === "pin-bounded") {
+    // Anything other than "drop" here gets the default "pin-bounded".
+    if (policy !== "drop") {
       for (let i = 1; i < lossy.length; i++) {
         if (lostEntries(lossy[i]!.loss) < lostEntries(lossy[at]!.loss)) at = i;
       }

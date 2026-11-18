@@ -9,6 +9,8 @@
  * its serialized form.
  */
 
+import type { HistoryEvictionPolicy } from "./state.js";
+
 /** Envelope discriminator. Present on every checkpoint. */
 export const CHECKPOINT_FORMAT = "reed-checkpoint";
 export type CheckpointFormat = typeof CHECKPOINT_FORMAT;
@@ -182,7 +184,7 @@ export interface CheckpointHistory {
   readonly limit: number;
   readonly coalesceTimeout: number;
   /** History eviction policy. Absent means `"pin-bounded"`, the default. */
-  readonly evictionPolicy?: "pin" | "drop" | "pin-bounded";
+  readonly evictionPolicy?: HistoryEvictionPolicy;
   readonly undo: readonly CheckpointHistoryEntry[];
   readonly redo: readonly CheckpointHistoryEntry[];
 }

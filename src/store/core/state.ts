@@ -11,6 +11,8 @@ import type {
   DocumentStoreRuntimeConfig,
   PieceTableState,
   PieceNode,
+  OriginalPieceNode,
+  AddPieceNode,
   EvaluationMode,
   LineIndexState,
   LineIndexNode,
@@ -21,6 +23,7 @@ import type {
   ChunkMetadata,
   BufferType,
 } from "../../types/state.js";
+import { HISTORY_EVICTION_POLICIES } from "../../types/state.js";
 import type { ReadonlyUint8Array } from "../../types/branded.js";
 import { byteOffset, byteLength, pieceID } from "../../types/branded.js";
 import type { ByteOffset, ByteLength, PieceID } from "../../types/branded.js";
@@ -64,9 +67,9 @@ const DEFAULT_CONFIG: Required<Omit<DocumentStoreConfigBase, "logger">> & {
 };
 
 export function assertValidHistoryEvictionPolicy(policy: unknown): void {
-  if (policy !== undefined && policy !== "pin" && policy !== "drop" && policy !== "pin-bounded") {
+  if (policy !== undefined && !(HISTORY_EVICTION_POLICIES as readonly unknown[]).includes(policy)) {
     throw new Error(
-      `historyEvictionPolicy must be 'pin', 'drop' or 'pin-bounded': ${String(policy)}`,
+      `historyEvictionPolicy must be one of ${HISTORY_EVICTION_POLICIES.map((p) => `'${p}'`).join(", ")}: ${String(policy)}`,
     );
   }
 }
@@ -280,22 +283,10 @@ export function createPieceNode(
   const leftAddLength = left?.subtreeAddLength ?? 0;
   const rightAddLength = right?.subtreeAddLength ?? 0;
   const subtreeLength = length + leftLength + rightLength;
+  const isAdd = bufferType === "add";
 
-  if (bufferType === "add") {
-    return Object.freeze({
-      _nodeKind: "piece" as const,
-      id,
-      color,
-      left,
-      right,
-      bufferType,
-      afterChunk,
-      start,
-      length,
-      subtreeLength,
-      subtreeAddLength: length + leftAddLength + rightAddLength,
-    });
-  }
+  // Only add pieces carry a placement key, and only their own bytes count
+  // toward subtreeAddLength.
   return Object.freeze({
     _nodeKind: "piece" as const,
     id,
@@ -303,11 +294,12 @@ export function createPieceNode(
     left,
     right,
     bufferType,
+    ...(isAdd && { afterChunk }),
     start,
     length,
     subtreeLength,
-    subtreeAddLength: leftAddLength + rightAddLength,
-  });
+    subtreeAddLength: (isAdd ? length : 0) + leftAddLength + rightAddLength,
+  }) as OriginalPieceNode | AddPieceNode;
 }
 
 /**

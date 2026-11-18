@@ -17,7 +17,7 @@ import {
   applyEdit,
   applyUntrackedEdit,
 } from "./edit.js";
-import { historyUndo, historyRedo } from "./history.js";
+import { historyUndo, historyRedo, historyStepDropped } from "./history.js";
 import {
   insertionKey,
   keepSameSelection,
@@ -163,6 +163,8 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       const nextRevision = state.revision + 1;
       const newState = historyUndo(state, nextRevision);
       if (newState === state) return state; // No undo available
+      // Dropping a stale entry changes only history, so the revision stays.
+      if (historyStepDropped(state, newState, "undo")) return newState;
       return withState(newState, {
         revision: nextRevision,
       });
@@ -172,6 +174,8 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       const nextRevision = state.revision + 1;
       const newState = historyRedo(state, nextRevision);
       if (newState === state) return state; // No redo available
+      // Dropping a stale entry changes only history, so the revision stays.
+      if (historyStepDropped(state, newState, "redo")) return newState;
       return withState(newState, {
         revision: nextRevision,
       });

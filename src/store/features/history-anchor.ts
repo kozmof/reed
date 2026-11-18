@@ -459,7 +459,10 @@ function nextBoundary(pieceTable: PieceTableState, offset: number, forwardOnly =
   for (let i = 0; i < leftovers.length; i++) {
     if (!isContinuationByte(leftovers[i]!)) return offset + 1 + i;
   }
-  if (offset + 1 + leftovers.length >= total) return total;
+  // The end of the document came within leftover reach. A full window of
+  // continuation bytes that ends right at the end is a longer run, so it falls
+  // through and moves to the nearer end like any other run.
+  if (leftovers.length < MAX_CONTINUATION_BYTES) return total;
 
   // Scan both ways until the nearer end of the run is known. `ahead` is the
   // first position not yet read after `offset`, `behind` the first byte read
@@ -823,7 +826,9 @@ export function historyForEviction(
   const { undoCut, redoCut } = evictionCutsAt(pieceTable, history, chunkIndex, start);
   if (undoCut < 0 && redoCut < 0) return history;
   const policy = history.evictionPolicy;
-  if (policy === "pin" || (policy === "pin-bounded" && !overLimit)) return null;
+  // Anything other than "pin" or "drop", such as a hand-built state without a
+  // policy, gets the default "pin-bounded".
+  if (policy === "pin" || (policy !== "drop" && !overLimit)) return null;
   // Keep only the entries newer than the cut. The split shares structure.
   const keepNewerThan = (stack: HistoryState["undoStack"], cut: number) =>
     cut < 0 ? stack : pstackTrimToSize(stack, pstackSize(stack) - cut - 1);

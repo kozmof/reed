@@ -57,7 +57,7 @@ import {
   isExactDecoding,
   utf8ByteLength,
 } from "../core/encoding.js";
-import { NO_CHUNK, placementRuns } from "../core/chunk-anchor.js";
+import { NO_CHUNK, keyFitsAfterRemoving, placementRuns } from "../core/chunk-anchor.js";
 import { codePointWindow, isSafeSplice, isSafeSplit } from "../core/utf8-seam.js";
 import type { FittedKey, KeyRun } from "../core/chunk-anchor.js";
 import {
@@ -674,6 +674,19 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
       `history ${change.type} at anchored position ${change.position} with placement key ` +
         `${change.afterChunk} resolves to [${position}, ${position + removed}), outside the ` +
         `${state.pieceTable.totalLength}-byte document`,
+    );
+  }
+  // The recorded key is checked again when the text goes in, which throws a
+  // plain RangeError. Check it here, after the removed bytes, so a key that no
+  // longer fits drops the entry like an out-of-range position does.
+  if (
+    change.type !== "delete" &&
+    change.byteLength > 0 &&
+    !keyFitsAfterRemoving(state.pieceTable, position, position + removed, change.afterChunk)
+  ) {
+    throw new StaleHistoryChangeError(
+      `history ${change.type} at anchored position ${change.position} inserts text with ` +
+        `placement key ${change.afterChunk} at offset ${position}, where it no longer fits`,
     );
   }
   const insertBytes =

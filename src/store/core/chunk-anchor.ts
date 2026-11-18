@@ -152,15 +152,31 @@ export function keySpan(root: PieceNode | null, key: number): { start: number; e
  * Inserted text, selection endpoints, and history anchors all check keys here.
  */
 export function keyFitsAt(pieceTable: KeyLayout, offset: number, key: number): boolean {
+  return keyFitsAfterRemoving(pieceTable, offset, offset, key);
+}
+
+/**
+ * True when `key` would fit at resident `start` (see `keyFitsAt`) once the
+ * bytes in [start, end) are removed, as a replace removes them before it
+ * inserts. Only the bytes on either side of the range must stay in key order
+ * around it. O(log n).
+ */
+export function keyFitsAfterRemoving(
+  pieceTable: KeyLayout,
+  start: number,
+  end: number,
+  key: number,
+): boolean {
+  if (start < 0 || end < start || end > pieceTable.totalLength) return false;
   // Before any chunk loads, NO_CHUNK is the only key and fits everywhere.
-  if (pieceTable.nextExpectedChunk === 0) {
-    return key === NO_CHUNK && offset >= 0 && offset <= pieceTable.totalLength;
-  }
+  if (pieceTable.nextExpectedChunk === 0) return key === NO_CHUNK;
   if (!Number.isSafeInteger(key) || key < NO_CHUNK || key >= pieceTable.nextExpectedChunk) {
     return false;
   }
-  const { start, end } = keySpan(pieceTable.root, key);
-  return start <= offset && offset <= end;
+  // Keys never decrease in document order, so the bytes keyed below `key` are
+  // [0, span.start) and the bytes keyed at or below it are [0, span.end).
+  const span = keySpan(pieceTable.root, key);
+  return span.start <= end && start <= span.end;
 }
 
 /**
