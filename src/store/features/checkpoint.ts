@@ -1040,7 +1040,7 @@ function restoreHistoryEntry(
  * entry. Each change applies to the document the newer ones left. A change
  * would make UNDO or REDO throw when its range ends past the end of that
  * document, or when the text it inserts carries a placement key that does
- * not fit where it lands (see `keyFitsAt`). The checkpoint is rejected here
+ * not fit where it lands (see `keyFitsAt`). Restore catches that here
  * instead.
  *
  * A replayed entry moves to the other stack, and the next replay applies it in
@@ -1057,13 +1057,16 @@ function restoreHistoryEntry(
  *
  * Replay loads and evicts no chunks, so every position resolves against the
  * restored layout. `readAnchor` has already checked each against zero.
+ *
+ * Returns the index of the newest entry that does not replay, with the
+ * reason, or null when the whole stack replays.
  */
-function assertStackReplays(
+function findStackReplayFailure(
   entries: readonly HistoryEntry[],
   pieceTable: PieceTableState,
   direction: 1 | -1,
   what: string,
-): void {
+): { readonly index: number; readonly message: string } | null {
   const chunked = pieceTable.nextExpectedChunk > 0;
   let doc = pieceTable;
   let length = pieceTable.totalLength;
@@ -1076,34 +1079,49 @@ function assertStackReplays(
       const insert = insertedLength(change, direction);
       const start = change.position + loadedLengthAtOrBelow(pieceTable, change.afterChunk);
       if (start + remove > length) {
-        fail(
-          "HISTORY_INVALID",
-          `${what}[${e}].changes[${i}] resolves to [${start}, ${start + remove}), past the end of ` +
-            `the ${length}-byte document it applies to`,
-        );
+        return {
+          index: e,
+          message:
+            `${what}[${e}].changes[${i}] resolves to [${start}, ${start + remove}), past the ` +
+            `end of the ${length}-byte document it applies to`,
+        };
       }
       length += insert - remove;
       if (!chunked) continue;
       if (remove > 0) doc = pieceTableDelete(doc, byteOffset(start), byteOffset(start + remove));
       // `remove` bytes are what the other direction inserts back here.
       if ((insert > 0 || remove > 0) && !keyFitsAt(doc, start, change.afterChunk)) {
-        fail(
-          "HISTORY_INVALID",
-          `${what}[${e}].changes[${i}] inserts text with placement key ${change.afterChunk} at ` +
-            `offset ${start} on undo or redo, which would put placement keys out of document order`,
-        );
+        return {
+          index: e,
+          message:
+            `${what}[${e}].changes[${i}] inserts text with placement key ${change.afterChunk} ` +
+            `at offset ${start} on undo or redo, which would put placement keys out of ` +
+            `document order`,
+        };
       }
       // Only lengths and keys are checked, so the inserted text stands in as
       // a placeholder: no bytes move.
       doc = pieceTableInsertPlaceholder(doc, byteOffset(start), insert, change.afterChunk);
     }
   }
+  return null;
 }
 
+/**
+ * Restore the undo and redo stacks.
+ *
+ * A stack that does not replay (see `findStackReplayFailure`) rejects the
+ * checkpoint unless `dropStale` is set. Version 1 could save offsets that had
+ * already gone stale when a chunk was evicted, and its restore still kept the
+ * document. A migrated payload does the same: each stack keeps the newer
+ * entries that replay and drops the failing entry and everything older, since
+ * each older entry applies to the document the failing one would have left.
+ */
 function restoreHistory(
   raw: unknown,
   pieceTable: PieceTableState,
   budget: RestoreBudget,
+  dropStale: boolean,
 ): HistoryState {
   const { limits } = budget;
   const source = readObject(raw, "history");
@@ -1141,10 +1159,14 @@ function restoreHistory(
       restoreHistoryEntry(entry, `${what}[${i}]`, pieceTable, budget),
     );
   };
-  const undo = readStack(rawUndo, "history.undo");
-  const redo = readStack(rawRedo, "history.redo");
-  assertStackReplays(undo, pieceTable, -1, "history.undo");
-  assertStackReplays(redo, pieceTable, 1, "history.redo");
+  const replayable = (entries: HistoryEntry[], direction: 1 | -1, what: string) => {
+    const failure = findStackReplayFailure(entries, pieceTable, direction, what);
+    if (failure === null) return entries;
+    if (!dropStale) fail("HISTORY_INVALID", failure.message);
+    return entries.slice(failure.index + 1);
+  };
+  const undo = replayable(readStack(rawUndo, "history.undo"), -1, "history.undo");
+  const redo = replayable(readStack(rawRedo, "history.redo"), 1, "history.redo");
 
   return Object.freeze({
     undoStack: pstackFromArray(undo),
@@ -1366,7 +1388,7 @@ export function restoreCheckpoint(
     pieceTable,
     lineIndex,
     selection: restoreSelection(migrated.selection, "selection", pieceTable, budget),
-    history: restoreHistory(migrated.history, pieceTable, budget),
+    history: restoreHistory(migrated.history, pieceTable, budget, version !== CHECKPOINT_VERSION),
     metadata: restoreMetadata(migrated.metadata, budget),
     attention: restoreAttention(migrated.attention, lengthByID, budget),
   });

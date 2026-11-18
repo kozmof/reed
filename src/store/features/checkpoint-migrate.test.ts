@@ -347,3 +347,105 @@ describe("version 1 migration of large or hostile input", () => {
     ).not.toThrow();
   });
 });
+
+describe("version 1 history that had already gone stale", () => {
+  /**
+   * Saved by version 1 after chunk size 8, load chunks 0 and 1, insert "xyz"
+   * at 12, evict chunk 0. Its eviction left the undo offset at 12 in an
+   * 11-byte document.
+   */
+  const staleV1 = () => ({
+    format: "reed-checkpoint",
+    version: 1,
+    mode: "exact",
+    revision: 4,
+    selectionRevision: 0,
+    pieceTable: {
+      nextPieceID: 4,
+      totalLength: 11,
+      originalBuffer: "",
+      addBuffer: "eHl6",
+      chunkSize: 8,
+      nextExpectedChunk: 2,
+      totalFileSize: 16,
+      loadedChunks: [0, 1],
+      chunks: [[1, "QkJCQkJCQgo="]],
+      chunkMetadata: [],
+      pieces: [
+        ["p1", "c", 0, 4, 1],
+        ["p2", "a", 0, 3],
+        ["p3", "c", 4, 4, 1],
+      ],
+    },
+    lineIndex: {
+      maxDirtyRanges: 32,
+      unloadedLineCounts: [],
+      lines: [
+        [11, 11],
+        [0, 0],
+      ],
+    },
+    selection: { ranges: [[0, 0]], primaryIndex: 0 },
+    history: {
+      limit: 1000,
+      coalesceTimeout: 0,
+      undo: [
+        {
+          changes: [["i", 12, "xyz"]],
+          selectionBefore: { ranges: [[0, 0]], primaryIndex: 0 },
+          selectionAfter: { ranges: [[15, 15]], primaryIndex: 0 },
+          timestamp: 0,
+        },
+      ],
+      redo: [],
+    },
+    metadata: {
+      encoding: "utf-8",
+      lineEnding: "lf",
+      normalizeInsertedLineEndings: false,
+      isDirty: true,
+    },
+    attention: { nextID: 0, attentions: [] },
+  });
+
+  it("restores the document and drops the history that does not replay", () => {
+    const restored = restoreCheckpoint(staleV1());
+    expect(getValue(restored.pieceTable)).toBe("BBBBxyzBBB\n");
+    expect(restored.history.undoStack).toBeNull();
+  });
+
+  it("keeps newer entries that replay above the stale one", () => {
+    const checkpoint = staleV1();
+    checkpoint.history.undo.push({
+      changes: [["i", 0, "Q"]],
+      selectionBefore: { ranges: [[0, 0]], primaryIndex: 0 },
+      selectionAfter: { ranges: [[1, 1]], primaryIndex: 0 },
+      timestamp: 1,
+    });
+    // The document already holds the newer insert.
+    checkpoint.pieceTable.addBuffer = "eHl6UQ==";
+    checkpoint.pieceTable.totalLength = 12;
+    checkpoint.pieceTable.nextPieceID = 5;
+    checkpoint.pieceTable.pieces.unshift(["p4", "a", 3, 1]);
+    checkpoint.lineIndex.lines = [
+      [12, 12],
+      [0, 0],
+    ];
+    checkpoint.revision = 5;
+
+    let state: DocumentState = restoreCheckpoint(checkpoint);
+    expect(getValue(state.pieceTable)).toBe("QBBBBxyzBBB\n");
+    state = documentReducer(state, DocumentActions.undo());
+    expect(getValue(state.pieceTable)).toBe("BBBBxyzBBB\n");
+    expect(state.history.undoStack).toBeNull();
+  });
+
+  it("still rejects a current-version checkpoint whose history does not replay", () => {
+    const store = createDocumentStore({ content: "abc", reconcileMode: "none" });
+    store.dispatch(DocumentActions.insert(byteOffset(3), "X"));
+    const checkpoint = JSON.parse(JSON.stringify(createCheckpoint(store.reconcileNow())));
+    store.dispose();
+    checkpoint.history.undo[0].changes[0] = ["i", 12, "X"];
+    expect(() => restoreCheckpoint(checkpoint)).toThrow(/past the end of the 4-byte document/);
+  });
+});

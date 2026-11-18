@@ -58,7 +58,7 @@ import {
   utf8ByteLength,
 } from "../core/encoding.js";
 import { NO_CHUNK, placementRuns } from "../core/chunk-anchor.js";
-import { codePointWindow, isSafeSplit } from "../core/utf8-seam.js";
+import { codePointWindow } from "../core/utf8-seam.js";
 import type { FittedKey, KeyRun } from "../core/chunk-anchor.js";
 import {
   anchorAt,
@@ -509,6 +509,10 @@ export function makeReplaceChange(
  * `selectionAfter` returns the selection the edit left, anchored against
  * `state`, which redo restores. The entry calls it on first read (see
  * `deferAnchorSelection`), so it must not depend on anything that changes.
+ *
+ * That function can hold the piece tree of the edited document. The entry
+ * drops it once read, and a new entry reads the one below it, which the next
+ * keystroke can no longer replace, so only the newest entry holds one.
  */
 export function historyPush(
   state: DocumentState,
@@ -519,7 +523,15 @@ export function historyPush(
 ): DocumentState {
   const history = state.history;
   // Derived on first read: an entry the next keystroke replaces never needs it.
+  let deriveAfter: (() => HistorySelectionState) | undefined = selectionAfter;
   let anchoredAfter: HistorySelectionState | undefined;
+  const readSelectionAfter = (): HistorySelectionState => {
+    if (deriveAfter !== undefined) {
+      anchoredAfter = deriveAfter();
+      deriveAfter = undefined;
+    }
+    return anchoredAfter!;
+  };
 
   // Try to coalesce with the last entry
   const change = changes[0];
@@ -541,7 +553,7 @@ export function historyPush(
       },
       selectionBefore: lastEntry.selectionBefore,
       get selectionAfter() {
-        return (anchoredAfter ??= selectionAfter());
+        return readSelectionAfter();
       },
       timestamp: now,
     });
@@ -560,10 +572,13 @@ export function historyPush(
     changes: Object.freeze([...changes]),
     selectionBefore: selectionBefore(),
     get selectionAfter() {
-      return (anchoredAfter ??= selectionAfter());
+      return readSelectionAfter();
     },
     timestamp: now,
   });
+  // Nothing coalesces into the entry below any more, so derive its selection
+  // now and let it drop the document it was derived from.
+  if (lastEntry !== undefined) void lastEntry.selectionAfter;
 
   // Trim undo stack if it exceeds limit.
   // The persistent AVL split keeps this O(log limit) after the stack saturates.
@@ -759,8 +774,15 @@ export type EditOperation = StructuralEditOperation & {
  * additional structural edits.
  *
  * `replay` is true when undo or redo applies a recorded change. Only then can
- * an edge of the edit cut a character (see `splitsCharacter`): the reducer
- * checks that every live edge, local or remote, is a code-point boundary.
+ * an edge of the edit cut a character: the reducer checks that every live
+ * edge, local or remote, is a code-point boundary, but a change recorded
+ * before chunks loaded beside it can replay next to bytes that complete or
+ * continue a character cut at its edge. The edit then joins or splits
+ * characters across its edges, before or after it applies, and the fast line
+ * update, which counts the edit's text apart from the text around it, would
+ * miscount them. Without chunks, history replays into the document it was
+ * recorded in, so a chunked replay alone re-reads the lines around the edit
+ * instead (see `codePointWindow`).
  */
 export function applyUntrackedEdit(
   state: DocumentState,
@@ -783,7 +805,7 @@ export function applyUntrackedEdit(
     (op.kind !== "insert" &&
       (op.deletedTextInexact === true ||
         shouldRebuildLineIndexForDelete(op.deletedText, deleteContext))) ||
-    (replay && splitsCharacter(state.pieceTable, op));
+    (replay && state.pieceTable.nextExpectedChunk > 0);
 
   if (op.kind !== "insert") {
     if (needsRebuild) {
@@ -827,13 +849,7 @@ export function applyUntrackedEdit(
   const deleteEnd = op.kind === "insert" ? op.position : op.deleteEnd;
   const insertedLength =
     newState.pieceTable.totalLength - state.pieceTable.totalLength + (deleteEnd - op.position);
-  // A replayed edit can also join characters across its edges in the edited
-  // document. The fast update above is then wrong, so repair from the original
-  // index.
-  if (
-    needsRebuild ||
-    (replay && splitsCharacterAfter(newState.pieceTable, op.position, op.position + insertedLength))
-  ) {
+  if (needsRebuild) {
     const window = codePointWindow(newState.pieceTable, op.position, deleteEnd, insertedLength);
     return withState(newState, {
       lineIndex: repairLineIndexWindow(
@@ -847,38 +863,6 @@ export function applyUntrackedEdit(
     });
   }
   return newState;
-}
-
-/**
- * True when an edge of `op` cuts a character of `pieceTable`, the document
- * before the edit.
- *
- * The reducer refuses such edits, but undo and redo replay a change recorded
- * before chunks loaded beside it. A chunk that loaded since can complete a
- * character cut at the edge, so the edit joins or splits characters there. The
- * fast line update counts the edit's text apart from the text around it, so
- * these edits re-read the lines instead (see `codePointWindow`). Text inserted
- * as a string is whole characters, so these edges are the only ones that can
- * cut one. Without chunks, history replays into the document it was recorded
- * in, where the reducer checked every edge.
- */
-function splitsCharacter(pieceTable: PieceTableState, op: StructuralEditOperation): boolean {
-  if (pieceTable.nextExpectedChunk === 0) return false;
-  if (!isSafeSplit(pieceTable, op.position)) return true;
-  return op.kind !== "insert" && !isSafeSplit(pieceTable, op.deleteEnd);
-}
-
-/**
- * True when the edges of the text an edit left at [start, end) of
- * `pieceTable`, the edited document, cut a character there.
- *
- * Edges that were safe before the edit can stop being safe: deleting a whole
- * character between an incomplete sequence and a continuation byte it left
- * on its own joins the two. See `splitsCharacter`.
- */
-function splitsCharacterAfter(pieceTable: PieceTableState, start: number, end: number): boolean {
-  if (pieceTable.nextExpectedChunk === 0) return false;
-  return !isSafeSplit(pieceTable, start) || !isSafeSplit(pieceTable, end);
 }
 
 /**

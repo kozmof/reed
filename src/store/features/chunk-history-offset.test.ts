@@ -39,9 +39,9 @@ import type {
   HistoryEvictionPolicy,
   HistoryState,
 } from "../../types/state.js";
-import { pstackPeek, pstackPush } from "../../types/state.js";
+import { pstackPeek, pstackPush, pstackToArray } from "../../types/state.js";
 import { anchorSelection, anchoredCursor, historyForEviction } from "./history-anchor.js";
-import { applyUntrackedEdit, makeDeleteChange, makeInsertChange } from "./edit.js";
+import { applyUntrackedEdit, historyPush, makeDeleteChange, makeInsertChange } from "./edit.js";
 import type { DocumentAction } from "../../types/actions.js";
 import { validateAction } from "../../types/actions.js";
 import { makeDeterministicRng } from "../../../test-utils/large-content.js";
@@ -2552,5 +2552,41 @@ describe("sixteenth review regressions", () => {
     restored.dispatch(DocumentActions.redo());
     restored.dispatch(DocumentActions.undo());
     expect(getValue(restored.getSnapshot().pieceTable)).toBe(before);
+  });
+});
+
+describe("seventeenth review regressions", () => {
+  it("moves a restored history selection inside a character to a boundary without chunks", () => {
+    // "é" is bytes 1..3.
+    const s = createDocumentStore({ content: "aé", reconcileMode: "none" });
+    s.dispatch(DocumentActions.insert(byteOffset(3), "X"));
+    const checkpoint = JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow())));
+    s.dispatch(DocumentActions.undo());
+    expect(s.getSnapshot().selection.ranges[0]).toMatchObject({ anchor: 0, head: 0 });
+    s.dispose();
+    // Offset 2 is the continuation byte of "é".
+    checkpoint.history.undo[0].selectionBefore.ranges = [[2, 2]];
+    const restored = documentReducer(restoreCheckpoint(checkpoint), DocumentActions.undo());
+    expect(getValue(restored.pieceTable)).toBe("aé");
+    expect(restored.selection.ranges[0]).toMatchObject({ anchor: 3, head: 3 });
+  });
+
+  it("derives an entry's selection once a new entry covers it, and only once", () => {
+    const state = createInitialState({ content: "abc" });
+    let derived = 0;
+    const cursor = () => {
+      derived++;
+      return anchoredCursor(-1, 0);
+    };
+    const change = makeInsertChange(byteOffset(0), "X");
+    let next = historyPush(state, [change], 0, cursor, cursor);
+    expect(derived).toBe(1); // selectionBefore only
+    // Too late to coalesce: a new entry, which reads the one below.
+    next = historyPush(next, [change], 1_000_000, cursor, cursor);
+    expect(derived).toBe(3);
+    const [below] = [...pstackToArray(next.history.undoStack)];
+    expect(below!.selectionAfter).toEqual(anchoredCursor(-1, 0));
+    expect(below!.selectionAfter).toBe(below!.selectionAfter);
+    expect(derived).toBe(3);
   });
 });

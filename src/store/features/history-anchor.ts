@@ -512,10 +512,13 @@ export function resolveSelection(
   selection: HistorySelectionState,
 ): SelectionState {
   // Before any chunk loads, every key is NO_CHUNK, whose span is the whole
-  // document, and an anchored position is its offset.
+  // document, and an anchored position is its offset. A restored checkpoint
+  // can still put it inside a character, which edits and SET_SELECTION
+  // reject, so it moves to a boundary as on the chunked path.
   if (pieceTable.nextExpectedChunk === 0) {
     const total = pieceTable.totalLength;
-    const within = (offset: number) => byteOffset(Math.max(0, Math.min(offset, total)));
+    const within = (offset: number) =>
+      byteOffset(nextBoundary(pieceTable, Math.max(0, Math.min(offset, total))));
     return freezeSelection(
       selection.ranges.map(
         (range): SelectionRange =>

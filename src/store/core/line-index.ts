@@ -208,8 +208,15 @@ function repairWindowWithMetrics(
       .map((line) => ({ offset: 0, ...line }));
   } else {
     let insertedText = readText(start, suffixStart);
-    // Standalone TextDecoder reads strip a leading BOM.
-    if (insertedText.length < readText.countChars!(start, suffixStart))
+    // A reader that decodes with a default TextDecoder drops a U+FEFF that
+    // starts the range, which line columns count: three bytes that count as
+    // one character but read as nothing. The built-in reader keeps it.
+    const bomEnd = byteOffset(start + 3);
+    if (
+      bomEnd <= suffixStart &&
+      readText(start, bomEnd) === "" &&
+      readText.countChars!(start, bomEnd) === 1
+    )
       insertedText = "\uFEFF" + insertedText;
     const text = prefixTail + insertedText + (suffixBytes === 0 ? suffixTail : "");
     lines = collectLines(buildLineIndexFromText(text, 0).root).map((n) => ({

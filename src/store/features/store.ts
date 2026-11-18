@@ -580,9 +580,9 @@ function createStoreOverState(
  *
  * Events are emitted after state changes:
  * - 'content-change': On INSERT, DELETE, REPLACE, APPLY_REMOTE
- * - 'selection-change': On SET_SELECTION, and when INSERT, DELETE, REPLACE, UNDO, REDO, or a
- *   chunk load or eviction moves the selection. An edit moves it past the edit, so typing at the
- *   cursor fires it
+ * - 'selection-change': On SET_SELECTION, and when INSERT, DELETE, REPLACE, APPLY_REMOTE, UNDO,
+ *   REDO, or a chunk load or eviction moves the selection. An edit moves it past the edit, so
+ *   typing at the cursor fires it, and so does a remote edit before the cursor
  * - 'history-change': On UNDO and REDO
  * - 'history-drop': On EVICT_CHUNK that drops history entries
  * - 'attention-change': When the attention layer changes
