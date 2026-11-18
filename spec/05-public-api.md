@@ -155,7 +155,7 @@ Auto-emitted by `store.createDocumentStoreWithEvents`:
 - `content-change` (`INSERT/DELETE/REPLACE/APPLY_REMOTE`)
 - `selection-change` (`SET_SELECTION`, and any other action that moves the selection: `INSERT`/`DELETE`/`REPLACE`/`APPLY_REMOTE` moving it past the edit, `UNDO`/`REDO`, `LOAD_CHUNK`/`LOAD_CHUNKS`/`EVICT_CHUNK`/`EVICT_CHUNKS`)
 - `history-change` (`UNDO/REDO`)
-- `history-drop` (`EVICT_CHUNK` or `EVICT_CHUNKS` when the `'drop'` policy, or `'pin-bounded'` with `overLimit` or through `EVICT_CHUNKS`, discards entries)
+- `history-drop` (`EVICT_CHUNK` or `EVICT_CHUNKS` when the `'drop'` policy, or `'pin-bounded'` with `overLimit` or through `EVICT_CHUNKS`, discards entries; `UNDO` or `REDO` when the next entry no longer resolves inside the document, which drops it and the rest of its stack)
 - `attention-change` (create, delete, or content edits that rewrite stored points)
 - `save` (`MARK_SAVED`)
 - `dirty-change` (when dirty flag changes)
@@ -286,4 +286,6 @@ Anchored history positions (chunk-safe undo and redo) change the meaning of expo
 - `APPLY_REMOTE` moves `state.selection` past each remote change the same way, except that a caret where a change inserts text stays before that text. In 4.x it left `state.selection` alone.
 - `REDO` restores the selection the edit left, not a caret at the end of the redone change. `UNDO` still restores the selection the edit came from.
 - `selection-change` fires whenever an action replaces the selection, including `INSERT`, `DELETE`, `REPLACE`, `APPLY_REMOTE`, `UNDO`, and `REDO`.
+- `rendering` (`getLineContent`, `getVisibleLines`, `getVisibleLine`) keeps a byte order mark at the start of the file as a U+FEFF at line 0, column 0, so line content agrees with the columns the line index counts. In 4.x it was stripped from line 0. Code that copies rendered line text or measures its width and does not want the mark should drop a leading U+FEFF from line 0 itself.
+- `UNDO` and `REDO` never apply an entry that no longer resolves inside the document. They drop it, together with the entries behind it on the same stack, leave the document unchanged, and emit `history-drop` instead of `history-change`. In 4.x such an entry was clamped to the document and applied.
 - Checkpoints are written as version 2. Restore still reads version 1, and `isCheckpoint` accepts both. In 4.x `isCheckpoint` returned true only for the version the library wrote, so a true result also meant the current layout. It now means only that `restore` can read the value: a stored version 1 checkpoint passes, and its history positions are unanchored offsets without placement keys. Code that reads checkpoint sections directly, rather than through `restore`, must also check `value.version === CHECKPOINT_VERSION`.

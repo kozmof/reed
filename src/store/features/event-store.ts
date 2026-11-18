@@ -98,13 +98,20 @@ export function withEvents(
 
     // History events. EVICT_CHUNK and EVICT_CHUNKS change history only when they discard
     // entries: under "drop", or "pin-bounded" with overLimit or through EVICT_CHUNKS.
-    if (action.type === "UNDO" || action.type === "REDO") {
+    // UNDO and REDO discard entries instead of applying one that no longer
+    // replays; the document is then unchanged.
+    const historyDiscarded =
+      prevState.history !== nextState.history && prevState.pieceTable === nextState.pieceTable;
+    if ((action.type === "UNDO" || action.type === "REDO") && !historyDiscarded) {
       prepare(
         "history-change",
         createHistoryChangeEvent(action.type === "UNDO" ? "undo" : "redo", prevState, nextState),
       );
     } else if (
-      (action.type === "EVICT_CHUNK" || action.type === "EVICT_CHUNKS") &&
+      (action.type === "EVICT_CHUNK" ||
+        action.type === "EVICT_CHUNKS" ||
+        action.type === "UNDO" ||
+        action.type === "REDO") &&
       prevState.history !== nextState.history
     ) {
       prepare("history-drop", createHistoryDropEvent(prevState, nextState));

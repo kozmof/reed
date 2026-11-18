@@ -15,6 +15,7 @@ import {
 } from "./store.js";
 import { DocumentActions, deserializeAction, serializeAction } from "./actions.js";
 import { documentReducer } from "./reducer.js";
+import { withEvents } from "./event-store.js";
 import { createCheckpoint, restoreCheckpoint } from "./checkpoint.js";
 import { createInitialState } from "../core/state.js";
 import { byteLength, byteOffset } from "../../types/branded.js";
@@ -28,7 +29,7 @@ import {
   pieceTableDelete,
   pieceTableInsert,
 } from "../core/piece-table.js";
-import { byteKey, pieceKey } from "../core/chunk-anchor.js";
+import { byteKey, keyFitsAt, pieceKey } from "../core/chunk-anchor.js";
 import { isSafeSplice, isSafeSplit } from "../core/utf8-seam.js";
 import { getTextForAttention } from "../core/attention.js";
 import { query } from "../../api/query.js";
@@ -43,14 +44,29 @@ import type {
   HistoryChange,
   HistoryEntry,
   HistoryEvictionPolicy,
+  HistorySelectionState,
   HistoryState,
 } from "../../types/state.js";
 import { pstackPeek, pstackPush, pstackToArray } from "../../types/state.js";
-import { anchorSelection, anchoredCursor, historyForEviction } from "./history-anchor.js";
+import { anchorSelection, historyForEviction } from "./history-anchor.js";
 import { applyUntrackedEdit, historyPush, makeDeleteChange, makeInsertChange } from "./edit.js";
 import type { DocumentAction } from "../../types/actions.js";
 import { validateAction } from "../../types/actions.js";
 import { makeDeterministicRng } from "../../../test-utils/large-content.js";
+
+/** A history selection holding one cursor at anchored `position` with key `key`. */
+function anchoredCursor(key: number, position: number): HistorySelectionState {
+  const cursor = Object.freeze({
+    anchor: position,
+    head: position,
+    anchorAfterChunk: key,
+    headAfterChunk: key,
+  });
+  return Object.freeze({
+    ranges: Object.freeze([cursor]),
+    primaryIndex: 0,
+  }) as HistorySelectionState;
+}
 
 const CHUNK_SIZE = 8;
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -2854,5 +2870,106 @@ describe("nineteenth review regressions", () => {
     expect(DocumentActions.evictChunks([0], 1)).not.toHaveProperty("keepHistory");
     const bad = { type: "EVICT_CHUNKS", chunkIndices: [0], maxLoaded: 1, keepHistory: "yes" };
     expect(validateAction(bad).valid).toBe(false);
+  });
+});
+
+describe("twentieth review regressions", () => {
+  /** An entry holding one change, with cursors that resolve anywhere. */
+  const entryOf = (change: HistoryChange): HistoryEntry =>
+    Object.freeze({
+      changes: Object.freeze([change]),
+      selectionBefore: anchoredCursor(-1, 0),
+      selectionAfter: anchoredCursor(-1, 0),
+      timestamp: 0,
+    });
+  /** A 3-byte document whose top entry on `stack` points past its end. */
+  const withStaleTop = (stack: "undoStack" | "redoStack") => {
+    const state = createInitialState({ content: "abc" });
+    const good = entryOf(makeInsertChange(byteOffset(0), "X"));
+    // Undo deletes [10, 11) and redo deletes [10, 12): both past the end.
+    const stale = entryOf(
+      stack === "undoStack"
+        ? makeInsertChange(byteOffset(10), "Y")
+        : makeDeleteChange(byteOffset(10), "YY"),
+    );
+    const other = stack === "undoStack" ? "redoStack" : "undoStack";
+    return Object.freeze({
+      ...state,
+      history: Object.freeze({
+        ...state.history,
+        [stack]: pstackPush(pstackPush(null, good), stale),
+        [other]: pstackPush(null, good),
+      }),
+    });
+  };
+
+  it.each([
+    ["UNDO", "undoStack", "redoStack"],
+    ["REDO", "redoStack", "undoStack"],
+  ] as const)(
+    "%s drops an entry that resolves outside the document and every entry behind it",
+    (type, stack, other) => {
+      const state = withStaleTop(stack);
+      const action = type === "UNDO" ? DocumentActions.undo() : DocumentActions.redo();
+      const next = documentReducer(state, action);
+      expect(next.pieceTable).toBe(state.pieceTable);
+      expect(next.selection).toBe(state.selection);
+      expect(next.history[stack]).toBeNull();
+      expect(next.history[other]).toBe(state.history[other]);
+      // The next press is a no-op rather than another failure.
+      expect(documentReducer(next, action)).toBe(next);
+    },
+  );
+
+  it("reports the dropped entries as history-drop, not history-change", () => {
+    let state = withStaleTop("undoStack");
+    const base = createDocumentStore();
+    const store = withEvents(
+      Object.assign(Object.create(base), {
+        getSnapshot: () => state,
+        dispatch: (action: DocumentAction) => (state = documentReducer(state, action)),
+      }),
+      undefined,
+    );
+    const seen: string[] = [];
+    store.addEventListener("history-change", () => seen.push("change"));
+    store.addEventListener("history-drop", () => seen.push("drop"));
+    store.dispatch(DocumentActions.undo());
+    expect(seen).toEqual(["drop"]);
+  });
+
+  it("drops a remote-insert caret's key once text under another key lands after it", () => {
+    const s = makeStore(4);
+    load(s, 0);
+    load(s, 3);
+    // Offset 8 sits between chunk 0 (key -1) and chunk 3 (key 2), so keys -1
+    // to 2 all fit there. Two carets store keys on different sides of chunk 2.
+    s.dispatch(
+      DocumentActions.setSelection([
+        { anchor: byteOffset(8), head: byteOffset(8), anchorAfterChunk: 1, headAfterChunk: 1 },
+        { anchor: byteOffset(8), head: byteOffset(8), anchorAfterChunk: 2, headAfterChunk: 2 },
+      ]),
+    );
+    expect(s.getSnapshot().selection.ranges).toEqual([
+      { anchor: 8, head: 8, anchorAfterChunk: 1, headAfterChunk: 1 },
+      { anchor: 8, head: 8, anchorAfterChunk: 2, headAfterChunk: 2 },
+    ]);
+    // The text takes the primary caret's key 1, and both carets stay before
+    // it. Key 2 no longer fits in front of text with key 1.
+    s.dispatch(DocumentActions.applyRemote([{ type: "insert", start: byteOffset(8), text: "R" }]));
+    const { pieceTable, selection } = s.getSnapshot();
+    expect(collectPieces(pieceTable.root).map(pieceKey)).toEqual([-1, 1, 2]);
+    expect(selection.ranges).toEqual([
+      { anchor: 8, head: 8, anchorAfterChunk: 1, headAfterChunk: 1 },
+      { anchor: 8, head: 8 },
+    ]);
+    for (const range of selection.ranges) {
+      for (const [offset, key] of [
+        [range.anchor, range.anchorAfterChunk],
+        [range.head, range.headAfterChunk],
+      ] as const) {
+        if (key !== undefined) expect(keyFitsAt(pieceTable, offset, key)).toBe(true);
+      }
+    }
   });
 });

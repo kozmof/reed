@@ -12,7 +12,7 @@ import type { DocumentStore } from "../../types/store.js";
 import { getRedoCount, getUndoCount } from "./history.js";
 import { getValue } from "../core/piece-table.js";
 import { documentReducer } from "./reducer.js";
-import { evictionHistoryLoss } from "./chunk-actions.js";
+import { evictionCandidate } from "./chunk-actions.js";
 import type { DocumentState, HistoryEvictionPolicy } from "../../types/state.js";
 import { makeDeterministicRng, randomInt } from "../../../test-utils/large-content.js";
 
@@ -447,8 +447,8 @@ describe("ChunkManager eviction that discards history", () => {
   const CHUNK_COUNT = 6;
   const content = (i: number) => String.fromCharCode(97 + i).repeat(CHUNK_SIZE - 1) + "\n";
   const lossOf = (state: DocumentState, chunk: number) => {
-    const loss = evictionHistoryLoss(state, chunk);
-    return loss === null ? null : loss.undo + loss.redo;
+    const loss = evictionCandidate(state, chunk)?.loss;
+    return loss === undefined ? null : loss.undo + loss.redo;
   };
 
   /**
@@ -833,3 +833,21 @@ it.each([0, -1, NaN, 1.5, Infinity])(
     store.dispose();
   },
 );
+
+describe("ChunkManager eviction after another path evicted a chunk", () => {
+  it("does not spend the first pass on a chunk that is already gone", async () => {
+    const store = createDocumentStore({ chunkSize: CHUNK_SIZE, totalFileSize: CHUNK_SIZE * 4 });
+    const chunks = { 0: "aaaaaaa\n", 1: "bbbbbbb\n", 2: "ccccccc\n", 3: "ddddddd\n" };
+    const manager = createChunkManager(store, makeLoader(chunks), { maxLoadedChunks: 2 });
+    manager.setActiveChunks([0, 1, 2, 3]);
+    for (const i of [0, 1, 2, 3]) await manager.ensureLoaded(i);
+    // Evicted behind the manager's back: still first in its LRU order.
+    store.dispatch(DocumentActions.evictChunk(0));
+    const dispatch = vi.spyOn(store, "dispatch");
+    manager.setActiveChunks([]);
+    const evictions = dispatch.mock.calls.filter(([action]) => action.type.startsWith("EVICT"));
+    expect(evictions).toEqual([[DocumentActions.evictChunks([1], 2, true)]]);
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([2, 3]);
+    manager.dispose();
+  });
+});

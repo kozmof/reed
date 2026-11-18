@@ -650,6 +650,14 @@ export function invertChange(change: HistoryChange): HistoryChange {
 }
 
 /**
+ * Thrown by applyChange when a history change resolves outside the document it
+ * is replayed against. historyUndo and historyRedo catch it and drop the entry.
+ */
+export class StaleHistoryChangeError extends RangeError {
+  override name = "StaleHistoryChangeError";
+}
+
+/**
  * Replay history through the same lazy structural pipeline as local edits.
  * The anchored position is resolved against the current chunk layout, and
  * inserted text gets the recorded placement key. Recorded raw bytes are
@@ -662,7 +670,7 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
   // position at the end and delete would remove other bytes, so refuse instead.
   const removed = removedLength(change, 1);
   if (position < 0 || position + removed > state.pieceTable.totalLength) {
-    throw new RangeError(
+    throw new StaleHistoryChangeError(
       `history ${change.type} at anchored position ${change.position} with placement key ` +
         `${change.afterChunk} resolves to [${position}, ${position + removed}), outside the ` +
         `${state.pieceTable.totalLength}-byte document`,

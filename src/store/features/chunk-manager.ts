@@ -259,9 +259,12 @@ export function createChunkManager(
       // the full pass would evict first, so offering every candidate only
       // when this falls short chooses the same chunks.
       const head: number[] = [];
+      const resident = store.getSnapshot().pieceTable.chunkMap;
       for (const candidate of lruOrder) {
         if (head.length === excess) break;
-        if (evictable(candidate)) head.push(candidate);
+        // lruOrder can still list chunks another path evicted; skip them so
+        // they do not take slots from chunks this pass could evict.
+        if (evictable(candidate) && resident.has(candidate)) head.push(candidate);
       }
       if (head.length > 0) {
         store.dispatch(DocumentActions.evictChunks(head, maxLoadedChunks, true));

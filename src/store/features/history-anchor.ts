@@ -238,6 +238,11 @@ export function insertionKey(
   return key ?? placementKey(pieceTable, offset, undefined, "before");
 }
 
+/** True when an endpoint stores no key, or its stored key fits `offset`. */
+function storedKeyFits(pieceTable: PieceTableState, offset: number, key: number | undefined) {
+  return key === undefined || keyFitsAt(pieceTable, offset, key);
+}
+
 /** True when an endpoint of `range` stores a placement key. */
 function rangeHasKey(range: SelectionRange): boolean {
   return range.anchorAfterChunk !== undefined || range.headAfterChunk !== undefined;
@@ -274,7 +279,8 @@ function rangeHasKey(range: SelectionRange): boolean {
  * the caret's key (see `insertionKey`). Non-empty ranges move as for a local
  * edit.
  *
- * Returns `selection` itself when no endpoint moves.
+ * Returns `selection` itself when no endpoint moves and every stored key still
+ * fits its offset.
  */
 export function moveSelectionPastEdit(
   pieceTable: PieceTableState,
@@ -316,7 +322,17 @@ export function moveSelectionPastEdit(
     // inserted text and its end to before it. Collapse it to a caret there.
     if (forward && head.offset < anchor.offset) head = anchor;
     if (backward && anchor.offset < head.offset) anchor = head;
-    if (anchor.offset === range.anchor && head.offset === range.head) return range;
+    // An endpoint that stays at `start` can lose its key's fit when text
+    // lands after it under another key, as a second caret at a remote insert
+    // does. Keep the range only while every stored key still fits.
+    if (
+      anchor.offset === range.anchor &&
+      head.offset === range.head &&
+      storedKeyFits(pieceTable, range.anchor, range.anchorAfterChunk) &&
+      storedKeyFits(pieceTable, range.head, range.headAfterChunk)
+    ) {
+      return range;
+    }
     changed = true;
     return selectionRange(pieceTable, anchor.offset, head.offset, anchor.key, head.key);
   });
@@ -407,21 +423,6 @@ export function deferAnchorSelection(
   const layout: KeyLayout = { root, totalLength, nextExpectedChunk };
   const loaded = loadedChunkLengths(pieceTable);
   return () => anchorChunked(layout, loaded, selection);
-}
-
-/** A history selection holding one cursor at anchored `position` with key `key`. */
-export function anchoredCursor(key: number, position: number): HistorySelectionState {
-  return freezeSelection(
-    [
-      Object.freeze({
-        anchor: position,
-        head: position,
-        anchorAfterChunk: key,
-        headAfterChunk: key,
-      }),
-    ],
-    0,
-  );
 }
 
 /** Bytes read at a time while scanning a long run of continuation bytes. */

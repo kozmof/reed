@@ -7,7 +7,7 @@
 import type { PieceTableState } from "../../types/state.js";
 import { byteOffset, type ByteOffset } from "../../types/branded.js";
 import { getRawByte } from "./piece-table.js";
-import { textEncoder, utf8ByteLength } from "./encoding.js";
+import { isSurrogatePairAt, textEncoder, utf8ByteLength } from "./encoding.js";
 
 /** Bytes a UTF-8 lead byte can own after it. */
 export const MAX_CONTINUATION_BYTES = 3;
@@ -66,12 +66,7 @@ export function isSafeSplice(
   text: string,
 ): boolean {
   const length = utf8ByteLength(text);
-  const lastUnits =
-    text.length >= 2 &&
-    isLowSurrogate(text.charCodeAt(text.length - 1)) &&
-    isHighSurrogate(text.charCodeAt(text.length - 2))
-      ? 2
-      : 1;
+  const lastUnits = isSurrogatePairAt(text, text.length - 2) ? 2 : 1;
   const tail = textEncoder.encode(text.slice(-lastUnits));
   const tailStart = start + length - tail.length;
   const shift = end - start - length;
@@ -83,14 +78,6 @@ export function isSafeSplice(
   };
   const total = pieceTable.totalLength - shift;
   return isSafeSplitOf(byteAt, total, start) && isSafeSplitOf(byteAt, total, start + length);
-}
-
-function isHighSurrogate(unit: number): boolean {
-  return unit >= 0xd800 && unit <= 0xdbff;
-}
-
-function isLowSurrogate(unit: number): boolean {
-  return unit >= 0xdc00 && unit <= 0xdfff;
 }
 
 /**

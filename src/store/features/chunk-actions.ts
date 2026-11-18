@@ -322,18 +322,20 @@ function evictableRange(state: DocumentState, chunkIndex: number): EvictableRang
 }
 
 /**
- * How many undo and redo entries EVICT_CHUNK discards to evict `chunkIndex`
- * when the policy lets it drop history (`"drop"`, or `"pin-bounded"` with
- * `overLimit`), or null when it cannot evict the chunk whatever happens to
- * history (see `evictChunk`). Under `"pin"`, only a chunk with no loss evicts.
+ * The resident range of `chunkIndex` and how many undo and redo entries
+ * evicting it discards when the policy lets it drop history (`"drop"`, or
+ * `"pin-bounded"` with `overLimit`), or null when it cannot be evicted
+ * whatever happens to history (see `evictableRange`). Under `"pin"`, only a
+ * chunk with no loss evicts.
  */
-export function evictionHistoryLoss(
+export function evictionCandidate(
   state: DocumentState,
   chunkIndex: number,
-): EvictionHistoryLoss | null {
+): { readonly range: NonNullable<EvictableRange>; readonly loss: EvictionHistoryLoss } | null {
   const range = evictableRange(state, chunkIndex);
   if (range === null) return null;
-  return historyLossForEviction(state.pieceTable, state.history, chunkIndex, range.start);
+  const loss = historyLossForEviction(state.pieceTable, state.history, chunkIndex, range.start);
+  return { range, loss };
 }
 
 export function evictChunk(state: DocumentState, action: EvictChunkAction): DocumentState {
@@ -433,9 +435,9 @@ export function evictChunks(state: DocumentState, action: EvictChunksAction): Do
   const lossy: { readonly chunk: number; loss: EvictionHistoryLoss }[] = [];
   for (const chunk of new Set(action.chunkIndices)) {
     if (next.pieceTable.chunkMap.size <= maxLoaded) return next;
-    const range = evictableRange(next, chunk);
-    if (range === null) continue;
-    const loss = historyLossForEviction(next.pieceTable, next.history, chunk, range.start);
+    const candidate = evictionCandidate(next, chunk);
+    if (candidate === null) continue;
+    const { range, loss } = candidate;
     if (lostEntries(loss) === 0) next = evictRange(next, chunk, range, next.history);
     else lossy.push({ chunk, loss });
   }
