@@ -30,8 +30,9 @@ import {
   carrySelectionAcrossChunks,
   historyForEviction,
   historyLossForEviction,
+  totalLoss,
+  type EvictionHistoryLoss,
 } from "./history-anchor.js";
-import type { EvictionHistoryLoss } from "./history-anchor.js";
 import { createFewestLossQueue } from "./fewest-loss-queue.js";
 import { repairChunkLines } from "../core/chunk-line-repair.js";
 import { summarizeBytes } from "../core/decoded-metrics.js";
@@ -418,11 +419,6 @@ function evictRange(
   });
 }
 
-/** Undo and redo entries an eviction discards in all. */
-function lostEntries(loss: EvictionHistoryLoss): number {
-  return loss.undo + loss.redo;
-}
-
 /**
  * Evict chunks from `chunkIndices` until at most `maxLoaded` chunks stay
  * loaded (see `EvictChunksAction`).
@@ -449,7 +445,7 @@ export function evictChunks(state: DocumentState, action: EvictChunksAction): Do
     const candidate = evictionCandidate(next, chunk);
     if (candidate === null) continue;
     const { range, loss } = candidate;
-    if (lostEntries(loss) === 0) next = evictRange(next, chunk, range, next.history);
+    if (totalLoss(loss) === 0) next = evictRange(next, chunk, range, next.history);
     else lossy.push({ chunk, loss });
   }
 

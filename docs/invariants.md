@@ -361,12 +361,26 @@ opaque and place no constraint on the allocator.
 
 ### 6.4 History Byte Lengths Are Derived
 
-Restore recomputes `byteLength` and `oldByteLength` from their strings rather than reading
-them, so invariant 4 cannot be violated by an edited payload.
+Restore derives `byteLength` and `oldByteLength` rather than reading them, so invariant 4
+cannot be violated by an edited payload. A change that carries raw `bytes` or `oldBytes` is
+measured by those bytes, since they are what undo and redo insert. Otherwise the length is the
+UTF-8 length of its string.
 
-History selections are checked for shape but not against the current document length. An undo
-entry describes an older revision, so its offsets may legitimately sit past the end of the
-document as it stands now.
+### 6.5 History Anchors Are Checked, and Stacks Replay
+
+Every anchored history position is checked against its placement key (`readAnchor`). The key
+must name a chunk that has been loaded. A change position must resolve to a non-negative offset
+in the restored chunk layout. A selection position is clamped into the document when it is
+restored, so it only needs the bound that holds in any layout, `-(key + 1) * chunkSize`.
+Neither is checked against the current document length: an undo entry describes an older
+revision, so its offsets may sit past the end of the document as it stands now.
+
+Each stack must also replay from its newest entry (`findStackReplayFailure`). Every change has
+to fit inside the document the newer changes left, and its placement key has to keep keys in
+document order. A current-version checkpoint whose stack does not replay is rejected with
+`HISTORY_INVALID`. A migrated payload keeps the newer entries that replay and drops the first
+failing entry and everything older, since older versions could save offsets that had already
+gone stale.
 
 ---
 

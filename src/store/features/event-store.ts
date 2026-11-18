@@ -36,6 +36,21 @@ export function withEvents(
   const emitter = createEventEmitter(logger);
   let disposed = false;
 
+  // The state the reducer returned for the dispatch now notifying, which the
+  // events describe. A store listener can dispatch again while it is
+  // notified, so the state `baseStore.dispatch` returns can already include
+  // that listener's actions. This listener is the base store's first (both
+  // callers pass a fresh store), so it runs before any listener that could
+  // dispatch. A dispatch that notifies no one, inside a transaction or from a
+  // listener, returns the reducer's state itself.
+  let awaitingCommit = false;
+  let committed: DocumentState | null = null;
+  baseStore.subscribe(() => {
+    if (!awaitingCommit) return;
+    awaitingCommit = false;
+    committed = baseStore.getSnapshot();
+  });
+
   // Depth-indexed event buffer. Each entry corresponds to one open transaction level.
   // Index 0 = outermost open transaction, last = innermost.
   const pendingEventLevels: Array<Array<() => void>> = [];
@@ -102,9 +117,8 @@ export function withEvents(
     // UNDO and REDO discard entries instead of applying one that no longer
     // replays; the document is then unchanged. The history step records a
     // drop against the state it ran on, prevState, so read the outcome from
-    // there: a store listener may have dispatched again since, so nextState
-    // need not be the state the step returned. The piece table cannot tell
-    // them apart, since replaying an entry that changes no bytes keeps it too.
+    // there. The piece table cannot tell them apart, since replaying an entry
+    // that changes no bytes keeps it too.
     const historyDiscarded =
       (action.type === "UNDO" || action.type === "REDO") &&
       isDroppedHistoryStep(action.type === "UNDO" ? "undo" : "redo", prevState);
@@ -158,7 +172,19 @@ export function withEvents(
   function dispatch(action: DocumentAction): DocumentState {
     if (disposed) return baseStore.getSnapshot();
     const prevState = baseStore.getSnapshot();
-    const nextState = baseStore.dispatch(action);
+    const outerAwaiting = awaitingCommit;
+    const outerCommitted = committed;
+    awaitingCommit = true;
+    committed = null;
+    let currentState: DocumentState;
+    let nextState: DocumentState;
+    try {
+      currentState = baseStore.dispatch(action);
+      nextState = committed ?? currentState;
+    } finally {
+      awaitingCommit = outerAwaiting;
+      committed = outerCommitted;
+    }
 
     if (nextState !== prevState) {
       try {
@@ -172,7 +198,7 @@ export function withEvents(
       }
     }
 
-    return nextState;
+    return currentState;
   }
 
   /**

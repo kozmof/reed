@@ -3,7 +3,7 @@
  * time the one whose eviction now discards the fewest entries, ties going to
  * the earlier candidate (see `evictChunks`).
  */
-import type { EvictionHistoryLoss } from "./history-anchor.js";
+import { totalLoss as total, type EvictionHistoryLoss } from "./history-anchor.js";
 
 interface Candidate {
   readonly index: number;
@@ -114,6 +114,10 @@ export function createFewestLossQueue(losses: readonly EvictionHistoryLoss[]): F
   // Candidates before these no longer discard undo, or redo, entries.
   let undoPassed = 0;
   let redoPassed = 0;
+  // Every candidate is already in the heap its counts put it in, so the ones
+  // that discard no undo, or no redo, entries to begin with pass unpushed.
+  while (undoPassed < byUndo.length && byUndo[undoPassed]!.undo === 0) undoPassed++;
+  while (redoPassed < byRedo.length && byRedo[redoPassed]!.redo === 0) redoPassed++;
   const pass = () => {
     while (undoPassed < byUndo.length && byUndo[undoPassed]!.undo <= droppedUndo) {
       const c = byUndo[undoPassed++]!;
@@ -124,13 +128,11 @@ export function createFewestLossQueue(losses: readonly EvictionHistoryLoss[]): F
       if (c.open) heaps[group(c)]!.push(c);
     }
   };
-  pass();
 
   const lossOf = (c: Candidate): EvictionHistoryLoss => ({
     undo: Math.max(0, c.undo - droppedUndo),
     redo: Math.max(0, c.redo - droppedRedo),
   });
-  const total = (loss: EvictionHistoryLoss) => loss.undo + loss.redo;
 
   return {
     take() {

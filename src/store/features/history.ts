@@ -129,9 +129,7 @@ function droppedStep(
  * replaying it, as far as a step has run on `input`. The event layer uses this
  * to emit `history-drop` rather than `history-change`: the document is
  * unchanged either way when an entry changes no bytes, so the step's outcome
- * is the only reliable signal. It asks about the state the step ran on, not
- * the one it returned, since a store listener can dispatch again before the
- * event layer looks, leaving the store at a later state.
+ * is the only reliable signal. It asks about the state the step ran on.
  */
 export function isDroppedHistoryStep(direction: "undo" | "redo", input: DocumentState): boolean {
   return droppedStepInputs[direction].has(input);

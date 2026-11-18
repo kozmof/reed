@@ -146,12 +146,15 @@ interface Stuck {
  * side, which can part one of them from an add piece that touched it, so
  * those two are measured again.
  *
- * Finding them costs O(L log k) for k chunks loaded since, and nothing when
- * none was.
+ * Every load and eviction replaces the chunk map, so when it is the one
+ * measured this costs O(1). Otherwise finding the chunks loaded since costs
+ * O(L) for L loaded chunks, no more than the caller's walk of the LRU order,
+ * and measuring their neighbours O(L log k) more for k of them.
  */
 function stillStuck(stuck: Stuck, state: DocumentState): ReadonlySet<number> | null {
   if (state.history !== stuck.history || state.attention !== stuck.attention) return null;
   const { chunkMap } = state.pieceTable;
+  if (chunkMap === stuck.chunkMap) return stuck.chunks;
   const loaded: number[] = [];
   for (const chunk of chunkMap.keys()) if (!stuck.chunkMap.has(chunk)) loaded.push(chunk);
   if (loaded.length === 0) return stuck.chunks;

@@ -3223,3 +3223,41 @@ describe("twenty-fourth review regressions", () => {
     expect(pstackPeek(next.history.undoStack)!.selectionBefore.primaryIndex).toBe(1);
   });
 });
+
+describe("twenty-sixth review regressions", () => {
+  it("describes the eviction in history-drop, not a listener's dispatch during it", () => {
+    const s = createDocumentStoreWithEvents({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 2,
+      reconcileMode: "none",
+      historyEvictionPolicy: "drop",
+    });
+    s.dispatch(DocumentActions.loadChunk(0, enc(CHUNK0)));
+    s.dispatch(DocumentActions.loadChunk(1, enc(CHUNK1)));
+    s.dispatch(DocumentActions.insert(byteOffset(2), "X"));
+    s.dispatch(DocumentActions.undo());
+    // A store listener types once chunk 0 is gone, while the eviction
+    // notifies it, so dispatch returns the state after that edit.
+    let typed = false;
+    s.subscribe(() => {
+      if (typed || s.getSnapshot().pieceTable.chunkMap.has(0)) return;
+      typed = true;
+      s.dispatch(DocumentActions.insert(byteOffset(0), "L"));
+    });
+    const drops: DocumentState[][] = [];
+    s.addEventListener("history-drop", ({ prevState, nextState }) =>
+      drops.push([prevState, nextState]),
+    );
+
+    const returned = s.dispatch(DocumentActions.evictChunk(0));
+    expect(typed).toBe(true);
+    expect(getUndoCount(returned)).toBe(1);
+    expect(drops).toHaveLength(1);
+    const [prevState, nextState] = drops[0]!;
+    expect(getRedoCount(prevState!)).toBe(1);
+    expect(getRedoCount(nextState!)).toBe(0);
+    // The event's state is the eviction's, without the listener's edit.
+    expect(getUndoCount(nextState!)).toBe(0);
+    expect(nextState!.pieceTable.totalLength).toBe(CHUNK1.length);
+  });
+});

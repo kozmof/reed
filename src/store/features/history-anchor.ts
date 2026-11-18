@@ -894,6 +894,11 @@ export interface EvictionHistoryLoss {
   readonly redo: number;
 }
 
+/** Undo and redo entries an eviction discards in all. */
+export function totalLoss(loss: EvictionHistoryLoss): number {
+  return loss.undo + loss.redo;
+}
+
 /**
  * How many undo and redo entries evicting `chunkIndex`, whose first resident
  * byte is at `start`, discards when history may be dropped: the entries
