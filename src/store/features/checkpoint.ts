@@ -1110,6 +1110,14 @@ function findStackReplayFailure(
             `document order`,
         };
       }
+      if (failure === "span") {
+        return {
+          index: e,
+          message:
+            `${what}[${e}].changes[${i}] removes [${start}, ${start + remove}) on undo or ` +
+            `redo, which holds bytes outside placement key ${change.afterChunk}`,
+        };
+      }
       length += insert - remove;
       if (!chunked) continue;
       if (remove > 0) doc = pieceTableDelete(doc, byteOffset(start), byteOffset(start + remove));

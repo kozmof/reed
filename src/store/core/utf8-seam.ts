@@ -7,15 +7,10 @@
 import type { PieceTableState } from "../../types/state.js";
 import { byteOffset, type ByteOffset } from "../../types/branded.js";
 import { getRawByte } from "./piece-table.js";
-import { isSurrogatePairAt, textEncoder, utf8ByteLength } from "./encoding.js";
+import { isContinuationByte, isSurrogatePairAt, textEncoder, utf8ByteLength } from "./encoding.js";
 
 /** Bytes a UTF-8 lead byte can own after it. */
 export const MAX_CONTINUATION_BYTES = 3;
-
-/** True for a UTF-8 continuation byte (`10xxxxxx`). */
-export function isContinuationByte(byte: number): boolean {
-  return (byte & 0xc0) === 0x80;
-}
 
 /**
  * True when splitting the bytes of `pieceTable` at `offset` leaves the decoding

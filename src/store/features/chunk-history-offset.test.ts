@@ -816,10 +816,15 @@ describe("checkpoint restore validates history anchors", () => {
     expect(checkpoint.history.undo[0]!.changes[0]).toEqual(["i", 2, "X", 0]);
 
     // nextExpectedChunk is 2, so key 1 is fine and key 2 is not. Key 1 fits
-    // only after chunk 1 (resident 8), where redo puts "X" back.
+    // only after chunk 1, where undoing a delete puts "X" back: anchored 1 is
+    // resident 9, past the "X" typed inside it.
     const atKey = (key: number, position = 2) =>
       editUndo(checkpoint, (entry) => (entry.changes[0] = ["i", position, "X", key]));
-    expect(() => restoreCheckpoint(atKey(1, 0))).not.toThrow();
+    const deleteAt = (key: number, position: number) =>
+      editUndo(checkpoint, (entry) => (entry.changes[0] = ["d", position, "X", key]));
+    expect(() => restoreCheckpoint(deleteAt(1, 1))).not.toThrow();
+    // Undoing the insert there would remove chunk 1's last byte, under key 0.
+    expect(() => restoreCheckpoint(atKey(1, 0))).toThrow(/outside placement key 1/);
     expect(() => restoreCheckpoint(atKey(2))).toThrow(/placement key 2/);
     // A change is replayed in the restored layout, so its position subtracts
     // at most the loaded chunks at or below its key: none for key 0, whose
@@ -3522,5 +3527,40 @@ describe("thirty-fourth review regressions", () => {
       s.dispatch(DocumentActions.undo());
       expect(text(s)).toBe(CHUNK0 + CHUNK1);
     });
+  });
+});
+
+describe("forty-fourth review regressions", () => {
+  type Wire = Record<string, any>;
+  const wireOf = (s: Store): Wire => JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow())));
+
+  it("refuses a change whose removed bytes reach past its key's span", () => {
+    const s = makeStore(3, "drop");
+    for (let i = 0; i < 3; i++) load(s, i);
+    s.dispatch(DocumentActions.insert(byteOffset(0), "X"));
+    s.dispatch(DocumentActions.undo());
+    const checkpoint = wireOf(s);
+    expect(checkpoint.history.redo[0].changes[0]).toEqual(["i", 0, "X"]);
+    // Redo would delete all of chunk 0 (key -1) and the first two bytes of
+    // chunk 1 (key 0). Evicting chunk 1 would then see nothing pointing into
+    // it, and the redo would delete bytes of chunk 2 instead.
+    checkpoint.history.redo[0].changes[0] = ["d", 0, "AAAAAAA\nBB", -1];
+    expect(() => restoreCheckpoint(checkpoint)).toThrow(/outside placement key -1/);
+  });
+
+  it("keeps a live delete across chunks replayable after evicting the later chunk", () => {
+    const s = makeStore(3, "drop");
+    for (let i = 0; i < 3; i++) load(s, i);
+    s.dispatch(DocumentActions.delete(byteOffset(0), byteOffset(10)));
+    s.dispatch(DocumentActions.undo());
+    // Undo gave the deleted bytes back under key -1, so redo no longer
+    // points into chunk 1, and evicting it keeps the entry.
+    const restored = createDocumentStoreFromCheckpoint(wireOf(s), { reconcileMode: "none" });
+    for (const store of [s, restored]) {
+      store.dispatch(DocumentActions.evictChunk(1, true));
+      expect(getRedoCount(store.getSnapshot())).toBe(1);
+      store.dispatch(DocumentActions.redo());
+      expect(text(store)).toBe("BBBBB\n" + CHUNKS[2]);
+    }
   });
 });

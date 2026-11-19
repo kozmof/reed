@@ -1,3 +1,5 @@
+import { isContinuationByte } from "./encoding.js";
+
 /** Sparse UTF-16 prefix counts over immutable UTF-8 buffer prefixes. */
 const BLOCK = 4096;
 const indexes = new WeakMap<ArrayBufferLike, Map<number, number[]>>();
@@ -61,7 +63,7 @@ export function bufferByteAtChar(bytes: Uint8Array, target: number): number {
     const b = bytes[position++]!;
     if (b < 0x80 || b >= 0xc0) chars += b >= 0xf0 ? 2 : 1;
   }
-  while (position < bytes.length && (bytes[position]! & 0xc0) === 0x80) position++;
+  while (position < bytes.length && isContinuationByte(bytes[position]!)) position++;
   return position;
 }
 

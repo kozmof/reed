@@ -1,5 +1,4 @@
-import type { DocumentAction, EvictChunksAction } from "../../types/actions.js";
-import type { ReedLogger } from "../../types/state.js";
+import type { PieceTableState, ReedLogger } from "../../types/state.js";
 
 /**
  * Maximum number of observer-triggered delivery steps drained synchronously.
@@ -34,43 +33,52 @@ export const MAX_OBSERVER_DELIVERED_ACTIONS_CEILING = 100_000;
 /** A sink for warnings, which reports a throw from `warn` through `error` when it has one. */
 export type WarnSink = Pick<ReedLogger, "warn" | "error">;
 
-// The logger of the ChunkManager that dispatched an EVICT_CHUNKS action, keyed
-// by the action's chunk list, while that dispatch call runs (see
-// `withEvictionWarnSink`).
-const evictionWarnSinks = new WeakMap<readonly number[], WarnSink>();
+// The logger of the ChunkManager that is dispatching an eviction, keyed by the
+// piece table of the state it measured the eviction against, while that
+// dispatch call runs (see `withEvictionWarnSink`).
+const evictionWarnSinks = new WeakMap<PieceTableState, WarnSink>();
 
 /**
- * Dispatch `action` with `sink` as the logger that a store without a logger of
- * its own warns through when it commits this eviction and the eviction
- * discards history. A ChunkManager dispatches its evictions this way, so its
- * logger hears of the history they discard through any wrapper that forwards
- * the action, or a shallow copy of it, synchronously.
+ * Run `dispatch` with `sink` as the logger that a store without a logger of
+ * its own warns through when it reduces an EVICT_CHUNKS from `from`, the piece
+ * table the eviction was measured against, and the eviction discards history.
+ * A ChunkManager dispatches its evictions this way, so its logger hears of the
+ * history they discard through any wrapper that forwards the eviction
+ * synchronously, even one that rebuilds the action, such as by serializing it.
  *
- * The sink is tied to the action's chunk list, which only the action and its
- * copies share. So an eviction another store commits while the call runs,
- * such as one a listener dispatches, is not credited to this logger, and an
- * eviction from a manager without a logger stays silent even inside another
- * manager's dispatch. Nothing outlives the call, so a later manager on the
- * same store, or a disposed one, neither shares nor keeps the sink. A store
- * with its own logger warns only through that, so the warning comes once.
+ * Only the store whose state holds `from` reduces from it, so an eviction
+ * another store commits while the call runs, such as one a listener
+ * dispatches, is not credited to this logger, and an eviction from a manager
+ * without a logger stays silent even inside another manager's dispatch. The
+ * eviction replaces the piece table, and the store takes the sink once, so an
+ * eviction a listener dispatches next is not credited either. A wrapper that
+ * changes the document before it forwards the eviction leaves the sink unused.
+ * Nothing outlives the call, so a later manager on the same store, or a
+ * disposed one, neither shares nor keeps the sink. A store with its own logger
+ * warns only through that, so the warning comes once.
  */
 export function withEvictionWarnSink<T>(
   sink: WarnSink | undefined,
-  action: EvictChunksAction,
-  dispatch: (action: EvictChunksAction) => T,
+  from: PieceTableState,
+  dispatch: () => T,
 ): T {
-  if (sink?.warn === undefined) return dispatch(action);
-  evictionWarnSinks.set(action.chunkIndices, sink);
+  if (sink?.warn === undefined) return dispatch();
+  evictionWarnSinks.set(from, sink);
   try {
-    return dispatch(action);
+    return dispatch();
   } finally {
-    evictionWarnSinks.delete(action.chunkIndices);
+    evictionWarnSinks.delete(from);
   }
 }
 
-/** The sink `withEvictionWarnSink` set for `action`, while its dispatch runs. */
-export function evictionWarnSinkFor(action: DocumentAction): WarnSink | undefined {
-  return action.type === "EVICT_CHUNKS" ? evictionWarnSinks.get(action.chunkIndices) : undefined;
+/**
+ * Take the sink `withEvictionWarnSink` set for an eviction reduced from
+ * `from`, while its dispatch runs. It is taken once.
+ */
+export function evictionWarnSinkFor(from: PieceTableState): WarnSink | undefined {
+  const sink = evictionWarnSinks.get(from);
+  if (sink !== undefined) evictionWarnSinks.delete(from);
+  return sink;
 }
 
 function toReportedError(message: string, error: unknown): Error {

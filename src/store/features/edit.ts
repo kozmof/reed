@@ -50,14 +50,14 @@ import {
   repairLineIndexWindow,
 } from "../core/line-index.js";
 import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
-import { contentDecoder, decodeRun, utf8ByteLength } from "../core/encoding.js";
-import { NO_CHUNK, placementRuns } from "../core/chunk-anchor.js";
 import {
-  codePointWindow,
+  contentDecoder,
+  decodeRun,
   isContinuationByte,
-  isSafeSplice,
-  isSafeSplit,
-} from "../core/utf8-seam.js";
+  utf8ByteLength,
+} from "../core/encoding.js";
+import { NO_CHUNK, placementRuns } from "../core/chunk-anchor.js";
+import { codePointWindow, isSafeSplice, isSafeSplit } from "../core/utf8-seam.js";
 import type { FittedKey, KeyRun } from "../core/chunk-anchor.js";
 import {
   anchorAt,
@@ -692,7 +692,9 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
         `${change.afterChunk} resolves to [${position}, ${position + removed}), ` +
         (failure === "range"
           ? `outside the ${state.pieceTable.totalLength}-byte document`
-          : "where the key no longer fits"),
+          : failure === "key"
+            ? "where the key no longer fits"
+            : "which holds bytes under another key"),
     );
   }
   const insertBytes =

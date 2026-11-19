@@ -405,6 +405,7 @@ function createStoreOverState(
    */
   function commit(action: DocumentAction): DocumentTransition {
     if (disposed) return { state, historyDropped: null };
+    const from = state.pieceTable;
     const transition = reduceDocument(state, action);
     const changed = transition.state !== state;
     if (changed) setState(transition.state);
@@ -414,9 +415,10 @@ function createStoreOverState(
     if (message !== null) {
       // A store with a logger of its own warns only through it, and stays
       // silent when it has no `warn`. Without one, choose the logger of the
-      // ChunkManager that dispatched this eviction now: it is set only while
-      // that dispatch runs.
-      const sink = logger ?? evictionWarnSinkFor(action);
+      // ChunkManager that dispatched this eviction now: it is set for the
+      // piece table the eviction was reduced from, only while that dispatch
+      // runs.
+      const sink = logger ?? evictionWarnSinkFor(from);
       if (sink?.warn !== undefined) {
         const warning = { depth: transaction.depth, message, sink };
         if (transaction.isActive) deferredWarnings.push(warning);

@@ -51,6 +51,11 @@ export function decodeRun(bytes: Uint8Array): { readonly text: string; readonly 
   return { text, exact: replacementCharCount(text) === encodedReplacementCount(bytes) };
 }
 
+/** True for a UTF-8 continuation byte (`10xxxxxx`). */
+export function isContinuationByte(byte: number): boolean {
+  return (byte & 0xc0) === 0x80;
+}
+
 /**
  * Return true when the UTF-16 code units at `index` and `index + 1` form a
  * valid surrogate pair.

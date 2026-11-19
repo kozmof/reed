@@ -75,10 +75,10 @@ export interface ChunkManagerConfig {
    * an eviction the manager dispatches discards undo history, the store that
    * commits it warns through the store's own `logger`, or through this one
    * when the store has none, also through a wrapper that forwards the action
-   * to `dispatch` synchronously, and a store with events fires
-   * `history-drop`. A store logger without `warn` keeps the warning silent.
-   * When `warn` throws here, the error goes to `error` if this logger has
-   * one.
+   * to `dispatch` synchronously, rebuilt or not, as long as it changes nothing
+   * before it. A store with events also fires `history-drop`. A store logger
+   * without `warn` keeps the warning silent. When `warn` throws here, the
+   * error goes to `error` if this logger has one.
    */
   logger?: Pick<ReedLogger, "warn" | "error">;
 }
@@ -479,10 +479,8 @@ export function createChunkManager(
           // allows. The store that commits the eviction warns of that through
           // its logger, or without one through this manager's (see
           // `withEvictionWarnSink`), and a store with events fires `history-drop`.
-          withEvictionWarnSink(
-            logger,
-            DocumentActions.evictChunks(candidates, maxLoadedChunks),
-            (action) => store.dispatch(action),
+          withEvictionWarnSink(logger, before.pieceTable, () =>
+            store.dispatch(DocumentActions.evictChunks(candidates, maxLoadedChunks)),
           );
           if (disposed) return;
         }

@@ -49,7 +49,7 @@ import {
   type InsertionPathEntry,
   type RootToLeafInsertPath,
 } from "./rb-tree.js";
-import { textEncoder, textDecoder, contentDecoder } from "./encoding.js";
+import { textEncoder, textDecoder, contentDecoder, isContinuationByte } from "./encoding.js";
 import { GrowableBuffer } from "./growable-buffer.js";
 import {
   NO_CHUNK,
@@ -268,7 +268,7 @@ export function isUtf8Boundary(state: PieceTableState, position: ByteOffset): bo
   if (position < 0 || position > state.totalLength) return false;
   if (position === 0 || position === state.totalLength) return true;
   const byte = getRawByte(state, position);
-  return byte >= 0 && (byte & 0xc0) !== 0x80;
+  return byte >= 0 && !isContinuationByte(byte);
 }
 
 // =============================================================================

@@ -6,7 +6,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createChunkManager } from "./chunk-manager.js";
 import { createDocumentStore, createDocumentStoreWithEvents } from "./store.js";
-import { DocumentActions } from "./actions.js";
+import { DocumentActions, deserializeAction, serializeAction } from "./actions.js";
 import { byteOffset } from "../../types/branded.js";
 import type { DocumentStore } from "../../types/store.js";
 import type { DocumentAction } from "../../types/actions.js";
@@ -865,6 +865,29 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
         (store: DocumentStore): DocumentStore => ({
           ...store,
           dispatch: (action) => store.dispatch({ ...action }),
+        }),
+      ],
+      [
+        "a wrapper that sends the action through serialization",
+        (store: DocumentStore): DocumentStore => ({
+          ...store,
+          dispatch: (action) => store.dispatch(deserializeAction(serializeAction(action))),
+        }),
+      ],
+      [
+        "a wrapper that rebuilds the eviction",
+        (store: DocumentStore): DocumentStore => ({
+          ...store,
+          dispatch: (action) =>
+            store.dispatch(
+              action.type === "EVICT_CHUNKS"
+                ? DocumentActions.evictChunks(
+                    [...action.chunkIndices],
+                    action.maxLoaded,
+                    action.keepHistory,
+                  )
+                : action,
+            ),
         }),
       ],
     ])("warns through the manager's logger, given %s", async (_, wrap) => {

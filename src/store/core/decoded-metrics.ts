@@ -1,4 +1,5 @@
 import { pieceBufferRanges } from "./piece-buffer-ranges.js";
+import { isContinuationByte } from "./encoding.js";
 /** Composable UTF-8 decoding metrics. Byte lengths stay raw even for malformed input. */
 import type { PieceNode, PieceTableState } from "../../types/state.js";
 
@@ -58,7 +59,7 @@ export function joinDecoded(a: DecodedSummary, b: DecodedSummary): DecodedSummar
   if (a.length === 0) return b;
   if (b.length === 0) return a;
   const adjustment =
-    (b.head[0]! & 0xc0) === 0x80
+    isContinuationByte(b.head[0]!)
       ? decodedCharLength(smallJoin(a.tail, b.head)) -
         decodedCharLength(a.tail) -
         decodedCharLength(b.head)

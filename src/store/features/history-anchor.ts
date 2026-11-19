@@ -36,7 +36,8 @@ import {
   toResidentOffset,
 } from "../core/chunk-anchor.js";
 import { getBytes, isUtf8Boundary } from "../core/piece-table.js";
-import { MAX_CONTINUATION_BYTES, isContinuationByte } from "../core/utf8-seam.js";
+import { isContinuationByte } from "../core/encoding.js";
+import { MAX_CONTINUATION_BYTES } from "../core/utf8-seam.js";
 import {
   changeDelta,
   forEachHistoryChange,
@@ -70,6 +71,11 @@ export function residentOffset(pieceTable: PieceTableState, anchor: HistoryAncho
  * direction inserts takes that key there, and so do the removed bytes when the
  * other direction inserts them back, so a change that only removes is checked
  * too. One whose key no longer fits would remove bytes it never recorded.
+ * `"span"`: some of the removed bytes have a key other than `key`. The bytes a
+ * change removes are text the other direction inserted under that key, so a
+ * recorded change never removes others. The eviction guard relies on it: a
+ * change keyed below a chunk then lies wholly before it (see
+ * `changeInsideChunk`).
  */
 export function changeReplayFailure(
   layout: KeyLayout,
@@ -77,10 +83,17 @@ export function changeReplayFailure(
   removed: number,
   inserted: number,
   key: number,
-): "range" | "key" | null {
+): "range" | "key" | "span" | null {
   if (start < 0 || start + removed > layout.totalLength) return "range";
   if ((removed > 0 || inserted > 0) && !keyFitsAfterRemoving(layout, start, start + removed, key)) {
     return "key";
+  }
+  // Without chunks every byte has key NO_CHUNK, which `key` then is.
+  if (removed > 0 && layout.nextExpectedChunk > 0) {
+    // Keys never decrease in document order, so the bytes with key `key` are
+    // exactly [span.start, span.end).
+    const span = keySpan(layout.root, key);
+    if (start < span.start || start + removed > span.end) return "span";
   }
   return null;
 }
@@ -774,7 +787,8 @@ interface ChunkTrack {
  * applies to. Otherwise moves the chunk's start past the change.
  *
  * A change keyed below `key` lies wholly before the chunk, and one keyed above
- * it wholly after. A change keyed `key` lies before the chunk when its position
+ * it wholly after: every byte a change removes has its key (see
+ * `changeReplayFailure`, which UNDO, REDO and checkpoint restore apply). A change keyed `key` lies before the chunk when its position
  * is at or before the chunk's start and it removes nothing from the start on.
  * Past that start it resolves by counting the chunk's bytes, which eviction
  * removes. A change that removes bytes from the start on removes the chunk's
