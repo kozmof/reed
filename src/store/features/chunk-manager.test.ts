@@ -664,6 +664,61 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
         dispatch: (action) => store.dispatch({ ...action }),
       }));
     });
+
+    it("measures the loss from the state the eviction reduced when a wrapper dispatches first", async () => {
+      const store = fresh();
+      const warn = vi.fn();
+      // Clearing history first leaves the eviction nothing to discard.
+      const wrapped: DocumentStore = {
+        ...store,
+        dispatch: (action) => {
+          if (action.type === "EVICT_CHUNKS" && action.keepHistory !== true) {
+            store.dispatch(DocumentActions.historyClear());
+          }
+          return store.dispatch(action);
+        },
+      };
+      const manager = createChunkManager(wrapped, makeLoader(chunks), {
+        maxLoadedChunks: 2,
+        logger: { warn },
+      });
+      await manager.ensureLoaded(0);
+      pinChunk0(store);
+      manager.setActiveChunks([1, 2]);
+      await manager.ensureLoaded(1);
+      await manager.ensureLoaded(2);
+      expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
+      expect(warn).not.toHaveBeenCalled();
+      manager.dispose();
+    });
+  });
+
+  it("stops the pass when a listener disposes the manager during the eviction", async () => {
+    const store = createDocumentStore({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 3,
+      historyEvictionPolicy: "pin",
+      reconcileMode: "none",
+    });
+    const warn = vi.fn();
+    const manager = createChunkManager(store, makeLoader(chunks), {
+      maxLoadedChunks: 1,
+      logger: { warn },
+    });
+    manager.setActiveChunks([0, 1, 2]);
+    for (const i of [0, 1, 2]) await manager.ensureLoaded(i);
+    pinChunk0(store);
+    let disposedByListener = false;
+    store.subscribe(() => {
+      if (disposedByListener || store.getSnapshot().pieceTable.chunkMap.has(1)) return;
+      disposedByListener = true;
+      manager.dispose();
+    });
+    warn.mockClear();
+    // History pins chunk 0, so the pass would stay over the limit and warn.
+    manager.setActiveChunks([]);
+    expect(disposedByListener).toBe(true);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("does not report history discarded for an edit a listener makes while the pass evicts", async () => {

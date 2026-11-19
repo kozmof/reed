@@ -502,6 +502,8 @@ export function createChunkManager(
       }
       if (head.length > 0) {
         store.dispatch(DocumentActions.evictChunks(head, maxLoadedChunks, true));
+        // A listener the eviction notified may have disposed the manager.
+        if (disposed) return;
       }
       const before = store.getSnapshot();
       // A store listener can dispatch while the eviction notifies it, so check
@@ -525,16 +527,17 @@ export function createChunkManager(
             before,
             DocumentActions.evictChunks(candidates, maxLoadedChunks),
           );
-          if (evicted !== before.history) {
-            const undoDropped = getUndoCount(before) - getUndoCount(evicted);
-            const redoDropped = getRedoCount(before) - getRedoCount(evicted);
+          if (evicted.to !== evicted.from) {
+            const undoDropped = getUndoCount(evicted.from) - getUndoCount(evicted.to);
+            const redoDropped = getRedoCount(evicted.from) - getRedoCount(evicted.to);
             logger?.warn?.(
               `[ChunkManager] evicting chunks to stay within the memory limit (${maxLoadedChunks}) ` +
                 `discarded ${undoDropped} undo and ${redoDropped} redo entries that pointed into them, ` +
-                `under the "${evicted.evictionPolicy}" history eviction policy. ` +
+                `under the "${evicted.to.evictionPolicy}" history eviction policy. ` +
                 `Raise maxLoadedChunks, or use "pin" to keep history at the cost of memory.`,
             );
           }
+          if (disposed) return;
         }
         // Still over the limit, so every candidate was offered: those left,
         // and the known ones skipped, cannot go in the state they were

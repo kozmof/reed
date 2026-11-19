@@ -411,10 +411,14 @@ interface DeletedRun {
  * `getText` decodes a range.
  *
  * Usually every run decodes exactly, so each holds whole characters and the
- * range decodes to the runs' texts joined, which saves decoding it again. Only
- * when a run edge cuts a character is the whole range decoded on its own.
+ * range decodes to the runs' texts joined, which saves decoding it again.
+ *
+ * Otherwise a run edge may cut a character. Decoding resumes the same way
+ * after any byte that is not a UTF-8 continuation byte (10xxxxxx), so bytes
+ * split before such a byte decode, joined, as the whole does. Only runs a
+ * continuation byte joins are decoded again, together.
  */
-function deletedRuns(
+export function deletedRuns(
   pieceTable: PieceTableState,
   runs: readonly KeyRun[],
 ): { readonly runs: DeletedRun[]; readonly text: string } {
@@ -431,13 +435,20 @@ function deletedRuns(
     // A single run's bytes are the range's own copy; a subarray shares them.
     return { text, length, bytes: asReadonlyUint8Array(runs.length === 1 ? raw : raw.slice()) };
   });
-  const text =
-    deleted.length === 1
-      ? deleted[0]!.text
-      : exactRuns
-        ? deleted.map((run) => run.text).join("")
-        : contentDecoder.decode(all);
-  return { runs: deleted, text };
+  if (deleted.length === 1) return { runs: deleted, text: deleted[0]!.text };
+  if (exactRuns) return { runs: deleted, text: deleted.map((run) => run.text).join("") };
+  const parts: string[] = [];
+  let first = 0;
+  for (let i = 1; i <= runs.length; i++) {
+    if (i < runs.length && ((all[runs[i]!.start - base] ?? 0) & 0xc0) === 0x80) continue;
+    parts.push(
+      i - first === 1
+        ? deleted[first]!.text
+        : contentDecoder.decode(all.subarray(runs[first]!.start - base, runs[i - 1]!.end - base)),
+    );
+    first = i;
+  }
+  return { runs: deleted, text: parts.join("") };
 }
 
 // =============================================================================

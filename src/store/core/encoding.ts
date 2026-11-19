@@ -23,7 +23,7 @@ const exactDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
  * bijection between strings without lone surrogates and well-formed bytes, so
  * this holds exactly when `bytes` decode strictly to `text`.
  */
-export function encodesTo(text: string, bytes: Uint8Array): boolean {
+function encodesTo(text: string, bytes: Uint8Array): boolean {
   try {
     return exactDecoder.decode(bytes) === text;
   } catch {
@@ -32,29 +32,19 @@ export function encodesTo(text: string, bytes: Uint8Array): boolean {
 }
 
 /**
- * True when `text`, the decoding of `length` bytes, is known to encode back to
- * them without comparing bytes.
- *
- * `contentDecoder` keeps a byte order mark, so decoding changes bytes only by
- * replacing malformed sequences with U+FFFD. Text `decoded` by it from those
- * very bytes is therefore exact when it has no U+FFFD, which one native scan
- * finds. Text from elsewhere must also have the right length. A replacement
- * can keep the length (three malformed bytes become one 3-byte U+FFFD), so
- * text containing U+FFFD has to be compared byte for byte.
- */
-export function isExactDecoding(text: string, length: number, decoded: boolean): boolean {
-  return !text.includes("�") && (decoded || utf8ByteLength(text) === length);
-}
-
-/**
  * `bytes` decoded as the document decodes them (see `contentDecoder`), and
  * whether the text encodes back to exactly those bytes. History keeps a run's
  * bytes beside its text when it does not, such as where a run edge cuts a
  * character.
+ *
+ * `contentDecoder` keeps a byte order mark, so decoding changes bytes only by
+ * replacing malformed sequences with U+FFFD. Text without U+FFFD, which one
+ * native scan finds, is therefore exact. Bytes may also hold a genuine
+ * U+FFFD, so text containing one is checked strictly.
  */
 export function decodeRun(bytes: Uint8Array): { readonly text: string; readonly exact: boolean } {
   const text = contentDecoder.decode(bytes);
-  return { text, exact: isExactDecoding(text, bytes.length, true) || encodesTo(text, bytes) };
+  return { text, exact: !text.includes("�") || encodesTo(text, bytes) };
 }
 
 /**

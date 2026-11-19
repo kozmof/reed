@@ -40,6 +40,7 @@ import { getBufferStats, compactAddBuffer } from "../core/piece-table.js";
 import { createTransactionManager, makeBatch, type CommitResult } from "./transaction.js";
 import { MAX_OBSERVER_REENTRANT_STEPS, reportCaughtError } from "./diagnostics.js";
 import { withEvents } from "./event-store.js";
+import { recordCommit } from "./eviction-report.js";
 import {
   createReconciliationScheduler,
   type ReconciliationSchedulerOptions,
@@ -366,6 +367,7 @@ function createStoreOverState(
   function commit(action: DocumentAction): DocumentTransition {
     if (disposed) return { state, historyDropped: false };
     const transition = reduceDocument(state, action);
+    recordCommit(action, state, transition.state);
     if (transition.state !== state) {
       setState(transition.state);
       if (!transaction.isActive) afterCommit();

@@ -35,7 +35,6 @@ import {
   type EvictionHistoryLoss,
 } from "./history-anchor.js";
 import { createFewestLossQueue } from "./fewest-loss-queue.js";
-import { recordEviction } from "./eviction-report.js";
 import { repairChunkLines } from "../core/chunk-line-repair.js";
 import { summarizeBytes } from "../core/decoded-metrics.js";
 import { PersistentMap, PersistentSet } from "../core/persistent-map.js";
@@ -511,7 +510,5 @@ export function evictChunks(state: DocumentState, action: EvictChunksAction): Do
       }
     }
   }
-  const result = withSelectionCarried(state, next);
-  recordEviction(action, state, result.history);
-  return result;
+  return withSelectionCarried(state, next);
 }
