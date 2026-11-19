@@ -83,8 +83,12 @@ Keys never decrease in document order. Loading places a chunk `c` at
 `pieceTableInsert` enforces the order: a given key that does not fit the
 insertion point (see `keyFitsAt`) means the caller computed it wrongly, so the
 insert throws a `RangeError` instead of placing the text under another key.
-Undo, redo, and checkpoint restore rely on that throw to reject history whose
-recorded key does not fit. `pieceTableInsertFitted` skips the check, for keys
+That throw is a guard against bugs, not how history is checked. Undo and redo
+check each change first with `changeReplayFailure` (see
+`src/store/features/history-anchor.ts`). A change whose range or key does not
+fit throws `StaleHistoryChangeError`, and the entry is dropped with
+`history-drop`. Checkpoint restore checks every stack with the same rule on
+stand-in bytes and never inserts. `pieceTableInsertFitted` skips the check, for keys
 the caller derived from the same document. An add piece key is always below
 `nextExpectedChunk`, so a sequential first load can append at the end. See
 `src/store/core/chunk-anchor.ts`.

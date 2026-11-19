@@ -25,9 +25,9 @@ import type { FittedKey, GapSide, KeyLayout, LoadedNode } from "../core/chunk-an
 import {
   NO_CHUNK,
   asFittedKey,
+  endpointKeyFitsAt,
   gapKey,
   keyFitsAfterRemoving,
-  keyFitsAt,
   keySpan,
   loadedChunkLengths,
   loadedSumAtOrBelow,
@@ -121,10 +121,16 @@ export function endpointSides(anchor: number, head: number): readonly [GapSide, 
 
 /**
  * A frozen live range with offsets `anchor` and `head`. Each key is stored
- * only when it fits its offset and differs from the key the document gives
- * that endpoint, so a range carries keys only next to an unloaded chunk. A
- * stored key records the side of an unloaded chunk the endpoint is on, which
- * the offset cannot say (see `SelectionRange.anchorAfterChunk`).
+ * only when it fits its offset (see `endpointKeyFitsAt`) and differs from the
+ * key the document gives that endpoint, so a range carries keys only next to
+ * an unloaded chunk. A stored key records the side of an unloaded chunk the
+ * endpoint is on, which the offset cannot say (see
+ * `SelectionRange.anchorAfterChunk`).
+ *
+ * Every range of a live selection is built here, or is an earlier range that
+ * this would build again unchanged for the current document (see
+ * `moveSelectionPastEdit`). Live stored keys are therefore normalized, and
+ * comparing them compares where the endpoints are (see `sameRange`).
  */
 export function selectionRange(
   pieceTable: PieceTableState,
@@ -139,7 +145,7 @@ export function selectionRange(
   const [anchorSide, headSide] = endpointSides(anchor, head);
   const keep = (offset: number, key: number | undefined, side: GapSide): key is number =>
     key !== undefined &&
-    keyFitsAt(pieceTable, offset, key) &&
+    endpointKeyFitsAt(pieceTable, offset, key) &&
     key !== gapKey(pieceTable.root, offset, side);
   const range: { -readonly [K in keyof SelectionRange]: SelectionRange[K] } = {
     anchor,
@@ -247,7 +253,7 @@ export function insertionKey(
 ): FittedKey {
   if (pieceTable.nextExpectedChunk === 0) return asFittedKey(NO_CHUNK);
   const fits = (key: number | undefined): key is number =>
-    key !== undefined && keyFitsAt(pieceTable, offset, key);
+    key !== undefined && endpointKeyFitsAt(pieceTable, offset, key);
   const keyOf = (range: SelectionRange | undefined): FittedKey | undefined => {
     if (range === undefined) return undefined;
     if (range.head === offset && fits(range.headAfterChunk)) {
@@ -264,11 +270,6 @@ export function insertionKey(
     key = keyOf(selection.ranges[i]);
   }
   return key ?? placementKey(pieceTable, offset, undefined, "before");
-}
-
-/** True when an endpoint stores no key, or its stored key fits `offset`. */
-function storedKeyFits(pieceTable: PieceTableState, offset: number, key: number | undefined) {
-  return key === undefined || keyFitsAt(pieceTable, offset, key);
 }
 
 /** True when an endpoint of `range` stores a placement key. */
@@ -307,8 +308,12 @@ function rangeHasKey(range: SelectionRange): boolean {
  * the caret's key (see `insertionKey`). Non-empty ranges move as for a local
  * edit.
  *
- * Returns `selection` itself when no endpoint moves and every stored key still
- * fits its offset.
+ * A range whose endpoints stay keeps its stored keys only where
+ * `selectionRange` would build them again. A key stops fitting when text lands
+ * after its endpoint under another key, as at a second caret at a remote
+ * insert. It becomes the key the document gives the endpoint when text lands
+ * next to it, as at a caret where evicted chunks were. Returns `selection`
+ * itself when every range is unchanged.
  */
 export function moveSelectionPastEdit(
   pieceTable: PieceTableState,
@@ -349,18 +354,13 @@ export function moveSelectionPastEdit(
     // inserted text and its end to before it. Collapse it to a caret there.
     if (forward && head.offset < anchor.offset) head = anchor;
     if (backward && anchor.offset < head.offset) anchor = head;
-    // An endpoint that stays at `start` can lose its key's fit when text
-    // lands after it under another key, as a second caret at a remote insert
-    // does. Keep the range only while every stored key still fits.
-    if (
-      anchor.offset === range.anchor &&
-      head.offset === range.head &&
-      storedKeyFits(pieceTable, range.anchor, range.anchorAfterChunk) &&
-      storedKeyFits(pieceTable, range.head, range.headAfterChunk)
-    ) {
-      return range;
-    }
-    return selectionRange(pieceTable, anchor.offset, head.offset, anchor.key, head.key);
+    const unmoved = anchor.offset === range.anchor && head.offset === range.head;
+    if (unmoved && !rangeHasKey(range)) return range;
+    // The stored keys of an unmoved range may no longer be the ones
+    // `selectionRange` keeps (see above), so build it again and keep the old
+    // object when nothing changed.
+    const next = selectionRange(pieceTable, anchor.offset, head.offset, anchor.key, head.key);
+    return unmoved && sameRange(next, range) ? range : next;
   };
   // APPLY_REMOTE calls this once per change, so skip what cannot move and copy
   // the ranges only once one does.
@@ -598,7 +598,11 @@ export function resolveSelection(
   );
 }
 
-/** True when two live ranges have the same offsets and stored keys. */
+/**
+ * True when two live ranges have the same offsets and stored keys. Live
+ * stored keys are normalized (see `selectionRange`), so this is true exactly
+ * when the ranges place their endpoints alike.
+ */
 function sameRange(a: SelectionRange, b: SelectionRange): boolean {
   return (
     a.anchor === b.anchor &&

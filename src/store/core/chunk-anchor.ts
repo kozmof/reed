@@ -148,8 +148,9 @@ export function keySpan(root: PieceNode | null, key: number): { start: number; e
  * take: every byte before the offset has a key at or below it, every byte after
  * has a key at or above it, and it names no chunk that has never loaded. O(log n).
  *
- * This is the one rule for whether a stored key still applies at an offset.
- * Inserted text, selection endpoints, and history anchors all check keys here.
+ * This is the one rule for whether a recorded key still applies at an offset.
+ * Inserted text and history anchors check keys here. Selection endpoints check
+ * the narrower `endpointKeyFitsAt`.
  */
 export function keyFitsAt(pieceTable: KeyLayout, offset: number, key: number): boolean {
   return keyFitsAfterRemoving(pieceTable, offset, offset, key);
@@ -177,6 +178,27 @@ export function keyFitsAfterRemoving(
   // [0, span.start) and the bytes keyed at or below it are [0, span.end).
   const span = keySpan(pieceTable.root, key);
   return span.start <= end && start <= span.end;
+}
+
+/**
+ * True when a selection endpoint at resident `offset` can store `key`: it fits
+ * there (see `keyFitsAt`), and it does not put a resident chunk after the
+ * endpoint when the chunk's last resident byte lies before it. O(log n).
+ *
+ * `keyFitsAt` accepts key `i - 1` just past the last resident byte of chunk
+ * `i`, because that byte's own key is `i - 1`. History needs that: undoing a
+ * delete of the chunk's tail inserts the tail back there under the chunk's
+ * key. An endpoint there with that key would claim to be inside the chunk,
+ * where its tail was, which no live selection can mean. Text typed there would
+ * take the key and count as inside the chunk, so evicting the chunk would cost
+ * that history. Such a key is below the gap key on the `"before"` side (see
+ * `gapKey`), which no other fitting key at an offset past 0 is.
+ */
+export function endpointKeyFitsAt(pieceTable: KeyLayout, offset: number, key: number): boolean {
+  return (
+    keyFitsAt(pieceTable, offset, key) &&
+    (offset === 0 || key >= gapKey(pieceTable.root, offset, "before"))
+  );
 }
 
 /**

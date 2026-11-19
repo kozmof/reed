@@ -16,7 +16,7 @@ import type { DocumentStore } from "../../types/store.js";
 import { isChunkByteLengthValid } from "../core/piece-table.js";
 import { DocumentActions } from "./actions.js";
 import { getRedoCount, getUndoCount } from "./history.js";
-import { documentReducer } from "./reducer.js";
+import { dispatchForOwnHistory } from "./store-commit.js";
 import { chunkHoldReason, hasAttentionAnchoredToChunk } from "./chunk-actions.js";
 
 // =============================================================================
@@ -368,6 +368,11 @@ export function createChunkManager(
   // both, and kept as indices so chunks evicted since leave memory. Null while
   // both are.
   let measuredChunks: ReadonlySet<number> | null = null;
+  // The chunk map `measuredChunks` was read from, held weakly so it keeps no
+  // evicted chunk in memory. While the store still holds it, nothing loaded or
+  // evicted since: a pass then compares it by identity in O(1), and keeps the
+  // same `measuredChunks` instead of reading the map again.
+  let measuredMap: WeakRef<ChunkMap> | null = null;
 
   // When fetchStrategy is 'queue', serialise fetches through this promise chain.
   let fetchQueue: Promise<void> = Promise.resolve();
@@ -441,8 +446,12 @@ export function createChunkManager(
     // chunks once for both, in O(1) when the chunk map is unchanged. The pass
     // records `measuredChunks` again when it ends, so a pass a throwing
     // dispatch cuts short leaves none, and the next drops both.
-    let base: ChunkMap | ReadonlySet<number> | null = measuredChunks;
+    const lastChunks = measuredChunks;
+    const lastMap = measuredMap?.deref();
+    let base: ChunkMap | ReadonlySet<number> | null =
+      lastChunks === null ? null : (lastMap ?? lastChunks);
     measuredChunks = null;
+    measuredMap = null;
     const catchUp = (state: DocumentState): void => {
       if (base === null) {
         stuck = null;
@@ -508,37 +517,23 @@ export function createChunkManager(
         if (candidates.length > 0) {
           // Without keepHistory this pass may discard history, as the policy
           // allows. Undo then stops short with no other sign, so say so.
-          const evict = DocumentActions.evictChunks(candidates, maxLoadedChunks);
-          // A store listener the eviction notifies can edit too, so the state
-          // after the dispatch need not be the eviction's alone. The store
-          // notifies once for the eviction, and again for every change after
-          // it: a listener's change during the notification adds a pass, and
-          // one after it a notification of its own. So with one notification
-          // the state after is the eviction's. Otherwise reduce the eviction
-          // again on `before`, which the reducer, being pure, gives as the
-          // dispatch did.
-          let notifications = 0;
-          const unsubscribe = store.subscribe(() => {
-            notifications++;
-          });
-          try {
-            store.dispatch(evict);
-          } finally {
-            unsubscribe();
-          }
-          const dispatched = store.getSnapshot();
-          if (dispatched.history !== before.history) {
-            const evicted = notifications === 1 ? dispatched : documentReducer(before, evict);
-            if (evicted.history !== before.history) {
-              const undoDropped = getUndoCount(before) - getUndoCount(evicted);
-              const redoDropped = getRedoCount(before) - getRedoCount(evicted);
-              logger?.warn?.(
-                `[ChunkManager] evicting chunks to stay within the memory limit (${maxLoadedChunks}) ` +
-                  `discarded ${undoDropped} undo and ${redoDropped} redo entries that pointed into them, ` +
-                  `under the "${evicted.history.evictionPolicy}" history eviction policy. ` +
-                  `Raise maxLoadedChunks, or use "pin" to keep history at the cost of memory.`,
-              );
-            }
+          // A store listener the eviction notifies can edit too, so the store's
+          // history afterwards need not be the eviction's alone. Compare the
+          // history the eviction itself left (see `dispatchForOwnHistory`).
+          const evicted = dispatchForOwnHistory(
+            store,
+            before,
+            DocumentActions.evictChunks(candidates, maxLoadedChunks),
+          );
+          if (evicted !== before.history) {
+            const undoDropped = getUndoCount(before) - getUndoCount(evicted);
+            const redoDropped = getRedoCount(before) - getRedoCount(evicted);
+            logger?.warn?.(
+              `[ChunkManager] evicting chunks to stay within the memory limit (${maxLoadedChunks}) ` +
+                `discarded ${undoDropped} undo and ${redoDropped} redo entries that pointed into them, ` +
+                `under the "${evicted.evictionPolicy}" history eviction policy. ` +
+                `Raise maxLoadedChunks, or use "pin" to keep history at the cost of memory.`,
+            );
           }
         }
         // Still over the limit, so every candidate was offered: those left,
@@ -580,7 +575,6 @@ export function createChunkManager(
       anchoredHeldSeen = false;
       stuck = null;
       chunkMemo = null;
-      measuredChunks = null;
       return;
     }
     // Warn when the cache goes over the limit, and when a reason not seen
@@ -647,10 +641,13 @@ export function createChunkManager(
 
     // Keep what `stuck` and `chunkMemo` hold against as indices, and forget
     // the memo's chunks no longer in memory, so neither keeps evicted chunks.
-    if (stuck === null && chunkMemo === null) {
-      measuredChunks = null;
-    } else {
-      measuredChunks = new Set(chunkMap.keys());
+    if (stuck !== null || chunkMemo !== null) {
+      if (lastChunks !== null && lastMap === chunkMap) {
+        measuredChunks = lastChunks;
+      } else {
+        measuredChunks = new Set(chunkMap.keys());
+      }
+      measuredMap = new WeakRef(chunkMap);
       if (chunkMemo !== null) {
         for (const chunk of chunkMemo.chunks.keys()) {
           if (!chunkMap.has(chunk)) chunkMemo.chunks.delete(chunk);
@@ -937,6 +934,7 @@ export function createChunkManager(
     stuck = null;
     chunkMemo = null;
     measuredChunks = null;
+    measuredMap = null;
     pressureCauses = null;
   }
 

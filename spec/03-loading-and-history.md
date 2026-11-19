@@ -93,8 +93,9 @@ position is on. A selection range then stores the placement key of that endpoint
 document cannot supply it, and it is kept by undo, redo, checkpoints, and a `SET_SELECTION`
 or edit selection that repeats the range at the same index. Text inserted at that endpoint,
 by a local edit or `APPLY_REMOTE`, takes the key, so it stays where the cursor was in the
-file, even when every chunk has been evicted. A key that no longer fits its offset after
-other edits is ignored.
+file, even when every chunk has been evicted. A key is dropped when it no longer fits its
+offset after other edits, or when the document now supplies it. A key that would put a loaded
+chunk after an endpoint that lies past that chunk's last loaded byte does not fit.
 
 ### 2.2 Eviction and history
 

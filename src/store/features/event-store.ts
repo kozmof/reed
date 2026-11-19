@@ -28,6 +28,7 @@ import {
   reportCaughtError,
 } from "./diagnostics.js";
 import type { DocumentTransition } from "./reducer.js";
+import { registerCommit } from "./store-commit.js";
 
 /**
  * Wrap a store in the typed event layer. Shared by the config-built and
@@ -231,16 +232,25 @@ export function withEvents(
    * Enhanced dispatch that buffers or emits events depending on transaction state.
    */
   function dispatch(action: DocumentAction): DocumentState {
-    if (disposed) return baseStore.getSnapshot();
+    commitWithEvents(action);
+    return baseStore.getSnapshot();
+  }
+
+  /**
+   * Dispatch `action` as `dispatch` does and return the reducer's transition
+   * for it, which the events describe (see `registerCommit`).
+   */
+  function commitWithEvents(action: DocumentAction): DocumentTransition {
     const prevState = baseStore.getSnapshot();
+    if (disposed) return { state: prevState, historyDropped: false };
     // Inside a transaction the events join the open level, which the
     // outermost commit's slot delivers. Choose before committing: outside a
     // transaction the commit notifies store listeners, and one that opens a
     // transaction must not pull this action's events into its level. Inside
     // one the commit notifies no one, so the level stays open until it returns.
     const target = pendingEventLevels[pendingEventLevels.length - 1] ?? reserveSlot().events;
+    let transition: DocumentTransition;
     try {
-      let transition: DocumentTransition;
       committing++;
       try {
         transition = commit(action);
@@ -260,8 +270,7 @@ export function withEvents(
     } finally {
       deliver();
     }
-
-    return baseStore.getSnapshot();
+    return transition;
   }
 
   /**
@@ -388,7 +397,7 @@ export function withEvents(
     baseStore.getSnapshot,
   );
 
-  return {
+  const store: DocumentStoreWithEvents = {
     // Pass through base store methods
     subscribe: baseStore.subscribe,
     getSnapshot: baseStore.getSnapshot,
@@ -415,4 +424,6 @@ export function withEvents(
     removeEventListener,
     events: emitter,
   };
+  registerCommit(store, commitWithEvents);
+  return store;
 }

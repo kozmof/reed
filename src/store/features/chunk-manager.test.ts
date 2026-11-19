@@ -625,6 +625,65 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     manager.dispose();
   });
 
+  it("reports only the eviction's loss through a store that coalesces notifications", async () => {
+    const { store: base, warn } = setup("pin-bounded");
+    // A wrapper Reed did not build, which notifies its listeners once per
+    // outermost dispatch and folds in whatever they dispatch meanwhile.
+    const listeners = new Set<() => void>();
+    let depth = 0;
+    let dirty = false;
+    let notifying = false;
+    base.subscribe(() => {
+      dirty = true;
+    });
+    const store: DocumentStore = {
+      ...base,
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      dispatch(action) {
+        depth++;
+        try {
+          base.dispatch(action);
+        } finally {
+          depth--;
+        }
+        if (depth === 0 && dirty && !notifying) {
+          dirty = false;
+          notifying = true;
+          try {
+            for (const listener of listeners) listener();
+          } finally {
+            notifying = false;
+          }
+        }
+        return base.getSnapshot();
+      },
+    };
+    const manager = createChunkManager(store, makeLoader(chunks), {
+      maxLoadedChunks: 2,
+      logger: { warn },
+    });
+    await manager.ensureLoaded(0);
+    pinChunk0(store);
+    manager.setActiveChunks([1, 2]);
+    await manager.ensureLoaded(1);
+    let typed = false;
+    store.subscribe(() => {
+      if (typed || store.getSnapshot().pieceTable.chunkMap.has(0)) return;
+      typed = true;
+      store.dispatch(DocumentActions.insert(byteOffset(0), "Y"));
+    });
+    await manager.ensureLoaded(2);
+
+    expect(typed).toBe(true);
+    expect(getUndoCount(store.getSnapshot())).toBe(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toContain("discarded 0 undo and 1 redo entries");
+    manager.dispose();
+  });
+
   it("measures an anchored chunk's edits again once a load parts it from them", async () => {
     const store = createDocumentStore({
       chunkSize: CHUNK_SIZE,

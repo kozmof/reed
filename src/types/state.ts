@@ -371,7 +371,8 @@ export interface SelectionRange {
    * it. SET_SELECTION and edit selections also keep it for a range without
    * keys whose offsets match a current range, wherever that range sits in the
    * list, or match it with anchor and head swapped, in which case the keys
-   * swap too. A key that does not fit the offset is dropped.
+   * swap too. A key that does not fit the offset, or that the document gives
+   * the endpoint anyway, is dropped.
    */
   readonly anchorAfterChunk?: number;
   /** Chunk placement key of `head`. See `anchorAfterChunk`. */

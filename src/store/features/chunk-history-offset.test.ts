@@ -3354,3 +3354,142 @@ describe("twenty-ninth review regressions", () => {
     expect(text(s)).toBe("CCCC\n");
   });
 });
+
+describe("thirty-fourth review regressions", () => {
+  const keys = (state: DocumentState) => {
+    const { anchorAfterChunk, headAfterChunk } = state.selection.ranges[0]!;
+    return { anchorAfterChunk, headAfterChunk };
+  };
+
+  describe("a stored key that an edit makes the document's own", () => {
+    // Caret inside chunk 1, then both chunks evicted: the caret keeps key 0,
+    // which says chunk 0 lies before it.
+    function caretWhereChunksWere() {
+      const s = makeStore(2);
+      load(s, 0);
+      load(s, 1);
+      s.dispatch(DocumentActions.setSelection([{ anchor: byteOffset(12), head: byteOffset(12) }]));
+      s.dispatch(DocumentActions.evictChunk(0));
+      s.dispatch(DocumentActions.evictChunk(1));
+      expect(keys(s.getSnapshot())).toEqual({ anchorAfterChunk: 0, headAfterChunk: 0 });
+      // A remote insert at the caret takes its key and leaves the caret
+      // before the text, where the document now gives key 0 itself.
+      s.dispatch(
+        DocumentActions.applyRemote([{ type: "insert", start: byteOffset(0), text: "R" }]),
+      );
+      return s;
+    }
+
+    it("is dropped from the caret, so echoing the selection back changes nothing", () => {
+      const s = caretWhereChunksWere();
+      const state = s.getSnapshot();
+      expect(cursor(s)).toEqual({ anchor: 0, head: 0 });
+      expect(keys(state)).toEqual({ anchorAfterChunk: undefined, headAfterChunk: undefined });
+
+      const echoed = s.dispatch(DocumentActions.setSelection(state.selection.ranges));
+      expect(echoed).toBe(state);
+      expect(echoed.selectionRevision).toBe(state.selectionRevision);
+    });
+
+    it("survives a checkpoint round trip unchanged", () => {
+      const s = caretWhereChunksWere();
+      const state = s.getSnapshot();
+      const restored = restoreCheckpoint(JSON.parse(JSON.stringify(createCheckpoint(state))));
+      expect(restored.selection.ranges).toEqual(state.selection.ranges);
+    });
+  });
+
+  describe("a key that puts a resident chunk after an endpoint past its end", () => {
+    // Chunks 0, 1 and 2 loaded: offset 16 is the end of chunk 1, whose bytes
+    // have key 0. Key 0 there would put chunk 1 after the caret.
+    function caretAtEndOfChunk1(policy: HistoryEvictionPolicy) {
+      const s = makeStore(3, policy);
+      load(s, 0);
+      load(s, 1);
+      load(s, 2);
+      s.dispatch(
+        DocumentActions.setSelection([
+          {
+            anchor: byteOffset(16),
+            head: byteOffset(16),
+            anchorAfterChunk: 0,
+            headAfterChunk: 0,
+          },
+        ]),
+      );
+      return s;
+    }
+
+    it("is not stored on the selection", () => {
+      const s = caretAtEndOfChunk1("drop");
+      expect(keys(s.getSnapshot())).toEqual({
+        anchorAfterChunk: undefined,
+        headAfterChunk: undefined,
+      });
+    });
+
+    it("does not make text typed there count as inside the chunk", () => {
+      const s = caretAtEndOfChunk1("drop");
+      s.dispatch(DocumentActions.insert(byteOffset(16), "x"));
+      s.dispatch(DocumentActions.undo());
+      s.dispatch(DocumentActions.evictChunk(1));
+      expect(getRedoCount(s.getSnapshot())).toBe(1);
+      s.dispatch(DocumentActions.redo());
+      expect(text(s)).toBe(CHUNK0 + "x" + CHUNKS[2]);
+    });
+
+    it("does not pin the chunk under pin-bounded", () => {
+      const s = caretAtEndOfChunk1("pin-bounded");
+      s.dispatch(DocumentActions.insert(byteOffset(16), "x"));
+      s.dispatch(DocumentActions.undo());
+      s.dispatch(DocumentActions.evictChunk(1));
+      expect(s.getSnapshot().pieceTable.chunkMap.has(1)).toBe(false);
+      expect(getRedoCount(s.getSnapshot())).toBe(1);
+    });
+
+    it("is still accepted inside the chunk and before it", () => {
+      const s = makeStore(4, "drop");
+      load(s, 1);
+      load(s, 3);
+      // Chunks 1 and 3 are loaded: at the start of chunk 1, key -1 (before
+      // chunk 0) is a side of an unloaded chunk the document cannot give.
+      s.dispatch(
+        DocumentActions.setSelection([
+          { anchor: byteOffset(0), head: byteOffset(0), anchorAfterChunk: -1, headAfterChunk: -1 },
+        ]),
+      );
+      expect(keys(s.getSnapshot())).toEqual({ anchorAfterChunk: -1, headAfterChunk: -1 });
+      // At its end, key 2 (after the unloaded chunk 2) is kept too, while
+      // key 0 (inside chunk 1) is not.
+      s.dispatch(
+        DocumentActions.setSelection([
+          { anchor: byteOffset(8), head: byteOffset(8), anchorAfterChunk: 2, headAfterChunk: 2 },
+        ]),
+      );
+      expect(keys(s.getSnapshot())).toEqual({ anchorAfterChunk: 2, headAfterChunk: 2 });
+      s.dispatch(
+        DocumentActions.setSelection([
+          { anchor: byteOffset(8), head: byteOffset(8), anchorAfterChunk: 0, headAfterChunk: 0 },
+        ]),
+      );
+      expect(keys(s.getSnapshot())).toEqual({
+        anchorAfterChunk: undefined,
+        headAfterChunk: undefined,
+      });
+    });
+
+    it("still replays history that gives a chunk's deleted tail back under its key", () => {
+      const s = makeStore(3, "drop");
+      load(s, 0);
+      load(s, 1);
+      // Delete the tail of chunk 0, then undo: the tail goes back at the end
+      // of the chunk's last resident byte under key -1.
+      s.dispatch(DocumentActions.delete(byteOffset(4), byteOffset(8)));
+      s.dispatch(DocumentActions.undo());
+      expect(text(s)).toBe(CHUNK0 + CHUNK1);
+      s.dispatch(DocumentActions.redo());
+      s.dispatch(DocumentActions.undo());
+      expect(text(s)).toBe(CHUNK0 + CHUNK1);
+    });
+  });
+});

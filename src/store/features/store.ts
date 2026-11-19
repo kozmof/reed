@@ -40,6 +40,7 @@ import { getBufferStats, compactAddBuffer } from "../core/piece-table.js";
 import { createTransactionManager, makeBatch, type CommitResult } from "./transaction.js";
 import { MAX_OBSERVER_REENTRANT_STEPS, reportCaughtError } from "./diagnostics.js";
 import { withEvents } from "./event-store.js";
+import { registerCommit } from "./store-commit.js";
 import {
   createReconciliationScheduler,
   type ReconciliationSchedulerOptions,
@@ -605,6 +606,7 @@ function createStoreOverState(
     whenReconciled,
     dispose,
   };
+  registerCommit(store, commit);
   return { store, commit };
 }
 
