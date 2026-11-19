@@ -15,7 +15,11 @@ import type { DocumentState, ReedLogger } from "../../types/state.js";
 import type { DocumentStore } from "../../types/store.js";
 import { isChunkByteLengthValid } from "../core/piece-table.js";
 import { DocumentActions } from "./actions.js";
-import { chunkHoldReason, hasAttentionAnchoredToChunk } from "./chunk-actions.js";
+import {
+  chunkHoldReason,
+  chunksMovedByLoads,
+  hasAttentionAnchoredToChunk,
+} from "./chunk-actions.js";
 import { withEvictionWarnSink } from "./diagnostics.js";
 
 // =============================================================================
@@ -70,9 +74,10 @@ export interface ChunkManagerConfig {
    * The manager warns when chunks stay resident over `maxLoadedChunks`. When
    * an eviction the manager dispatches discards undo history, the store that
    * commits it warns through the store's own `logger`, or through this one
-   * when the store has none, also through a wrapper that forwards
-   * `dispatch` synchronously, and a store with events fires `history-drop`.
-   * When `warn` throws there, the error goes to `error` if this logger has
+   * when the store has none, also through a wrapper that forwards the action
+   * to `dispatch` synchronously, and a store with events fires
+   * `history-drop`. A store logger without `warn` keeps the warning silent.
+   * When `warn` throws here, the error goes to `error` if this logger has
    * one.
    */
   logger?: Pick<ReedLogger, "warn" | "error">;
@@ -174,62 +179,6 @@ interface Stuck {
   readonly history: DocumentState["history"];
   readonly attention: DocumentState["attention"];
   readonly chunks: Set<number>;
-}
-
-/**
- * The resident chunks of `chunkMap` whose standing against edits may differ
- * from when `previous` was the chunk map, history and attention unchanged.
- *
- * What keeps a chunk resident is history pointing inside it, an attention
- * anchored to it, or edits splitting or touching it (see
- * `evictionCandidate`). Every edit, undo, redo, and history clear replaces
- * the history object, and every attention change the attention object. So
- * while both are unchanged, the text has changed only by chunks loaded or
- * evicted, which leave what history points inside a chunk, and the
- * attentions anchored to it, as they were. Evicting a chunk only brings text
- * together, and a chunk no edit touches has no add piece beside it to bring
- * to its neighbours. Loading one puts its text between the loaded chunks on
- * either side, which can part one of them from an add piece that touched it.
- * So the chunks returned are each chunk loaded since and the nearest resident
- * chunk below and above it.
- *
- * `previous` can be just the indices of the chunks then resident, which keeps
- * no chunk bytes in memory. Every load and eviction replaces the chunk map, so
- * when `previous` is `chunkMap` itself this costs O(1). Otherwise finding the
- * chunks loaded since costs O(L) for L resident chunks, and finding their
- * neighbours O(L log k) more for k of them.
- */
-function chunksMovedByLoads(
-  previous: ChunkMap | ReadonlySet<number>,
-  chunkMap: ChunkMap,
-): ReadonlySet<number> {
-  const moved = new Set<number>();
-  if (chunkMap === previous) return moved;
-  const loaded: number[] = [];
-  for (const chunk of chunkMap.keys()) if (!previous.has(chunk)) loaded.push(chunk);
-  if (loaded.length === 0) return moved;
-  loaded.sort((a, b) => a - b);
-  // The nearest resident chunk below and above each one loaded since. A chunk
-  // with one loaded since between it and another is not the other's nearest.
-  const below = loaded.map(() => -Infinity);
-  const above = loaded.map(() => Infinity);
-  for (const chunk of chunkMap.keys()) {
-    // The first chunk loaded since that lies above `chunk`.
-    let lo = 0;
-    let hi = loaded.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (loaded[mid]! > chunk) hi = mid;
-      else lo = mid + 1;
-    }
-    if (lo < loaded.length) below[lo] = Math.max(below[lo]!, chunk);
-    const under = loaded[lo - 1] === chunk ? lo - 2 : lo - 1;
-    if (under >= 0) above[under] = Math.min(above[under]!, chunk);
-  }
-  for (const chunk of loaded) moved.add(chunk);
-  for (const chunk of below) if (chunk !== -Infinity) moved.add(chunk);
-  for (const chunk of above) if (chunk !== Infinity) moved.add(chunk);
-  return moved;
 }
 
 // =============================================================================
@@ -530,8 +479,10 @@ export function createChunkManager(
           // allows. The store that commits the eviction warns of that through
           // its logger, or without one through this manager's (see
           // `withEvictionWarnSink`), and a store with events fires `history-drop`.
-          withEvictionWarnSink(logger, () =>
-            store.dispatch(DocumentActions.evictChunks(candidates, maxLoadedChunks)),
+          withEvictionWarnSink(
+            logger,
+            DocumentActions.evictChunks(candidates, maxLoadedChunks),
+            (action) => store.dispatch(action),
           );
           if (disposed) return;
         }

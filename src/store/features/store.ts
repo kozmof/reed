@@ -39,7 +39,7 @@ import { reconcileFull, reconcileViewport } from "../core/line-index.js";
 import { getBufferStats, compactAddBuffer } from "../core/piece-table.js";
 import { createTransactionManager, makeBatch, type CommitResult } from "./transaction.js";
 import {
-  currentEvictionWarnSink,
+  evictionWarnSinkFor,
   MAX_OBSERVER_REENTRANT_STEPS,
   reportCaughtError,
   type WarnSink,
@@ -98,8 +98,12 @@ function evictionWarning(action: DocumentAction, transition: DocumentTransition)
   );
 }
 
-/** A warning of history an eviction discarded, with the sink it goes to. */
+/**
+ * A warning of history an eviction discarded, with the sink it goes to, and
+ * the transaction depth that holds it while it waits for the outermost commit.
+ */
 interface EvictionWarning {
+  depth: number;
   readonly message: string;
   readonly sink: WarnSink;
 }
@@ -139,7 +143,7 @@ function createStoreOverState(
   // (see `evictionWarning`), each with the depth that holds it. The outermost
   // commit logs them, and a rollback discards those its level held, since it
   // restores the history.
-  let deferredWarnings: { depth: number; readonly warning: EvictionWarning }[] = [];
+  let deferredWarnings: EvictionWarning[] = [];
 
   /**
    * Replace internal state reference only when it changes.
@@ -408,11 +412,14 @@ function createStoreOverState(
     // their evictions committed, even when a listener evicts again.
     const message = evictionWarning(action, transition);
     if (message !== null) {
-      // Choose the sink now: a ChunkManager's is set only during its dispatch.
-      const sink = logger?.warn !== undefined ? logger : currentEvictionWarnSink();
-      if (sink !== null) {
-        const warning = { message, sink };
-        if (transaction.isActive) deferredWarnings.push({ depth: transaction.depth, warning });
+      // A store with a logger of its own warns only through it, and stays
+      // silent when it has no `warn`. Without one, choose the logger of the
+      // ChunkManager that dispatched this eviction now: it is set only while
+      // that dispatch runs.
+      const sink = logger ?? evictionWarnSinkFor(action);
+      if (sink?.warn !== undefined) {
+        const warning = { depth: transaction.depth, message, sink };
+        if (transaction.isActive) deferredWarnings.push(warning);
         else logWarnings([warning]);
       }
     }
@@ -476,7 +483,7 @@ function createStoreOverState(
       // or open a transaction of its own, whose losses have not committed yet.
       const warnings = deferredWarnings;
       deferredWarnings = [];
-      logWarnings(warnings.map((entry) => entry.warning));
+      logWarnings(warnings);
       afterCommit();
     } else {
       // The enclosing level now holds what this one committed.
@@ -491,7 +498,9 @@ function createStoreOverState(
    * through the sink chosen when it committed: the store's logger, or without
    * one the logger of the ChunkManager that dispatched the eviction (see
    * `withEvictionWarnSink`). The change has committed, so a logger's throw is
-   * reported through that sink's `error`, not thrown.
+   * reported through that sink's `error`, not thrown. Only a store without a
+   * logger uses a manager's sink, so when that sink has no `error` there is
+   * no store logger to report through, and the throw is reported globally.
    */
   function logWarnings(warnings: readonly EvictionWarning[]): void {
     for (const { message, sink } of warnings) {

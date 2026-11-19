@@ -813,6 +813,29 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     });
   });
 
+  it("keeps the warning silent when the store's own logger has no warn", async () => {
+    const store = createDocumentStore({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 3,
+      historyEvictionPolicy: "pin-bounded",
+      reconcileMode: "none",
+      logger: { error: () => {} },
+    });
+    const warn = vi.fn();
+    const manager = createChunkManager(store, makeLoader(chunks), {
+      maxLoadedChunks: 2,
+      logger: { warn },
+    });
+    await manager.ensureLoaded(0);
+    pinChunk0(store);
+    manager.setActiveChunks([1, 2]);
+    await manager.ensureLoaded(1);
+    await manager.ensureLoaded(2);
+    expect(getRedoCount(store.getSnapshot())).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+
   describe("when the store has no logger", () => {
     const bare = () =>
       createDocumentStore({
@@ -902,6 +925,65 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
       expect(getRedoCount(store.getSnapshot())).toBe(0);
       expect(warn).not.toHaveBeenCalled();
       manager.dispose();
+    });
+
+    it("does not credit another store's eviction to the manager whose dispatch runs", async () => {
+      const store = bare();
+      const other = bare();
+      for (const i of [0, 1] as const) {
+        other.dispatch(DocumentActions.loadChunk(i, makeBytes(chunks[i])));
+      }
+      pinChunk0(other);
+      // While the manager's eviction notifies it, a listener evicts chunk 0
+      // of an unrelated store, discarding its redo entry.
+      let evicted = false;
+      store.subscribe(() => {
+        if (evicted || store.getSnapshot().pieceTable.chunkMap.has(0)) return;
+        evicted = true;
+        other.dispatch(DocumentActions.evictChunks([0], 1));
+      });
+      const warn = vi.fn();
+      const manager = createChunkManager(store, makeLoader(chunks), {
+        maxLoadedChunks: 2,
+        logger: { warn },
+      });
+      await evictPinned(store, manager);
+      expect(evicted).toBe(true);
+      expect(getRedoCount(other.getSnapshot())).toBe(0);
+      expect(warn).toHaveBeenCalledTimes(1);
+      manager.dispose();
+    });
+
+    it("keeps a manager without a logger silent inside another manager's dispatch", async () => {
+      const store = bare();
+      const other = bare();
+      // A manager without a logger, over its limit with every chunk active,
+      // and a redo entry pinning chunk 0.
+      const silent = createChunkManager(other, makeLoader(chunks), { maxLoadedChunks: 2 });
+      await silent.ensureLoaded(0);
+      pinChunk0(other);
+      silent.setActiveChunks([0, 1, 2]);
+      await silent.ensureLoaded(1);
+      await silent.ensureLoaded(2);
+      // While the logging manager's eviction notifies it, a listener lets the
+      // silent manager evict chunk 0, discarding its redo entry.
+      let released = false;
+      store.subscribe(() => {
+        if (released || store.getSnapshot().pieceTable.chunkMap.has(0)) return;
+        released = true;
+        silent.setActiveChunks([1, 2]);
+      });
+      const warn = vi.fn();
+      const manager = createChunkManager(store, makeLoader(chunks), {
+        maxLoadedChunks: 2,
+        logger: { warn },
+      });
+      await evictPinned(store, manager);
+      expect(released).toBe(true);
+      expect(getRedoCount(other.getSnapshot())).toBe(0);
+      expect(warn).toHaveBeenCalledTimes(1);
+      manager.dispose();
+      silent.dispose();
     });
 
     it("reports a manager logger's throw through that logger's error", async () => {

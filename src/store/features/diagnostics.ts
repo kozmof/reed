@@ -1,3 +1,4 @@
+import type { DocumentAction, EvictChunksAction } from "../../types/actions.js";
 import type { ReedLogger } from "../../types/state.js";
 
 /**
@@ -33,34 +34,43 @@ export const MAX_OBSERVER_DELIVERED_ACTIONS_CEILING = 100_000;
 /** A sink for warnings, which reports a throw from `warn` through `error` when it has one. */
 export type WarnSink = Pick<ReedLogger, "warn" | "error">;
 
-// The logger of the ChunkManager whose eviction is being dispatched, while its
-// dispatch call runs; null otherwise (see `withEvictionWarnSink`).
-let evictionWarnSink: WarnSink | null = null;
+// The logger of the ChunkManager that dispatched an EVICT_CHUNKS action, keyed
+// by the action's chunk list, while that dispatch call runs (see
+// `withEvictionWarnSink`).
+const evictionWarnSinks = new WeakMap<readonly number[], WarnSink>();
 
 /**
- * Run `dispatch` with `sink` as the logger that a store without a logger of
- * its own warns through when an EVICT_CHUNKS committed during the call
+ * Dispatch `action` with `sink` as the logger that a store without a logger of
+ * its own warns through when it commits this eviction and the eviction
  * discards history. A ChunkManager dispatches its evictions this way, so its
  * logger hears of the history they discard through any wrapper that forwards
- * the dispatch synchronously. Nothing outlives the call, so a later manager on
- * the same store, or a disposed one, neither shares nor keeps the sink. A
- * store with its own logger warns only through that, so the warning comes
- * once.
+ * the action, or a shallow copy of it, synchronously.
+ *
+ * The sink is tied to the action's chunk list, which only the action and its
+ * copies share. So an eviction another store commits while the call runs,
+ * such as one a listener dispatches, is not credited to this logger, and an
+ * eviction from a manager without a logger stays silent even inside another
+ * manager's dispatch. Nothing outlives the call, so a later manager on the
+ * same store, or a disposed one, neither shares nor keeps the sink. A store
+ * with its own logger warns only through that, so the warning comes once.
  */
-export function withEvictionWarnSink<T>(sink: WarnSink | undefined, dispatch: () => T): T {
-  if (sink?.warn === undefined) return dispatch();
-  const outer = evictionWarnSink;
-  evictionWarnSink = sink;
+export function withEvictionWarnSink<T>(
+  sink: WarnSink | undefined,
+  action: EvictChunksAction,
+  dispatch: (action: EvictChunksAction) => T,
+): T {
+  if (sink?.warn === undefined) return dispatch(action);
+  evictionWarnSinks.set(action.chunkIndices, sink);
   try {
-    return dispatch();
+    return dispatch(action);
   } finally {
-    evictionWarnSink = outer;
+    evictionWarnSinks.delete(action.chunkIndices);
   }
 }
 
-/** The sink `withEvictionWarnSink` set for the dispatch running now, or null. */
-export function currentEvictionWarnSink(): WarnSink | null {
-  return evictionWarnSink;
+/** The sink `withEvictionWarnSink` set for `action`, while its dispatch runs. */
+export function evictionWarnSinkFor(action: DocumentAction): WarnSink | undefined {
+  return action.type === "EVICT_CHUNKS" ? evictionWarnSinks.get(action.chunkIndices) : undefined;
 }
 
 function toReportedError(message: string, error: unknown): Error {
