@@ -16,7 +16,7 @@ import type { DocumentStore } from "../../types/store.js";
 import { isChunkByteLengthValid } from "../core/piece-table.js";
 import { DocumentActions } from "./actions.js";
 import { getRedoCount, getUndoCount } from "./history.js";
-import { hasAttentionAnchoredToChunk, isChunkHeldByEditsOrHistory } from "./chunk-actions.js";
+import { chunkHoldReason, hasAttentionAnchoredToChunk } from "./chunk-actions.js";
 
 // =============================================================================
 // Public interfaces
@@ -136,10 +136,13 @@ export interface ChunkManager {
  *   history point into it.
  * - `"untracked"`: loaded without this manager, so it never offers it.
  *
- * A chunk an attention is anchored inside counts as `"held"` too when edits
- * or history would keep it without the attention.
+ * Each chunk counts under one cause. The warning also says how many
+ * `"anchored"` chunks edits or history would keep without the attention.
  */
 type PressureCause = "pinned" | "requested" | "anchored" | "held" | "untracked";
+
+/** Marks, among the reasons seen, anchored chunks edits or history hold too. */
+const ANCHORED_HELD = "anchored-held";
 
 /** Each cause's text, in the order the pressure warning lists them. */
 const PRESSURE_CAUSE_TEXT: Readonly<Record<PressureCause, string>> = {
@@ -281,35 +284,62 @@ export function createChunkManager(
   // went over (see `PressureCause`); null while within the limit. The pressure
   // warning is logged when a reason is new, so once per cause rather than on
   // every load while the cache stays over.
-  let pressureCauses: Set<PressureCause> | null = null;
+  // Besides each `PressureCause`, it records `ANCHORED_HELD` once an anchored
+  // chunk was found that edits or history would keep too.
+  let pressureCauses: Set<PressureCause | typeof ANCHORED_HELD> | null = null;
 
-  // Which resident chunks an attention is anchored inside, as measured in a
+  // Which resident chunks an attention is anchored inside, and what else
+  // would keep an anchored one (see `chunkHoldReason`), as measured in a
   // state with this history and attention. While both are unchanged, the text
   // has changed only by chunks loaded or evicted (see `stillStuck`), which
-  // leave each other chunk's pieces and so its anchors as they were. The
-  // pressure check then looks each chunk up once rather than walking it
-  // on every load while the cache stays over the limit.
-  let anchoredMemo: {
+  // leave each other chunk's pieces and so its anchors and edits as they
+  // were. The pressure check then looks each chunk up once rather than
+  // walking it on every load while the cache stays over the limit.
+  let chunkMemo: {
     readonly history: DocumentState["history"];
     readonly attention: DocumentState["attention"];
-    readonly byChunk: Map<number, boolean>;
+    readonly anchored: Map<number, boolean>;
+    readonly hold: Map<number, ReturnType<typeof chunkHoldReason>>;
   } | null = null;
+
+  function memoFor(state: DocumentState): NonNullable<typeof chunkMemo> {
+    if (
+      chunkMemo === null ||
+      chunkMemo.history !== state.history ||
+      chunkMemo.attention !== state.attention
+    ) {
+      chunkMemo = {
+        history: state.history,
+        attention: state.attention,
+        anchored: new Map(),
+        hold: new Map(),
+      };
+    }
+    return chunkMemo;
+  }
 
   function isAnchored(state: DocumentState, chunkIndex: number): boolean {
     if (state.attention.attentions.size === 0) return false;
-    if (
-      anchoredMemo === null ||
-      anchoredMemo.history !== state.history ||
-      anchoredMemo.attention !== state.attention
-    ) {
-      anchoredMemo = { history: state.history, attention: state.attention, byChunk: new Map() };
+    const { anchored } = memoFor(state);
+    let result = anchored.get(chunkIndex);
+    if (result === undefined) {
+      result = hasAttentionAnchoredToChunk(state, chunkIndex);
+      anchored.set(chunkIndex, result);
     }
-    let anchored = anchoredMemo.byChunk.get(chunkIndex);
-    if (anchored === undefined) {
-      anchored = hasAttentionAnchoredToChunk(state, chunkIndex);
-      anchoredMemo.byChunk.set(chunkIndex, anchored);
+    return result;
+  }
+
+  function holdReason(
+    state: DocumentState,
+    chunkIndex: number,
+  ): ReturnType<typeof chunkHoldReason> {
+    const { hold } = memoFor(state);
+    let result = hold.get(chunkIndex);
+    if (result === undefined) {
+      result = chunkHoldReason(state, chunkIndex);
+      hold.set(chunkIndex, result);
     }
-    return anchored;
+    return result;
   }
 
   // Candidates the last eviction pass measured and could not evict, though
@@ -505,28 +535,45 @@ export function createChunkManager(
         anchoredChunks.push(chunkIndex);
       } else count("held");
     }
-    const seen = pressureCauses ?? new Set<PressureCause>();
+    const seen = pressureCauses ?? new Set<PressureCause | typeof ANCHORED_HELD>();
     pressureCauses = seen;
     const isNew = (cause: PressureCause) => counts.has(cause) && !seen.has(cause);
     let newCause = PRESSURE_CAUSES.some(isNew);
     // An anchored chunk can be held by edits or history too, which matters
-    // once the attention is gone. Finding out walks the chunk, so do it only
-    // when it could add a cause or the warning needs the count.
-    if (anchoredChunks.length > 0 && (newCause || !seen.has("held"))) {
+    // once the attention is gone. It is counted apart from "held", so the
+    // counts still add up to the chunks loaded. Finding out walks the chunk
+    // the first time, so do it only when it could add a reason or the warning
+    // needs the count.
+    let anchoredHeld = 0;
+    let anchoredHeldByHistory = false;
+    if (anchoredChunks.length > 0 && (newCause || !seen.has(ANCHORED_HELD))) {
       for (const chunkIndex of anchoredChunks) {
-        if (isChunkHeldByEditsOrHistory(current, chunkIndex)) count("held");
+        const reason = holdReason(current, chunkIndex);
+        if (reason === null) continue;
+        anchoredHeld++;
+        if (reason === "history") anchoredHeldByHistory = true;
       }
-      newCause ||= isNew("held");
+      if (anchoredHeld > 0) {
+        newCause ||= !seen.has(ANCHORED_HELD);
+        seen.add(ANCHORED_HELD);
+      }
     }
     for (const cause of counts.keys()) seen.add(cause);
     if (newCause) {
       const reasons = PRESSURE_CAUSES.filter((cause) => counts.has(cause)).map(
-        (cause) => `${counts.get(cause)} ${PRESSURE_CAUSE_TEXT[cause]}`,
+        (cause) =>
+          `${counts.get(cause)} ${PRESSURE_CAUSE_TEXT[cause]}` +
+          (cause === "anchored" && anchoredHeld > 0
+            ? `, ${anchoredHeld} of which also ${PRESSURE_CAUSE_TEXT.held}`
+            : ""),
       );
+      // The hint names history, so it needs a chunk history may be keeping:
+      // one refused eviction, or an anchored one history would keep.
       logger?.warn?.(
         `[ChunkManager] eviction pressure: ${loadedCount} chunks loaded, over the memory ` +
           `limit (${maxLoadedChunks}), and none can be evicted: ${reasons.join("; ")}.` +
-          (counts.has("held") && store.getSnapshot().history.evictionPolicy === "pin"
+          ((counts.has("held") || anchoredHeldByHistory) &&
+          store.getSnapshot().history.evictionPolicy === "pin"
             ? ` The "pin" history eviction policy keeps chunks undo history points into; ` +
               `"pin-bounded" or "drop" lets eviction discard that history.`
             : ""),

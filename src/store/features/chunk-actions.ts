@@ -310,6 +310,8 @@ type EvictableRange = { readonly start: ByteOffset; readonly end: ByteOffset } |
  * or edits have split or touched it.
  */
 function evictableRange(state: DocumentState, chunkIndex: number): EvictableRange {
+  // The map lookup first: a chunk not loaded skips the attention walk.
+  if (!state.pieceTable.chunkMap.has(chunkIndex)) return null;
   if (hasAttentionAnchoredToChunk(state, chunkIndex)) return null;
   return uneditedRange(state, chunkIndex);
 }
@@ -329,19 +331,22 @@ function uneditedRange(state: DocumentState, chunkIndex: number): EvictableRange
 }
 
 /**
- * True when the loaded chunk `chunkIndex` would stay resident because of user
- * edits or undo history even with no attention anchored to it: edits have
- * split or touched it, or history points inside it under `"pin"`. Under the
- * other policies an over-limit eviction pass discards such history.
+ * What would keep the loaded chunk `chunkIndex` resident even with no
+ * attention anchored to it: `"edits"` when edits have split or touched it,
+ * `"history"` when history points inside it under `"pin"`, else null. Under
+ * the other policies an over-limit eviction pass discards such history.
  */
-export function isChunkHeldByEditsOrHistory(state: DocumentState, chunkIndex: number): boolean {
-  if (!state.pieceTable.chunkMap.has(chunkIndex)) return false;
+export function chunkHoldReason(
+  state: DocumentState,
+  chunkIndex: number,
+): "edits" | "history" | null {
+  if (!state.pieceTable.chunkMap.has(chunkIndex)) return null;
   const range = uneditedRange(state, chunkIndex);
-  if (range === null) return true;
-  return (
-    state.history.evictionPolicy === "pin" &&
+  if (range === null) return "edits";
+  return state.history.evictionPolicy === "pin" &&
     totalLoss(historyLossForEviction(state.pieceTable, state.history, chunkIndex, range.start)) > 0
-  );
+    ? "history"
+    : null;
 }
 
 /**

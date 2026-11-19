@@ -467,9 +467,33 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
     expect(warn).toHaveBeenCalledTimes(1);
     const message = warn.mock.calls[0]![0] as string;
-    expect(message).toContain("1 hold an attention anchor");
-    expect(message).toContain("1 hold user edits or undo history");
+    // Counted once, as anchored, so the counts add up to the chunks loaded.
+    expect(message).toContain(
+      "1 hold an attention anchor, 1 of which also hold user edits or undo history",
+    );
+    expect(message).not.toContain("; 1 hold user edits or undo history");
     expect(message).toContain('"pin-bounded"');
+    manager.dispose();
+  });
+
+  it("names edits for an anchored chunk without the 'pin' hint when history keeps nothing", async () => {
+    const { store, manager, warn } = setup("pin");
+    await manager.ensureLoaded(0);
+    // An edit, not history, keeps chunk 0; clearing history leaves nothing to pin.
+    store.dispatch(DocumentActions.insert(byteOffset(2), "X"));
+    store.dispatch(DocumentActions.historyClear());
+    store.dispatch(DocumentActions.createAttention(byteOffset(1), byteOffset(3)));
+    manager.setActiveChunks([1, 2]);
+    await manager.ensureLoaded(1);
+    await manager.ensureLoaded(2);
+
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = warn.mock.calls[0]![0] as string;
+    expect(message).toContain(
+      "1 hold an attention anchor, 1 of which also hold user edits or undo history",
+    );
+    expect(message).not.toContain('"pin-bounded"');
     manager.dispose();
   });
 

@@ -997,6 +997,37 @@ describe("Event delivery limits and failed transaction calls", () => {
     );
   });
 
+  it("does not count a handler's batched or no-op actions toward the delivery limit", () => {
+    const error = vi.fn();
+    const store = createDocumentStoreWithEvents({
+      content: "",
+      reconcileMode: "none",
+      logger: { error, warn: vi.fn() },
+    });
+    const inserted: string[] = [];
+    let armed = true;
+    store.addEventListener("content-change", (e) => {
+      if (e.action.type === "INSERT") inserted.push(e.action.text);
+      if (!armed) return;
+      armed = false;
+      // More no-op actions than the limit, then a batch larger than it.
+      for (let i = 0; i <= MAX_OBSERVER_DELIVERED_ACTIONS; i++) {
+        store.dispatch(
+          DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(0) }]),
+        );
+      }
+      store.batch(
+        Array.from({ length: MAX_OBSERVER_DELIVERED_ACTIONS + 1 }, () =>
+          DocumentActions.insert(byteOffset(0), "b"),
+        ),
+      );
+    });
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "a"));
+    expect(error).not.toHaveBeenCalled();
+    expect(inserted).toHaveLength(MAX_OBSERVER_DELIVERED_ACTIONS + 2);
+  });
+
   /**
    * An event store over a base store whose next inner `beginTransaction` or
    * `commitTransaction` fails as an invariant violation does: it runs

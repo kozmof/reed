@@ -56,9 +56,11 @@ export function withEvents(
 
   // Events reach handlers in the order their actions committed. A store
   // listener or an event handler can dispatch while events are delivered.
-  // Each dispatch, and each outermost transaction commit, reserves its place
-  // in this queue before it commits, so the events of an action dispatched
-  // from inside another queue behind it, and only the outermost call delivers.
+  // Each dispatch outside a transaction, and each outermost transaction
+  // commit, reserves its place in this queue before it commits, so the events
+  // of an action dispatched from inside another queue behind it, and only the
+  // outermost call delivers. A dispatch inside a transaction buffers its
+  // events in the open level instead, so it reserves no slot.
   //
   // `depth` counts how many event deliveries led to the dispatch: 0 for one
   // made outside delivery, n + 1 for one an event handler made while slot n's
@@ -67,8 +69,10 @@ export function withEvents(
   // one's events, and does not count a handler that dispatches many actions
   // in one go as a cycle. The total limit stops a handler that dispatches
   // more than one action per event, which grows the work exponentially well
-  // before the depth limit. Slots past either limit still committed; only
-  // their events are dropped.
+  // before the depth limit. The total limit counts only slots that hold
+  // events: a slot left empty, by an action that changed nothing, starts no
+  // handler and so cannot feed a cycle. Slots past either limit still
+  // committed; only their events are dropped.
   interface DeliverySlot {
     readonly depth: number;
     readonly events: Array<() => void>;
@@ -96,15 +100,18 @@ export function withEvents(
     if (committing > 0 || delivering) return;
     delivering = true;
     let tooDeep = false;
+    let delivered = 0;
     try {
       for (let i = 0; i < deliveryQueue.length; i++) {
-        if (i >= MAX_OBSERVER_DELIVERED_ACTIONS) {
+        const slot = deliveryQueue[i]!;
+        if (slot.events.length === 0) continue;
+        if (delivered >= MAX_OBSERVER_DELIVERED_ACTIONS) {
           reportCycle(
             `dispatched more than ${MAX_OBSERVER_DELIVERED_ACTIONS} actions in one synchronous delivery`,
           );
           break;
         }
-        const slot = deliveryQueue[i]!;
+        delivered++;
         if (slot.depth >= MAX_OBSERVER_REENTRANT_STEPS) {
           if (!tooDeep) {
             tooDeep = true;
@@ -226,7 +233,9 @@ export function withEvents(
   function dispatch(action: DocumentAction): DocumentState {
     if (disposed) return baseStore.getSnapshot();
     const prevState = baseStore.getSnapshot();
-    const slot = reserveSlot();
+    // Inside a transaction the events join the open level, which the
+    // outermost commit's slot delivers.
+    const slot = pendingEventLevels.length === 0 ? reserveSlot() : null;
     try {
       let transition: DocumentTransition;
       committing++;
@@ -240,7 +249,9 @@ export function withEvents(
         try {
           const events = prepareEventsForAction(action, prevState, transition);
           const level = pendingEventLevels[pendingEventLevels.length - 1];
-          (level ?? slot.events).push(...events);
+          // A reset while the action committed can discard the level it was
+          // dispatched into; its events then take a slot of their own.
+          (level ?? (slot ?? reserveSlot()).events).push(...events);
         } catch (error) {
           // The state transition has already committed. Event metadata is
           // observational and must not make callers believe the edit failed.
