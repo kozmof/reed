@@ -792,14 +792,15 @@ export interface DocumentState<M extends EvaluationMode = EvaluationMode> {
    * `state.pieceTable === prev.pieceTable`. Structural sharing makes this an
    * O(1) identity check, including across selection-only changes.
    *
-   * Other actions move the selection without changing this counter: edits,
-   * UNDO and REDO, and LOAD_CHUNK, LOAD_CHUNKS, EVICT_CHUNK, or EVICT_CHUNKS,
-   * which shift offsets after the loaded or evicted chunks. An eviction also
-   * collapses an endpoint inside an evicted chunk to where that chunk was.
-   * To redraw the caret on every
-   * selection change, compare `state.selection !== prev.selection` (or listen
-   * for 'selection-change'). An action that leaves the selection in place
-   * keeps the same selection object.
+   * Other actions move the selection without changing this counter: local
+   * edits (INSERT, DELETE, REPLACE) and remote ones (APPLY_REMOTE), which move
+   * it past the edited text; UNDO and REDO; and LOAD_CHUNK, LOAD_CHUNKS,
+   * EVICT_CHUNK, or EVICT_CHUNKS, which shift offsets after the loaded or
+   * evicted chunks. An eviction also collapses an endpoint inside an evicted
+   * chunk to where that chunk was. To redraw the caret on every selection
+   * change, compare `state.selection !== prev.selection` (or listen for
+   * 'selection-change'). An action that leaves the selection in place keeps
+   * the same selection object.
    */
   readonly selectionRevision: number;
   /** Piece table containing the document content */

@@ -9,6 +9,7 @@ import { createDocumentStore } from "./store.js";
 import { DocumentActions } from "./actions.js";
 import { byteOffset } from "../../types/branded.js";
 import type { DocumentStore } from "../../types/store.js";
+import type { DocumentAction } from "../../types/actions.js";
 import { getRedoCount, getUndoCount } from "./history.js";
 import { getValue } from "../core/piece-table.js";
 import { documentReducer } from "./reducer.js";
@@ -601,6 +602,68 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]![0]).toContain("discarded 0 undo and 1 redo entries");
     manager.dispose();
+  });
+
+  describe("when the store is wrapped", () => {
+    /** Evict chunk 0, discarding its redo entry, while a listener types. */
+    const evictWhileTyping = async (
+      store: DocumentStore,
+      wrap: (store: DocumentStore) => DocumentStore,
+    ) => {
+      const warn = vi.fn();
+      const manager = createChunkManager(wrap(store), makeLoader(chunks), {
+        maxLoadedChunks: 2,
+        logger: { warn },
+      });
+      await manager.ensureLoaded(0);
+      pinChunk0(store);
+      manager.setActiveChunks([1, 2]);
+      await manager.ensureLoaded(1);
+      let typed = false;
+      store.subscribe(() => {
+        if (typed || store.getSnapshot().pieceTable.chunkMap.has(0)) return;
+        typed = true;
+        store.dispatch(DocumentActions.insert(byteOffset(0), "Y"));
+      });
+      await manager.ensureLoaded(2);
+      expect(typed).toBe(true);
+      expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]![0]).toContain("discarded 0 undo and 1 redo entries");
+      manager.dispose();
+    };
+    const fresh = () =>
+      createDocumentStore({
+        chunkSize: CHUNK_SIZE,
+        totalFileSize: CHUNK_SIZE * 3,
+        historyEvictionPolicy: "pin-bounded",
+        reconcileMode: "none",
+      });
+
+    it("sends the eviction that discards history through a patched dispatch", async () => {
+      const store = fresh();
+      const seen: DocumentAction[] = [];
+      const original = store.dispatch;
+      store.dispatch = (action) => {
+        seen.push(action);
+        return original(action);
+      };
+      await evictWhileTyping(store, (s) => s);
+      expect(
+        seen.some((action) => action.type === "EVICT_CHUNKS" && action.keepHistory !== true),
+      ).toBe(true);
+    });
+
+    it("reports the eviction's own loss for a copy of the store", async () => {
+      await evictWhileTyping(fresh(), (store) => ({ ...store }));
+    });
+
+    it("reports the eviction's own loss when a wrapper dispatches a copy of the action", async () => {
+      await evictWhileTyping(fresh(), (store) => ({
+        ...store,
+        dispatch: (action) => store.dispatch({ ...action }),
+      }));
+    });
   });
 
   it("does not report history discarded for an edit a listener makes while the pass evicts", async () => {

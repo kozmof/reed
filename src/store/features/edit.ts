@@ -50,13 +50,7 @@ import {
   repairLineIndexWindow,
 } from "../core/line-index.js";
 import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
-import {
-  contentDecoder,
-  decodeRun,
-  encodesTo,
-  isExactDecoding,
-  utf8ByteLength,
-} from "../core/encoding.js";
+import { contentDecoder, decodeRun, utf8ByteLength } from "../core/encoding.js";
 import { NO_CHUNK, placementRuns } from "../core/chunk-anchor.js";
 import { codePointWindow, isSafeSplice, isSafeSplit } from "../core/utf8-seam.js";
 import type { FittedKey, KeyRun } from "../core/chunk-anchor.js";
@@ -198,24 +192,16 @@ export function pieceTableDelete(
 }
 
 /**
- * The text an edit deletes from [start, end), as the edit pipeline counts it,
- * with the bytes it was decoded from. Local and remote deletes both read it
- * here. `applyEdit` keeps those bytes in history when the text does not encode
- * back to them, so passing them on saves reading the range a second time. It
- * decodes with `contentDecoder`, as `getText` does; it cannot call
- * `getText` without reading the bytes twice.
+ * The text an untracked edit deletes from [start, end), as the edit pipeline
+ * counts it. It decodes with `contentDecoder`, as `getText` does and as
+ * `applyEdit` decodes the runs it deletes (see `deletedRuns`).
  *
  * A U+FEFF at the start of the range is kept, as `getText` keeps it. The
  * line index counts it as a character, so deleted text without it would leave
  * the line one character too long, and undo could not restore it from the text.
  */
-export function readDeletedRange(
-  state: DocumentState,
-  start: ByteOffset,
-  end: ByteOffset,
-): { readonly deletedText: string; readonly deletedBytes: Uint8Array } {
-  const deletedBytes = getBytes(state.pieceTable, start, end);
-  return { deletedText: contentDecoder.decode(deletedBytes), deletedBytes };
+export function readDeletedText(state: DocumentState, start: ByteOffset, end: ByteOffset): string {
+  return contentDecoder.decode(getBytes(state.pieceTable, start, end));
 }
 
 // =============================================================================
@@ -419,42 +405,39 @@ interface DeletedRun {
 }
 
 /**
- * Text and, where needed, raw bytes of each run of a delete. `deletedText` is
- * the decoding of the whole range, which a single run reuses. Several runs
- * decode each run from the range's bytes, the way `getText` decodes a range.
- * `deletedBytes`, when given, holds the range's bytes, so they are not read
- * again. Otherwise they are read once, and only when needed.
+ * Text and, where needed, raw bytes of each run of a delete, and the text of
+ * the whole range, which the line index counts (see `readDeletedText`). The
+ * range's bytes are read once, and each run decoded from them, the way
+ * `getText` decodes a range.
+ *
+ * Usually every run decodes exactly, so each holds whole characters and the
+ * range decodes to the runs' texts joined, which saves decoding it again. Only
+ * when a run edge cuts a character is the whole range decoded on its own.
  */
 function deletedRuns(
   pieceTable: PieceTableState,
   runs: readonly KeyRun[],
-  deletedText: string,
-  deletedBytes: Uint8Array | undefined,
-): DeletedRun[] {
-  if (runs.length === 0) return [];
+): { readonly runs: DeletedRun[]; readonly text: string } {
+  if (runs.length === 0) return { runs: [], text: "" };
   const base = runs[0]!.start;
-  const end = runs[runs.length - 1]!.end;
-  const rangeBytes = () => deletedBytes ?? getBytes(pieceTable, byteOffset(base), byteOffset(end));
-  if (runs.length === 1) {
-    const length = end - base;
-    // `deletedBytes` are the bytes `deletedText` was decoded from.
-    if (isExactDecoding(deletedText, length, deletedBytes !== undefined)) {
-      return [{ text: deletedText, length }];
-    }
-    const raw = rangeBytes();
-    return [
-      encodesTo(deletedText, raw)
-        ? { text: deletedText, length }
-        : { text: deletedText, length, bytes: asReadonlyUint8Array(raw) },
-    ];
-  }
-  const all = rangeBytes();
-  return runs.map((run) => {
-    const raw = all.subarray(run.start - base, run.end - base);
+  const all = getBytes(pieceTable, byteOffset(base), byteOffset(runs[runs.length - 1]!.end));
+  let exactRuns = true;
+  const deleted = runs.map((run): DeletedRun => {
+    const raw = runs.length === 1 ? all : all.subarray(run.start - base, run.end - base);
     const { text, exact } = decodeRun(raw);
     const length = run.end - run.start;
-    return exact ? { text, length } : { text, length, bytes: asReadonlyUint8Array(raw.slice()) };
+    if (exact) return { text, length };
+    exactRuns = false;
+    // A single run's bytes are the range's own copy; a subarray shares them.
+    return { text, length, bytes: asReadonlyUint8Array(runs.length === 1 ? raw : raw.slice()) };
   });
+  const text =
+    deleted.length === 1
+      ? deleted[0]!.text
+      : exactRuns
+        ? deleted.map((run) => run.text).join("")
+        : contentDecoder.decode(all);
+  return { runs: deleted, text };
 }
 
 // =============================================================================
@@ -775,15 +758,25 @@ export type StructuralEditOperation =
     } & DeleteFields &
       InsertFields);
 
-export type EditOperation = StructuralEditOperation & {
+/**
+ * An edit `applyEdit` records in history. It reads the deleted text itself,
+ * along with the bytes history may need (see `deletedRuns`).
+ */
+export type EditOperation = (
+  | ({ readonly kind: "insert"; readonly position: ByteOffset } & InsertFields)
+  | {
+      readonly kind: "delete";
+      readonly position: ByteOffset;
+      readonly deleteEnd: ByteOffset;
+    }
+  | ({
+      readonly kind: "replace";
+      readonly position: ByteOffset;
+      readonly deleteEnd: ByteOffset;
+    } & InsertFields)
+) & {
   readonly timestamp?: number | undefined;
   readonly selection?: NonEmptyReadonlyArray<SelectionRange> | undefined;
-  /**
-   * For a delete or replace, the bytes of [position, deleteEnd) that
-   * `deletedText` was decoded from (see `readDeletedRange`). When omitted,
-   * they are read again where history needs them.
-   */
-  readonly deletedBytes?: Uint8Array | undefined;
 };
 
 /**
@@ -945,9 +938,22 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   // at the insertion point holds, or the gap's key.
   const insertKey =
     runs.length > 0 ? runs[0]!.key : insertionKey(pieceTable, selectionBefore, op.position);
+  // Deleted text as undo re-inserts it. Decoding replaces malformed bytes with
+  // U+FFFD, so the text can encode to different bytes than were deleted. Bytes
+  // at the edge of an unloaded chunk are often an incomplete character. When
+  // the text does not encode back to the deleted bytes, history keeps the
+  // exact bytes, so undo restores the document byte for byte and every
+  // recorded position stays valid. Runs are empty for an insert. A single run
+  // is the whole deleted range.
+  const deleted = deletedRuns(pieceTable, runs);
+  const placement: InsertKey = { kind: "fitted", key: insertKey };
   let newState = applyUntrackedEdit(
     state,
-    op.kind === "delete" ? op : { ...op, placement: { kind: "fitted", key: insertKey } },
+    op.kind === "insert"
+      ? { ...op, placement }
+      : op.kind === "delete"
+        ? { ...op, deletedText: deleted.text }
+        : { ...op, deletedText: deleted.text, placement },
     nextRevision,
   );
 
@@ -976,21 +982,13 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   // History positions are anchored against the pre-edit document. Edits never
   // load or evict chunks, so the post-edit chunk layout resolves them the same way.
   const anchor = anchorAt(pieceTable, insertKey, op.position);
-  // Deleted text as undo re-inserts it. Decoding replaces malformed bytes with
-  // U+FFFD, so the text can encode to different bytes than were deleted. Bytes at the edge of an unloaded chunk
-  // are often an incomplete character. When the text does not encode back to
-  // the deleted bytes, history keeps the exact bytes, so undo restores the
-  // document byte for byte and every recorded position stays valid.
-  // Runs are empty for an insert. A single run is the whole deleted range.
-  const deleted =
-    op.kind === "insert" ? [] : deletedRuns(pieceTable, runs, op.deletedText, op.deletedBytes);
   // Each run except the first becomes its own delete, ordered right to left so
   // every position is valid when its change is applied. Undo applies them in
   // reverse, re-inserting each run with its own key.
   const changes: HistoryChange[] = [];
   for (let i = runs.length - 1; i >= 1; i--) {
     const run = runs[i]!;
-    const { text, length, bytes } = deleted[i]!;
+    const { text, length, bytes } = deleted.runs[i]!;
     changes.push(
       Object.freeze({
         type: "delete" as const,
@@ -1001,7 +999,7 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
       }),
     );
   }
-  const first = deleted[0] ?? { text: "", length: 0 };
+  const first = deleted.runs[0] ?? { text: "", length: 0 };
   const firstBytes = first.bytes;
   changes.push(
     Object.freeze(

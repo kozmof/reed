@@ -1381,6 +1381,22 @@ describe("sixth review regressions", () => {
     expect(() => roundTrip(s)).not.toThrow();
   });
 
+  it("counts the lines of a delete over several runs from the runs' joined text", () => {
+    const s = createDocumentStore({ chunkSize: 8, totalFileSize: 16, reconcileMode: "none" });
+    s.dispatch(DocumentActions.loadChunk(0, enc("ab\né\nc\n")));
+    s.dispatch(DocumentActions.loadChunk(1, enc("d\n😀e\n")));
+    // Bytes from chunk 0 and chunk 1 have different keys: two runs, each of
+    // whole characters, with line breaks in both.
+    s.dispatch(DocumentActions.delete(byteOffset(3), byteOffset(14)));
+    expect(text(s)).toBe("ab\ne\n");
+    const lines = (root: Parameters<typeof collectLines>[0]) =>
+      collectLines(root).map((line) => line.charLength);
+    expect(lines(s.getSnapshot().lineIndex.root)).toEqual(lines(rebuildLineIndex(text(s)).root));
+    s.dispatch(DocumentActions.undo());
+    expect(text(s)).toBe("ab\né\nc\nd\n😀e\n");
+    expect(lines(s.getSnapshot().lineIndex.root)).toEqual(lines(rebuildLineIndex(text(s)).root));
+  });
+
   it("recounts a character that undo joins with bytes of a chunk loaded since the edit", () => {
     // An emoji split across the edge of chunks 0 and 1.
     const bytes = new Uint8Array([

@@ -12,7 +12,7 @@ import { isUtf8Boundary } from "../core/piece-table.js";
 import {
   validatePosition,
   validateRange,
-  readDeletedRange,
+  readDeletedText,
   applyEdit,
   applyUntrackedEdit,
 } from "./edit.js";
@@ -164,7 +164,6 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
         kind: "delete",
         position: start,
         deleteEnd: end,
-        ...readDeletedRange(state, start, end),
         timestamp: action.timestamp,
         selection: action.selection,
       });
@@ -186,7 +185,6 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
         kind: "replace",
         position: start,
         deleteEnd: end,
-        ...readDeletedRange(state, start, end),
         insertText: replaceText,
         timestamp: action.timestamp,
         selection: action.selection,
@@ -290,7 +288,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
           validateBoundaryPosition(newState, end, "APPLY_REMOTE delete end");
           didApplyChange = true;
           // Untracked edits keep no history, so only the text is needed.
-          const { deletedText } = readDeletedRange(newState, start, end);
+          const deletedText = readDeletedText(newState, start, end);
           newState = applyUntrackedEdit(
             newState,
             { kind: "delete", position: start, deleteEnd: end, deletedText },

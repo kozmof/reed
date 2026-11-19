@@ -28,7 +28,6 @@ import {
   reportCaughtError,
 } from "./diagnostics.js";
 import type { DocumentTransition } from "./reducer.js";
-import { registerCommit } from "./store-commit.js";
 
 /**
  * Wrap a store in the typed event layer. Shared by the config-built and
@@ -238,7 +237,7 @@ export function withEvents(
 
   /**
    * Dispatch `action` as `dispatch` does and return the reducer's transition
-   * for it, which the events describe (see `registerCommit`).
+   * for it, which the events describe.
    */
   function commitWithEvents(action: DocumentAction): DocumentTransition {
     const prevState = baseStore.getSnapshot();
@@ -424,6 +423,5 @@ export function withEvents(
     removeEventListener,
     events: emitter,
   };
-  registerCommit(store, commitWithEvents);
   return store;
 }

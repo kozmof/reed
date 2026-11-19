@@ -344,6 +344,8 @@ export function moveSelectionPastEdit(
       : offset > start && offset < end
         ? { offset: byteOffset(start), key: undefined }
         : move(offset, key);
+  const nextToEdit = (offset: number, key: number | undefined) =>
+    key !== undefined && offset >= start && offset <= end;
   const moveRange = (range: SelectionRange): SelectionRange => {
     const forward = range.anchor < range.head;
     const backward = range.anchor > range.head;
@@ -355,10 +357,19 @@ export function moveSelectionPastEdit(
     if (forward && head.offset < anchor.offset) head = anchor;
     if (backward && anchor.offset < head.offset) anchor = head;
     const unmoved = anchor.offset === range.anchor && head.offset === range.head;
-    if (unmoved && !rangeHasKey(range)) return range;
     // The stored keys of an unmoved range may no longer be the ones
-    // `selectionRange` keeps (see above), so build it again and keep the old
-    // object when nothing changed.
+    // `selectionRange` keeps (see above), but only next to the edit. Keys
+    // never decrease in document order, so whether a key fits at an offset,
+    // and the gap key there, depend only on the bytes on either side of it,
+    // which an edit changes only for an offset in [start, end]. Build such a
+    // range again and keep the old object when nothing changed.
+    if (
+      unmoved &&
+      !nextToEdit(range.anchor, range.anchorAfterChunk) &&
+      !nextToEdit(range.head, range.headAfterChunk)
+    ) {
+      return range;
+    }
     const next = selectionRange(pieceTable, anchor.offset, head.offset, anchor.key, head.key);
     return unmoved && sameRange(next, range) ? range : next;
   };

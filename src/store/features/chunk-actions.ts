@@ -35,6 +35,7 @@ import {
   type EvictionHistoryLoss,
 } from "./history-anchor.js";
 import { createFewestLossQueue } from "./fewest-loss-queue.js";
+import { recordEviction } from "./eviction-report.js";
 import { repairChunkLines } from "../core/chunk-line-repair.js";
 import { summarizeBytes } from "../core/decoded-metrics.js";
 import { PersistentMap, PersistentSet } from "../core/persistent-map.js";
@@ -463,7 +464,8 @@ function evictRange(
  * pass.
  *
  * Each candidate's loss is measured once, and the selection is carried across
- * once, after the last eviction.
+ * once, after the last eviction. The history left is reported to a caller
+ * waiting on `action` (see `dispatchEviction`).
  */
 export function evictChunks(state: DocumentState, action: EvictChunksAction): DocumentState {
   const { maxLoaded } = action;
@@ -509,5 +511,7 @@ export function evictChunks(state: DocumentState, action: EvictChunksAction): Do
       }
     }
   }
-  return withSelectionCarried(state, next);
+  const result = withSelectionCarried(state, next);
+  recordEviction(action, state, result.history);
+  return result;
 }

@@ -16,7 +16,7 @@ import type { DocumentStore } from "../../types/store.js";
 import { isChunkByteLengthValid } from "../core/piece-table.js";
 import { DocumentActions } from "./actions.js";
 import { getRedoCount, getUndoCount } from "./history.js";
-import { dispatchForOwnHistory } from "./store-commit.js";
+import { dispatchEviction } from "./eviction-report.js";
 import { chunkHoldReason, hasAttentionAnchoredToChunk } from "./chunk-actions.js";
 
 // =============================================================================
@@ -519,8 +519,8 @@ export function createChunkManager(
           // allows. Undo then stops short with no other sign, so say so.
           // A store listener the eviction notifies can edit too, so the store's
           // history afterwards need not be the eviction's alone. Compare the
-          // history the eviction itself left (see `dispatchForOwnHistory`).
-          const evicted = dispatchForOwnHistory(
+          // history the eviction itself left (see `dispatchEviction`).
+          const evicted = dispatchEviction(
             store,
             before,
             DocumentActions.evictChunks(candidates, maxLoadedChunks),
