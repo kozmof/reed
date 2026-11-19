@@ -8,12 +8,12 @@
  * `store.dispatch`, so whatever wraps the store sees the action, and learns
  * here what the eviction itself did.
  *
- * A store Reed builds reports each action it commits while an eviction is
- * awaited (see `recordCommit`), so the reducer stays pure. Only commits on the
- * awaiting store's own line of history count: the first starts from the
- * history the caller read, and each later one from the history the one before
- * left. Another store, such as a mirror a wrapper also dispatches to, starts
- * from history of its own, so its commits are ignored.
+ * Each store Reed builds carries an eviction tap (`EVICTION_TAP`). The store
+ * passes every action it commits to its own tap, with the history the reducer
+ * read and the history it produced, so the reducer stays pure. While a caller
+ * awaits an eviction on that tap, the first matching eviction the store
+ * commits answers it. Nothing is inferred from other stores: a mirror that a
+ * wrapper also dispatches to has a tap of its own, which nobody awaits.
  */
 
 import type { DocumentState, HistoryState } from "../../types/state.js";
@@ -30,17 +30,98 @@ export interface EvictionHistory {
 interface AwaitedEviction {
   readonly action: EvictChunksAction;
   readonly onDropped: (history: EvictionHistory) => void;
-  /** The history the awaiting store's latest commit left. */
-  head: HistoryState;
-  /** Whether the awaiting store committed the eviction. */
+  /** Whether the store committed the eviction. */
   committed: boolean;
   /** What the eviction discarded, when it committed outside a transaction. */
   dropped: EvictionHistory | null;
 }
 
-// Dispatch is synchronous, so the evictions being awaited nest: a listener
-// one notifies can await another, which is then last.
-const awaiting: AwaitedEviction[] = [];
+/**
+ * The key a store Reed builds keeps its tap under. The property is
+ * enumerable, so a wrapper made by spreading the store (`{ ...store }`) keeps
+ * the tap of the store it forwards to.
+ */
+export const EVICTION_TAP: unique symbol = Symbol("reed.evictionTap");
+
+/** One store's view of the evictions awaited on it. */
+export interface EvictionTap {
+  /**
+   * Note that the store reduced `action` from `from` to `to`. The store calls
+   * this for every action it commits, before notifying anyone, and it costs
+   * nothing unless an eviction is awaited. A matching eviction answers the
+   * innermost caller still waiting for one.
+   *
+   * Inside a transaction a rollback can still undo the eviction, so a loss is
+   * not reported yet. The function returned reports it, and the store calls
+   * it once the outermost transaction commits, or drops it on a rollback.
+   */
+  record(
+    action: DocumentAction,
+    from: HistoryState,
+    to: HistoryState,
+    inTransaction: boolean,
+  ): (() => void) | null;
+}
+
+interface TapInternals extends EvictionTap {
+  /** Wait for `entry`'s eviction; the function returned stops waiting. */
+  await(entry: AwaitedEviction): () => void;
+}
+
+// Taps this module made, so a foreign value under the key is ignored.
+const taps = new WeakSet<object>();
+
+/** A tap for a new store. */
+export function createEvictionTap(): EvictionTap {
+  // Dispatch is synchronous, so the evictions awaited on one store nest: a
+  // listener one notifies can await another, which is then last.
+  const awaiting: AwaitedEviction[] = [];
+  const tap: TapInternals = {
+    record(action, from, to, inTransaction) {
+      if (awaiting.length === 0 || action.type !== "EVICT_CHUNKS") return null;
+      for (let i = awaiting.length - 1; i >= 0; i--) {
+        const entry = awaiting[i]!;
+        if (entry.committed || !sameEviction(entry.action, action)) continue;
+        entry.committed = true;
+        if (to === from) return null;
+        const dropped: EvictionHistory = { from, to };
+        if (!inTransaction) {
+          entry.dropped = dropped;
+          return null;
+        }
+        return () => entry.onDropped(dropped);
+      }
+      return null;
+    },
+    await(entry) {
+      awaiting.push(entry);
+      return () => {
+        awaiting.splice(awaiting.lastIndexOf(entry), 1);
+      };
+    },
+  };
+  taps.add(tap);
+  return tap;
+}
+
+/** Put `tap` on `store`, where `dispatchEviction` and spread copies find it. */
+export function attachEvictionTap<S extends object>(store: S, tap: EvictionTap): S {
+  Object.defineProperty(store, EVICTION_TAP, {
+    value: tap,
+    enumerable: true,
+    writable: false,
+    configurable: false,
+  });
+  return store;
+}
+
+/** The tap `store` carries, when a store Reed built put it there. */
+export function evictionTapOf(store: object): EvictionTap | undefined {
+  const tap = (store as { [EVICTION_TAP]?: unknown })[EVICTION_TAP];
+  return typeof tap === "object" && tap !== null && taps.has(tap)
+    ? (tap as EvictionTap)
+    : undefined;
+}
 
 /**
  * True when `a` and `b` ask for the same eviction. A dispatch wrapper may pass
@@ -59,52 +140,21 @@ function sameEviction(a: EvictChunksAction, b: EvictChunksAction): boolean {
 }
 
 /**
- * Note that a store reduced `action` from `from` to `to`. The store calls this
- * for every action it commits, before notifying anyone, and it costs nothing
- * unless an eviction is awaited. A matching eviction answers the innermost
- * caller whose store's history it continues.
- *
- * Inside a transaction a rollback can still undo the eviction, so a loss is
- * not reported yet. The function returned reports it, and the store calls it
- * once the outermost transaction commits, or drops it on a rollback.
- */
-export function recordCommit(
-  action: DocumentAction,
-  from: DocumentState,
-  to: DocumentState,
-  inTransaction: boolean,
-): (() => void) | null {
-  let deferred: (() => void) | null = null;
-  let answered = false;
-  for (let i = awaiting.length - 1; i >= 0; i--) {
-    const entry = awaiting[i]!;
-    if (entry.committed || from.history !== entry.head) continue;
-    entry.head = to.history;
-    if (answered || action.type !== "EVICT_CHUNKS" || !sameEviction(entry.action, action)) {
-      continue;
-    }
-    answered = true;
-    entry.committed = true;
-    if (to.history === from.history) continue;
-    const dropped: EvictionHistory = { from: from.history, to: to.history };
-    if (!inTransaction) entry.dropped = dropped;
-    else deferred = () => entry.onDropped(dropped);
-  }
-  return deferred;
-}
-
-/**
  * Dispatch `action` to `store`, whose state is `before`, and call `onDropped`
  * with the history the action itself reduced from and left if it discarded
  * any, without counting whatever a listener it notified dispatched.
  *
- * A store Reed built reports the eviction it committed, even when a dispatch
- * wrapper copied the action or dispatched something first. Inside one of its
- * transactions, `onDropped` waits for the outermost commit, and a rollback
- * cancels it. For any other store, or when the store committed no matching
- * eviction, history the store still holds afterwards means nothing discarded
- * any: every change to history makes a new object. Otherwise the reducer,
- * being pure, reduces `action` on `before` again.
+ * A store carrying a tap reports the eviction it committed, even when a
+ * dispatch wrapper copied the action or dispatched something first. Inside
+ * one of its transactions, `onDropped` waits for the outermost commit, and a
+ * rollback cancels it.
+ *
+ * Without a tap, or when the store committed no matching eviction (a wrapper
+ * rewrote it), history the store still holds afterwards means nothing
+ * discarded any: every change to history makes a new object. Otherwise the
+ * reducer, being pure, reduces `action` on `before` again to measure the
+ * loss. That repeats the eviction's work, so a caller with nobody to tell
+ * should dispatch the action directly instead.
  */
 export function dispatchEviction(
   store: DocumentStore,
@@ -112,18 +162,13 @@ export function dispatchEviction(
   action: EvictChunksAction,
   onDropped: (history: EvictionHistory) => void,
 ): void {
-  const entry: AwaitedEviction = {
-    action,
-    onDropped,
-    head: before.history,
-    committed: false,
-    dropped: null,
-  };
-  awaiting.push(entry);
+  const tap = evictionTapOf(store) as TapInternals | undefined;
+  const entry: AwaitedEviction = { action, onDropped, committed: false, dropped: null };
+  const stop = tap?.await(entry);
   try {
     store.dispatch(action);
   } finally {
-    awaiting.splice(awaiting.lastIndexOf(entry), 1);
+    stop?.();
   }
   if (entry.committed) {
     if (entry.dropped !== null) onDropped(entry.dropped);

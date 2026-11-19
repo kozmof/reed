@@ -34,6 +34,7 @@ import type { PieceID, AttentionID, ReadonlyUint8Array } from "../../types/brand
 import { byteOffset, byteLength, pieceID, attentionID } from "../../types/branded.js";
 import type {
   CheckpointEnvelope,
+  RestorableCheckpointEnvelope,
   CheckpointRestoreOptions,
   CheckpointErrorCode,
 } from "../../types/checkpoint.js";
@@ -60,6 +61,7 @@ import { pieceTableDelete, pieceTableInsertPlaceholder } from "../core/piece-tab
 import { changeReplayFailure, nextBoundary, selectionRange } from "./history-anchor.js";
 import { insertedLength, removedLength } from "./history-entry.js";
 import { GrowableBuffer } from "../core/growable-buffer.js";
+import { errorMessage } from "./diagnostics.js";
 import {
   asReadonlyMap,
   asReadonlyUint8Array,
@@ -316,7 +318,7 @@ function readBytes(value: unknown, what: string, budget: RestoreBudget): Uint8Ar
     return bytes;
   } catch (error) {
     if (error instanceof CheckpointError) throw error;
-    fail("MALFORMED", `${what} is not valid base64: ${(error as Error).message}`);
+    fail("MALFORMED", `${what} is not valid base64: ${errorMessage(error)}`);
   }
 }
 
@@ -1292,11 +1294,11 @@ export function isCheckpoint(value: unknown): value is CheckpointEnvelope {
  * checkpoint sections.
  *
  * Unlike `isCheckpoint`, this accepts the older versions restore migrates
- * forward, so a true result may be an older layout: read the sections only
- * through `restoreCheckpoint`, or check `value.version === CHECKPOINT_VERSION`
- * first.
+ * forward, so a true result may be an older layout (see
+ * `RestorableCheckpointEnvelope`): read the sections only through
+ * `restoreCheckpoint`, or narrow the value with `isCheckpoint` first.
  */
-export function isRestorableCheckpoint(value: unknown): value is CheckpointEnvelope {
+export function isRestorableCheckpoint(value: unknown): value is RestorableCheckpointEnvelope {
   const version = envelopeVersion(value);
   return version !== null && version >= minimumSupportedVersion();
 }
@@ -1367,7 +1369,7 @@ function migrate(source: Record<string, unknown>, version: number): Record<strin
     if (error instanceof CheckpointError) throw error;
     fail(
       "MALFORMED",
-      `checkpoint version ${version} could not be migrated: ${error instanceof Error ? error.message : String(error)}`,
+      `checkpoint version ${version} could not be migrated: ${errorMessage(error)}`,
     );
   }
 }
@@ -1449,7 +1451,7 @@ export function decodeCheckpoint(
   try {
     parsed = JSON.parse(json);
   } catch (error) {
-    fail("NOT_A_CHECKPOINT", `checkpoint is not valid JSON: ${(error as Error).message}`);
+    fail("NOT_A_CHECKPOINT", `checkpoint is not valid JSON: ${errorMessage(error)}`);
   }
   return restoreCheckpoint(parsed, options);
 }

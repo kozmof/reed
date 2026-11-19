@@ -54,3 +54,11 @@ export function reportCaughtError(
   }
   reportGlobally(message, error);
 }
+
+/**
+ * The message of a caught value, for a message of our own. Anything can be
+ * thrown, so a value that is not an Error is named by `String`.
+ */
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

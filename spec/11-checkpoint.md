@@ -222,7 +222,7 @@ checkpoint.restore(checkpoint, restoreOptions?) // unknown -> DocumentState<'eag
 checkpoint.encode(state, options?)   // DocumentState<'eager'> -> string
 checkpoint.decode(json, restoreOptions?)        // string -> DocumentState<'eager'>
 checkpoint.isCheckpoint(value)       // value is CheckpointEnvelope
-checkpoint.isRestorableCheckpoint(value) // value is CheckpointEnvelope, older versions too
+checkpoint.isRestorableCheckpoint(value) // value is RestorableCheckpointEnvelope, older versions too
 
 store.createDocumentStoreFromCheckpoint(checkpoint, config?, restoreOptions?)
 store.createDocumentStoreWithEventsFromCheckpoint(checkpoint, config?, restoreOptions?)
@@ -231,8 +231,9 @@ store.createDocumentStoreWithEventsFromCheckpoint(checkpoint, config?, restoreOp
 `isCheckpoint` checks the format, the current version, and non-null object sections. It
 narrows to `CheckpointEnvelope`, whose section contents remain unvalidated.
 `isRestorableCheckpoint` makes the same checks but also accepts the older versions restore
-migrates, so its sections may use an older layout; code that reads them directly must also
-check `value.version === CHECKPOINT_VERSION`. Pass the value to
+migrates. It narrows to `RestorableCheckpointEnvelope`, whose `version` is any number and whose
+sections may use an older layout; code that reads them directly must first narrow the value
+with `isCheckpoint`. Pass the value to
 `restore` for full validation. Restore entry points accept `unknown` input and check
 line boundaries and UTF-16 lengths against the resident document bytes.
 

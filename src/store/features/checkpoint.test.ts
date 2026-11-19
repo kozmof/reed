@@ -22,7 +22,11 @@ import {
 import { DocumentActions } from "./actions.js";
 import { documentReducer } from "./reducer.js";
 import { CheckpointError, CHECKPOINT_VERSION } from "../../types/checkpoint.js";
-import type { DocumentCheckpoint, CheckpointEnvelope } from "../../types/checkpoint.js";
+import type {
+  DocumentCheckpoint,
+  CheckpointEnvelope,
+  RestorableCheckpointEnvelope,
+} from "../../types/checkpoint.js";
 import type { DocumentState } from "../../types/state.js";
 import { pstackSize } from "../../types/state.js";
 import { byteOffset } from "../../types/branded.js";
@@ -1378,6 +1382,30 @@ describe("checkpoint envelope contract", () => {
       expectTypeOf(value).toEqualTypeOf<CheckpointEnvelope>();
       expectTypeOf(value).not.toMatchTypeOf<DocumentCheckpoint>();
       expect(() => restoreCheckpoint(value)).toThrow(CheckpointError);
+    }
+  });
+
+  it("does not claim the current version for a value only isRestorableCheckpoint accepts", () => {
+    const value: unknown = {
+      format: "reed-checkpoint",
+      version: 1,
+      pieceTable: {},
+      lineIndex: {},
+      selection: {},
+      history: {},
+      metadata: {},
+      attention: {},
+    };
+    expect(isRestorableCheckpoint(value)).toBe(true);
+    expect(isCheckpoint(value)).toBe(false);
+    if (isRestorableCheckpoint(value)) {
+      expectTypeOf(value).toEqualTypeOf<RestorableCheckpointEnvelope>();
+      expectTypeOf(value.version).toEqualTypeOf<number>();
+      expectTypeOf(value).not.toMatchTypeOf<CheckpointEnvelope>();
+      expectTypeOf(value).not.toMatchTypeOf<DocumentCheckpoint>();
+    }
+    if (isCheckpoint(value)) {
+      expectTypeOf(value.version).toEqualTypeOf<typeof CHECKPOINT_VERSION>();
     }
   });
 });

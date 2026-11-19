@@ -214,7 +214,7 @@ interface SearchBudget {
   remaining: number;
 }
 
-/** Work allowed per byte of chunk data and removed text in the payload. */
+/** Work allowed per byte of chunk data and of text the undo stack removed. */
 const SEARCH_WORK_PER_BYTE = 16;
 /** Work allowed whatever the payload's size. */
 const SEARCH_WORK_FLOOR = 1 << 20;
@@ -725,7 +725,8 @@ function anchorV1Positions(data: CheckpointWireData): CheckpointWireData {
   };
   // Undo gives back the removed text of each change, so the searches for
   // where it came from may scan in all a multiple of the chunk data and that
-  // text.
+  // text, counted in UTF-8 bytes like the bytes searched. The redo walk
+  // applies changes forward and searches nothing, so its text is not counted.
   let inputBytes = 0;
   for (const [, length] of chunkLengths) inputBytes += length;
   const rawHistory = data.history;
@@ -740,7 +741,7 @@ function anchorV1Positions(data: CheckpointWireData): CheckpointWireData {
       for (const change of changes) {
         if (!isTuple(change)) continue;
         const removedText = change[0] === "r" ? change[3] : change[0] === "d" ? change[2] : "";
-        if (typeof removedText === "string") inputBytes += removedText.length;
+        if (typeof removedText === "string") inputBytes += utf8ByteLength(removedText);
       }
     }
   }

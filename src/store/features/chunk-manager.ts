@@ -522,12 +522,14 @@ export function createChunkManager(
           // A store listener the eviction notifies can edit too, so the store's
           // history afterwards need not be the eviction's alone. Compare the
           // history the eviction itself left. Inside a transaction the report
-          // waits for the commit (see `dispatchEviction`).
-          dispatchEviction(
-            store,
-            before,
-            DocumentActions.evictChunks(candidates, maxLoadedChunks),
-            (evicted) => {
+          // waits for the commit (see `dispatchEviction`). Measuring can cost
+          // a second reduction through a store Reed did not build, so without
+          // a logger the eviction is just dispatched.
+          const evict = DocumentActions.evictChunks(candidates, maxLoadedChunks);
+          if (logger?.warn === undefined) {
+            store.dispatch(evict);
+          } else {
+            dispatchEviction(store, before, evict, (evicted) => {
               const undoDropped = getUndoCount(evicted.from) - getUndoCount(evicted.to);
               const redoDropped = getRedoCount(evicted.from) - getRedoCount(evicted.to);
               logger?.warn?.(
@@ -536,8 +538,8 @@ export function createChunkManager(
                   `under the "${evicted.to.evictionPolicy}" history eviction policy. ` +
                   `Raise maxLoadedChunks, or use "pin" to keep history at the cost of memory.`,
               );
-            },
-          );
+            });
+          }
           if (disposed) return;
         }
         // Still over the limit, so every candidate was offered: those left,

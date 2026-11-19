@@ -67,6 +67,7 @@ export type {
 export type {
   DocumentCheckpoint,
   CheckpointEnvelope,
+  RestorableCheckpointEnvelope,
   CheckpointOptions,
   CheckpointRestoreOptions,
   CheckpointMode,

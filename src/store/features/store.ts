@@ -40,7 +40,7 @@ import { getBufferStats, compactAddBuffer } from "../core/piece-table.js";
 import { createTransactionManager, makeBatch, type CommitResult } from "./transaction.js";
 import { MAX_OBSERVER_REENTRANT_STEPS, reportCaughtError } from "./diagnostics.js";
 import { withEvents } from "./event-store.js";
-import { recordCommit } from "./eviction-report.js";
+import { attachEvictionTap, createEvictionTap } from "./eviction-report.js";
 import {
   createReconciliationScheduler,
   type ReconciliationSchedulerOptions,
@@ -105,9 +105,11 @@ function createStoreOverState(
   // flag in a follow-up pass after its current listener snapshot completes.
   let notificationPending = false;
   const transaction = createTransactionManager();
-  // Eviction losses committed inside a transaction (see `recordCommit`), each
-  // with the depth that holds it. The outermost commit reports them, and a
-  // rollback discards those its level held, since it restores the history.
+  // Answers callers awaiting an eviction on this store (see `dispatchEviction`).
+  const evictionTap = createEvictionTap();
+  // Eviction losses committed inside a transaction (see `EvictionTap.record`),
+  // each with the depth that holds it. The outermost commit reports them, and
+  // a rollback discards those its level held, since it restores the history.
   let deferredReports: { depth: number; readonly report: () => void }[] = [];
 
   /**
@@ -371,7 +373,12 @@ function createStoreOverState(
   function commit(action: DocumentAction): DocumentTransition {
     if (disposed) return { state, historyDropped: false };
     const transition = reduceDocument(state, action);
-    const report = recordCommit(action, state, transition.state, transaction.isActive);
+    const report = evictionTap.record(
+      action,
+      state.history,
+      transition.state.history,
+      transaction.isActive,
+    );
     if (report !== null) deferredReports.push({ depth: transaction.depth, report });
     if (transition.state !== state) {
       setState(transition.state);
@@ -431,8 +438,13 @@ function createStoreOverState(
       throw e;
     }
     if (result.isOutermost) {
+      // Take the reports before notifying: a listener may dispose the store,
+      // which clears the queue, or open a transaction of its own and leave it
+      // open, whose losses have not committed yet.
+      const reports = deferredReports;
+      deferredReports = [];
       afterCommit();
-      reportDeferred();
+      runReports(reports);
     } else {
       // The enclosing level now holds what this one committed.
       for (const entry of deferredReports) {
@@ -445,10 +457,7 @@ function createStoreOverState(
    * Report the eviction losses the outermost transaction committed. The
    * change has committed, so a report's error is reported, not thrown.
    */
-  function reportDeferred(): void {
-    if (deferredReports.length === 0) return;
-    const reports = deferredReports;
-    deferredReports = [];
+  function runReports(reports: readonly { readonly report: () => void }[]): void {
     for (const { report } of reports) {
       try {
         report();
@@ -642,6 +651,7 @@ function createStoreOverState(
     whenReconciled,
     dispose,
   };
+  attachEvictionTap(store, evictionTap);
   return { store, commit };
 }
 

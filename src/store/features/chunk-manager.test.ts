@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { createChunkManager } from "./chunk-manager.js";
-import { createDocumentStore } from "./store.js";
+import { createDocumentStore, createDocumentStoreWithEvents } from "./store.js";
 import { DocumentActions } from "./actions.js";
 import { byteOffset } from "../../types/branded.js";
 import type { DocumentStore } from "../../types/store.js";
@@ -692,6 +692,39 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
       manager.dispose();
     });
 
+    it("takes the loss from the base store's commit through a copy of an event store", async () => {
+      const store = createDocumentStoreWithEvents({
+        chunkSize: CHUNK_SIZE,
+        totalFileSize: CHUNK_SIZE * 3,
+        historyEvictionPolicy: "pin-bounded",
+        reconcileMode: "none",
+      });
+      const warn = vi.fn();
+      // Clearing history first leaves the eviction nothing to discard, which
+      // only the store's own commit of the eviction can tell.
+      const wrapped: DocumentStore = {
+        ...store,
+        dispatch: (action) => {
+          if (action.type === "EVICT_CHUNKS" && action.keepHistory !== true) {
+            store.dispatch(DocumentActions.historyClear());
+          }
+          return store.dispatch(action);
+        },
+      };
+      const manager = createChunkManager(wrapped, makeLoader(chunks), {
+        maxLoadedChunks: 2,
+        logger: { warn },
+      });
+      await manager.ensureLoaded(0);
+      pinChunk0(store);
+      manager.setActiveChunks([1, 2]);
+      await manager.ensureLoaded(1);
+      await manager.ensureLoaded(2);
+      expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
+      expect(warn).not.toHaveBeenCalled();
+      manager.dispose();
+    });
+
     it("does not count a listener's edit when a wrapper changes the action", async () => {
       const store = fresh();
       const warn = vi.fn();
@@ -805,6 +838,44 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
       expect(getRedoCount(store.getSnapshot())).toBe(0);
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn.mock.calls[0]![0]).toContain("discarded 0 undo and 1 redo entries");
+      manager.dispose();
+    });
+
+    it("reports the committed loss when a listener disposes the store as it commits", async () => {
+      const { store, manager, warn } = await overLimit();
+      store.beginTransaction();
+      manager.setActiveChunks([1, 2]);
+      store.subscribe(() => store.dispose());
+      store.commitTransaction();
+      expect(getRedoCount(store.getSnapshot())).toBe(0);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]![0]).toContain("discarded 0 undo and 1 redo entries");
+      manager.dispose();
+    });
+
+    it("does not report a loss a listener's still open transaction holds", async () => {
+      const { store, manager, warn } = await overLimit();
+      // As the outer transaction commits, a listener opens one of its own and
+      // evicts chunk 0 there, discarding the redo entry, but leaves it open.
+      let opened = false;
+      const unsubscribe = store.subscribe(() => {
+        if (opened) return;
+        opened = true;
+        store.beginTransaction();
+        manager.setActiveChunks([1, 2]);
+      });
+      store.beginTransaction();
+      store.dispatch(
+        DocumentActions.setSelection([{ anchor: byteOffset(1), head: byteOffset(1) }]),
+      );
+      store.commitTransaction();
+      unsubscribe();
+      expect(opened).toBe(true);
+      expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
+      expect(warn).not.toHaveBeenCalled();
+      store.rollbackTransaction();
+      expect(getRedoCount(store.getSnapshot())).toBe(1);
+      expect(warn).not.toHaveBeenCalled();
       manager.dispose();
     });
 
