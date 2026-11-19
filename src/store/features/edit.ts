@@ -509,8 +509,10 @@ export function makeReplaceChange(
  * selection of the entry it extends. It must anchor the selection against the
  * document before the changes, which `state` no longer holds.
  * `selectionAfter` returns the selection the edit left, anchored against
- * `state`, which redo restores. The entry calls it on first read (see
- * `deferAnchorSelection`), so it must not depend on anything that changes.
+ * `state`, which redo restores. When edits can coalesce, the entry calls it
+ * on first read (see `deferAnchorSelection`), so it must not depend on
+ * anything that changes. Without a coalesce timeout no later edit replaces
+ * the entry, so it is called at once.
  *
  * That function can hold the piece tree of the edited document. The entry
  * drops it once read, and a new entry reads the one below it, which the next
@@ -524,6 +526,16 @@ export function historyPush(
   selectionAfter: () => HistorySelectionState,
 ): DocumentState {
   const history = state.history;
+  if (history.coalesceTimeout <= 0) {
+    // Nothing coalesces, so the selection is needed and derived now.
+    const entry: HistoryEntry = Object.freeze({
+      changes: Object.freeze([...changes]),
+      selectionBefore: selectionBefore(),
+      selectionAfter: selectionAfter(),
+      timestamp: now,
+    });
+    return pushEntry(state, entry);
+  }
   // Derived on first read: an entry the next keystroke replaces never needs it.
   let deriveAfter: (() => HistorySelectionState) | undefined = selectionAfter;
   let anchoredAfter: HistorySelectionState | undefined;
@@ -581,7 +593,12 @@ export function historyPush(
   // Nothing coalesces into the entry below any more, so derive its selection
   // now and let it drop the document it was derived from.
   if (lastEntry !== undefined) void lastEntry.selectionAfter;
+  return pushEntry(state, entry);
+}
 
+/** Push `entry` as a new undo entry, trimming the stack and clearing redo. */
+function pushEntry(state: DocumentState, entry: HistoryEntry): DocumentState {
+  const history = state.history;
   // Trim undo stack if it exceeds limit.
   // The persistent AVL split keeps this O(log limit) after the stack saturates.
   const undoStack = pstackTrimToSize(pstackPush(history.undoStack, entry), history.limit);

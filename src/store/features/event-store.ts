@@ -23,8 +23,8 @@ import {
   type DocumentEventMap,
 } from "./events.js";
 import {
-  acceptEvictionWarnLenders,
   MAX_OBSERVER_DELIVERED_ACTIONS,
+  MAX_OBSERVER_DELIVERED_ACTIONS_CEILING,
   MAX_OBSERVER_REENTRANT_STEPS,
   reportCaughtError,
 } from "./diagnostics.js";
@@ -79,7 +79,8 @@ export function withEvents(
   // and is no cycle. Handlers that react once to each of those actions are no
   // cycle either, so the limit grows with that direct work: it is
   // MAX_OBSERVER_DELIVERED_ACTIONS plus MAX_OBSERVER_REENTRANT_STEPS for each
-  // slot of depth 0 or 1 delivered. A chain of handlers each reacting once per
+  // slot of depth 0 or 1 delivered, up to MAX_OBSERVER_DELIVERED_ACTIONS_CEILING,
+  // so the work a run of handlers can do stays bounded. A chain of handlers each reacting once per
   // event then meets the depth limit first, and a handler that dispatches two
   // or more actions per event meets this one a few levels past depth 2. The
   // queue runs level by level, so every slot of depth 0 or 1 is delivered
@@ -132,7 +133,10 @@ export function withEvents(
         if (slot.depth < 2) {
           direct++;
         } else {
-          const limit = MAX_OBSERVER_DELIVERED_ACTIONS + MAX_OBSERVER_REENTRANT_STEPS * direct;
+          const limit = Math.min(
+            MAX_OBSERVER_DELIVERED_ACTIONS + MAX_OBSERVER_REENTRANT_STEPS * direct,
+            MAX_OBSERVER_DELIVERED_ACTIONS_CEILING,
+          );
           if (reactions >= limit) {
             reportCycle(
               `dispatched more than ${limit} actions in reaction to actions handlers dispatched, in one synchronous delivery`,
@@ -247,26 +251,17 @@ export function withEvents(
    * Enhanced dispatch that buffers or emits events depending on transaction state.
    */
   function dispatch(action: DocumentAction): DocumentState {
-    commitWithEvents(action);
-    return baseStore.getSnapshot();
-  }
-
-  /**
-   * Dispatch `action` as `dispatch` does and return the reducer's transition
-   * for it, which the events describe.
-   */
-  function commitWithEvents(action: DocumentAction): DocumentTransition {
     const prevState = baseStore.getSnapshot();
-    if (disposed) return { state: prevState, historyDropped: null };
+    if (disposed) return prevState;
     // Inside a transaction the events join the open level, which the
     // outermost commit's slot delivers. Choose before committing: outside a
     // transaction the commit notifies store listeners, and one that opens a
     // transaction must not pull this action's events into its level. Inside
     // one the commit notifies no one, so the level stays open until it returns.
     const target = pendingEventLevels[pendingEventLevels.length - 1] ?? reserveSlot().events;
-    let transition: DocumentTransition;
     try {
       committing++;
+      let transition: DocumentTransition;
       try {
         transition = commit(action);
       } finally {
@@ -285,7 +280,7 @@ export function withEvents(
     } finally {
       deliver();
     }
-    return transition;
+    return baseStore.getSnapshot();
   }
 
   /**
@@ -439,7 +434,5 @@ export function withEvents(
     removeEventListener,
     events: emitter,
   };
-  // A ChunkManager given this wrapper lends its logger to the base store.
-  acceptEvictionWarnLenders(store, baseStore);
   return store;
 }

@@ -56,7 +56,7 @@ Returns `ReconcilableDocumentStore` with:
 Supported config fields (`DocumentStoreConfig`):
 
 - `content`
-- `logger` — optional diagnostics sink. Omit it to keep the library silent. The store warns through it when `EVICT_CHUNKS`, which ChunkManager sends, discards undo or redo history, once the eviction is final: at once outside a transaction, at the outermost commit inside one, and not at all after a rollback. Without it, the store gives that warning to the `logger` of a ChunkManager managing it, if that has one
+- `logger` — optional diagnostics sink. Omit it to keep the library silent. The store warns through it when `EVICT_CHUNKS`, which ChunkManager sends, discards undo or redo history, once the eviction is final: at once outside a transaction, at the outermost commit inside one, and not at all after a rollback. Without it, the store gives the warning for an eviction a ChunkManager dispatched to that manager's `logger`, if it has one
 - `historyLimit`
 - `chunkSize`
 - `encoding` — currently only `'utf-8'` is supported
@@ -105,7 +105,7 @@ Requires a user-supplied `ChunkLoader` with
 `loadChunk(chunkIndex, signal?): Promise<Uint8Array>`. The optional abort signal is canceled when
 the manager drops a pending load or is disposed.
 
-Config (`ChunkManagerConfig`): `maxLoadedChunks`, `fetchStrategy`, `logger`. The manager's `logger` hears when chunks stay loaded over `maxLoadedChunks`. History an eviction discards is reported by the store's own `logger`, or by the manager's `logger` when the store has none and is one Reed built, and by the store's `history-drop` event.
+Config (`ChunkManagerConfig`): `maxLoadedChunks`, `fetchStrategy`, `logger`. The manager's `logger` hears when chunks stay loaded over `maxLoadedChunks`. History an eviction discards is reported by the store's own `logger`, or, for an eviction the manager dispatches, by the manager's `logger` when the store has none, also through a wrapper that forwards `dispatch` synchronously, and by the store's `history-drop` event. A throw from the manager's `warn` there is reported through its `error`, if it has one.
 
 ### 2.5 Flat `createStreamingDocumentLoader(store, loader, metadata, config?)`
 

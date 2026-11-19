@@ -2619,7 +2619,8 @@ describe("seventeenth review regressions", () => {
   });
 
   it("derives an entry's selection once a new entry covers it, and only once", () => {
-    const state = createInitialState({ content: "abc" });
+    // Edits coalesce, so the newest entry defers its selection.
+    const state = createInitialState({ content: "abc", undoGroupTimeout: 500 });
     let derived = 0;
     const cursor = () => {
       derived++;
@@ -2635,6 +2636,20 @@ describe("seventeenth review regressions", () => {
     expect(below!.selectionAfter).toEqual(anchoredCursor(-1, 0));
     expect(below!.selectionAfter).toBe(below!.selectionAfter);
     expect(derived).toBe(3);
+  });
+
+  it("derives an entry's selection at once when edits do not coalesce", () => {
+    const state = createInitialState({ content: "abc" });
+    let derived = 0;
+    const cursor = () => {
+      derived++;
+      return anchoredCursor(-1, 0);
+    };
+    const next = historyPush(state, [makeInsertChange(byteOffset(0), "X")], 0, cursor, cursor);
+    expect(derived).toBe(2);
+    const [entry] = [...pstackToArray(next.history.undoStack)];
+    expect(entry!.selectionAfter).toEqual(anchoredCursor(-1, 0));
+    expect(derived).toBe(2);
   });
 });
 

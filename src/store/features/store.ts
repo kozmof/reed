@@ -39,9 +39,10 @@ import { reconcileFull, reconcileViewport } from "../core/line-index.js";
 import { getBufferStats, compactAddBuffer } from "../core/piece-table.js";
 import { createTransactionManager, makeBatch, type CommitResult } from "./transaction.js";
 import {
-  acceptEvictionWarnLenders,
+  currentEvictionWarnSink,
   MAX_OBSERVER_REENTRANT_STEPS,
   reportCaughtError,
+  type WarnSink,
 } from "./diagnostics.js";
 import { withEvents } from "./event-store.js";
 import {
@@ -97,6 +98,12 @@ function evictionWarning(action: DocumentAction, transition: DocumentTransition)
   );
 }
 
+/** A warning of history an eviction discarded, with the sink it goes to. */
+interface EvictionWarning {
+  readonly message: string;
+  readonly sink: WarnSink;
+}
+
 /**
  * Shared store body. Takes the state to start from, so a store can be built
  * either from configuration (`createDocumentStore`) or from an already-assembled
@@ -132,7 +139,7 @@ function createStoreOverState(
   // (see `evictionWarning`), each with the depth that holds it. The outermost
   // commit logs them, and a rollback discards those its level held, since it
   // restores the history.
-  let deferredWarnings: { depth: number; readonly message: string }[] = [];
+  let deferredWarnings: { depth: number; readonly warning: EvictionWarning }[] = [];
 
   /**
    * Replace internal state reference only when it changes.
@@ -399,11 +406,15 @@ function createStoreOverState(
     if (changed) setState(transition.state);
     // Warn before listeners hear of the change, so warnings follow the order
     // their evictions committed, even when a listener evicts again.
-    const warning = evictionWarning(action, transition);
-    if (warning !== null) {
-      if (transaction.isActive)
-        deferredWarnings.push({ depth: transaction.depth, message: warning });
-      else logWarnings([warning]);
+    const message = evictionWarning(action, transition);
+    if (message !== null) {
+      // Choose the sink now: a ChunkManager's is set only during its dispatch.
+      const sink = logger?.warn !== undefined ? logger : currentEvictionWarnSink();
+      if (sink !== null) {
+        const warning = { message, sink };
+        if (transaction.isActive) deferredWarnings.push({ depth: transaction.depth, warning });
+        else logWarnings([warning]);
+      }
     }
     if (changed && !transaction.isActive) afterCommit();
     return transition;
@@ -465,7 +476,7 @@ function createStoreOverState(
       // or open a transaction of its own, whose losses have not committed yet.
       const warnings = deferredWarnings;
       deferredWarnings = [];
-      logWarnings(warnings.map((entry) => entry.message));
+      logWarnings(warnings.map((entry) => entry.warning));
       afterCommit();
     } else {
       // The enclosing level now holds what this one committed.
@@ -476,20 +487,18 @@ function createStoreOverState(
   }
 
   /**
-   * Log warnings of history lost to evictions that have committed, through
-   * the store's logger, or without one through a logger a ChunkManager lent
-   * (see `lendEvictionWarnLogger`). The change has committed, so a logger's
-   * error is reported, not thrown.
+   * Log warnings of history lost to evictions that have committed, each
+   * through the sink chosen when it committed: the store's logger, or without
+   * one the logger of the ChunkManager that dispatched the eviction (see
+   * `withEvictionWarnSink`). The change has committed, so a logger's throw is
+   * reported through that sink's `error`, not thrown.
    */
-  function logWarnings(messages: readonly string[]): void {
-    const sink = logger?.warn !== undefined ? logger : warnLenders.loggers[0];
-    const warn = sink?.warn;
-    if (warn === undefined) return;
-    for (const message of messages) {
+  function logWarnings(warnings: readonly EvictionWarning[]): void {
+    for (const { message, sink } of warnings) {
       try {
-        warn.call(sink, message);
+        sink.warn?.(message);
       } catch (error) {
-        reportCaughtError(logger, "The logger threw after an eviction committed", error);
+        reportCaughtError(sink, "The logger threw after an eviction committed", error);
       }
     }
   }
@@ -678,7 +687,6 @@ function createStoreOverState(
     whenReconciled,
     dispose,
   };
-  const warnLenders = acceptEvictionWarnLenders(store);
   return { store, commit };
 }
 

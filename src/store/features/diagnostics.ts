@@ -16,55 +16,51 @@ export const MAX_OBSERVER_REENTRANT_STEPS = 100;
  * handler or store listener dispatches directly are not counted, so it can
  * apply any number of them. Each adds MAX_OBSERVER_REENTRANT_STEPS to the
  * limit, so other handlers can react once to each of them, as deep as the
- * depth limit allows.
+ * depth limit allows, up to MAX_OBSERVER_DELIVERED_ACTIONS_CEILING.
  */
 export const MAX_OBSERVER_DELIVERED_ACTIONS = 10_000;
 
 /**
- * Loggers a store without a logger of its own warns through when an eviction
- * discards history. A ChunkManager lends its logger to the store it manages,
- * so a manager configured with a logger still hears of the loss, and a store
- * with its own logger warns only through that, so the warning comes once.
+ * Most actions dispatched in reaction to handler-dispatched actions whose
+ * events one synchronous delivery delivers, however many actions handlers
+ * dispatch directly. Without it, a handler applying a large change set one
+ * action at a time would raise the limit far enough that a handler
+ * dispatching two actions per event could run for minutes before it is
+ * stopped.
  */
-export interface EvictionWarnLenders {
-  /** The lent loggers, earliest first. The store warns through the first. */
-  readonly loggers: Pick<ReedLogger, "warn">[];
-}
+export const MAX_OBSERVER_DELIVERED_ACTIONS_CEILING = 100_000;
 
-// Keyed by every store object a caller can hold: the base store and its event
-// wrapper share one entry.
-const evictionWarnLenders = new WeakMap<object, EvictionWarnLenders>();
+/** A sink for warnings, which reports a throw from `warn` through `error` when it has one. */
+export type WarnSink = Pick<ReedLogger, "warn" | "error">;
 
-/**
- * Register `store` to accept lent loggers, sharing `base`'s registration when
- * `store` wraps it, and return the registration.
- */
-export function acceptEvictionWarnLenders(store: object, base?: object): EvictionWarnLenders {
-  const lenders = (base === undefined ? undefined : evictionWarnLenders.get(base)) ?? {
-    loggers: [],
-  };
-  evictionWarnLenders.set(store, lenders);
-  return lenders;
-}
+// The logger of the ChunkManager whose eviction is being dispatched, while its
+// dispatch call runs; null otherwise (see `withEvictionWarnSink`).
+let evictionWarnSink: WarnSink | null = null;
 
 /**
- * Lend `logger` to `store` for its eviction warnings, and return a function
- * that takes it back. A store Reed did not build, such as a wrapper of one,
- * accepts none, and then `logger` hears nothing.
+ * Run `dispatch` with `sink` as the logger that a store without a logger of
+ * its own warns through when an EVICT_CHUNKS committed during the call
+ * discards history. A ChunkManager dispatches its evictions this way, so its
+ * logger hears of the history they discard through any wrapper that forwards
+ * the dispatch synchronously. Nothing outlives the call, so a later manager on
+ * the same store, or a disposed one, neither shares nor keeps the sink. A
+ * store with its own logger warns only through that, so the warning comes
+ * once.
  */
-export function lendEvictionWarnLogger(
-  store: object,
-  logger: Pick<ReedLogger, "warn">,
-): () => void {
-  const lenders = evictionWarnLenders.get(store);
-  if (lenders === undefined) return () => {};
-  // A wrapper object per loan, so lending one logger twice takes back one.
-  const loan: Pick<ReedLogger, "warn"> = { warn: (...args) => logger.warn?.(...args) };
-  lenders.loggers.push(loan);
-  return () => {
-    const at = lenders.loggers.indexOf(loan);
-    if (at >= 0) lenders.loggers.splice(at, 1);
-  };
+export function withEvictionWarnSink<T>(sink: WarnSink | undefined, dispatch: () => T): T {
+  if (sink?.warn === undefined) return dispatch();
+  const outer = evictionWarnSink;
+  evictionWarnSink = sink;
+  try {
+    return dispatch();
+  } finally {
+    evictionWarnSink = outer;
+  }
+}
+
+/** The sink `withEvictionWarnSink` set for the dispatch running now, or null. */
+export function currentEvictionWarnSink(): WarnSink | null {
+  return evictionWarnSink;
 }
 
 function toReportedError(message: string, error: unknown): Error {

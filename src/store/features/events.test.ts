@@ -20,7 +20,11 @@ import type { DocumentAction } from "../../types/actions.js";
 import type { DocumentState, DocumentStoreConfig } from "../../types/state.js";
 import { getValue } from "../core/piece-table.js";
 import { byteOffset, byteLength } from "../../types/branded.js";
-import { MAX_OBSERVER_DELIVERED_ACTIONS, MAX_OBSERVER_REENTRANT_STEPS } from "./diagnostics.js";
+import {
+  MAX_OBSERVER_DELIVERED_ACTIONS,
+  MAX_OBSERVER_DELIVERED_ACTIONS_CEILING,
+  MAX_OBSERVER_REENTRANT_STEPS,
+} from "./diagnostics.js";
 
 describe("Event Emitter", () => {
   describe("addEventListener", () => {
@@ -1044,6 +1048,46 @@ describe("Event delivery limits and failed transaction calls", () => {
     store.dispatch(DocumentActions.markSaved());
     expect(error).not.toHaveBeenCalled();
     expect(reactions).toBe(count);
+  });
+
+  it("stops a fan-out cycle at the ceiling however many actions a handler dispatched", () => {
+    const error = vi.fn();
+    const store = createDocumentStoreWithEvents({
+      content: "ab",
+      reconcileMode: "none",
+      logger: { error, warn: vi.fn() },
+    });
+    const at = (offset: number) =>
+      DocumentActions.setSelection([{ anchor: byteOffset(offset), head: byteOffset(offset) }]);
+    // Enough direct actions that, uncapped, the limit would pass the ceiling.
+    const direct = MAX_OBSERVER_DELIVERED_ACTIONS_CEILING / MAX_OBSERVER_REENTRANT_STEPS;
+    let armed = true;
+    let fanning = false;
+    store.addEventListener("save", () => {
+      if (!armed) return;
+      armed = false;
+      for (let i = 0; i < direct; i++) store.dispatch(at(1 + (i % 2)));
+      fanning = true;
+    });
+    // Dispatch two actions per event once the direct actions are in, each
+    // moving the selection so it changes the state.
+    let reactions = 0;
+    store.addEventListener("selection-change", (e) => {
+      if (!fanning) return;
+      reactions++;
+      const offset = e.nextState.selection.ranges[0]!.head;
+      store.dispatch(at(offset === 0 ? 1 : 0));
+      store.dispatch(at(offset === 0 ? 0 : 1));
+    });
+
+    store.dispatch(DocumentActions.markSaved());
+    expect(reactions).toBeLessThanOrEqual(MAX_OBSERVER_DELIVERED_ACTIONS_CEILING + direct + 1);
+    expect(error).toHaveBeenCalledWith(
+      "Document event cycle exceeded the re-entrancy limit",
+      expect.objectContaining({
+        message: expect.stringContaining(`${MAX_OBSERVER_DELIVERED_ACTIONS_CEILING} actions`),
+      }),
+    );
   });
 
   it.each([

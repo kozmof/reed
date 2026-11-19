@@ -132,37 +132,6 @@ describe("eviction warning", () => {
     expect(order).toEqual(["warn", "listener"]);
   });
 
-  it.each([
-    ["a store", false],
-    ["a store with events", true],
-  ])("warns through a ChunkManager's logger when %s has none", (_, events) => {
-    const config = {
-      chunkSize: CHUNK_SIZE,
-      totalFileSize: CHUNK_SIZE * 2,
-      historyEvictionPolicy: "pin-bounded",
-      reconcileMode: "none",
-    } as const;
-    const store = events ? createDocumentStoreWithEvents(config) : createDocumentStore(config);
-    store.dispatch(DocumentActions.loadChunk(0, encode("aaaaaaaa")));
-    store.dispatch(DocumentActions.loadChunk(1, encode("bbbbbbbb")));
-    store.dispatch(DocumentActions.insert(byteOffset(2), "X"));
-    store.dispatch(DocumentActions.undo());
-    const warn = vi.fn();
-    const manager = createChunkManager(store, unusedLoader, { logger: { warn } });
-    store.dispatch(evict);
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]![0]).toContain("discarded 0 undo and 1 redo entries");
-
-    // A disposed manager takes its logger back.
-    manager.dispose();
-    store.dispatch(DocumentActions.loadChunk(0, encode("aaaaaaaa")));
-    store.dispatch(DocumentActions.insert(byteOffset(2), "X"));
-    store.dispatch(DocumentActions.undo());
-    store.dispatch(evict);
-    expect(getRedoCount(store.getSnapshot())).toBe(0);
-    expect(warn).toHaveBeenCalledTimes(1);
-  });
-
   it("warns only through the store's logger when both have one", () => {
     const storeWarn = vi.fn();
     const store = pinnedStore(storeWarn);

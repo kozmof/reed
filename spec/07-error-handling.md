@@ -24,7 +24,8 @@ Reed validates actions and isolates failures at store boundaries. This document 
   - Event handler dispatches nest at most 100 levels deep, and one synchronous
     delivery delivers the events of at most 10,000 actions dispatched in
     reaction to actions a handler dispatched, plus 100 for each action a
-    handler or store listener dispatches directly. Those direct actions are
+    handler or store listener dispatches directly, and never more than
+    100,000. Those direct actions are
     not counted, so a handler can dispatch any number of them one at a time,
     and other handlers can react once to each. The total limit stops a
     handler that dispatches more than one action per event before the work

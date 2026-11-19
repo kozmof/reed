@@ -813,6 +813,118 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     });
   });
 
+  describe("when the store has no logger", () => {
+    const bare = () =>
+      createDocumentStore({
+        chunkSize: CHUNK_SIZE,
+        totalFileSize: CHUNK_SIZE * 3,
+        historyEvictionPolicy: "pin-bounded",
+        reconcileMode: "none",
+      });
+    /** Have `manager` evict chunk 0, discarding the redo entry that pins it. */
+    const evictPinned = async (
+      store: DocumentStore,
+      manager: ReturnType<typeof createChunkManager>,
+    ) => {
+      await manager.ensureLoaded(0);
+      pinChunk0(store);
+      manager.setActiveChunks([1, 2]);
+      await manager.ensureLoaded(1);
+      await manager.ensureLoaded(2);
+      expect(getRedoCount(store.getSnapshot())).toBe(0);
+    };
+
+    it.each([
+      ["the store itself", (store: DocumentStore): DocumentStore => store],
+      ["a copy of the store", (store: DocumentStore): DocumentStore => ({ ...store })],
+      [
+        "a wrapper that forwards dispatch",
+        (store: DocumentStore): DocumentStore => ({
+          ...store,
+          dispatch: (action) => store.dispatch({ ...action }),
+        }),
+      ],
+    ])("warns through the manager's logger, given %s", async (_, wrap) => {
+      const store = bare();
+      const warn = vi.fn();
+      const manager = createChunkManager(wrap(store), makeLoader(chunks), {
+        maxLoadedChunks: 2,
+        logger: { warn },
+      });
+      await evictPinned(store, manager);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]![0]).toContain("discarded 0 undo and 1 redo entries");
+      manager.dispose();
+    });
+
+    it("warns through the manager's logger for a copy of a store with events", async () => {
+      const store = createDocumentStoreWithEvents({
+        chunkSize: CHUNK_SIZE,
+        totalFileSize: CHUNK_SIZE * 3,
+        historyEvictionPolicy: "pin-bounded",
+        reconcileMode: "none",
+      });
+      const warn = vi.fn();
+      const manager = createChunkManager({ ...store }, makeLoader(chunks), {
+        maxLoadedChunks: 2,
+        logger: { warn },
+      });
+      await evictPinned(store, manager);
+      expect(warn).toHaveBeenCalledTimes(1);
+      manager.dispose();
+    });
+
+    it("warns through the logger of the manager that evicts, not one dropped before it", async () => {
+      const store = bare();
+      const staleWarn = vi.fn();
+      // Dropped without dispose.
+      createChunkManager(store, makeLoader(chunks), { logger: { warn: staleWarn } });
+      const warn = vi.fn();
+      const manager = createChunkManager(store, makeLoader(chunks), {
+        maxLoadedChunks: 2,
+        logger: { warn },
+      });
+      await evictPinned(store, manager);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(staleWarn).not.toHaveBeenCalled();
+      manager.dispose();
+    });
+
+    it("does not warn through the manager's logger for an eviction it did not dispatch", () => {
+      const store = bare();
+      const warn = vi.fn();
+      const manager = createChunkManager(store, makeLoader(chunks), { logger: { warn } });
+      for (const i of [0, 1] as const) {
+        store.dispatch(DocumentActions.loadChunk(i, makeBytes(chunks[i])));
+      }
+      pinChunk0(store);
+      store.dispatch(DocumentActions.evictChunks([0], 1));
+      expect(getRedoCount(store.getSnapshot())).toBe(0);
+      expect(warn).not.toHaveBeenCalled();
+      manager.dispose();
+    });
+
+    it("reports a manager logger's throw through that logger's error", async () => {
+      const store = bare();
+      const error = vi.fn();
+      const manager = createChunkManager(store, makeLoader(chunks), {
+        maxLoadedChunks: 2,
+        logger: {
+          warn: () => {
+            throw new Error("sink down");
+          },
+          error,
+        },
+      });
+      await evictPinned(store, manager);
+      expect(error).toHaveBeenCalledWith(
+        "The logger threw after an eviction committed",
+        expect.anything(),
+      );
+      manager.dispose();
+    });
+  });
+
   describe("inside a transaction", () => {
     /** Load chunks 0-2 as active, with chunk 0 pinned by a redo entry. */
     const overLimit = async () => {

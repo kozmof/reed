@@ -16,7 +16,7 @@ import type { DocumentStore } from "../../types/store.js";
 import { isChunkByteLengthValid } from "../core/piece-table.js";
 import { DocumentActions } from "./actions.js";
 import { chunkHoldReason, hasAttentionAnchoredToChunk } from "./chunk-actions.js";
-import { lendEvictionWarnLogger } from "./diagnostics.js";
+import { withEvictionWarnSink } from "./diagnostics.js";
 
 // =============================================================================
 // Public interfaces
@@ -68,12 +68,14 @@ export interface ChunkManagerConfig {
    * Optional diagnostics sink. Omit to keep the manager silent.
    *
    * The manager warns when chunks stay resident over `maxLoadedChunks`. When
-   * an eviction discards undo history, the store that commits it warns
-   * through the store's own `logger`, or through this one when the store has
-   * none, and a store with events fires `history-drop`. A store Reed did not
-   * build, such as a wrapper of one, does not use this logger.
+   * an eviction the manager dispatches discards undo history, the store that
+   * commits it warns through the store's own `logger`, or through this one
+   * when the store has none, also through a wrapper that forwards
+   * `dispatch` synchronously, and a store with events fires `history-drop`.
+   * When `warn` throws there, the error goes to `error` if this logger has
+   * one.
    */
-  logger?: Pick<ReedLogger, "warn">;
+  logger?: Pick<ReedLogger, "warn" | "error">;
 }
 
 /**
@@ -281,10 +283,6 @@ export function createChunkManager(
   const maxLoadedChunks = config.maxLoadedChunks ?? 8;
   const fetchStrategy = config.fetchStrategy ?? "parallel";
   const logger = config.logger;
-  // Without a logger of its own, the store warns through this one when an
-  // eviction discards history (see `lendEvictionWarnLogger`).
-  const returnLoggerLoan =
-    logger?.warn === undefined ? () => {} : lendEvictionWarnLogger(store, logger);
 
   // In-flight fetch promises keyed by chunk index.
   // Removed once the fetch resolves or rejects.
@@ -530,8 +528,11 @@ export function createChunkManager(
         if (candidates.length > 0) {
           // Without keepHistory this pass may discard history, as the policy
           // allows. The store that commits the eviction warns of that through
-          // its logger, and a store with events fires `history-drop`.
-          store.dispatch(DocumentActions.evictChunks(candidates, maxLoadedChunks));
+          // its logger, or without one through this manager's (see
+          // `withEvictionWarnSink`), and a store with events fires `history-drop`.
+          withEvictionWarnSink(logger, () =>
+            store.dispatch(DocumentActions.evictChunks(candidates, maxLoadedChunks)),
+          );
           if (disposed) return;
         }
         // Still over the limit, so every candidate was offered: those left,
@@ -922,7 +923,6 @@ export function createChunkManager(
   function dispose(): void {
     if (disposed) return;
     disposed = true;
-    returnLoggerLoan();
     for (const controller of abortControllers.values()) {
       controller.abort();
     }
