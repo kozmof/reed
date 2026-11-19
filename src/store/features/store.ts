@@ -34,10 +34,10 @@ import {
   withState,
 } from "../core/state.js";
 import { restoreCheckpoint } from "./checkpoint.js";
-import { documentReducer } from "./reducer.js";
+import { reduceDocument, type DocumentTransition } from "./reducer.js";
 import { reconcileFull, reconcileViewport } from "../core/line-index.js";
 import { getBufferStats, compactAddBuffer } from "../core/piece-table.js";
-import { createTransactionManager, makeBatch } from "./transaction.js";
+import { createTransactionManager, makeBatch, type CommitResult } from "./transaction.js";
 import { MAX_OBSERVER_REENTRANT_STEPS, reportCaughtError } from "./diagnostics.js";
 import { withEvents } from "./event-store.js";
 import {
@@ -63,13 +63,14 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
 
 /**
  * A store together with its commit function. `commit` applies an action like
- * `dispatch` but returns the state the reducer produced for it, before any
- * listener notified by it dispatches again. The event layer describes that
- * state, so it does not depend on the order of the store's listeners.
+ * `dispatch` but returns the reducer's transition for it: the state it
+ * produced, before any listener notified by it dispatches again, and whether
+ * it dropped stale history. The event layer describes that transition, so it
+ * does not depend on the order of the store's listeners.
  */
 interface StoreCore {
   readonly store: ReconcilableDocumentStore;
-  readonly commit: (action: DocumentAction) => DocumentState;
+  readonly commit: (action: DocumentAction) => DocumentTransition;
 }
 
 /**
@@ -359,22 +360,36 @@ function createStoreOverState(
   }
 
   /**
-   * Apply an action and return the reducer's state for it. A listener the
-   * action notifies can dispatch again, so `state` can already be later.
+   * Apply an action and return the reducer's transition for it. A listener
+   * the action notifies can dispatch again, so `state` can already be later.
    */
-  function commit(action: DocumentAction): DocumentState {
-    if (disposed) return state;
-    const newState = documentReducer(state, action);
-    if (newState !== state) {
-      setState(newState);
-      if (!transaction.isActive) {
-        notifyListeners();
-        if (state.lineIndex.rebuildPending || needsCompaction()) {
-          scheduleReconciliation();
-        }
-      }
+  function commit(action: DocumentAction): DocumentTransition {
+    if (disposed) return { state, historyDropped: false };
+    const transition = reduceDocument(state, action);
+    if (transition.state !== state) {
+      setState(transition.state);
+      if (!transaction.isActive) afterCommit();
     }
-    return newState;
+    return transition;
+  }
+
+  /**
+   * Notify listeners of a committed change and schedule reconciliation.
+   *
+   * The change has already committed, so neither step may throw: a listener's
+   * error is reported by `notifyListeners`, and a scheduler's error here. A
+   * caller can then rely on a throw from `dispatch` or `commitTransaction`
+   * meaning the change did not take effect.
+   */
+  function afterCommit(): void {
+    notifyListeners();
+    try {
+      if (state.lineIndex.rebuildPending || needsCompaction()) {
+        scheduleReconciliation();
+      }
+    } catch (error) {
+      reportCaughtError(logger, "Reconciliation scheduler threw after a commit", error);
+    }
   }
 
   /**
@@ -394,23 +409,21 @@ function createStoreOverState(
   /**
    * Commit the current transaction level.
    * Notifies listeners and schedules reconciliation when the outermost transaction completes.
-   * On throw (invariant violation) the store calls emergencyReset before rethrowing.
+   * On throw (invariant violation) the store calls emergencyReset before rethrowing,
+   * so a throw means the transaction did not commit. Errors after the commit
+   * are reported instead (see `afterCommit`).
    * Do not attempt rollback if `commitTransaction` throws.
    */
   function commitTransaction(): void {
     if (disposed) return;
+    let result: CommitResult;
     try {
-      const result = transaction.commit();
-      if (result.isOutermost) {
-        notifyListeners();
-        if (state.lineIndex.rebuildPending || needsCompaction()) {
-          scheduleReconciliation();
-        }
-      }
+      result = transaction.commit();
     } catch (e) {
       emergencyReset();
       throw e;
     }
+    if (result.isOutermost) afterCommit();
   }
 
   /**

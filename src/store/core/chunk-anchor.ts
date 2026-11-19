@@ -256,34 +256,27 @@ export function buildLoadedChunks(
   return root;
 }
 
-/** Total length of the loaded chunks with index <= key. O(log L). */
-export function loadedSumAtOrBelow(root: LoadedNode | null, key: number): number {
-  let sum = 0;
+/**
+ * Total of `field` over the loaded chunks with index <= key: their length for
+ * `"sum"`, how many there are for `"count"`. O(log L).
+ */
+function totalAtOrBelow(root: LoadedNode | null, key: number, field: "sum" | "count"): number {
+  let total = 0;
   let node = root;
   while (node !== null) {
     if (node.key <= key) {
-      sum += node.value + (node.left?.sum ?? 0);
+      total += (field === "sum" ? node.value : 1) + (node.left?.[field] ?? 0);
       node = node.right;
     } else {
       node = node.left;
     }
   }
-  return sum;
+  return total;
 }
 
-/** Number of loaded chunks with index <= key. O(log L). */
-function loadedCountAtOrBelow(root: LoadedNode | null, key: number): number {
-  let count = 0;
-  let node = root;
-  while (node !== null) {
-    if (node.key <= key) {
-      count += 1 + (node.left?.count ?? 0);
-      node = node.right;
-    } else {
-      node = node.left;
-    }
-  }
-  return count;
+/** Total length of the loaded chunks with index <= key. O(log L). */
+export function loadedSumAtOrBelow(root: LoadedNode | null, key: number): number {
+  return totalAtOrBelow(root, key, "sum");
 }
 
 type ChunkMap = PieceTableState["chunkMap"];
@@ -351,7 +344,7 @@ export function residentStartIsFileStart(state: PieceTableState): boolean {
   const key = pieceKey(first);
   if (key < 0) return true;
   if (key >= state.chunkMap.size) return false;
-  return loadedCountAtOrBelow(loadedTree(state.chunkMap), key) === key + 1;
+  return totalAtOrBelow(loadedTree(state.chunkMap), key, "count") === key + 1;
 }
 
 // =============================================================================

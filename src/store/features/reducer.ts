@@ -16,7 +16,7 @@ import {
   applyEdit,
   applyUntrackedEdit,
 } from "./edit.js";
-import { historyUndo, historyRedo, markDroppedHistoryStep } from "./history.js";
+import { historyUndo, historyRedo } from "./history.js";
 import {
   insertionKey,
   moveSelectionPastEdit,
@@ -94,6 +94,42 @@ function setSelection(state: DocumentState, ranges: readonly SelectionRange[]): 
 // =============================================================================
 
 /**
+ * A state transition, and whether it was an UNDO or REDO that dropped a stale
+ * entry instead of replaying it. The event layer reports such a step as
+ * `history-drop`. An entry that changes no bytes leaves the document as a drop
+ * does, so the outcome comes from the step rather than from the states.
+ */
+export interface DocumentTransition {
+  readonly state: DocumentState;
+  readonly historyDropped: boolean;
+}
+
+/**
+ * Apply UNDO or REDO. Dropping a stale entry changes only history, but still
+ * moves the revision, as HISTORY_CLEAR does, so code keyed on it sees the drop.
+ */
+function stepHistory(state: DocumentState, type: "UNDO" | "REDO"): DocumentTransition {
+  const nextRevision = state.revision + 1;
+  const step =
+    type === "UNDO" ? historyUndo(state, nextRevision) : historyRedo(state, nextRevision);
+  if (step.outcome === "empty") return { state, historyDropped: false };
+  return {
+    state: withState(step.state, { revision: nextRevision }),
+    historyDropped: step.outcome === "dropped",
+  };
+}
+
+/**
+ * Apply `action` as `documentReducer` does, and say whether it dropped stale
+ * history (see `DocumentTransition`).
+ */
+export function reduceDocument(state: DocumentState, action: DocumentAction): DocumentTransition {
+  return action.type === "UNDO" || action.type === "REDO"
+    ? stepHistory(state, action.type)
+    : { state: documentReducer(state, action), historyDropped: false };
+}
+
+/**
  * Core reducer implementation with structural sharing.
  * Handles all document actions and returns new immutable state.
  */
@@ -160,24 +196,9 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
     case "SET_SELECTION":
       return setSelection(state, action.ranges);
 
-    case "UNDO": {
-      const nextRevision = state.revision + 1;
-      const step = historyUndo(state, nextRevision);
-      if (step.outcome === "empty") return state;
-      // Dropping a stale entry changes only history, but still moves the
-      // revision, as HISTORY_CLEAR does, so code keyed on it sees the drop.
-      // The mark tells the event layer the step was a drop.
-      const next = withState(step.state, { revision: nextRevision });
-      return step.outcome === "dropped" ? markDroppedHistoryStep(next) : next;
-    }
-
-    case "REDO": {
-      const nextRevision = state.revision + 1;
-      const step = historyRedo(state, nextRevision);
-      if (step.outcome === "empty") return state;
-      const next = withState(step.state, { revision: nextRevision });
-      return step.outcome === "dropped" ? markDroppedHistoryStep(next) : next;
-    }
+    case "UNDO":
+    case "REDO":
+      return stepHistory(state, action.type).state;
 
     case "HISTORY_CLEAR": {
       // Clear both undo and redo stacks while preserving config

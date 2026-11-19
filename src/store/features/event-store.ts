@@ -22,21 +22,29 @@ import {
   type EventHandler,
   type DocumentEventMap,
 } from "./events.js";
-import { MAX_OBSERVER_REENTRANT_STEPS, reportCaughtError } from "./diagnostics.js";
-import { isDroppedHistoryStep } from "./history.js";
+import {
+  MAX_OBSERVER_DELIVERED_ACTIONS,
+  MAX_OBSERVER_REENTRANT_STEPS,
+  reportCaughtError,
+} from "./diagnostics.js";
+import type { DocumentTransition } from "./reducer.js";
 
 /**
  * Wrap a store in the typed event layer. Shared by the config-built and
  * checkpoint-built entry points.
  *
- * `commit` applies an action to `baseStore` and returns the state the reducer
- * produced for it. A store listener can dispatch again while the action
+ * `commit` applies an action to `baseStore` and returns the reducer's
+ * transition for it. A store listener can dispatch again while the action
  * notifies it, so `baseStore.getSnapshot()` afterwards can already include
  * that listener's actions; the events describe the reducer's state instead.
+ *
+ * `baseStore` and `commit` throw only when the change did not take effect:
+ * the base store reports errors that come after a commit rather than
+ * throwing them, so a throw here means the buffered events are discarded.
  */
 export function withEvents(
   baseStore: ReconcilableDocumentStore,
-  commit: (action: DocumentAction) => DocumentState,
+  commit: (action: DocumentAction) => DocumentTransition,
   logger: DocumentStoreRuntimeConfig["logger"],
 ): DocumentStoreWithEvents {
   const emitter = createEventEmitter(logger);
@@ -54,8 +62,13 @@ export function withEvents(
   //
   // `depth` counts how many event deliveries led to the dispatch: 0 for one
   // made outside delivery, n + 1 for one an event handler made while slot n's
-  // events were delivered. The re-entrancy limit bounds this depth, so a
-  // handler that dispatches many actions in one go is not mistaken for a cycle.
+  // events were delivered. Two limits bound a run of handler dispatches. The
+  // depth limit stops a chain of handlers each dispatching from the previous
+  // one's events, and does not count a handler that dispatches many actions
+  // in one go as a cycle. The total limit stops a handler that dispatches
+  // more than one action per event, which grows the work exponentially well
+  // before the depth limit. Slots past either limit still committed; only
+  // their events are dropped.
   interface DeliverySlot {
     readonly depth: number;
     readonly events: Array<() => void>;
@@ -71,28 +84,39 @@ export function withEvents(
     return slot;
   }
 
+  function reportCycle(detail: string): void {
+    reportCaughtError(
+      logger,
+      "Document event cycle exceeded the re-entrancy limit",
+      new Error(`Event handlers ${detail}`),
+    );
+  }
+
   function deliver(): void {
     if (committing > 0 || delivering) return;
     delivering = true;
-    let reported = false;
+    let tooDeep = false;
     try {
       for (let i = 0; i < deliveryQueue.length; i++) {
+        if (i >= MAX_OBSERVER_DELIVERED_ACTIONS) {
+          reportCycle(
+            `dispatched more than ${MAX_OBSERVER_DELIVERED_ACTIONS} actions in one synchronous delivery`,
+          );
+          break;
+        }
         const slot = deliveryQueue[i]!;
         if (slot.depth >= MAX_OBSERVER_REENTRANT_STEPS) {
-          if (!reported) {
-            reported = true;
-            reportCaughtError(
-              logger,
-              "Document event cycle exceeded the re-entrancy limit",
-              new Error(
-                `Event handlers dispatched actions more than ${MAX_OBSERVER_REENTRANT_STEPS} levels deep`,
-              ),
-            );
+          if (!tooDeep) {
+            tooDeep = true;
+            reportCycle(`dispatched actions more than ${MAX_OBSERVER_REENTRANT_STEPS} levels deep`);
           }
           continue;
         }
         deliveringDepth = slot.depth;
         for (const emit of slot.events) emit();
+        // Release the delivered events, and the states they captured, while
+        // handlers keep queueing behind them.
+        slot.events.length = 0;
       }
     } finally {
       deliveryQueue.length = 0;
@@ -112,7 +136,7 @@ export function withEvents(
   function prepareEventsForAction(
     action: DocumentAction,
     prevState: DocumentState,
-    nextState: DocumentState,
+    { state: nextState, historyDropped }: DocumentTransition,
   ): Array<() => void> {
     if (disposed) return [];
     const events: Array<() => void> = [];
@@ -151,10 +175,8 @@ export function withEvents(
     // UNDO and REDO discard entries instead of applying one that no longer
     // replays; the document is then unchanged. The piece table cannot tell
     // that apart from replaying an entry that changes no bytes, so the
-    // reducer marks the state a drop returns.
-    const historyDiscarded =
-      (action.type === "UNDO" || action.type === "REDO") && isDroppedHistoryStep(nextState);
-    if ((action.type === "UNDO" || action.type === "REDO") && !historyDiscarded) {
+    // reducer's transition says which it was.
+    if ((action.type === "UNDO" || action.type === "REDO") && !historyDropped) {
       prepare(
         "history-change",
         createHistoryChangeEvent(action.type === "UNDO" ? "undo" : "redo", prevState, nextState),
@@ -206,17 +228,17 @@ export function withEvents(
     const prevState = baseStore.getSnapshot();
     const slot = reserveSlot();
     try {
-      let nextState: DocumentState;
+      let transition: DocumentTransition;
       committing++;
       try {
-        nextState = commit(action);
+        transition = commit(action);
       } finally {
         committing--;
       }
 
-      if (nextState !== prevState) {
+      if (transition.state !== prevState) {
         try {
-          const events = prepareEventsForAction(action, prevState, nextState);
+          const events = prepareEventsForAction(action, prevState, transition);
           const level = pendingEventLevels[pendingEventLevels.length - 1];
           (level ?? slot.events).push(...events);
         } catch (error) {
@@ -233,11 +255,29 @@ export function withEvents(
   }
 
   /**
+   * Run a base store begin or inner commit with the open event levels
+   * detached, and put them back when it returns.
+   *
+   * When such a call throws, the base store has already run emergencyReset,
+   * which notifies store listeners before rethrowing. A listener that
+   * dispatches then commits for real, outside any transaction, so its events
+   * must not join a level the reset discarded. With the levels detached they
+   * get their own delivery slot, and the levels stay discarded after the
+   * throw, as the reset discarded the transaction. A call that returns
+   * notifies no one, so detaching changes nothing then.
+   */
+  function withLevelsDetached(call: () => void): void {
+    const open = pendingEventLevels.splice(0);
+    call();
+    pendingEventLevels.push(...open);
+  }
+
+  /**
    * Begin a transaction, pushing a new event buffer level.
    */
   function beginTransaction(): void {
     if (disposed) return;
-    baseStore.beginTransaction();
+    withLevelsDetached(baseStore.beginTransaction);
     pendingEventLevels.push([]);
   }
 
@@ -262,13 +302,7 @@ export function withEvents(
 
     const events = pendingEventLevels.pop()!;
     if (pendingEventLevels.length > 0) {
-      try {
-        baseStore.commitTransaction();
-      } catch (e) {
-        // Clear our buffer to match the emergencyReset already performed by baseStore.
-        pendingEventLevels.length = 0;
-        throw e;
-      }
+      withLevelsDetached(baseStore.commitTransaction);
       pendingEventLevels[pendingEventLevels.length - 1]!.push(...events);
       return;
     }

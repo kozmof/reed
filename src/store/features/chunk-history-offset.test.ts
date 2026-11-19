@@ -14,7 +14,7 @@ import {
   createDocumentStoreWithEvents,
 } from "./store.js";
 import { DocumentActions, deserializeAction, serializeAction } from "./actions.js";
-import { documentReducer } from "./reducer.js";
+import { documentReducer, reduceDocument } from "./reducer.js";
 import { withEvents } from "./event-store.js";
 import { createCheckpoint, restoreCheckpoint } from "./checkpoint.js";
 import { createInitialState } from "../core/state.js";
@@ -2943,7 +2943,11 @@ describe("twentieth review regressions", () => {
     const base = createDocumentStore();
     const store = withEvents(
       Object.assign(Object.create(base), { getSnapshot: () => state }),
-      (action: DocumentAction) => (state = documentReducer(state, action)),
+      (action: DocumentAction) => {
+        const transition = reduceDocument(state, action);
+        state = transition.state;
+        return transition;
+      },
       undefined,
     );
     const seen: string[] = [];
@@ -2965,7 +2969,11 @@ describe("twentieth review regressions", () => {
       const base = createDocumentStore();
       const store = withEvents(
         Object.assign(Object.create(base), { getSnapshot: () => state }),
-        (action: DocumentAction) => (state = documentReducer(Object.freeze({ ...state }), action)),
+        (action: DocumentAction) => {
+          const transition = reduceDocument(Object.freeze({ ...state }), action);
+          state = transition.state;
+          return transition;
+        },
         undefined,
       );
       const seen: string[] = [];
@@ -2989,9 +2997,9 @@ describe("twentieth review regressions", () => {
         // A store listener moves the caret while the store notifies it, so
         // the snapshot is later than the state the step returned.
         (action: DocumentAction) => {
-          const committed = documentReducer(state, action);
+          const committed = reduceDocument(state, action);
           state = documentReducer(
-            committed,
+            committed.state,
             DocumentActions.setSelection([{ anchor: byteOffset(1), head: byteOffset(1) }]),
           );
           return committed;
@@ -3158,7 +3166,11 @@ describe("twenty-first review regressions", () => {
     const base = createDocumentStore();
     const store = withEvents(
       Object.assign(Object.create(base), { getSnapshot: () => state }),
-      (action: DocumentAction) => (state = documentReducer(state, action)),
+      (action: DocumentAction) => {
+        const transition = reduceDocument(state, action);
+        state = transition.state;
+        return transition;
+      },
       undefined,
     );
     const seen: string[] = [];

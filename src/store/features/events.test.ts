@@ -14,9 +14,13 @@ import {
 } from "./events.js";
 import { createInitialState } from "./../core/state.js";
 import { DocumentActions } from "./actions.js";
-import { createDocumentStoreWithEvents } from "./store.js";
+import { createDocumentStore, createDocumentStoreWithEvents } from "./store.js";
+import { withEvents } from "./event-store.js";
+import type { DocumentAction } from "../../types/actions.js";
+import type { DocumentState, DocumentStoreConfig } from "../../types/state.js";
+import { getValue } from "../core/piece-table.js";
 import { byteOffset, byteLength } from "../../types/branded.js";
-import { MAX_OBSERVER_REENTRANT_STEPS } from "./diagnostics.js";
+import { MAX_OBSERVER_DELIVERED_ACTIONS, MAX_OBSERVER_REENTRANT_STEPS } from "./diagnostics.js";
 
 describe("Event Emitter", () => {
   describe("addEventListener", () => {
@@ -967,3 +971,144 @@ it("delivers large remote batches through the event-enabled store", () => {
     store.dispose();
   }
 });
+
+describe("Event delivery limits and failed transaction calls", () => {
+  it("bounds a handler that dispatches two actions for every event", () => {
+    const error = vi.fn();
+    const store = createDocumentStoreWithEvents({
+      content: "",
+      reconcileMode: "none",
+      logger: { error, warn: vi.fn() },
+    });
+    let calls = 0;
+    store.addEventListener("content-change", () => {
+      calls++;
+      store.dispatch(DocumentActions.insert(byteOffset(0), "a"));
+      store.dispatch(DocumentActions.insert(byteOffset(0), "b"));
+    });
+
+    expect(() => store.dispatch(DocumentActions.insert(byteOffset(0), "x"))).not.toThrow();
+    expect(calls).toBe(MAX_OBSERVER_DELIVERED_ACTIONS);
+    expect(error).toHaveBeenCalledWith(
+      "Document event cycle exceeded the re-entrancy limit",
+      expect.objectContaining({
+        message: expect.stringContaining(`${MAX_OBSERVER_DELIVERED_ACTIONS} actions`),
+      }),
+    );
+  });
+
+  /**
+   * An event store over a base store whose next inner `beginTransaction` or
+   * `commitTransaction` fails as an invariant violation does: it runs
+   * emergencyReset, which notifies listeners, and then throws.
+   */
+  function storeWithFailingCall(call: "beginTransaction" | "commitTransaction") {
+    const base = createDocumentStore({ content: "", reconcileMode: "none" });
+    let failNext = false;
+    const failing = Object.assign(Object.create(base), {
+      [call]() {
+        if (failNext) {
+          failNext = false;
+          base.emergencyReset();
+          throw new Error("invariant violated");
+        }
+        base[call]();
+      },
+    });
+    const store = withEvents(
+      failing,
+      (action: DocumentAction) => ({ state: base.dispatch(action), historyDropped: false }),
+      undefined,
+    );
+    const inserted: string[] = [];
+    store.addEventListener("content-change", (e) => {
+      if (e.action.type === "INSERT") inserted.push(e.action.text);
+    });
+    return { store, inserted, failNext: () => (failNext = true) };
+  }
+
+  it("emits events for a listener's dispatch while a failed inner commit resets", () => {
+    const { store, inserted, failNext } = storeWithFailingCall("commitTransaction");
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+    store.beginTransaction();
+    let armed = true;
+    store.subscribe(() => {
+      if (!armed) return;
+      armed = false;
+      store.dispatch(DocumentActions.insert(byteOffset(0), "B"));
+    });
+    failNext();
+
+    expect(() => store.commitTransaction()).toThrow("invariant violated");
+    expect(getText(store)).toBe("B");
+    expect(inserted).toEqual(["B"]);
+  });
+
+  it("emits events for a listener's dispatch while a failed inner begin resets", () => {
+    const { store, inserted, failNext } = storeWithFailingCall("beginTransaction");
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+    let armed = true;
+    store.subscribe(() => {
+      if (!armed) return;
+      armed = false;
+      store.dispatch(DocumentActions.insert(byteOffset(0), "B"));
+    });
+    failNext();
+
+    expect(() => store.beginTransaction()).toThrow("invariant violated");
+    expect(getText(store)).toBe("B");
+    expect(inserted).toEqual(["B"]);
+  });
+
+  it("emits events for dispatches after a failed begin", () => {
+    const { store, inserted, failNext } = storeWithFailingCall("beginTransaction");
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+    failNext();
+    expect(() => store.beginTransaction()).toThrow("invariant violated");
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "C"));
+    expect(getText(store)).toBe("C");
+    expect(inserted).toEqual(["C"]);
+  });
+
+  it("emits a transaction's events when the scheduler throws after the commit", () => {
+    const error = vi.fn();
+    const throwingScheduler: DocumentStoreConfig["scheduler"] = () => ({
+      schedule() {
+        throw new Error("scheduler failed");
+      },
+      cancel() {},
+      runNow() {},
+      get isRunning() {
+        return false;
+      },
+    });
+    const store = createDocumentStoreWithEvents({
+      content: "line\n",
+      scheduler: throwingScheduler,
+      logger: { error, warn: vi.fn() },
+    });
+    const seen: string[] = [];
+    store.addEventListener("content-change", () => seen.push("content"));
+    store.addEventListener("dirty-change", () => seen.push("dirty"));
+
+    expect(() => store.batch([DocumentActions.insert(byteOffset(0), "new\n")])).not.toThrow();
+    expect(getText(store)).toBe("new\nline\n");
+    expect(seen).toEqual(["content", "dirty"]);
+    expect(error).toHaveBeenCalledWith(
+      "Reconciliation scheduler threw after a commit",
+      expect.any(Error),
+    );
+
+    seen.length = 0;
+    expect(() => store.dispatch(DocumentActions.insert(byteOffset(0), "x"))).not.toThrow();
+    expect(seen).toEqual(["content"]);
+  });
+});
+
+function getText(store: { getSnapshot(): DocumentState }): string {
+  return getValue(store.getSnapshot().pieceTable);
+}

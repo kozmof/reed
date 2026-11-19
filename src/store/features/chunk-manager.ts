@@ -16,7 +16,7 @@ import type { DocumentStore } from "../../types/store.js";
 import { isChunkByteLengthValid } from "../core/piece-table.js";
 import { DocumentActions } from "./actions.js";
 import { getRedoCount, getUndoCount } from "./history.js";
-import { hasAttentionAnchoredToChunk } from "./chunk-actions.js";
+import { hasAttentionAnchoredToChunk, isChunkHeldByEditsOrHistory } from "./chunk-actions.js";
 
 // =============================================================================
 // Public interfaces
@@ -135,18 +135,13 @@ export interface ChunkManager {
  * - `"held"`: offered for eviction and refused, since user edits or undo
  *   history point into it.
  * - `"untracked"`: loaded without this manager, so it never offers it.
+ *
+ * A chunk an attention is anchored inside counts as `"held"` too when edits
+ * or history would keep it without the attention.
  */
 type PressureCause = "pinned" | "requested" | "anchored" | "held" | "untracked";
 
-/** Every `PressureCause`, in the order the pressure warning lists them. */
-const PRESSURE_CAUSES: readonly PressureCause[] = [
-  "pinned",
-  "requested",
-  "anchored",
-  "held",
-  "untracked",
-];
-
+/** Each cause's text, in the order the pressure warning lists them. */
 const PRESSURE_CAUSE_TEXT: Readonly<Record<PressureCause, string>> = {
   pinned: "pinned as active",
   requested: "just loaded for the current request",
@@ -154,6 +149,9 @@ const PRESSURE_CAUSE_TEXT: Readonly<Record<PressureCause, string>> = {
   held: "hold user edits or undo history",
   untracked: "loaded outside this ChunkManager",
 };
+
+/** Every `PressureCause`, in the order the pressure warning lists them. */
+const PRESSURE_CAUSES = Object.keys(PRESSURE_CAUSE_TEXT) as readonly PressureCause[];
 
 /** Chunks an eviction pass could not evict, and the state it measured them in. */
 interface Stuck {
@@ -284,6 +282,35 @@ export function createChunkManager(
   // warning is logged when a reason is new, so once per cause rather than on
   // every load while the cache stays over.
   let pressureCauses: Set<PressureCause> | null = null;
+
+  // Which resident chunks an attention is anchored inside, as measured in a
+  // state with this history and attention. While both are unchanged, the text
+  // has changed only by chunks loaded or evicted (see `stillStuck`), which
+  // leave each other chunk's pieces and so its anchors as they were. The
+  // pressure check then looks each chunk up once rather than walking it
+  // on every load while the cache stays over the limit.
+  let anchoredMemo: {
+    readonly history: DocumentState["history"];
+    readonly attention: DocumentState["attention"];
+    readonly byChunk: Map<number, boolean>;
+  } | null = null;
+
+  function isAnchored(state: DocumentState, chunkIndex: number): boolean {
+    if (state.attention.attentions.size === 0) return false;
+    if (
+      anchoredMemo === null ||
+      anchoredMemo.history !== state.history ||
+      anchoredMemo.attention !== state.attention
+    ) {
+      anchoredMemo = { history: state.history, attention: state.attention, byChunk: new Map() };
+    }
+    let anchored = anchoredMemo.byChunk.get(chunkIndex);
+    if (anchored === undefined) {
+      anchored = hasAttentionAnchoredToChunk(state, chunkIndex);
+      anchoredMemo.byChunk.set(chunkIndex, anchored);
+    }
+    return anchored;
+  }
 
   // Candidates the last eviction pass measured and could not evict, though
   // over the limit, and the state it measured them in. Under "pin", history
@@ -466,28 +493,32 @@ export function createChunkManager(
     // since then keeps chunks resident, not on every load while it stays
     // over: under "pin", history keeping chunks resident is a steady state.
     const counts = new Map<PressureCause, number>();
+    const count = (cause: PressureCause) => counts.set(cause, (counts.get(cause) ?? 0) + 1);
     const current = store.getSnapshot();
+    const anchoredChunks: number[] = [];
     for (const chunkIndex of chunkMap.keys()) {
-      const cause: PressureCause = activeChunks.has(chunkIndex)
-        ? "pinned"
-        : isProtected(chunkIndex)
-          ? "requested"
-          : !lruOrder.has(chunkIndex)
-            ? "untracked"
-            : hasAttentionAnchoredToChunk(current, chunkIndex)
-              ? "anchored"
-              : "held";
-      counts.set(cause, (counts.get(cause) ?? 0) + 1);
+      if (activeChunks.has(chunkIndex)) count("pinned");
+      else if (isProtected(chunkIndex)) count("requested");
+      else if (!lruOrder.has(chunkIndex)) count("untracked");
+      else if (isAnchored(current, chunkIndex)) {
+        count("anchored");
+        anchoredChunks.push(chunkIndex);
+      } else count("held");
     }
     const seen = pressureCauses ?? new Set<PressureCause>();
     pressureCauses = seen;
-    let newCause = false;
-    for (const cause of counts.keys()) {
-      if (!seen.has(cause)) {
-        seen.add(cause);
-        newCause = true;
+    const isNew = (cause: PressureCause) => counts.has(cause) && !seen.has(cause);
+    let newCause = PRESSURE_CAUSES.some(isNew);
+    // An anchored chunk can be held by edits or history too, which matters
+    // once the attention is gone. Finding out walks the chunk, so do it only
+    // when it could add a cause or the warning needs the count.
+    if (anchoredChunks.length > 0 && (newCause || !seen.has("held"))) {
+      for (const chunkIndex of anchoredChunks) {
+        if (isChunkHeldByEditsOrHistory(current, chunkIndex)) count("held");
       }
+      newCause ||= isNew("held");
     }
+    for (const cause of counts.keys()) seen.add(cause);
     if (newCause) {
       const reasons = PRESSURE_CAUSES.filter((cause) => counts.has(cause)).map(
         (cause) => `${counts.get(cause)} ${PRESSURE_CAUSE_TEXT[cause]}`,

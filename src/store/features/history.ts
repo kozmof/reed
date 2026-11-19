@@ -104,31 +104,6 @@ export interface HistoryStepResult {
   readonly state: DocumentState;
 }
 
-// States an UNDO or REDO produced by dropping a stale entry. States are
-// immutable and replaced on every change, so the mark stays with exactly the
-// state the step returned.
-const droppedHistorySteps = new WeakSet<DocumentState>();
-
-/**
- * Record that the reducer produced `state` by dropping a stale undo or redo
- * entry (outcome `"dropped"`) instead of replaying it. Returns `state`.
- */
-export function markDroppedHistoryStep(state: DocumentState): DocumentState {
-  droppedHistorySteps.add(state);
-  return state;
-}
-
-/**
- * True when `state` is the state an UNDO or REDO returned after dropping a
- * stale entry (see `markDroppedHistoryStep`). The event layer uses this to
- * emit `history-drop` rather than `history-change`. When an entry changes no
- * bytes, the document looks the same either way, so the reducer records the
- * step's outcome instead of leaving it to be inferred from the states.
- */
-export function isDroppedHistoryStep(state: DocumentState): boolean {
-  return droppedHistorySteps.has(state);
-}
-
 /**
  * Perform undo operation.
  * Keeps aggregate-based queries accurate and defers cached offset repair.
