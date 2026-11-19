@@ -399,11 +399,11 @@ interface DeletedRun {
 /**
  * Text and, where needed, raw bytes of each run of a delete, and the text of
  * the whole range, which the line index counts. A U+FEFF at the start of the
-range is kept, as `getText` keeps it: the line index counts it as a
-character, so deleted text without it would leave the line one character too
-long, and undo could not restore it from the text. The
- * range's bytes are read once, and each run decoded from them, the way
- * `getText` decodes a range.
+ * range is kept, as `getText` keeps it: the line index counts it as a
+ * character, so deleted text without it would leave the line one character
+ * too long, and undo could not restore it from the text. The range's bytes
+ * are read once, and each run decoded from them, the way `getText` decodes a
+ * range.
  *
  * Usually every run decodes exactly, so each holds whole characters and the
  * range decodes to the runs' texts joined, which saves decoding it again.

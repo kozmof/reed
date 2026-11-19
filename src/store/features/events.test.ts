@@ -1007,14 +1007,43 @@ describe("Event delivery limits and failed transaction calls", () => {
 
     expect(() => store.dispatch(DocumentActions.insert(byteOffset(0), "x"))).not.toThrow();
     // The first action's events, and the two its handler dispatched, are not
-    // counted; the limit stops their reactions.
-    expect(calls).toBe(MAX_OBSERVER_DELIVERED_ACTIONS + 3);
+    // counted, and each raises the limit; the limit stops their reactions.
+    const limit = MAX_OBSERVER_DELIVERED_ACTIONS + 3 * MAX_OBSERVER_REENTRANT_STEPS;
+    expect(calls).toBe(limit + 3);
     expect(error).toHaveBeenCalledWith(
       "Document event cycle exceeded the re-entrancy limit",
       expect.objectContaining({
-        message: expect.stringContaining(`${MAX_OBSERVER_DELIVERED_ACTIONS} actions`),
+        message: expect.stringContaining(`${limit} actions`),
       }),
     );
+  });
+
+  it("delivers a reaction to each of many actions a handler dispatches", () => {
+    const error = vi.fn();
+    const store = createDocumentStoreWithEvents({
+      content: "",
+      reconcileMode: "none",
+      logger: { error, warn: vi.fn() },
+    });
+    const count = 2 * MAX_OBSERVER_DELIVERED_ACTIONS;
+    let armed = true;
+    // One handler applies a change set one operation at a time (depth 1).
+    store.addEventListener("save", () => {
+      if (!armed) return;
+      armed = false;
+      for (let i = 0; i < count; i++) store.dispatch(DocumentActions.insert(byteOffset(0), "r"));
+    });
+    // Another reacts once to each operation (depth 2).
+    let reactions = 0;
+    store.addEventListener("content-change", (e) => {
+      if (e.action.type !== "INSERT") return;
+      if (e.action.text === "r") store.dispatch(DocumentActions.insert(byteOffset(0), "s"));
+      else reactions++;
+    });
+
+    store.dispatch(DocumentActions.markSaved());
+    expect(error).not.toHaveBeenCalled();
+    expect(reactions).toBe(count);
   });
 
   it.each([

@@ -118,10 +118,13 @@ export function createFewestLossQueue(losses: readonly EvictionHistoryLoss[]): F
   // that discard no undo, or no redo, entries to begin with pass unpushed.
   while (undoPassed < byUndo.length && byUndo[undoPassed]!.undo === 0) undoPassed++;
   while (redoPassed < byRedo.length && byRedo[redoPassed]!.redo === 0) redoPassed++;
-  const pass = () => {
+  // `redoBefore` is droppedRedo before this drop. A candidate whose redo count
+  // this drop passes too moves in the redo loop, so the undo loop leaves it
+  // there, and it is pushed once, into the heap both counts put it in.
+  const pass = (redoBefore: number) => {
     while (undoPassed < byUndo.length && byUndo[undoPassed]!.undo <= droppedUndo) {
       const c = byUndo[undoPassed++]!;
-      if (c.open) heaps[group(c)]!.push(c);
+      if (c.open && !(c.redo > redoBefore && c.redo <= droppedRedo)) heaps[group(c)]!.push(c);
     }
     while (redoPassed < byRedo.length && byRedo[redoPassed]!.redo <= droppedRedo) {
       const c = byRedo[redoPassed++]!;
@@ -162,9 +165,10 @@ export function createFewestLossQueue(losses: readonly EvictionHistoryLoss[]): F
       return { index: best.c.index, loss: best.loss };
     },
     dropped(loss) {
+      const redoBefore = droppedRedo;
       droppedUndo += loss.undo;
       droppedRedo += loss.redo;
-      pass();
+      pass(redoBefore);
     },
   };
 }

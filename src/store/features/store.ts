@@ -38,7 +38,11 @@ import { reduceDocument, type DocumentTransition } from "./reducer.js";
 import { reconcileFull, reconcileViewport } from "../core/line-index.js";
 import { getBufferStats, compactAddBuffer } from "../core/piece-table.js";
 import { createTransactionManager, makeBatch, type CommitResult } from "./transaction.js";
-import { MAX_OBSERVER_REENTRANT_STEPS, reportCaughtError } from "./diagnostics.js";
+import {
+  acceptEvictionWarnLenders,
+  MAX_OBSERVER_REENTRANT_STEPS,
+  reportCaughtError,
+} from "./diagnostics.js";
 import { withEvents } from "./event-store.js";
 import {
   createReconciliationScheduler,
@@ -472,15 +476,18 @@ function createStoreOverState(
   }
 
   /**
-   * Log warnings of history lost to evictions that have committed. The change
-   * has committed, so a logger's error is reported, not thrown.
+   * Log warnings of history lost to evictions that have committed, through
+   * the store's logger, or without one through a logger a ChunkManager lent
+   * (see `lendEvictionWarnLogger`). The change has committed, so a logger's
+   * error is reported, not thrown.
    */
   function logWarnings(messages: readonly string[]): void {
-    const warn = logger?.warn;
+    const sink = logger?.warn !== undefined ? logger : warnLenders.loggers[0];
+    const warn = sink?.warn;
     if (warn === undefined) return;
     for (const message of messages) {
       try {
-        warn.call(logger, message);
+        warn.call(sink, message);
       } catch (error) {
         reportCaughtError(logger, "The logger threw after an eviction committed", error);
       }
@@ -671,6 +678,7 @@ function createStoreOverState(
     whenReconciled,
     dispose,
   };
+  const warnLenders = acceptEvictionWarnLenders(store);
   return { store, commit };
 }
 

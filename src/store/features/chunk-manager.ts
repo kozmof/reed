@@ -16,6 +16,7 @@ import type { DocumentStore } from "../../types/store.js";
 import { isChunkByteLengthValid } from "../core/piece-table.js";
 import { DocumentActions } from "./actions.js";
 import { chunkHoldReason, hasAttentionAnchoredToChunk } from "./chunk-actions.js";
+import { lendEvictionWarnLogger } from "./diagnostics.js";
 
 // =============================================================================
 // Public interfaces
@@ -68,8 +69,9 @@ export interface ChunkManagerConfig {
    *
    * The manager warns when chunks stay resident over `maxLoadedChunks`. When
    * an eviction discards undo history, the store that commits it warns
-   * through the store's own `logger`, and a store with events fires
-   * `history-drop`.
+   * through the store's own `logger`, or through this one when the store has
+   * none, and a store with events fires `history-drop`. A store Reed did not
+   * build, such as a wrapper of one, does not use this logger.
    */
   logger?: Pick<ReedLogger, "warn">;
 }
@@ -279,6 +281,10 @@ export function createChunkManager(
   const maxLoadedChunks = config.maxLoadedChunks ?? 8;
   const fetchStrategy = config.fetchStrategy ?? "parallel";
   const logger = config.logger;
+  // Without a logger of its own, the store warns through this one when an
+  // eviction discards history (see `lendEvictionWarnLogger`).
+  const returnLoggerLoan =
+    logger?.warn === undefined ? () => {} : lendEvictionWarnLogger(store, logger);
 
   // In-flight fetch promises keyed by chunk index.
   // Removed once the fetch resolves or rejects.
@@ -916,6 +922,7 @@ export function createChunkManager(
   function dispose(): void {
     if (disposed) return;
     disposed = true;
+    returnLoggerLoan();
     for (const controller of abortControllers.values()) {
       controller.abort();
     }

@@ -869,7 +869,9 @@ export interface DocumentStoreConfigBase {
    * such as undo history an EVICT_CHUNKS discarded.
    *
    * Without a logger, Reed uses `globalThis.reportError` when available and
-   * falls back to `console.error` for failures, and does not warn.
+   * falls back to `console.error` for failures. It then warns of history an
+   * eviction discarded only through the `logger` of a ChunkManager managing
+   * the store, and gives no other warnings.
    */
   logger?: ReedLogger;
   /** Maximum history entries (default: 1000) */

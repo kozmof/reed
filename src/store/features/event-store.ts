@@ -23,6 +23,7 @@ import {
   type DocumentEventMap,
 } from "./events.js";
 import {
+  acceptEvictionWarnLenders,
   MAX_OBSERVER_DELIVERED_ACTIONS,
   MAX_OBSERVER_REENTRANT_STEPS,
   reportCaughtError,
@@ -75,12 +76,17 @@ export function withEvents(
   // in reaction to the events of actions a handler dispatched. A handler that
   // dispatches many actions in one go, such as applying a remote change set
   // one operation at a time, fills depth 1, or depth 0 from a store listener,
-  // and is no cycle. A cycle reaches depth 2 one level later, so the work
-  // before the limit stops it is what handlers dispatched at depth 1 plus the
-  // limit. It counts only slots it delivers: an empty slot, left by an action that
-  // changed nothing, starts no handler, and a slot past the depth limit is
-  // skipped. Slots past either limit still committed; only their events are
-  // dropped.
+  // and is no cycle. Handlers that react once to each of those actions are no
+  // cycle either, so the limit grows with that direct work: it is
+  // MAX_OBSERVER_DELIVERED_ACTIONS plus MAX_OBSERVER_REENTRANT_STEPS for each
+  // slot of depth 0 or 1 delivered. A chain of handlers each reacting once per
+  // event then meets the depth limit first, and a handler that dispatches two
+  // or more actions per event meets this one a few levels past depth 2. The
+  // queue runs level by level, so every slot of depth 0 or 1 is delivered
+  // before the first slot of depth 2. Both counts take only slots delivered:
+  // an empty slot, left by an action that changed nothing, starts no handler,
+  // and a slot past the depth limit is skipped. Slots past either limit still
+  // committed; only their events are dropped.
   interface DeliverySlot {
     readonly depth: number;
     readonly events: Array<() => void>;
@@ -108,7 +114,9 @@ export function withEvents(
     if (committing > 0 || delivering) return;
     delivering = true;
     let tooDeep = false;
-    // Delivered slots of depth 2 and more (see the queue's comment).
+    // Delivered slots of depth 0 or 1, and of depth 2 and more (see the
+    // queue's comment).
+    let direct = 0;
     let reactions = 0;
     try {
       for (let i = 0; i < deliveryQueue.length; i++) {
@@ -121,10 +129,13 @@ export function withEvents(
           }
           continue;
         }
-        if (slot.depth >= 2) {
-          if (reactions >= MAX_OBSERVER_DELIVERED_ACTIONS) {
+        if (slot.depth < 2) {
+          direct++;
+        } else {
+          const limit = MAX_OBSERVER_DELIVERED_ACTIONS + MAX_OBSERVER_REENTRANT_STEPS * direct;
+          if (reactions >= limit) {
             reportCycle(
-              `dispatched more than ${MAX_OBSERVER_DELIVERED_ACTIONS} actions in reaction to actions handlers dispatched, in one synchronous delivery`,
+              `dispatched more than ${limit} actions in reaction to actions handlers dispatched, in one synchronous delivery`,
             );
             break;
           }
@@ -195,7 +206,7 @@ export function withEvents(
     // table cannot tell a dropped entry apart from replaying one that changes
     // no bytes, so the reducer's transition says which it was.
     if (historyDropped !== null) {
-      prepare("history-drop", createHistoryDropEvent(prevState, nextState));
+      prepare("history-drop", createHistoryDropEvent(prevState, nextState, historyDropped));
     } else if (action.type === "UNDO" || action.type === "REDO") {
       prepare(
         "history-change",
@@ -428,5 +439,7 @@ export function withEvents(
     removeEventListener,
     events: emitter,
   };
+  // A ChunkManager given this wrapper lends its logger to the base store.
+  acceptEvictionWarnLenders(store, baseStore);
   return store;
 }

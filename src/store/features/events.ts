@@ -5,7 +5,7 @@ import { transformRemoteRanges } from "./remote-ranges.js";
  * Provides a pub/sub mechanism for document changes and editor events.
  */
 
-import { pstackSize, type DocumentState, type ReedLogger } from "../../types/state.js";
+import type { DocumentState, ReedLogger } from "../../types/state.js";
 import type { ContentChangeAction, DocumentAction } from "../../types/actions.js";
 import { byteOffset, type ByteOffset, type AttentionID } from "../../types/branded.js";
 import { utf8ByteLength } from "../core/encoding.js";
@@ -378,22 +378,22 @@ export function createHistoryChangeEvent(
 }
 
 /**
- * Create a history drop event. The counts are the entries `nextState` lacks
- * that `prevState` had; the action changed history in no other way.
+ * Create a history drop event. `dropped` holds the undo and redo entries the
+ * action discarded without undoing or redoing them, as the reducer counted
+ * them, so the event and the store's eviction warning report the same loss.
  */
 export function createHistoryDropEvent(
   prevState: DocumentState,
   nextState: DocumentState,
+  dropped: { readonly undo: number; readonly redo: number },
 ): HistoryDropEvent {
-  const dropped = (stack: "undoStack" | "redoStack") =>
-    Math.max(0, pstackSize(prevState.history[stack]) - pstackSize(nextState.history[stack]));
   return Object.freeze({
     type: "history-drop" as const,
     timestamp: Date.now(),
     prevState,
     nextState,
-    undoDropped: dropped("undoStack"),
-    redoDropped: dropped("redoStack"),
+    undoDropped: dropped.undo,
+    redoDropped: dropped.redo,
   });
 }
 
