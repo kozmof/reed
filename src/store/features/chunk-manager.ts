@@ -16,6 +16,7 @@ import type { DocumentStore } from "../../types/store.js";
 import { isChunkByteLengthValid } from "../core/piece-table.js";
 import { DocumentActions } from "./actions.js";
 import { getRedoCount, getUndoCount } from "./history.js";
+import { documentReducer } from "./reducer.js";
 import { chunkHoldReason, hasAttentionAnchoredToChunk } from "./chunk-actions.js";
 
 // =============================================================================
@@ -141,9 +142,6 @@ export interface ChunkManager {
  */
 type PressureCause = "pinned" | "requested" | "anchored" | "held" | "untracked";
 
-/** Marks, among the reasons seen, anchored chunks edits or history hold too. */
-const ANCHORED_HELD = "anchored-held";
-
 /** Each cause's text, in the order the pressure warning lists them. */
 const PRESSURE_CAUSE_TEXT: Readonly<Record<PressureCause, string>> = {
   pinned: "pinned as active",
@@ -156,42 +154,45 @@ const PRESSURE_CAUSE_TEXT: Readonly<Record<PressureCause, string>> = {
 /** Every `PressureCause`, in the order the pressure warning lists them. */
 const PRESSURE_CAUSES = Object.keys(PRESSURE_CAUSE_TEXT) as readonly PressureCause[];
 
+type ChunkMap = DocumentState["pieceTable"]["chunkMap"];
+
 /** Chunks an eviction pass could not evict, and the state it measured them in. */
 interface Stuck {
   readonly history: DocumentState["history"];
   readonly attention: DocumentState["attention"];
-  readonly chunkMap: DocumentState["pieceTable"]["chunkMap"];
+  readonly chunkMap: ChunkMap;
   readonly chunks: ReadonlySet<number>;
 }
 
 /**
- * The chunks of `stuck` that still cannot be evicted in `state`, or null when
- * that is unknown.
+ * The resident chunks of `chunkMap` whose standing against edits may differ
+ * from when `previous` was the chunk map, history and attention unchanged.
  *
- * A chunk is kept by history pointing inside it, an attention anchored to it,
- * or edits splitting or touching it (see `evictionCandidate`). Every edit,
- * undo, redo, and history clear replaces the history object, and every
- * attention change the attention object. So while both are the ones measured,
- * the text has changed only by chunks loaded or evicted, which leave what
- * history points inside a chunk as it was. Evicting a chunk only brings text
- * together. Loading one puts its text between the loaded chunks on either
- * side, which can part one of them from an add piece that touched it, so
- * those two are measured again.
+ * What keeps a chunk resident is history pointing inside it, an attention
+ * anchored to it, or edits splitting or touching it (see
+ * `evictionCandidate`). Every edit, undo, redo, and history clear replaces
+ * the history object, and every attention change the attention object. So
+ * while both are unchanged, the text has changed only by chunks loaded or
+ * evicted, which leave what history points inside a chunk, and the
+ * attentions anchored to it, as they were. Evicting a chunk only brings text
+ * together, and a chunk no edit touches has no add piece beside it to bring
+ * to its neighbours. Loading one puts its text between the loaded chunks on
+ * either side, which can part one of them from an add piece that touched it.
+ * So the chunks returned are each chunk loaded since and the nearest resident
+ * chunk below and above it.
  *
- * Every load and eviction replaces the chunk map, so when it is the one
- * measured this costs O(1). Otherwise finding the chunks loaded since costs
- * O(L) for L loaded chunks, no more than the caller's walk of the LRU order,
- * and measuring their neighbours O(L log k) more for k of them.
+ * Every load and eviction replaces the chunk map, so when it is `previous`
+ * this costs O(1). Otherwise finding the chunks loaded since costs O(L) for L
+ * resident chunks, and finding their neighbours O(L log k) more for k of them.
  */
-function stillStuck(stuck: Stuck, state: DocumentState): ReadonlySet<number> | null {
-  if (state.history !== stuck.history || state.attention !== stuck.attention) return null;
-  const { chunkMap } = state.pieceTable;
-  if (chunkMap === stuck.chunkMap) return stuck.chunks;
+function chunksMovedByLoads(previous: ChunkMap, chunkMap: ChunkMap): ReadonlySet<number> {
+  const moved = new Set<number>();
+  if (chunkMap === previous) return moved;
   const loaded: number[] = [];
-  for (const chunk of chunkMap.keys()) if (!stuck.chunkMap.has(chunk)) loaded.push(chunk);
-  if (loaded.length === 0) return stuck.chunks;
+  for (const chunk of chunkMap.keys()) if (!previous.has(chunk)) loaded.push(chunk);
+  if (loaded.length === 0) return moved;
   loaded.sort((a, b) => a - b);
-  // The nearest loaded chunk below and above each one loaded since. A chunk
+  // The nearest resident chunk below and above each one loaded since. A chunk
   // with one loaded since between it and another is not the other's nearest.
   const below = loaded.map(() => -Infinity);
   const above = loaded.map(() => Infinity);
@@ -208,9 +209,23 @@ function stillStuck(stuck: Stuck, state: DocumentState): ReadonlySet<number> | n
     const under = loaded[lo - 1] === chunk ? lo - 2 : lo - 1;
     if (under >= 0) above[under] = Math.min(above[under]!, chunk);
   }
+  for (const chunk of loaded) moved.add(chunk);
+  for (const chunk of below) if (chunk !== -Infinity) moved.add(chunk);
+  for (const chunk of above) if (chunk !== Infinity) moved.add(chunk);
+  return moved;
+}
+
+/**
+ * The chunks of `stuck` that still cannot be evicted in `state`, or null when
+ * that is unknown: they stay stuck while history and attention are the ones
+ * measured, except those loads may have moved (see `chunksMovedByLoads`).
+ */
+function stillStuck(stuck: Stuck, state: DocumentState): ReadonlySet<number> | null {
+  if (state.history !== stuck.history || state.attention !== stuck.attention) return null;
+  const moved = chunksMovedByLoads(stuck.chunkMap, state.pieceTable.chunkMap);
+  if (moved.size === 0) return stuck.chunks;
   const chunks = new Set(stuck.chunks);
-  for (const chunk of below) chunks.delete(chunk);
-  for (const chunk of above) chunks.delete(chunk);
+  for (const chunk of moved) chunks.delete(chunk);
   return chunks;
 }
 
@@ -284,25 +299,30 @@ export function createChunkManager(
   // went over (see `PressureCause`); null while within the limit. The pressure
   // warning is logged when a reason is new, so once per cause rather than on
   // every load while the cache stays over.
-  // Besides each `PressureCause`, it records `ANCHORED_HELD` once an anchored
-  // chunk was found that edits or history would keep too.
-  let pressureCauses: Set<PressureCause | typeof ANCHORED_HELD> | null = null;
+  let pressureCauses: Set<PressureCause> | null = null;
+  // Whether, since the cache went over, an anchored chunk was found that edits
+  // or history would keep too. Reset with `pressureCauses`.
+  let anchoredHeldSeen = false;
 
-  // Which resident chunks an attention is anchored inside, and what else
-  // would keep an anchored one (see `chunkHoldReason`), as measured in a
-  // state with this history and attention. While both are unchanged, the text
-  // has changed only by chunks loaded or evicted (see `stillStuck`), which
-  // leave each other chunk's pieces and so its anchors and edits as they
-  // were. The pressure check then looks each chunk up once rather than
-  // walking it on every load while the cache stays over the limit.
+  // For each resident chunk, whether an attention is anchored inside it and
+  // what else would keep it (see `chunkHoldReason`), as measured in a state
+  // with this history and attention. Each entry holds until a load may have
+  // moved its chunk against an add piece (see `chunksMovedByLoads`, the rule
+  // `stillStuck` follows), so the pressure check walks each chunk once rather
+  // than on every load while the cache stays over the limit.
+  interface ChunkReasons {
+    anchored?: boolean;
+    hold?: ReturnType<typeof chunkHoldReason>;
+  }
   let chunkMemo: {
     readonly history: DocumentState["history"];
     readonly attention: DocumentState["attention"];
-    readonly anchored: Map<number, boolean>;
-    readonly hold: Map<number, ReturnType<typeof chunkHoldReason>>;
+    chunkMap: ChunkMap;
+    readonly chunks: Map<number, ChunkReasons>;
   } | null = null;
 
-  function memoFor(state: DocumentState): NonNullable<typeof chunkMemo> {
+  function reasonsFor(state: DocumentState, chunkIndex: number): ChunkReasons {
+    const { chunkMap } = state.pieceTable;
     if (
       chunkMemo === null ||
       chunkMemo.history !== state.history ||
@@ -311,35 +331,38 @@ export function createChunkManager(
       chunkMemo = {
         history: state.history,
         attention: state.attention,
-        anchored: new Map(),
-        hold: new Map(),
+        chunkMap,
+        chunks: new Map(),
       };
+    } else if (chunkMemo.chunkMap !== chunkMap) {
+      for (const chunk of chunksMovedByLoads(chunkMemo.chunkMap, chunkMap)) {
+        chunkMemo.chunks.delete(chunk);
+      }
+      chunkMemo.chunkMap = chunkMap;
     }
-    return chunkMemo;
+    let reasons = chunkMemo.chunks.get(chunkIndex);
+    if (reasons === undefined) {
+      reasons = {};
+      chunkMemo.chunks.set(chunkIndex, reasons);
+    }
+    return reasons;
   }
 
   function isAnchored(state: DocumentState, chunkIndex: number): boolean {
     if (state.attention.attentions.size === 0) return false;
-    const { anchored } = memoFor(state);
-    let result = anchored.get(chunkIndex);
-    if (result === undefined) {
-      result = hasAttentionAnchoredToChunk(state, chunkIndex);
-      anchored.set(chunkIndex, result);
-    }
-    return result;
+    const reasons = reasonsFor(state, chunkIndex);
+    reasons.anchored ??= hasAttentionAnchoredToChunk(state, chunkIndex);
+    return reasons.anchored;
   }
 
   function holdReason(
     state: DocumentState,
     chunkIndex: number,
   ): ReturnType<typeof chunkHoldReason> {
-    const { hold } = memoFor(state);
-    let result = hold.get(chunkIndex);
-    if (result === undefined) {
-      result = chunkHoldReason(state, chunkIndex);
-      hold.set(chunkIndex, result);
-    }
-    return result;
+    const reasons = reasonsFor(state, chunkIndex);
+    // null is a measured reason, so test for undefined rather than use ??=.
+    if (reasons.hold === undefined) reasons.hold = chunkHoldReason(state, chunkIndex);
+    return reasons.hold;
   }
 
   // Candidates the last eviction pass measured and could not evict, though
@@ -465,17 +488,25 @@ export function createChunkManager(
         if (candidates.length > 0) {
           // Without keepHistory this pass may discard history, as the policy
           // allows. Undo then stops short with no other sign, so say so.
-          store.dispatch(DocumentActions.evictChunks(candidates, maxLoadedChunks));
-          const after = store.getSnapshot();
-          if (after.history !== before.history) {
-            const undoDropped = getUndoCount(before) - getUndoCount(after);
-            const redoDropped = getRedoCount(before) - getRedoCount(after);
-            logger?.warn?.(
-              `[ChunkManager] evicting chunks to stay within the memory limit (${maxLoadedChunks}) ` +
-                `discarded ${undoDropped} undo and ${redoDropped} redo entries that pointed into them, ` +
-                `under the "${after.history.evictionPolicy}" history eviction policy. ` +
-                `Raise maxLoadedChunks, or use "pin" to keep history at the cost of memory.`,
-            );
+          const evict = DocumentActions.evictChunks(candidates, maxLoadedChunks);
+          store.dispatch(evict);
+          // A store listener the eviction notifies can edit too, so the state
+          // after the dispatch need not be the eviction's alone. History is
+          // unchanged only when neither touched it; otherwise reduce the
+          // eviction again on `before`, which the reducer, being pure, gives
+          // as the dispatch did. That doubles only passes that change history.
+          if (store.getSnapshot().history !== before.history) {
+            const evicted = documentReducer(before, evict);
+            if (evicted.history !== before.history) {
+              const undoDropped = getUndoCount(before) - getUndoCount(evicted);
+              const redoDropped = getRedoCount(before) - getRedoCount(evicted);
+              logger?.warn?.(
+                `[ChunkManager] evicting chunks to stay within the memory limit (${maxLoadedChunks}) ` +
+                  `discarded ${undoDropped} undo and ${redoDropped} redo entries that pointed into them, ` +
+                  `under the "${evicted.history.evictionPolicy}" history eviction policy. ` +
+                  `Raise maxLoadedChunks, or use "pin" to keep history at the cost of memory.`,
+              );
+            }
           }
         }
         // Still over the limit, so every candidate was offered: those left,
@@ -517,6 +548,7 @@ export function createChunkManager(
     const loadedCount = chunkMap.size;
     if (loadedCount <= maxLoadedChunks) {
       pressureCauses = null;
+      anchoredHeldSeen = false;
       return;
     }
     // Warn when the cache goes over the limit, and when a reason not seen
@@ -535,7 +567,7 @@ export function createChunkManager(
         anchoredChunks.push(chunkIndex);
       } else count("held");
     }
-    const seen = pressureCauses ?? new Set<PressureCause | typeof ANCHORED_HELD>();
+    const seen = pressureCauses ?? new Set<PressureCause>();
     pressureCauses = seen;
     const isNew = (cause: PressureCause) => counts.has(cause) && !seen.has(cause);
     let newCause = PRESSURE_CAUSES.some(isNew);
@@ -546,7 +578,7 @@ export function createChunkManager(
     // needs the count.
     let anchoredHeld = 0;
     let anchoredHeldByHistory = false;
-    if (anchoredChunks.length > 0 && (newCause || !seen.has(ANCHORED_HELD))) {
+    if (anchoredChunks.length > 0 && (newCause || !anchoredHeldSeen)) {
       for (const chunkIndex of anchoredChunks) {
         const reason = holdReason(current, chunkIndex);
         if (reason === null) continue;
@@ -554,8 +586,8 @@ export function createChunkManager(
         if (reason === "history") anchoredHeldByHistory = true;
       }
       if (anchoredHeld > 0) {
-        newCause ||= !seen.has(ANCHORED_HELD);
-        seen.add(ANCHORED_HELD);
+        newCause ||= !anchoredHeldSeen;
+        anchoredHeldSeen = true;
       }
     }
     for (const cause of counts.keys()) seen.add(cause);

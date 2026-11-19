@@ -691,6 +691,24 @@ describe("Store event ordering under nested dispatch", () => {
     expect(returned.revision).toBe(2);
   });
 
+  it("delivers an action's events when a store listener it notifies opens a transaction", () => {
+    const store = createDocumentStoreWithEvents({ content: "", reconcileMode: "none" });
+    const seen = revisions(store);
+    let once = true;
+    store.subscribe(() => {
+      if (!once) return;
+      once = false;
+      store.beginTransaction();
+    });
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+    // The insert committed outside any transaction, so its events are not
+    // buffered in the listener's level, and rolling that back keeps them.
+    expect(seen).toEqual(["0->1"]);
+    store.rollbackTransaction();
+    expect(seen).toEqual(["0->1"]);
+  });
+
   it("orders events the same for a store listener subscribed before any event handler", () => {
     const store = createDocumentStoreWithEvents({ content: "", reconcileMode: "none" });
     let once = true;

@@ -579,6 +579,65 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     expect([...store.getSnapshot().pieceTable.chunkMap.keys()]).toEqual([2]);
     limited.dispose();
   });
+  it("does not report history discarded for an edit a listener makes while the pass evicts", async () => {
+    const { store, manager, warn } = setup("pin-bounded");
+    await manager.ensureLoaded(0);
+    pinChunk0(store);
+    await manager.ensureLoaded(1);
+    // Typing clears the redo entry, and pushes an undo one, while the pass
+    // evicts chunk 1 at no cost to history.
+    let typed = false;
+    store.subscribe(() => {
+      if (typed || store.getSnapshot().pieceTable.chunkMap.has(1)) return;
+      typed = true;
+      store.dispatch(DocumentActions.insert(byteOffset(0), "Y"));
+    });
+    await manager.ensureLoaded(2);
+
+    expect(typed).toBe(true);
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([0, 2]);
+    expect(getUndoCount(store.getSnapshot())).toBe(1);
+    expect(warn).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+
+  it("measures an anchored chunk's edits again once a load parts it from them", async () => {
+    const store = createDocumentStore({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 6,
+      historyEvictionPolicy: "drop",
+      reconcileMode: "none",
+    });
+    const six = Object.fromEntries(Array.from({ length: 6 }, (_, i) => [i, `${i}`.repeat(8)]));
+    const warn = vi.fn();
+    const manager = createChunkManager(store, makeLoader(six), {
+      maxLoadedChunks: 1,
+      logger: { warn },
+    });
+    manager.setActiveChunks([2, 4]);
+    for (const i of [2, 4]) await manager.ensureLoaded(i);
+    // Text typed at the seam of chunks 2 and 4 touches both, and an attention
+    // is anchored inside chunk 4.
+    store.dispatch(DocumentActions.insert(byteOffset(CHUNK_SIZE), "X"));
+    store.dispatch(DocumentActions.createAttention(byteOffset(11), byteOffset(13)));
+    // Loading both while pinned already warned; count from the unpinning.
+    warn.mockClear();
+    manager.setActiveChunks([]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toContain(
+      "1 hold an attention anchor, 1 of which also hold user edits or undo history",
+    );
+
+    // Chunk 3 loads between that text and chunk 4, so no edit touches chunk 4.
+    await manager.ensureLoaded(3);
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([2, 3, 4]);
+    expect(warn).toHaveBeenCalledTimes(2);
+    const message = warn.mock.calls[1]![0] as string;
+    expect(message).toContain("1 hold an attention anchor;");
+    expect(message).not.toContain("of which");
+    manager.dispose();
+  });
+
   it("stays over the limit under 'pin' and says how to bound it", async () => {
     const { store, manager, warn } = setup("pin");
     await manager.ensureLoaded(0);

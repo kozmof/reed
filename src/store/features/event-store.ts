@@ -234,8 +234,11 @@ export function withEvents(
     if (disposed) return baseStore.getSnapshot();
     const prevState = baseStore.getSnapshot();
     // Inside a transaction the events join the open level, which the
-    // outermost commit's slot delivers.
-    const slot = pendingEventLevels.length === 0 ? reserveSlot() : null;
+    // outermost commit's slot delivers. Choose before committing: outside a
+    // transaction the commit notifies store listeners, and one that opens a
+    // transaction must not pull this action's events into its level. Inside
+    // one the commit notifies no one, so the level stays open until it returns.
+    const target = pendingEventLevels[pendingEventLevels.length - 1] ?? reserveSlot().events;
     try {
       let transition: DocumentTransition;
       committing++;
@@ -247,11 +250,7 @@ export function withEvents(
 
       if (transition.state !== prevState) {
         try {
-          const events = prepareEventsForAction(action, prevState, transition);
-          const level = pendingEventLevels[pendingEventLevels.length - 1];
-          // A reset while the action committed can discard the level it was
-          // dispatched into; its events then take a slot of their own.
-          (level ?? (slot ?? reserveSlot()).events).push(...events);
+          target.push(...prepareEventsForAction(action, prevState, transition));
         } catch (error) {
           // The state transition has already committed. Event metadata is
           // observational and must not make callers believe the edit failed.
