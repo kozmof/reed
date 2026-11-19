@@ -15,8 +15,6 @@ import type { DocumentState, ReedLogger } from "../../types/state.js";
 import type { DocumentStore } from "../../types/store.js";
 import { isChunkByteLengthValid } from "../core/piece-table.js";
 import { DocumentActions } from "./actions.js";
-import { getRedoCount, getUndoCount } from "./history.js";
-import { dispatchEviction } from "./eviction-report.js";
 import { chunkHoldReason, hasAttentionAnchoredToChunk } from "./chunk-actions.js";
 
 // =============================================================================
@@ -68,9 +66,10 @@ export interface ChunkManagerConfig {
   /**
    * Optional diagnostics sink. Omit to keep the manager silent.
    *
-   * The manager warns when an eviction discards undo history. A store Reed
-   * built reports that loss, also through a wrapper, as long as the wrapper's
-   * `getSnapshot` returns the state of the store it forwards to.
+   * The manager warns when chunks stay resident over `maxLoadedChunks`. When
+   * an eviction discards undo history, the store that commits it warns
+   * through the store's own `logger`, and a store with events fires
+   * `history-drop`.
    */
   logger?: Pick<ReedLogger, "warn">;
 }
@@ -524,25 +523,9 @@ export function createChunkManager(
         }
         if (candidates.length > 0) {
           // Without keepHistory this pass may discard history, as the policy
-          // allows. Undo then stops short with no other sign, so say so.
-          // A store listener the eviction notifies can edit too, so the store's
-          // history afterwards need not be the eviction's alone. The store
-          // that commits the eviction reports the history it left, and inside
-          // a transaction waits for the commit (see `dispatchEviction`).
-          dispatchEviction(
-            store,
-            DocumentActions.evictChunks(candidates, maxLoadedChunks),
-            (evicted) => {
-              const undoDropped = getUndoCount(evicted.from) - getUndoCount(evicted.to);
-              const redoDropped = getRedoCount(evicted.from) - getRedoCount(evicted.to);
-              logger?.warn?.(
-                `[ChunkManager] evicting chunks to stay within the memory limit (${maxLoadedChunks}) ` +
-                  `discarded ${undoDropped} undo and ${redoDropped} redo entries that pointed into them, ` +
-                  `under the "${evicted.to.evictionPolicy}" history eviction policy. ` +
-                  `Raise maxLoadedChunks, or use "pin" to keep history at the cost of memory.`,
-              );
-            },
-          );
+          // allows. The store that commits the eviction warns of that through
+          // its logger, and a store with events fires `history-drop`.
+          store.dispatch(DocumentActions.evictChunks(candidates, maxLoadedChunks));
           if (disposed) return;
         }
         // Still over the limit, so every candidate was offered: those left,

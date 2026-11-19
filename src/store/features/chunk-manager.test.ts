@@ -281,13 +281,16 @@ describe("ChunkManager LRU eviction", () => {
 describe("ChunkManager with the 'pin-bounded' history policy", () => {
   const chunks = { 0: "aaaaaaa\n", 1: "bbbbbbb\n", 2: "ccccccc\n" };
   const setup = (historyEvictionPolicy: HistoryEvictionPolicy) => {
+    // The store warns of history an eviction discards, and the manager of
+    // chunks that stay resident, so both share one logger here.
+    const warn = vi.fn();
     const store = createDocumentStore({
       chunkSize: CHUNK_SIZE,
       totalFileSize: CHUNK_SIZE * 3,
       historyEvictionPolicy,
       reconcileMode: "none",
+      logger: { warn },
     });
-    const warn = vi.fn();
     const manager = createChunkManager(store, makeLoader(chunks), {
       maxLoadedChunks: 2,
       logger: { warn },
@@ -606,11 +609,9 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
 
   describe("when the store is wrapped", () => {
     /** Evict chunk 0, discarding its redo entry, while a listener types. */
-    const evictWhileTyping = async (
-      store: DocumentStore,
-      wrap: (store: DocumentStore) => DocumentStore,
-    ) => {
+    const evictWhileTyping = async (wrap: (store: DocumentStore) => DocumentStore) => {
       const warn = vi.fn();
+      const store = fresh(warn);
       const manager = createChunkManager(wrap(store), makeLoader(chunks), {
         maxLoadedChunks: 2,
         logger: { warn },
@@ -632,42 +633,51 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
       expect(warn.mock.calls[0]![0]).toContain("discarded 0 undo and 1 redo entries");
       manager.dispose();
     };
-    const fresh = () =>
+    const fresh = (warn: (message: string) => void = () => {}) =>
       createDocumentStore({
         chunkSize: CHUNK_SIZE,
         totalFileSize: CHUNK_SIZE * 3,
         historyEvictionPolicy: "pin-bounded",
         reconcileMode: "none",
+        logger: { warn },
       });
 
     it("sends the eviction that discards history through a patched dispatch", async () => {
-      const store = fresh();
       const seen: DocumentAction[] = [];
-      const original = store.dispatch;
-      store.dispatch = (action) => {
-        seen.push(action);
-        return original(action);
-      };
-      await evictWhileTyping(store, (s) => s);
+      await evictWhileTyping((store) => {
+        const original = store.dispatch;
+        store.dispatch = (action) => {
+          seen.push(action);
+          return original(action);
+        };
+        return store;
+      });
       expect(
         seen.some((action) => action.type === "EVICT_CHUNKS" && action.keepHistory !== true),
       ).toBe(true);
     });
 
     it("reports the eviction's own loss for a copy of the store", async () => {
-      await evictWhileTyping(fresh(), (store) => ({ ...store }));
+      await evictWhileTyping((store) => ({ ...store }));
     });
 
     it("reports the eviction's own loss when a wrapper dispatches a copy of the action", async () => {
-      await evictWhileTyping(fresh(), (store) => ({
+      await evictWhileTyping((store) => ({
         ...store,
         dispatch: (action) => store.dispatch({ ...action }),
       }));
     });
 
+    it("reports the eviction's own loss through a wrapper whose snapshot is a copy", async () => {
+      await evictWhileTyping((store) => ({
+        ...store,
+        getSnapshot: () => ({ ...store.getSnapshot() }),
+      }));
+    });
+
     it("measures the loss from the state the eviction reduced when a wrapper dispatches first", async () => {
-      const store = fresh();
       const warn = vi.fn();
+      const store = fresh(warn);
       // Clearing history first leaves the eviction nothing to discard.
       const wrapped: DocumentStore = {
         ...store,
@@ -693,13 +703,14 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     });
 
     it("takes the loss from the base store's commit through a copy of an event store", async () => {
+      const warn = vi.fn();
       const store = createDocumentStoreWithEvents({
         chunkSize: CHUNK_SIZE,
         totalFileSize: CHUNK_SIZE * 3,
         historyEvictionPolicy: "pin-bounded",
         reconcileMode: "none",
+        logger: { warn },
       });
-      const warn = vi.fn();
       // Clearing history first leaves the eviction nothing to discard, which
       // only the store's own commit of the eviction can tell.
       const wrapped: DocumentStore = {
@@ -726,10 +737,9 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     });
 
     it("does not count a listener's edit when a wrapper changes the action", async () => {
-      const store = fresh();
       const warn = vi.fn();
-      // Repeating the chunks evicts the same ones, but no longer matches the
-      // action the manager built, so the store's own report is not used.
+      const store = fresh(warn);
+      // Repeating the chunks evicts the same ones in a different action.
       const wrapped: DocumentStore = {
         ...store,
         dispatch: (action) =>
@@ -761,11 +771,13 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
       manager.dispose();
     });
 
-    it("ignores the same eviction committed by another store", async () => {
-      const store = fresh();
+    it("warns through the store whose eviction discards history, not a mirror's", async () => {
+      const warn = vi.fn();
+      const mirrorWarn = vi.fn();
+      const store = fresh(warn);
       // A mirror whose redo entries pin chunks 0 and 1, so evicting either
       // there discards history.
-      const mirror = fresh();
+      const mirror = fresh(mirrorWarn);
       for (const i of [0, 1, 2] as const) {
         mirror.dispatch(DocumentActions.loadChunk(i, new TextEncoder().encode(chunks[i])));
       }
@@ -774,7 +786,6 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
       mirror.dispatch(DocumentActions.undo());
       mirror.dispatch(DocumentActions.undo());
       const mirrorHistory = mirror.getSnapshot().history;
-      const warn = vi.fn();
       const wrapped: DocumentStore = {
         ...store,
         dispatch: (action) => {
@@ -796,6 +807,8 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
       expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([0, 2]);
       expect(mirror.getSnapshot().history).not.toBe(mirrorHistory);
       expect(warn).not.toHaveBeenCalled();
+      expect(mirrorWarn).toHaveBeenCalledTimes(1);
+      expect(mirrorWarn.mock.calls[0]![0]).toContain("discarded 0 undo and 1 redo entries");
       manager.dispose();
     });
   });

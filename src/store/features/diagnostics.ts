@@ -9,10 +9,12 @@ import type { ReedLogger } from "../../types/state.js";
 export const MAX_OBSERVER_REENTRANT_STEPS = 100;
 
 /**
- * Maximum number of actions whose events one synchronous event delivery
- * delivers, counting those that event handlers dispatch during it. The depth
- * limit alone lets a handler that dispatches two actions per event grow the
- * work exponentially before it is reached.
+ * Maximum number of actions dispatched in reaction to the events of actions
+ * that event handlers dispatched, whose events one synchronous event delivery
+ * delivers. The depth limit alone lets a handler that dispatches two actions
+ * per event grow the work exponentially before it is reached. The actions a
+ * handler dispatches directly, in reaction to an action dispatched outside
+ * delivery, are not counted, so a handler can apply any number of them.
  */
 export const MAX_OBSERVER_DELIVERED_ACTIONS = 10_000;
 

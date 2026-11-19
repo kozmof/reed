@@ -865,10 +865,11 @@ export interface DocumentStoreConfigBase {
   /** Initial document content */
   content?: string;
   /**
-   * Optional diagnostics sink for caught callback failures.
+   * Optional diagnostics sink for caught callback failures, and for warnings
+   * such as undo history an EVICT_CHUNKS discarded.
    *
    * Without a logger, Reed uses `globalThis.reportError` when available and
-   * falls back to `console.error`.
+   * falls back to `console.error` for failures, and does not warn.
    */
   logger?: ReedLogger;
   /** Maximum history entries (default: 1000) */

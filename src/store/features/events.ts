@@ -5,7 +5,7 @@ import { transformRemoteRanges } from "./remote-ranges.js";
  * Provides a pub/sub mechanism for document changes and editor events.
  */
 
-import type { DocumentState, ReedLogger } from "../../types/state.js";
+import { pstackSize, type DocumentState, type ReedLogger } from "../../types/state.js";
 import type { ContentChangeAction, DocumentAction } from "../../types/actions.js";
 import { byteOffset, type ByteOffset, type AttentionID } from "../../types/branded.js";
 import { utf8ByteLength } from "../core/encoding.js";
@@ -86,19 +86,29 @@ export interface HistoryChangeEvent extends DocumentEvent {
 }
 
 /**
- * Fired when EVICT_CHUNK or EVICT_CHUNKS discards history entries under the `"drop"` eviction
- * policy, or under `"pin-bounded"` with `overLimit` or through EVICT_CHUNKS. Also fired when
- * UNDO or REDO meets an entry that no longer resolves inside the document: that entry and the
- * entries behind it on the same stack are dropped. Nothing is undone or
- * redone: the undo and redo counts drop. Dropping history does not move the
- * selection, but the same eviction can: an endpoint inside the evicted chunk
- * collapses to where the chunk was, and `selection-change` fires for that
- * separately.
+ * Fired when an action discards undo or redo entries without undoing or
+ * redoing them, so the undo and redo counts drop:
+ * - EVICT_CHUNK or EVICT_CHUNKS discards the entries that point into the
+ *   chunks it evicts, under the `"drop"` eviction policy, or under
+ *   `"pin-bounded"` with `overLimit` or through EVICT_CHUNKS.
+ * - UNDO or REDO meets an entry that no longer resolves inside the document:
+ *   that entry and the entries behind it on the same stack are dropped.
+ * - APPLY_REMOTE clears both stacks, since history is not rebased against
+ *   remote edits.
+ * - HISTORY_CLEAR clears both stacks.
+ *
+ * Nothing is undone or redone. Dropping history does not move the selection,
+ * but the same eviction can: an endpoint inside the evicted chunk collapses to
+ * where the chunk was, and `selection-change` fires for that separately.
  */
 export interface HistoryDropEvent extends DocumentEvent {
   readonly type: "history-drop";
   readonly prevState: DocumentState;
   readonly nextState: DocumentState;
+  /** Undo entries discarded. */
+  readonly undoDropped: number;
+  /** Redo entries discarded. */
+  readonly redoDropped: number;
 }
 
 /**
@@ -368,17 +378,22 @@ export function createHistoryChangeEvent(
 }
 
 /**
- * Create a history drop event.
+ * Create a history drop event. The counts are the entries `nextState` lacks
+ * that `prevState` had; the action changed history in no other way.
  */
 export function createHistoryDropEvent(
   prevState: DocumentState,
   nextState: DocumentState,
 ): HistoryDropEvent {
+  const dropped = (stack: "undoStack" | "redoStack") =>
+    Math.max(0, pstackSize(prevState.history[stack]) - pstackSize(nextState.history[stack]));
   return Object.freeze({
     type: "history-drop" as const,
     timestamp: Date.now(),
     prevState,
     nextState,
+    undoDropped: dropped("undoStack"),
+    redoDropped: dropped("redoStack"),
   });
 }
 

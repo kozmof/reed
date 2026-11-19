@@ -1006,13 +1006,44 @@ describe("Event delivery limits and failed transaction calls", () => {
     });
 
     expect(() => store.dispatch(DocumentActions.insert(byteOffset(0), "x"))).not.toThrow();
-    expect(calls).toBe(MAX_OBSERVER_DELIVERED_ACTIONS);
+    // The first action's events, and the two its handler dispatched, are not
+    // counted; the limit stops their reactions.
+    expect(calls).toBe(MAX_OBSERVER_DELIVERED_ACTIONS + 3);
     expect(error).toHaveBeenCalledWith(
       "Document event cycle exceeded the re-entrancy limit",
       expect.objectContaining({
         message: expect.stringContaining(`${MAX_OBSERVER_DELIVERED_ACTIONS} actions`),
       }),
     );
+  });
+
+  it.each([
+    ["an event handler", 1],
+    ["a store listener", 0],
+  ])("delivers the events of every action %s dispatches one at a time", (_, viaListener) => {
+    const error = vi.fn();
+    const store = createDocumentStoreWithEvents({
+      content: "",
+      reconcileMode: "none",
+      logger: { error, warn: vi.fn() },
+    });
+    const count = MAX_OBSERVER_DELIVERED_ACTIONS + 5;
+    let armed = true;
+    const applyAll = () => {
+      if (!armed) return;
+      armed = false;
+      for (let i = 0; i < count; i++) store.dispatch(DocumentActions.insert(byteOffset(0), "r"));
+    };
+    if (viaListener) store.subscribe(applyAll);
+    else store.addEventListener("save", applyAll);
+    let changes = 0;
+    store.addEventListener("content-change", () => changes++);
+
+    store.dispatch(
+      viaListener ? DocumentActions.insert(byteOffset(0), "a") : DocumentActions.markSaved(),
+    );
+    expect(error).not.toHaveBeenCalled();
+    expect(changes).toBe(count + (viaListener ? 1 : 0));
   });
 
   it("does not count a handler's batched or no-op actions toward the delivery limit", () => {
@@ -1066,7 +1097,7 @@ describe("Event delivery limits and failed transaction calls", () => {
     });
     const store = withEvents(
       failing,
-      (action: DocumentAction) => ({ state: base.dispatch(action), historyDropped: false }),
+      (action: DocumentAction) => ({ state: base.dispatch(action), historyDropped: null }),
       undefined,
     );
     const inserted: string[] = [];

@@ -56,7 +56,7 @@ Returns `ReconcilableDocumentStore` with:
 Supported config fields (`DocumentStoreConfig`):
 
 - `content`
-- `logger` — optional diagnostics sink. Omit it to keep the library silent
+- `logger` — optional diagnostics sink. Omit it to keep the library silent. The store warns through it when `EVICT_CHUNKS`, which ChunkManager sends, discards undo or redo history, once the eviction is final: at once outside a transaction, at the outermost commit inside one, and not at all after a rollback
 - `historyLimit`
 - `chunkSize`
 - `encoding` — currently only `'utf-8'` is supported
@@ -105,7 +105,7 @@ Requires a user-supplied `ChunkLoader` with
 `loadChunk(chunkIndex, signal?): Promise<Uint8Array>`. The optional abort signal is canceled when
 the manager drops a pending load or is disposed.
 
-Config (`ChunkManagerConfig`): `maxLoadedChunks`, `fetchStrategy`, `logger`.
+Config (`ChunkManagerConfig`): `maxLoadedChunks`, `fetchStrategy`, `logger`. The manager's `logger` hears when chunks stay loaded over `maxLoadedChunks`. History an eviction discards is reported by the store's own `logger` and its `history-drop` event.
 
 ### 2.5 Flat `createStreamingDocumentLoader(store, loader, metadata, config?)`
 
@@ -155,7 +155,7 @@ Auto-emitted by `store.createDocumentStoreWithEvents`:
 - `content-change` (`INSERT/DELETE/REPLACE/APPLY_REMOTE`)
 - `selection-change` (`SET_SELECTION`, and any other action that moves the selection: `INSERT`/`DELETE`/`REPLACE`/`APPLY_REMOTE` moving it past the edit, `UNDO`/`REDO`, `LOAD_CHUNK`/`LOAD_CHUNKS`/`EVICT_CHUNK`/`EVICT_CHUNKS`)
 - `history-change` (`UNDO/REDO`)
-- `history-drop` (`EVICT_CHUNK` or `EVICT_CHUNKS` when the `'drop'` policy, or `'pin-bounded'` with `overLimit` or through `EVICT_CHUNKS`, discards entries; `UNDO` or `REDO` when the next entry no longer resolves inside the document, which drops it and the rest of its stack)
+- `history-drop` (`EVICT_CHUNK` or `EVICT_CHUNKS` when the `'drop'` policy, or `'pin-bounded'` with `overLimit` or through `EVICT_CHUNKS`, discards entries; `UNDO` or `REDO` when the next entry no longer resolves inside the document, which drops it and the rest of its stack; `APPLY_REMOTE` and `HISTORY_CLEAR` when they clear a non-empty history). The event carries `undoDropped` and `redoDropped`, the entries discarded
 - `attention-change` (create, delete, or content edits that rewrite stored points)
 - `save` (`MARK_SAVED`)
 - `dirty-change` (when dirty flag changes)

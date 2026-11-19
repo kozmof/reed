@@ -4,19 +4,13 @@
  * Route text edits to `edit.ts` and undo/redo to `history.ts`.
  */
 
-import type { DocumentState, SelectionRange } from "../../types/state.js";
+import type { DocumentState, HistoryState, SelectionRange } from "../../types/state.js";
 import type { DocumentAction } from "../../types/actions.js";
 import { byteOffset } from "../../types/branded.js";
 import { withState } from "../core/state.js";
-import { isUtf8Boundary } from "../core/piece-table.js";
-import {
-  validatePosition,
-  validateRange,
-  readDeletedText,
-  applyEdit,
-  applyUntrackedEdit,
-} from "./edit.js";
-import { historyUndo, historyRedo } from "./history.js";
+import { getText, isUtf8Boundary } from "../core/piece-table.js";
+import { validatePosition, validateRange, applyEdit, applyUntrackedEdit } from "./edit.js";
+import { getRedoCount, getUndoCount, historyUndo, historyRedo } from "./history.js";
 import {
   insertionKey,
   moveSelectionPastEdit,
@@ -93,15 +87,33 @@ function setSelection(state: DocumentState, ranges: readonly SelectionRange[]): 
 // Main Reducer
 // =============================================================================
 
+/** Undo and redo entries an action discarded without undoing or redoing them. */
+export interface HistoryLoss {
+  readonly undo: number;
+  readonly redo: number;
+}
+
 /**
- * A state transition, and whether it was an UNDO or REDO that dropped a stale
- * entry instead of replaying it. The event layer reports such a step as
- * `history-drop`. An entry that changes no bytes leaves the document as a drop
- * does, so the outcome comes from the step rather than from the states.
+ * A state transition, and the history it discarded without undoing or
+ * redoing it, or null. That is history an eviction discarded with the chunks
+ * its entries point into, the stale entries an UNDO or REDO dropped instead of
+ * replaying one, and the stacks APPLY_REMOTE and HISTORY_CLEAR cleared. The
+ * event layer reports it as `history-drop`, and the store warns of the history
+ * an EVICT_CHUNKS discarded. An entry that changes no bytes leaves the
+ * document as a drop does, so the outcome comes from the step rather than from
+ * the states.
  */
 export interface DocumentTransition {
   readonly state: DocumentState;
-  readonly historyDropped: boolean;
+  readonly historyDropped: HistoryLoss | null;
+}
+
+/** The entries `to` lacks that `from` had, or null when it lacks none. */
+function historyLoss(from: HistoryState, to: HistoryState): HistoryLoss | null {
+  if (from === to) return null;
+  const undo = Math.max(0, getUndoCount(from) - getUndoCount(to));
+  const redo = Math.max(0, getRedoCount(from) - getRedoCount(to));
+  return undo === 0 && redo === 0 ? null : { undo, redo };
 }
 
 /**
@@ -112,21 +124,35 @@ function stepHistory(state: DocumentState, type: "UNDO" | "REDO"): DocumentTrans
   const nextRevision = state.revision + 1;
   const step =
     type === "UNDO" ? historyUndo(state, nextRevision) : historyRedo(state, nextRevision);
-  if (step.outcome === "empty") return { state, historyDropped: false };
+  if (step.outcome === "empty") return { state, historyDropped: null };
   return {
     state: withState(step.state, { revision: nextRevision }),
-    historyDropped: step.outcome === "dropped",
+    historyDropped:
+      step.outcome === "dropped" ? historyLoss(state.history, step.state.history) : null,
   };
 }
 
 /**
- * Apply `action` as `documentReducer` does, and say whether it dropped stale
- * history (see `DocumentTransition`).
+ * Apply `action` as `documentReducer` does, and say what history it discarded
+ * (see `DocumentTransition`).
  */
 export function reduceDocument(state: DocumentState, action: DocumentAction): DocumentTransition {
-  return action.type === "UNDO" || action.type === "REDO"
-    ? stepHistory(state, action.type)
-    : { state: documentReducer(state, action), historyDropped: false };
+  switch (action.type) {
+    case "UNDO":
+    case "REDO":
+      return stepHistory(state, action.type);
+    case "EVICT_CHUNK":
+    case "EVICT_CHUNKS":
+    case "APPLY_REMOTE":
+    case "HISTORY_CLEAR": {
+      const next = documentReducer(state, action);
+      return { state: next, historyDropped: historyLoss(state.history, next.history) };
+    }
+    default:
+      // An edit clears redo and can trim the oldest undo entry at the limit:
+      // that is how editing works, not history lost to something else.
+      return { state: documentReducer(state, action), historyDropped: null };
+  }
 }
 
 /**
@@ -287,8 +313,9 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
           validateBoundaryPosition(newState, start, "APPLY_REMOTE delete start");
           validateBoundaryPosition(newState, end, "APPLY_REMOTE delete end");
           didApplyChange = true;
-          // Untracked edits keep no history, so only the text is needed.
-          const deletedText = readDeletedText(newState, start, end);
+          // Untracked edits keep no history, so only the text is needed. It
+          // keeps a leading U+FEFF, which the line index counts.
+          const deletedText = getText(newState.pieceTable, start, end);
           newState = applyUntrackedEdit(
             newState,
             { kind: "delete", position: start, deleteEnd: end, deletedText },

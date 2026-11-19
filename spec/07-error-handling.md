@@ -22,10 +22,12 @@ Reed validates actions and isolates failures at store boundaries. This document 
   - Store listeners get at most 100 synchronous notification passes.
   - The emitter delivers at most 100 events that handlers queue while it emits.
   - Event handler dispatches nest at most 100 levels deep, and one synchronous
-    delivery delivers the events of at most 10,000 actions. The depth limit
-    lets a handler dispatch many actions in one go. The total limit stops a
-    handler that dispatches more than one action per event before the work
-    grows exponentially.
+    delivery delivers the events of at most 10,000 actions dispatched in
+    reaction to actions a handler dispatched. The actions a handler or store
+    listener dispatches directly are not counted, so it can dispatch any
+    number of them one at a time. The total limit stops a handler that
+    dispatches more than one action per event before the work grows
+    exponentially.
   - Actions dispatched past a limit still commit. Only their notifications or
     events are dropped.
 - Once a change commits, `dispatch()` and `commitTransaction()` do not throw.

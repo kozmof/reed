@@ -196,19 +196,6 @@ export function pieceTableDelete(
   return nextState;
 }
 
-/**
- * The text an untracked edit deletes from [start, end), as the edit pipeline
- * counts it. It decodes with `contentDecoder`, as `getText` does and as
- * `applyEdit` decodes the runs it deletes (see `deletedRuns`).
- *
- * A U+FEFF at the start of the range is kept, as `getText` keeps it. The
- * line index counts it as a character, so deleted text without it would leave
- * the line one character too long, and undo could not restore it from the text.
- */
-export function readDeletedText(state: DocumentState, start: ByteOffset, end: ByteOffset): string {
-  return contentDecoder.decode(getBytes(state.pieceTable, start, end));
-}
-
 // =============================================================================
 // Eager and lazy line-index update strategies
 // =============================================================================
@@ -411,7 +398,10 @@ interface DeletedRun {
 
 /**
  * Text and, where needed, raw bytes of each run of a delete, and the text of
- * the whole range, which the line index counts (see `readDeletedText`). The
+ * the whole range, which the line index counts. A U+FEFF at the start of the
+range is kept, as `getText` keeps it: the line index counts it as a
+character, so deleted text without it would leave the line one character too
+long, and undo could not restore it from the text. The
  * range's bytes are read once, and each run decoded from them, the way
  * `getText` decodes a range.
  *

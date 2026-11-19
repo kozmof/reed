@@ -40,7 +40,6 @@ import { getBufferStats, compactAddBuffer } from "../core/piece-table.js";
 import { createTransactionManager, makeBatch, type CommitResult } from "./transaction.js";
 import { MAX_OBSERVER_REENTRANT_STEPS, reportCaughtError } from "./diagnostics.js";
 import { withEvents } from "./event-store.js";
-import { claimEviction } from "./eviction-report.js";
 import {
   createReconciliationScheduler,
   type ReconciliationSchedulerOptions,
@@ -75,6 +74,26 @@ interface StoreCore {
 }
 
 /**
+ * The warning for history an EVICT_CHUNKS discarded, or null.
+ *
+ * EVICT_CHUNKS chooses which chunks go, so its caller, such as ChunkManager
+ * keeping within maxLoadedChunks, does not choose the history lost. Undo then
+ * stops short with no other sign, so the store that commits it says so.
+ * EVICT_CHUNK names its chunk, so its caller chose the loss, and
+ * `history-drop` reports both.
+ */
+function evictionWarning(action: DocumentAction, transition: DocumentTransition): string | null {
+  const loss = transition.historyDropped;
+  if (action.type !== "EVICT_CHUNKS" || loss === null) return null;
+  return (
+    `[Reed] evicting chunks to stay within ${action.maxLoaded} loaded chunks ` +
+    `discarded ${loss.undo} undo and ${loss.redo} redo entries that pointed into them, ` +
+    `under the "${transition.state.history.evictionPolicy}" history eviction policy. ` +
+    `Raise the chunk limit (ChunkManager's maxLoadedChunks), or use "pin" to keep history at the cost of memory.`
+  );
+}
+
+/**
  * Shared store body. Takes the state to start from, so a store can be built
  * either from configuration (`createDocumentStore`) or from an already-assembled
  * state (`createDocumentStoreFromCheckpoint`).
@@ -105,10 +124,11 @@ function createStoreOverState(
   // flag in a follow-up pass after its current listener snapshot completes.
   let notificationPending = false;
   const transaction = createTransactionManager();
-  // Eviction losses committed inside a transaction (see `claimEviction`),
-  // each with the depth that holds it. The outermost commit reports them, and
-  // a rollback discards those its level held, since it restores the history.
-  let deferredReports: { depth: number; readonly report: () => void }[] = [];
+  // Warnings of history lost to evictions committed inside a transaction
+  // (see `evictionWarning`), each with the depth that holds it. The outermost
+  // commit logs them, and a rollback discards those its level held, since it
+  // restores the history.
+  let deferredWarnings: { depth: number; readonly message: string }[] = [];
 
   /**
    * Replace internal state reference only when it changes.
@@ -369,19 +389,17 @@ function createStoreOverState(
    * the action notifies can dispatch again, so `state` can already be later.
    */
   function commit(action: DocumentAction): DocumentTransition {
-    if (disposed) return { state, historyDropped: false };
-    const from = state.history;
+    if (disposed) return { state, historyDropped: null };
     const transition = reduceDocument(state, action);
     const changed = transition.state !== state;
     if (changed) setState(transition.state);
-    // The store holds the new state first, so a caller awaiting the eviction
-    // can tell this commit is its store's (see `claimEviction`). The loss is
-    // reported before listeners hear of the change, so losses are reported in
-    // the order they committed, even when a listener evicts again.
-    const report = claimEviction(action, from, transition.state);
-    if (report !== null) {
-      if (transaction.isActive) deferredReports.push({ depth: transaction.depth, report });
-      else runReports([{ report }]);
+    // Warn before listeners hear of the change, so warnings follow the order
+    // their evictions committed, even when a listener evicts again.
+    const warning = evictionWarning(action, transition);
+    if (warning !== null) {
+      if (transaction.isActive)
+        deferredWarnings.push({ depth: transaction.depth, message: warning });
+      else logWarnings([warning]);
     }
     if (changed && !transaction.isActive) afterCommit();
     return transition;
@@ -438,31 +456,33 @@ function createStoreOverState(
       throw e;
     }
     if (result.isOutermost) {
-      // Report before notifying, in commit order: a listener may evict again
-      // and report its own loss, dispose the store, which clears the queue,
+      // Warn before notifying, in commit order: a listener may evict again
+      // and warn of its own loss, dispose the store, which clears the queue,
       // or open a transaction of its own, whose losses have not committed yet.
-      const reports = deferredReports;
-      deferredReports = [];
-      runReports(reports);
+      const warnings = deferredWarnings;
+      deferredWarnings = [];
+      logWarnings(warnings.map((entry) => entry.message));
       afterCommit();
     } else {
       // The enclosing level now holds what this one committed.
-      for (const entry of deferredReports) {
+      for (const entry of deferredWarnings) {
         if (entry.depth > transaction.depth) entry.depth = transaction.depth;
       }
     }
   }
 
   /**
-   * Report eviction losses that have committed. The change has committed, so
-   * a report's error is reported, not thrown.
+   * Log warnings of history lost to evictions that have committed. The change
+   * has committed, so a logger's error is reported, not thrown.
    */
-  function runReports(reports: readonly { readonly report: () => void }[]): void {
-    for (const { report } of reports) {
+  function logWarnings(messages: readonly string[]): void {
+    const warn = logger?.warn;
+    if (warn === undefined) return;
+    for (const message of messages) {
       try {
-        report();
+        warn.call(logger, message);
       } catch (error) {
-        reportCaughtError(logger, "An eviction report threw after its eviction committed", error);
+        reportCaughtError(logger, "The logger threw after an eviction committed", error);
       }
     }
   }
@@ -475,8 +495,8 @@ function createStoreOverState(
   function rollbackTransaction(): void {
     if (disposed) return;
     const result = transaction.rollback();
-    if (deferredReports.length > 0) {
-      deferredReports = deferredReports.filter((entry) => entry.depth <= transaction.depth);
+    if (deferredWarnings.length > 0) {
+      deferredWarnings = deferredWarnings.filter((entry) => entry.depth <= transaction.depth);
     }
     if (result.snapshot) {
       setState(result.snapshot);
@@ -507,7 +527,7 @@ function createStoreOverState(
   function emergencyReset(): DocumentState | null {
     if (disposed) return null;
     const earliest = transaction.emergencyReset();
-    deferredReports = [];
+    deferredWarnings = [];
     if (earliest) {
       setState(earliest);
     }
@@ -529,7 +549,7 @@ function createStoreOverState(
     lineCache = new WeakMap();
     compactWorkspace = null;
     listeners = [];
-    deferredReports = [];
+    deferredWarnings = [];
     rejectWhenReconciledWaiters(
       new Error("DocumentStore was disposed before reconciliation completed"),
     );
@@ -664,8 +684,9 @@ function createStoreOverState(
  *   REDO, or a chunk load or eviction moves the selection. An edit moves it past the edit, so
  *   typing at the cursor fires it, and so does a remote edit before the cursor
  * - 'history-change': On UNDO and REDO that apply an entry
- * - 'history-drop': On EVICT_CHUNK or EVICT_CHUNKS that drops history entries, and on UNDO or
- *   REDO that drops an entry no longer resolving inside the document
+ * - 'history-drop': When an action discards undo or redo entries without undoing or redoing
+ *   them: EVICT_CHUNK or EVICT_CHUNKS that drops entries, UNDO or REDO that drops an entry no
+ *   longer resolving inside the document, and APPLY_REMOTE or HISTORY_CLEAR that clears history
  * - 'attention-change': When the attention layer changes
  * - 'save': On MARK_SAVED
  * - 'dirty-change': When isDirty state changes

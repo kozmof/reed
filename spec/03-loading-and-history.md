@@ -159,7 +159,7 @@ History boundaries:
 - `content-change` for local text edits and `APPLY_REMOTE`
 - `selection-change` whenever an action moves the selection, including an edit, undo, redo, and a chunk load or eviction
 - `history-change` for undo and redo
-- `history-drop` when eviction discards entries under the `'drop'` policy, or under `'pin-bounded'` with `overLimit` or through `EVICT_CHUNKS`, and when undo or redo meets an entry that no longer resolves inside the document: that entry and the rest of its stack are dropped and the document is unchanged
+- `history-drop` when eviction discards entries under the `'drop'` policy, or under `'pin-bounded'` with `overLimit` or through `EVICT_CHUNKS`, and when undo or redo meets an entry that no longer resolves inside the document: that entry and the rest of its stack are dropped and the document is unchanged, and when `APPLY_REMOTE` or `HISTORY_CLEAR` clears a non-empty history. It carries `undoDropped` and `redoDropped`
 - `attention-change` when attention records are created, deleted, or migrated
 - `dirty-change`
 

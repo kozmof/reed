@@ -64,15 +64,23 @@ export function withEvents(
   //
   // `depth` counts how many event deliveries led to the dispatch: 0 for one
   // made outside delivery, n + 1 for one an event handler made while slot n's
-  // events were delivered. Two limits bound a run of handler dispatches. The
-  // depth limit stops a chain of handlers each dispatching from the previous
-  // one's events, and does not count a handler that dispatches many actions
-  // in one go as a cycle. The total limit stops a handler that dispatches
-  // more than one action per event, which grows the work exponentially well
-  // before the depth limit. The total limit counts only slots that hold
-  // events: a slot left empty, by an action that changed nothing, starts no
-  // handler and so cannot feed a cycle. Slots past either limit still
-  // committed; only their events are dropped.
+  // events were delivered. Each slot is queued behind every slot of a smaller
+  // depth, so the queue runs level by level. Two limits bound a run of
+  // handler dispatches. The depth limit stops a chain of handlers each
+  // dispatching from the previous one's events. The total limit stops a
+  // handler that dispatches more than one action per event, which grows the
+  // work exponentially well before the depth limit.
+  //
+  // The total limit counts only slots of depth 2 and more: actions dispatched
+  // in reaction to the events of actions a handler dispatched. A handler that
+  // dispatches many actions in one go, such as applying a remote change set
+  // one operation at a time, fills depth 1, or depth 0 from a store listener,
+  // and is no cycle. A cycle reaches depth 2 one level later, so the work
+  // before the limit stops it is what handlers dispatched at depth 1 plus the
+  // limit. It counts only slots it delivers: an empty slot, left by an action that
+  // changed nothing, starts no handler, and a slot past the depth limit is
+  // skipped. Slots past either limit still committed; only their events are
+  // dropped.
   interface DeliverySlot {
     readonly depth: number;
     readonly events: Array<() => void>;
@@ -100,24 +108,27 @@ export function withEvents(
     if (committing > 0 || delivering) return;
     delivering = true;
     let tooDeep = false;
-    let delivered = 0;
+    // Delivered slots of depth 2 and more (see the queue's comment).
+    let reactions = 0;
     try {
       for (let i = 0; i < deliveryQueue.length; i++) {
         const slot = deliveryQueue[i]!;
         if (slot.events.length === 0) continue;
-        if (delivered >= MAX_OBSERVER_DELIVERED_ACTIONS) {
-          reportCycle(
-            `dispatched more than ${MAX_OBSERVER_DELIVERED_ACTIONS} actions in one synchronous delivery`,
-          );
-          break;
-        }
-        delivered++;
         if (slot.depth >= MAX_OBSERVER_REENTRANT_STEPS) {
           if (!tooDeep) {
             tooDeep = true;
             reportCycle(`dispatched actions more than ${MAX_OBSERVER_REENTRANT_STEPS} levels deep`);
           }
           continue;
+        }
+        if (slot.depth >= 2) {
+          if (reactions >= MAX_OBSERVER_DELIVERED_ACTIONS) {
+            reportCycle(
+              `dispatched more than ${MAX_OBSERVER_DELIVERED_ACTIONS} actions in reaction to actions handlers dispatched, in one synchronous delivery`,
+            );
+            break;
+          }
+          reactions++;
         }
         deliveringDepth = slot.depth;
         for (const emit of slot.events) emit();
@@ -177,25 +188,19 @@ export function withEvents(
       prepare("selection-change", createSelectionChangeEvent(prevState, nextState));
     }
 
-    // History events. EVICT_CHUNK and EVICT_CHUNKS change history only when they discard
-    // entries: under "drop", or "pin-bounded" with overLimit or through EVICT_CHUNKS.
-    // UNDO and REDO discard entries instead of applying one that no longer
-    // replays; the document is then unchanged. The piece table cannot tell
-    // that apart from replaying an entry that changes no bytes, so the
-    // reducer's transition says which it was.
-    if ((action.type === "UNDO" || action.type === "REDO") && !historyDropped) {
+    // History events. UNDO and REDO that apply an entry change history; an
+    // action that discards entries without undoing or redoing them drops it
+    // (see `DocumentTransition`): an eviction, an UNDO or REDO that meets an
+    // entry that no longer replays, APPLY_REMOTE, and HISTORY_CLEAR. The piece
+    // table cannot tell a dropped entry apart from replaying one that changes
+    // no bytes, so the reducer's transition says which it was.
+    if (historyDropped !== null) {
+      prepare("history-drop", createHistoryDropEvent(prevState, nextState));
+    } else if (action.type === "UNDO" || action.type === "REDO") {
       prepare(
         "history-change",
         createHistoryChangeEvent(action.type === "UNDO" ? "undo" : "redo", prevState, nextState),
       );
-    } else if (
-      (action.type === "EVICT_CHUNK" ||
-        action.type === "EVICT_CHUNKS" ||
-        action.type === "UNDO" ||
-        action.type === "REDO") &&
-      prevState.history !== nextState.history
-    ) {
-      prepare("history-drop", createHistoryDropEvent(prevState, nextState));
     }
 
     // Emit attention-change when CREATE_ATTENTION, DELETE_ATTENTION, or a
@@ -241,7 +246,7 @@ export function withEvents(
    */
   function commitWithEvents(action: DocumentAction): DocumentTransition {
     const prevState = baseStore.getSnapshot();
-    if (disposed) return { state: prevState, historyDropped: false };
+    if (disposed) return { state: prevState, historyDropped: null };
     // Inside a transaction the events join the open level, which the
     // outermost commit's slot delivers. Choose before committing: outside a
     // transaction the commit notifies store listeners, and one that opens a
