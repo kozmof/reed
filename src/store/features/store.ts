@@ -105,6 +105,10 @@ function createStoreOverState(
   // flag in a follow-up pass after its current listener snapshot completes.
   let notificationPending = false;
   const transaction = createTransactionManager();
+  // Eviction losses committed inside a transaction (see `recordCommit`), each
+  // with the depth that holds it. The outermost commit reports them, and a
+  // rollback discards those its level held, since it restores the history.
+  let deferredReports: { depth: number; readonly report: () => void }[] = [];
 
   /**
    * Replace internal state reference only when it changes.
@@ -367,7 +371,8 @@ function createStoreOverState(
   function commit(action: DocumentAction): DocumentTransition {
     if (disposed) return { state, historyDropped: false };
     const transition = reduceDocument(state, action);
-    recordCommit(action, state, transition.state);
+    const report = recordCommit(action, state, transition.state, transaction.isActive);
+    if (report !== null) deferredReports.push({ depth: transaction.depth, report });
     if (transition.state !== state) {
       setState(transition.state);
       if (!transaction.isActive) afterCommit();
@@ -425,7 +430,32 @@ function createStoreOverState(
       emergencyReset();
       throw e;
     }
-    if (result.isOutermost) afterCommit();
+    if (result.isOutermost) {
+      afterCommit();
+      reportDeferred();
+    } else {
+      // The enclosing level now holds what this one committed.
+      for (const entry of deferredReports) {
+        if (entry.depth > transaction.depth) entry.depth = transaction.depth;
+      }
+    }
+  }
+
+  /**
+   * Report the eviction losses the outermost transaction committed. The
+   * change has committed, so a report's error is reported, not thrown.
+   */
+  function reportDeferred(): void {
+    if (deferredReports.length === 0) return;
+    const reports = deferredReports;
+    deferredReports = [];
+    for (const { report } of reports) {
+      try {
+        report();
+      } catch (error) {
+        reportCaughtError(logger, "An eviction report threw after a transaction committed", error);
+      }
+    }
   }
 
   /**
@@ -436,6 +466,9 @@ function createStoreOverState(
   function rollbackTransaction(): void {
     if (disposed) return;
     const result = transaction.rollback();
+    if (deferredReports.length > 0) {
+      deferredReports = deferredReports.filter((entry) => entry.depth <= transaction.depth);
+    }
     if (result.snapshot) {
       setState(result.snapshot);
     }
@@ -465,6 +498,7 @@ function createStoreOverState(
   function emergencyReset(): DocumentState | null {
     if (disposed) return null;
     const earliest = transaction.emergencyReset();
+    deferredReports = [];
     if (earliest) {
       setState(earliest);
     }
@@ -486,6 +520,7 @@ function createStoreOverState(
     lineCache = new WeakMap();
     compactWorkspace = null;
     listeners = [];
+    deferredReports = [];
     rejectWhenReconciledWaiters(
       new Error("DocumentStore was disposed before reconciliation completed"),
     );

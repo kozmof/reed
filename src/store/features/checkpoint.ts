@@ -1367,7 +1367,7 @@ function migrate(source: Record<string, unknown>, version: number): Record<strin
     if (error instanceof CheckpointError) throw error;
     fail(
       "MALFORMED",
-      `checkpoint version ${version} could not be migrated: ${(error as Error).message}`,
+      `checkpoint version ${version} could not be migrated: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }

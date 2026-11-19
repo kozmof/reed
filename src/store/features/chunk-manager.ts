@@ -521,22 +521,23 @@ export function createChunkManager(
           // allows. Undo then stops short with no other sign, so say so.
           // A store listener the eviction notifies can edit too, so the store's
           // history afterwards need not be the eviction's alone. Compare the
-          // history the eviction itself left (see `dispatchEviction`).
-          const evicted = dispatchEviction(
+          // history the eviction itself left. Inside a transaction the report
+          // waits for the commit (see `dispatchEviction`).
+          dispatchEviction(
             store,
             before,
             DocumentActions.evictChunks(candidates, maxLoadedChunks),
+            (evicted) => {
+              const undoDropped = getUndoCount(evicted.from) - getUndoCount(evicted.to);
+              const redoDropped = getRedoCount(evicted.from) - getRedoCount(evicted.to);
+              logger?.warn?.(
+                `[ChunkManager] evicting chunks to stay within the memory limit (${maxLoadedChunks}) ` +
+                  `discarded ${undoDropped} undo and ${redoDropped} redo entries that pointed into them, ` +
+                  `under the "${evicted.to.evictionPolicy}" history eviction policy. ` +
+                  `Raise maxLoadedChunks, or use "pin" to keep history at the cost of memory.`,
+              );
+            },
           );
-          if (evicted.to !== evicted.from) {
-            const undoDropped = getUndoCount(evicted.from) - getUndoCount(evicted.to);
-            const redoDropped = getRedoCount(evicted.from) - getRedoCount(evicted.to);
-            logger?.warn?.(
-              `[ChunkManager] evicting chunks to stay within the memory limit (${maxLoadedChunks}) ` +
-                `discarded ${undoDropped} undo and ${redoDropped} redo entries that pointed into them, ` +
-                `under the "${evicted.to.evictionPolicy}" history eviction policy. ` +
-                `Raise maxLoadedChunks, or use "pin" to keep history at the cost of memory.`,
-            );
-          }
           if (disposed) return;
         }
         // Still over the limit, so every candidate was offered: those left,

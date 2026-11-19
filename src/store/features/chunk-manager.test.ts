@@ -691,6 +691,134 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
       expect(warn).not.toHaveBeenCalled();
       manager.dispose();
     });
+
+    it("does not count a listener's edit when a wrapper changes the action", async () => {
+      const store = fresh();
+      const warn = vi.fn();
+      // Repeating the chunks evicts the same ones, but no longer matches the
+      // action the manager built, so the store's own report is not used.
+      const wrapped: DocumentStore = {
+        ...store,
+        dispatch: (action) =>
+          store.dispatch(
+            action.type === "EVICT_CHUNKS"
+              ? { ...action, chunkIndices: [...action.chunkIndices, ...action.chunkIndices] }
+              : action,
+          ),
+      };
+      const manager = createChunkManager(wrapped, makeLoader(chunks), {
+        maxLoadedChunks: 2,
+        logger: { warn },
+      });
+      await manager.ensureLoaded(0);
+      pinChunk0(store);
+      await manager.ensureLoaded(1);
+      // The pass evicts chunk 1 at no cost to history while a listener types,
+      // which pushes an undo entry and clears the redo one.
+      let typed = false;
+      store.subscribe(() => {
+        if (typed || store.getSnapshot().pieceTable.chunkMap.has(1)) return;
+        typed = true;
+        store.dispatch(DocumentActions.insert(byteOffset(0), "Y"));
+      });
+      await manager.ensureLoaded(2);
+      expect(typed).toBe(true);
+      expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([0, 2]);
+      expect(warn).not.toHaveBeenCalled();
+      manager.dispose();
+    });
+
+    it("ignores the same eviction committed by another store", async () => {
+      const store = fresh();
+      // A mirror whose redo entries pin chunks 0 and 1, so evicting either
+      // there discards history.
+      const mirror = fresh();
+      for (const i of [0, 1, 2] as const) {
+        mirror.dispatch(DocumentActions.loadChunk(i, new TextEncoder().encode(chunks[i])));
+      }
+      mirror.dispatch(DocumentActions.insert(byteOffset(2), "X"));
+      mirror.dispatch(DocumentActions.insert(byteOffset(CHUNK_SIZE + 4), "Z"));
+      mirror.dispatch(DocumentActions.undo());
+      mirror.dispatch(DocumentActions.undo());
+      const mirrorHistory = mirror.getSnapshot().history;
+      const warn = vi.fn();
+      const wrapped: DocumentStore = {
+        ...store,
+        dispatch: (action) => {
+          if (action.type === "EVICT_CHUNKS" && action.keepHistory !== true) {
+            mirror.dispatch(action);
+          }
+          return store.dispatch(action);
+        },
+      };
+      const manager = createChunkManager(wrapped, makeLoader(chunks), {
+        maxLoadedChunks: 2,
+        logger: { warn },
+      });
+      await manager.ensureLoaded(0);
+      pinChunk0(store);
+      await manager.ensureLoaded(1);
+      // Here the pass evicts chunk 1 at no cost to history.
+      await manager.ensureLoaded(2);
+      expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([0, 2]);
+      expect(mirror.getSnapshot().history).not.toBe(mirrorHistory);
+      expect(warn).not.toHaveBeenCalled();
+      manager.dispose();
+    });
+  });
+
+  describe("inside a transaction", () => {
+    /** Load chunks 0-2 as active, with chunk 0 pinned by a redo entry. */
+    const overLimit = async () => {
+      const { store, manager, warn } = setup("pin-bounded");
+      await manager.ensureLoaded(0);
+      pinChunk0(store);
+      manager.setActiveChunks([0, 1, 2]);
+      await manager.ensureLoaded(1);
+      await manager.ensureLoaded(2);
+      warn.mockClear();
+      return { store, manager, warn };
+    };
+
+    it("does not report history a rollback restores", async () => {
+      const { store, manager, warn } = await overLimit();
+      store.beginTransaction();
+      manager.setActiveChunks([1, 2]);
+      expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
+      store.rollbackTransaction();
+      expect(getRedoCount(store.getSnapshot())).toBe(1);
+      expect(warn).not.toHaveBeenCalled();
+      manager.dispose();
+    });
+
+    it("reports the history discarded once the outermost transaction commits", async () => {
+      const { store, manager, warn } = await overLimit();
+      store.beginTransaction();
+      store.beginTransaction();
+      manager.setActiveChunks([1, 2]);
+      store.commitTransaction();
+      expect(warn).not.toHaveBeenCalled();
+      // A rollback of a later inner level keeps what the outer level holds.
+      store.beginTransaction();
+      store.rollbackTransaction();
+      store.commitTransaction();
+      expect(getRedoCount(store.getSnapshot())).toBe(0);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]![0]).toContain("discarded 0 undo and 1 redo entries");
+      manager.dispose();
+    });
+
+    it("does not report history an outer rollback restores", async () => {
+      const { store, manager, warn } = await overLimit();
+      store.beginTransaction();
+      store.beginTransaction();
+      manager.setActiveChunks([1, 2]);
+      store.commitTransaction();
+      store.rollbackTransaction();
+      expect(getRedoCount(store.getSnapshot())).toBe(1);
+      expect(warn).not.toHaveBeenCalled();
+      manager.dispose();
+    });
   });
 
   it("stops the pass when a listener disposes the manager during the eviction", async () => {

@@ -52,7 +52,12 @@ import {
 import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
 import { contentDecoder, decodeRun, utf8ByteLength } from "../core/encoding.js";
 import { NO_CHUNK, placementRuns } from "../core/chunk-anchor.js";
-import { codePointWindow, isSafeSplice, isSafeSplit } from "../core/utf8-seam.js";
+import {
+  codePointWindow,
+  isContinuationByte,
+  isSafeSplice,
+  isSafeSplit,
+} from "../core/utf8-seam.js";
 import type { FittedKey, KeyRun } from "../core/chunk-anchor.js";
 import {
   anchorAt,
@@ -418,7 +423,7 @@ interface DeletedRun {
  * split before such a byte decode, joined, as the whole does. Only runs a
  * continuation byte joins are decoded again, together.
  */
-export function deletedRuns(
+function deletedRuns(
   pieceTable: PieceTableState,
   runs: readonly KeyRun[],
 ): { readonly runs: DeletedRun[]; readonly text: string } {
@@ -440,7 +445,7 @@ export function deletedRuns(
   const parts: string[] = [];
   let first = 0;
   for (let i = 1; i <= runs.length; i++) {
-    if (i < runs.length && ((all[runs[i]!.start - base] ?? 0) & 0xc0) === 0x80) continue;
+    if (i < runs.length && isContinuationByte(all[runs[i]!.start - base] ?? 0)) continue;
     parts.push(
       i - first === 1
         ? deleted[first]!.text
