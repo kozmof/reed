@@ -28,7 +28,6 @@ import {
   reportCaughtError,
 } from "./diagnostics.js";
 import type { DocumentTransition } from "./reducer.js";
-import { attachEvictionTap, evictionTapOf } from "./eviction-report.js";
 
 /**
  * Wrap a store in the typed event layer. Shared by the config-built and
@@ -424,9 +423,5 @@ export function withEvents(
     removeEventListener,
     events: emitter,
   };
-  // Every action this store dispatches commits in the base store, which
-  // answers evictions awaited on it, so callers holding this store await there.
-  const tap = evictionTapOf(baseStore);
-  if (tap !== undefined) attachEvictionTap(store, tap);
   return store;
 }

@@ -465,7 +465,7 @@ function evictRange(
  * Each candidate's loss is measured once, and the selection is carried across
  * once, after the last eviction. The reducer reports nothing: the store
  * that commits the eviction tells a caller waiting on it what history it
- * discarded (see `EvictionTap` and `dispatchEviction`).
+ * discarded (see `claimEviction` and `dispatchEviction`).
  */
 export function evictChunks(state: DocumentState, action: EvictChunksAction): DocumentState {
   const { maxLoaded } = action;

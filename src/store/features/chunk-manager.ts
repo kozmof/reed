@@ -65,7 +65,13 @@ export interface ChunkManagerConfig {
    * - 'queue'     — serialise fetches one at a time (lower peak I/O)
    */
   fetchStrategy?: "parallel" | "queue";
-  /** Optional diagnostics sink. Omit to keep the manager silent. */
+  /**
+   * Optional diagnostics sink. Omit to keep the manager silent.
+   *
+   * The manager warns when an eviction discards undo history. A store Reed
+   * built reports that loss, also through a wrapper, as long as the wrapper's
+   * `getSnapshot` returns the state of the store it forwards to.
+   */
   logger?: Pick<ReedLogger, "warn">;
 }
 
@@ -520,16 +526,13 @@ export function createChunkManager(
           // Without keepHistory this pass may discard history, as the policy
           // allows. Undo then stops short with no other sign, so say so.
           // A store listener the eviction notifies can edit too, so the store's
-          // history afterwards need not be the eviction's alone. Compare the
-          // history the eviction itself left. Inside a transaction the report
-          // waits for the commit (see `dispatchEviction`). Measuring can cost
-          // a second reduction through a store Reed did not build, so without
-          // a logger the eviction is just dispatched.
-          const evict = DocumentActions.evictChunks(candidates, maxLoadedChunks);
-          if (logger?.warn === undefined) {
-            store.dispatch(evict);
-          } else {
-            dispatchEviction(store, before, evict, (evicted) => {
+          // history afterwards need not be the eviction's alone. The store
+          // that commits the eviction reports the history it left, and inside
+          // a transaction waits for the commit (see `dispatchEviction`).
+          dispatchEviction(
+            store,
+            DocumentActions.evictChunks(candidates, maxLoadedChunks),
+            (evicted) => {
               const undoDropped = getUndoCount(evicted.from) - getUndoCount(evicted.to);
               const redoDropped = getRedoCount(evicted.from) - getRedoCount(evicted.to);
               logger?.warn?.(
@@ -538,8 +541,8 @@ export function createChunkManager(
                   `under the "${evicted.to.evictionPolicy}" history eviction policy. ` +
                   `Raise maxLoadedChunks, or use "pin" to keep history at the cost of memory.`,
               );
-            });
-          }
+            },
+          );
           if (disposed) return;
         }
         // Still over the limit, so every candidate was offered: those left,
