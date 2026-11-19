@@ -854,7 +854,9 @@ function restoreSelection(
       }
       // null stands for no stored key. A key text at its offset could not
       // take is ignored, as it is on the live selection (see
-      // `SelectionRange.anchorAfterChunk`): remote edits do not move stored keys.
+      // `SelectionRange.anchorAfterChunk`). A captured selection's keys fit
+      // (see `captureSelection`), but a checkpoint built by hand or by an
+      // older version may store one that does not.
       const readKey = (index: 2 | 3): number | undefined => {
         const value = tuple[index];
         if (value === null || value === undefined) return undefined;

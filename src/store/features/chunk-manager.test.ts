@@ -579,6 +579,30 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     expect([...store.getSnapshot().pieceTable.chunkMap.keys()]).toEqual([2]);
     limited.dispose();
   });
+  it("reports only the history the eviction discards when a listener edits as it evicts", async () => {
+    const { store, manager, warn } = setup("pin-bounded");
+    await manager.ensureLoaded(0);
+    pinChunk0(store);
+    manager.setActiveChunks([1, 2]);
+    await manager.ensureLoaded(1);
+    // Evicting chunk 0 discards the redo entry; typing then pushes an undo
+    // entry, which the warning must not count against the eviction.
+    let typed = false;
+    store.subscribe(() => {
+      if (typed || store.getSnapshot().pieceTable.chunkMap.has(0)) return;
+      typed = true;
+      store.dispatch(DocumentActions.insert(byteOffset(0), "Y"));
+    });
+    await manager.ensureLoaded(2);
+
+    expect(typed).toBe(true);
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
+    expect(getUndoCount(store.getSnapshot())).toBe(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toContain("discarded 0 undo and 1 redo entries");
+    manager.dispose();
+  });
+
   it("does not report history discarded for an edit a listener makes while the pass evicts", async () => {
     const { store, manager, warn } = setup("pin-bounded");
     await manager.ensureLoaded(0);
