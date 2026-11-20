@@ -42,6 +42,7 @@ import {
   evictionWarnSinkFor,
   MAX_OBSERVER_REENTRANT_STEPS,
   reportCaughtError,
+  warnSafely,
   type WarnSink,
 } from "./diagnostics.js";
 import { withEvents } from "./event-store.js";
@@ -506,11 +507,7 @@ function createStoreOverState(
    */
   function logWarnings(warnings: readonly EvictionWarning[]): void {
     for (const { message, sink } of warnings) {
-      try {
-        sink.warn?.(message);
-      } catch (error) {
-        reportCaughtError(sink, "The logger threw after an eviction committed", error);
-      }
+      warnSafely(sink, message, "The logger threw after an eviction committed");
     }
   }
 

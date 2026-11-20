@@ -7,7 +7,12 @@
  * the chunk lifecycle a focused test boundary.
  */
 
-import type { DocumentState, LineIndexState, PieceNode } from "../../types/state.js";
+import type {
+  DocumentState,
+  LineIndexState,
+  PieceNode,
+  SelectionState,
+} from "../../types/state.js";
 import { pstackSize } from "../../types/state.js";
 import type {
   DeclareChunkMetadataAction,
@@ -27,6 +32,7 @@ import {
 } from "../core/piece-table.js";
 import { hasAttentionForPiece } from "../core/attention.js";
 import { deriveLoadedChunks, keySpan } from "../core/chunk-anchor.js";
+import { lowerBound } from "../core/binary-search.js";
 import {
   carrySelectionAcrossChunks,
   historyForEviction,
@@ -246,12 +252,16 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
   let pieceTable = state.pieceTable;
   let lineIndex = state.lineIndex;
   let unloadedLineCount = state.lineIndex.unloadedLineCount;
+  // Where the lowest chunk goes, in the text before the load. The chunks go
+  // in ascending order, so every other one lands after it.
+  let firstInsertion: ByteOffset | null = null;
 
   for (const chunk of prepared) {
     // Before the first piece whose key is >= the chunk index: the first piece
     // of a higher chunk, or text recorded as lying after the chunk. For the
     // next chunk in order every key is below it, so that is the end.
     const insertionPos = byteOffset(keySpan(root, chunk.chunkIndex).start);
+    firstInsertion ??= insertionPos;
     const id = pieceID(`p${nextPieceID++}`);
     root = insertChunkPieceAt(root, insertionPos, chunk.chunkIndex, chunk.data.length, id);
     summarizeBytes(chunk.data); // Prepare reusable decoder summaries once during loading.
@@ -297,9 +307,25 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
     revision: state.revision + prepared.length,
     pieceTable,
     lineIndex,
-    // Keep the cursor on the same text, as history positions are kept.
-    selection: carrySelectionAcrossChunks(state.pieceTable, pieceTable, state.selection),
+    // Keep the cursor on the same text, as history positions are kept. A
+    // selection wholly before every loaded chunk cannot move, which is the
+    // usual case while chunks stream in at the end, so it skips the carry.
+    selection:
+      state.pieceTable.nextExpectedChunk !== 0 &&
+      firstInsertion !== null &&
+      selectionEndsBefore(state.selection, firstInsertion)
+        ? state.selection
+        : carrySelectionAcrossChunks(state.pieceTable, pieceTable, state.selection),
   });
+}
+
+/**
+ * True when every endpoint of `selection` lies before `offset`. Text inserted
+ * at `offset` or later leaves such endpoints, and the pieces and chunk keys
+ * around them, unchanged, so carrying the selection would return it as is.
+ */
+function selectionEndsBefore(selection: SelectionState, offset: ByteOffset): boolean {
+  return selection.ranges.every((range) => range.anchor < offset && range.head < offset);
 }
 
 type EvictableRange = { readonly start: ByteOffset; readonly end: ByteOffset } | null;
@@ -411,13 +437,7 @@ export function chunksMovedByLoads(
   const above = loaded.map(() => Infinity);
   for (const chunk of chunkMap.keys()) {
     // The first chunk loaded since that lies above `chunk`.
-    let lo = 0;
-    let hi = loaded.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (loaded[mid]! > chunk) hi = mid;
-      else lo = mid + 1;
-    }
+    const lo = lowerBound(loaded, chunk + 1);
     if (lo < loaded.length) below[lo] = Math.max(below[lo]!, chunk);
     const under = loaded[lo - 1] === chunk ? lo - 2 : lo - 1;
     if (under >= 0) above[under] = Math.min(above[under]!, chunk);

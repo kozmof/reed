@@ -49,7 +49,10 @@ export {
   pieceTableInsert,
   pieceTableDelete,
   getValue,
+  // getText keeps a byte order mark at offset 0, as the line index counts it;
+  // getPresentedText strips it, as getValue does.
   getText,
+  getPresentedText,
   getLength,
   getValueStream,
   findPieceAtPosition,

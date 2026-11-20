@@ -237,6 +237,30 @@ describe("ChunkManager LRU eviction", () => {
     manager.dispose();
   });
 
+  it("reports a throwing pressure warning through error, keeping the load", async () => {
+    const store = createDocumentStore({ chunkSize: CHUNK_SIZE, totalFileSize: CHUNK_SIZE * 3 });
+    const loader = makeLoader({ 0: "aaaabbbb", 1: "bbbbcccc", 2: "ccccdddd" });
+    const failure = new Error("warn failed");
+    const warn = vi.fn(() => {
+      throw failure;
+    });
+    const error = vi.fn();
+    const manager = createChunkManager(store, loader, {
+      maxLoadedChunks: 1,
+      logger: { warn, error },
+    });
+    manager.setActiveChunks([0, 1]);
+    await manager.ensureLoaded(0);
+    // Pinned chunks keep the cache over the limit, so the manager warns.
+    await expect(manager.ensureLoaded(1)).resolves.toBeUndefined();
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(2);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("eviction pressure"));
+    expect(error).toHaveBeenCalledWith(expect.any(String), failure);
+    // A pass that shrinks the active set returns normally too.
+    expect(() => manager.setActiveChunks([1])).not.toThrow();
+    manager.dispose();
+  });
+
   it("re-applies eviction pressure when the active chunk set shrinks", async () => {
     const store = createDocumentStore({ chunkSize: CHUNK_SIZE, totalFileSize: CHUNK_SIZE * 3 });
     const loader = makeLoader({ 0: "aaaabbbb", 1: "bbbbcccc", 2: "ccccdddd" });
@@ -1293,8 +1317,8 @@ describe("ChunkManager eviction transition", () => {
     // Unpinning puts all three over the limit of one.
     manager.setActiveChunks([]);
     const evictions = dispatch.mock.calls.filter(([action]) => action.type.startsWith("EVICT"));
-    // Two must go, and the two least recently used cost no history.
-    expect(evictions).toEqual([[DocumentActions.evictChunks([0, 1], 1, true)]]);
+    // Every unpinned chunk is offered; the reducer stops once two have gone.
+    expect(evictions).toEqual([[DocumentActions.evictChunks([0, 1, 2], 1)]]);
     expect([...store.getSnapshot().pieceTable.chunkMap.keys()]).toEqual([2]);
     manager.dispose();
   });
@@ -1704,7 +1728,7 @@ it.each([0, -1, NaN, 1.5, Infinity])(
 );
 
 describe("ChunkManager eviction after another path evicted a chunk", () => {
-  it("does not spend the first pass on a chunk that is already gone", async () => {
+  it("does not offer a chunk that is already gone", async () => {
     const store = createDocumentStore({ chunkSize: CHUNK_SIZE, totalFileSize: CHUNK_SIZE * 4 });
     const chunks = { 0: "aaaaaaa\n", 1: "bbbbbbb\n", 2: "ccccccc\n", 3: "ddddddd\n" };
     const manager = createChunkManager(store, makeLoader(chunks), { maxLoadedChunks: 2 });
@@ -1715,7 +1739,7 @@ describe("ChunkManager eviction after another path evicted a chunk", () => {
     const dispatch = vi.spyOn(store, "dispatch");
     manager.setActiveChunks([]);
     const evictions = dispatch.mock.calls.filter(([action]) => action.type.startsWith("EVICT"));
-    expect(evictions).toEqual([[DocumentActions.evictChunks([1], 2, true)]]);
+    expect(evictions).toEqual([[DocumentActions.evictChunks([1, 2, 3], 2)]]);
     expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([2, 3]);
     manager.dispose();
   });

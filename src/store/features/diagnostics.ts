@@ -141,6 +141,25 @@ export function reportCaughtError(
 }
 
 /**
+ * Warn through `sink`, reporting a throw from `warn` through `sink.error`, or
+ * globally when it has none, instead of letting it escape. For warnings about
+ * work that has already happened, which a logger's failure must not undo or
+ * interrupt.
+ */
+export function warnSafely(
+  sink: WarnSink | undefined,
+  message: string,
+  failureMessage: string,
+): void {
+  if (sink?.warn === undefined) return;
+  try {
+    sink.warn(message);
+  } catch (error) {
+    reportCaughtError(sink, failureMessage, error);
+  }
+}
+
+/**
  * The message of a caught value, for a message of our own. Anything can be
  * thrown, so a value that is not an Error is named by `String`.
  */

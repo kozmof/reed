@@ -20,7 +20,7 @@ import {
   chunksMovedByLoads,
   hasAttentionAnchoredToChunk,
 } from "./chunk-actions.js";
-import { withEvictionWarnSink } from "./diagnostics.js";
+import { warnSafely, withEvictionWarnSink } from "./diagnostics.js";
 
 // =============================================================================
 // Public interfaces
@@ -395,8 +395,7 @@ export function createChunkManager(
         ? chunkIndex === protectedChunkIndices
         : protectedChunkIndices?.has(chunkIndex) === true;
     const start = store.getSnapshot();
-    const resident = start.pieceTable.chunkMap;
-    const excess = resident.size - maxLoadedChunks;
+    const excess = start.pieceTable.chunkMap.size - maxLoadedChunks;
 
     // Bring `stuck` and `chunkMemo` up to `state`: drop each when history or
     // attention changed, and their entries for chunks loads may have moved
@@ -437,73 +436,71 @@ export function createChunkManager(
       base = chunkMap;
     };
 
-    if (excess > 0) {
-      catchUp(start);
+    // Usually one eviction, and at most two: see the retry below.
+    for (let state = start, retried = false; excess > 0; ) {
+      catchUp(state);
       // Least recently used first: chunks the manager may evict that are still
       // in memory. Pinned chunks and the chunks just loaded for the caller
-      // stay. The reducer chooses among them (see EVICT_CHUNKS): every chunk
-      // whose eviction costs no history first, then as the policy allows.
-      const evictable = (chunkIndex: number) =>
-        !activeChunks.has(chunkIndex) &&
-        !isProtected(chunkIndex) &&
-        stuck?.chunks.has(chunkIndex) !== true;
-      // Usually the least recently used chunks cost no history, so try just
-      // as many as must go, evicting only those that cost none. That is what
-      // the full pass would evict first, so offering every candidate only
-      // when this falls short chooses the same chunks.
-      const head: number[] = [];
+      // stay. The reducer chooses among them in one transition (see
+      // EVICT_CHUNKS): every chunk whose eviction costs no history first, then
+      // as the policy allows. It stops once the limit is met, so when the
+      // least recently used chunks cost no history it measures only as many
+      // as must go.
+      const { chunkMap: resident } = state.pieceTable;
+      const candidates: number[] = [];
+      let skippedStuck = false;
       for (const candidate of lruOrder) {
-        if (head.length === excess) break;
-        // lruOrder can still list chunks another path evicted; skip them so
-        // they do not take slots from chunks this pass could evict.
-        if (evictable(candidate) && resident.has(candidate)) head.push(candidate);
+        // lruOrder can still list chunks another path evicted; skip them.
+        if (!resident.has(candidate) || activeChunks.has(candidate) || isProtected(candidate)) {
+          continue;
+        }
+        if (stuck?.chunks.has(candidate) === true) skippedStuck = true;
+        else candidates.push(candidate);
       }
-      if (head.length > 0) {
-        store.dispatch(DocumentActions.evictChunks(head, maxLoadedChunks, true));
+      if (candidates.length > 0) {
+        // The eviction may discard history, as the policy allows. The store
+        // that commits it warns of that through its logger, or without one
+        // through this manager's (see `withEvictionWarnSink`), and a store
+        // with events fires `history-drop`.
+        withEvictionWarnSink(logger, state.pieceTable, () =>
+          store.dispatch(DocumentActions.evictChunks(candidates, maxLoadedChunks)),
+        );
         // A listener the eviction notified may have disposed the manager.
         if (disposed) return;
       }
-      const before = store.getSnapshot();
-      // A store listener can dispatch while the eviction notifies it, so check
-      // the skipped chunks again against the state the full pass starts from.
-      // The eviction itself keeps history and attention, and only evicts.
-      catchUp(before);
-      const remaining = before.pieceTable.chunkMap;
-      if (remaining.size > maxLoadedChunks) {
-        const candidates: number[] = [];
-        for (const candidate of lruOrder) {
-          if (evictable(candidate) && remaining.has(candidate)) candidates.push(candidate);
-        }
-        if (candidates.length > 0) {
-          // Without keepHistory this pass may discard history, as the policy
-          // allows. The store that commits the eviction warns of that through
-          // its logger, or without one through this manager's (see
-          // `withEvictionWarnSink`), and a store with events fires `history-drop`.
-          withEvictionWarnSink(logger, before.pieceTable, () =>
-            store.dispatch(DocumentActions.evictChunks(candidates, maxLoadedChunks)),
-          );
-          if (disposed) return;
-        }
-        // Still over the limit, so every candidate was offered: those left,
-        // and the known ones skipped, cannot go in the state they were
-        // measured in, `before`. That holds only while history and attention
-        // are the ones `before` had, which `catchUp` checks before they are
-        // used: when the pass discarded history, or a listener changed either
-        // while the pass notified it, nothing is kept.
-        const left = store.getSnapshot().pieceTable.chunkMap;
-        if (left.size > maxLoadedChunks) {
-          const chunks = new Set<number>();
-          for (const chunk of stuck?.chunks ?? []) if (left.has(chunk)) chunks.add(chunk);
-          for (const chunk of candidates) if (left.has(chunk)) chunks.add(chunk);
-          stuck = {
-            history: before.history,
-            attention: before.attention,
-            chunks,
-          };
-        } else {
-          stuck = null;
-        }
+      const after = store.getSnapshot();
+      const left = after.pieceTable.chunkMap;
+      if (left.size <= maxLoadedChunks) {
+        stuck = null;
+        break;
       }
+      // The eviction discarded history, or a listener it notified changed
+      // history or attention, which may have freed the chunks skipped as
+      // stuck. Offer them once more, against the state now.
+      if (
+        skippedStuck &&
+        !retried &&
+        (after.history !== state.history || after.attention !== state.attention)
+      ) {
+        retried = true;
+        state = after;
+        continue;
+      }
+      // Still over the limit, so every candidate was offered: those left, and
+      // the known ones skipped, cannot go in the state they were measured in,
+      // `state`. That holds only while history and attention are the ones
+      // `state` had, which `catchUp` checks before they are used: when the
+      // pass discarded history, or a listener changed either while the pass
+      // notified it, nothing is kept.
+      const chunks = new Set<number>();
+      for (const chunk of stuck?.chunks ?? []) if (left.has(chunk)) chunks.add(chunk);
+      for (const chunk of candidates) if (left.has(chunk)) chunks.add(chunk);
+      stuck = {
+        history: state.history,
+        attention: state.attention,
+        chunks,
+      };
+      break;
     }
 
     // Forget chunks no longer in memory, evicted here or by another path. The
@@ -576,14 +573,18 @@ export function createChunkManager(
       );
       // The hint names history, so it needs a chunk history may be keeping:
       // one refused eviction, or an anchored one history would keep.
-      logger?.warn?.(
-        `[ChunkManager] eviction pressure: ${loadedCount} chunks loaded, over the memory ` +
+      // The chunk that brought the cache over the limit has loaded, so a
+      // throwing logger is reported, not thrown to the caller.
+      warnSafely(
+        logger,
+        `[ChunkManager] eviction pressure:${loadedCount} chunks loaded, over the memory ` +
           `limit (${maxLoadedChunks}), and none can be evicted: ${reasons.join("; ")}.` +
           ((counts.has("held") || anchoredHeldByHistory) &&
           store.getSnapshot().history.evictionPolicy === "pin"
             ? ` The "pin" history eviction policy keeps chunks undo history points into; ` +
               `"pin-bounded" or "drop" lets eviction discard that history.`
             : ""),
+        "The ChunkManager logger threw while warning of eviction pressure",
       );
     }
 

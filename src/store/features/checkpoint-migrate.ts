@@ -20,6 +20,7 @@
  */
 
 import { CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
+import { lowerBound } from "../core/binary-search.js";
 import { base64DecodedLength, decodeBase64, encodeBase64 } from "../core/base64.js";
 import type { GapSide, KeyRun } from "../core/chunk-anchor.js";
 import {
@@ -270,18 +271,6 @@ interface LostBytes {
   readonly from: number;
   readonly to: number;
   readonly fromEnd: boolean;
-}
-
-/** Index of the first of ascending `values` that is at least `min`. */
-function lowerBound(values: readonly number[], min: number): number {
-  let low = 0;
-  let high = values.length;
-  while (low < high) {
-    const mid = (low + high) >>> 1;
-    if (values[mid]! < min) low = mid + 1;
-    else high = mid;
-  }
-  return low;
 }
 
 /**

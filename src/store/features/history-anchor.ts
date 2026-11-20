@@ -35,6 +35,7 @@ import {
   toAnchoredOffset,
   toResidentOffset,
 } from "../core/chunk-anchor.js";
+import { partitionPoint } from "../core/binary-search.js";
 import { getBytes, isUtf8Boundary } from "../core/piece-table.js";
 import { isContinuationByte } from "../core/encoding.js";
 import { MAX_CONTINUATION_BYTES } from "../core/utf8-seam.js";
@@ -621,14 +622,7 @@ export class RemoteBatchSelection {
 
   /** First sorted position whose offset is at least `offset`. */
   #lowerBound(offset: number): number {
-    let lo = 0;
-    let hi = this.#order.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (this.#offsetAt(mid) < offset) lo = mid + 1;
-      else hi = mid;
-    }
-    return lo;
+    return partitionPoint(this.#order.length, (position) => this.#offsetAt(position) < offset);
   }
 
   /** Add `delta` to the offset at every sorted position from `from` on. */
@@ -1079,9 +1073,8 @@ interface EvictionCuts {
 }
 
 // The same history is often measured against the same chunk more than once:
-// ChunkManager offers a candidate to its keepHistory pass and then to its full
-// pass (EVICT_CHUNKS), and offers a refused candidate again once a load next to
-// it may have freed it. The cuts depend only on the history, the chunk, and
+// EVICT_CHUNKS measures a candidate and then evicts it, and ChunkManager
+// offers a refused candidate again once a load next to it may have freed it. The cuts depend only on the history, the chunk, and
 // the chunk's anchored start. Loading or evicting other chunks leaves the
 // anchored start unchanged, and every edit, undo, and redo replaces the
 // history object, so the cuts are kept per history object.
