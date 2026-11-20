@@ -763,28 +763,46 @@ export function nextBoundary(
   forwardOnly = false,
 ): number {
   if (isUtf8Boundary(pieceTable, byteOffset(offset))) return offset;
-  // `offset` is inside the document, on a continuation byte.
+  // `offset` is inside the document, on a continuation byte. Read as far on
+  // each side as leftovers can reach, which tells whether the run is short
+  // enough to be leftovers.
   const total = pieceTable.totalLength;
-  const leftovers = getBytes(
-    pieceTable,
-    byteOffset(offset + 1),
-    byteOffset(offset + 1 + MAX_CONTINUATION_BYTES),
-  );
-  for (let i = 0; i < leftovers.length; i++) {
-    if (!isContinuationByte(leftovers[i]!)) return offset + 1 + i;
-  }
-  // The end of the document came within leftover reach. A full window of
-  // continuation bytes that ends right at the end is a longer run, so it falls
-  // through and moves to the nearer end like any other run.
-  if (leftovers.length < MAX_CONTINUATION_BYTES) return total;
-
-  // Scan both ways until the nearer end of the run is known. `ahead` is the
-  // first position not yet read after `offset`, `behind` the first byte read
-  // before it. Every byte read so far is a continuation byte.
-  let ahead = offset + 1 + MAX_CONTINUATION_BYTES;
-  let behind = offset;
+  const from = Math.max(0, offset - MAX_CONTINUATION_BYTES);
+  const to = Math.min(total, offset + 1 + MAX_CONTINUATION_BYTES);
+  const window = getBytes(pieceTable, byteOffset(from), byteOffset(to));
+  // `after` is the first boundary after `offset` and `before` the last one
+  // before it, once found. `runStart` is the first continuation byte of the
+  // run. `ahead` is the first position not yet read after `offset`, `behind`
+  // the first byte read before it. Every byte read between the ends found so
+  // far is a continuation byte.
+  let ahead = to;
+  let behind = from;
   let after: number | undefined;
   let before: number | undefined;
+  let runStart: number | undefined;
+  for (let p = offset + 1; p < to; p++) {
+    if (!isContinuationByte(window[p - from]!)) {
+      after = p;
+      break;
+    }
+  }
+  if (after === undefined && to === total) after = total;
+  for (let p = offset - 1; p >= from; p--) {
+    if (!isContinuationByte(window[p - from]!)) {
+      before = p;
+      runStart = p + 1;
+      break;
+    }
+  }
+  if (before === undefined && from === 0) before = runStart = 0;
+  if (after !== undefined) {
+    if (forwardOnly) return after;
+    // Leftovers: the whole run lies inside the window. A run with an end
+    // outside it is longer than leftovers can be.
+    if (runStart !== undefined && after - runStart <= MAX_CONTINUATION_BYTES) return after;
+  }
+
+  // Scan on until the nearer end of the run is known.
   for (;;) {
     if (after === undefined) {
       const block = getBytes(pieceTable, byteOffset(ahead), byteOffset(ahead + SCAN_BLOCK));
@@ -797,12 +815,12 @@ export function nextBoundary(
       continue;
     }
     if (before === undefined) {
-      const from = Math.max(0, behind - SCAN_BLOCK);
-      const block = getBytes(pieceTable, byteOffset(from), byteOffset(behind));
+      const start = Math.max(0, behind - SCAN_BLOCK);
+      const block = getBytes(pieceTable, byteOffset(start), byteOffset(behind));
       let i = block.length - 1;
       while (i >= 0 && isContinuationByte(block[i]!)) i--;
-      if (i >= 0) before = from + i;
-      else if ((behind = from) === 0) before = 0;
+      if (i >= 0) before = start + i;
+      else if ((behind = start) === 0) before = 0;
     }
     // An end not found yet is at least as far as the bytes read on its side.
     const afterDistance = after !== undefined ? after - offset : ahead - offset;
@@ -1086,13 +1104,13 @@ interface EvictionCuts {
 }
 
 // The same history is often measured against the same chunk more than once:
-// EVICT_CHUNKS measures a candidate and then evicts it, and ChunkManager
-// offers a candidate to its keepHistory pass and then to its full pass, and
-// offers a refused candidate again on every pass while the cache stays over
-// its limit. The cuts depend only on the history, the chunk, and the chunk's
-// anchored start. Loading or evicting other chunks leaves the anchored start
-// unchanged, and every edit, undo, and redo replaces the history object, so
-// the cuts are kept per history object.
+// EVICT_CHUNKS measures a candidate and then evicts it, and while history
+// keeps the cache over its limit, ChunkManager offers the chunks it keeps
+// again after every load (it skips them only while the document is unchanged
+// since they were refused). The cuts depend only on the history, the chunk,
+// and the chunk's anchored start. Loading or evicting other chunks leaves the
+// anchored start unchanged, and every edit, undo, and redo replaces the
+// history object, so the cuts are kept per history object.
 const evictionCutCache = new WeakMap<HistoryState, Map<number, EvictionCuts>>();
 
 function evictionCuts(history: HistoryState, chunkIndex: number, anchoredStart: number) {

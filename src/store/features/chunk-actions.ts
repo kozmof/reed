@@ -27,7 +27,6 @@ import {
 } from "../core/piece-table.js";
 import { hasAttentionForPiece } from "../core/attention.js";
 import { deriveLoadedChunks, keySpan } from "../core/chunk-anchor.js";
-import { lowerBound } from "../core/binary-search.js";
 import {
   carrySelectionAcrossChunks,
   rangeEndsBefore,
@@ -132,11 +131,63 @@ function hasAddPieceTouchingRange(
   );
 }
 
-export function hasAttentionAnchoredToChunk(state: DocumentState, chunkIndex: number): boolean {
-  if (state.attention.attentions.size === 0) return false;
-  return visitChunk(state.pieceTable.root, chunkIndex, (node) =>
-    hasAttentionForPiece(state.attention, node.id),
+const NO_CHUNKS: readonly number[] = Object.freeze([]);
+
+// For each attention layer, the chunks an attention is anchored to under each
+// piece node. Immutable subtrees keep their entry across loads, evictions, and
+// edits, so a new root costs O(log n) merges of these short lists, and the
+// whole tree is walked once per attention layer.
+const anchoredChunkCache = new WeakMap<
+  DocumentState["attention"],
+  WeakMap<PieceNode, readonly number[]>
+>();
+
+/** Sorted union of `a`, `b`, and `extra` when given. */
+function mergeChunks(
+  a: readonly number[],
+  b: readonly number[],
+  extra?: number,
+): readonly number[] {
+  if (extra === undefined) {
+    if (b.length === 0) return a;
+    if (a.length === 0) return b;
+  }
+  const merged = new Set([...a, ...b]);
+  if (extra !== undefined) merged.add(extra);
+  return Object.freeze([...merged].sort((x, y) => x - y));
+}
+
+function anchoredChunksUnder(
+  node: PieceNode | null,
+  attention: DocumentState["attention"],
+  byNode: WeakMap<PieceNode, readonly number[]>,
+): readonly number[] {
+  if (!node) return NO_CHUNKS;
+  const cached = byNode.get(node);
+  if (cached !== undefined) return cached;
+  const own =
+    node.bufferType === "chunk" && hasAttentionForPiece(attention, node.id)
+      ? node.chunkIndex
+      : undefined;
+  const chunks = mergeChunks(
+    anchoredChunksUnder(node.left, attention, byNode),
+    anchoredChunksUnder(node.right, attention, byNode),
+    own,
   );
+  byNode.set(node, chunks);
+  return chunks;
+}
+
+/** Whether an attention is anchored to a piece of chunk `chunkIndex`. */
+export function hasAttentionAnchoredToChunk(state: DocumentState, chunkIndex: number): boolean {
+  const { attention } = state;
+  if (attention.attentions.size === 0) return false;
+  let byNode = anchoredChunkCache.get(attention);
+  if (byNode === undefined) {
+    byNode = new WeakMap();
+    anchoredChunkCache.set(attention, byNode);
+  }
+  return anchoredChunksUnder(state.pieceTable.root, attention, byNode).includes(chunkIndex);
 }
 
 export function declareChunkMetadata(
@@ -322,15 +373,17 @@ type EvictableRange = { readonly start: ByteOffset; readonly end: ByteOffset } |
  * or edits have split or touched it.
  */
 function evictableRange(state: DocumentState, chunkIndex: number): EvictableRange {
-  // The map lookup first: a chunk not loaded skips the attention walk.
-  if (!state.pieceTable.chunkMap.has(chunkIndex)) return null;
-  if (hasAttentionAnchoredToChunk(state, chunkIndex)) return null;
-  return uneditedRange(state, chunkIndex);
+  const range = uneditedRange(state, chunkIndex);
+  return range === null || hasAttentionAnchoredToChunk(state, chunkIndex) ? null : range;
 }
 
 /**
  * The resident range of `chunkIndex` when no edit has split or touched it,
  * else null, attentions aside.
+ *
+ * O(k + log n) for a chunk in k pieces. The walk stops at the first piece out
+ * of place, so a chunk edits have split costs about as little as one they
+ * have not.
  */
 function uneditedRange(state: DocumentState, chunkIndex: number): EvictableRange {
   const chunkBytes = state.pieceTable.chunkMap.get(chunkIndex);
@@ -376,62 +429,6 @@ export function evictionCandidate(
   if (range === null) return null;
   const loss = historyLossForEviction(state.pieceTable, state.history, chunkIndex, range.start);
   return { range, loss };
-}
-
-type ChunkMap = DocumentState["pieceTable"]["chunkMap"];
-
-/**
- * The resident chunks of `chunkMap` whose standing against edits may differ
- * from when `previous` was the chunk map, history and attention unchanged.
- *
- * What keeps a chunk resident is history pointing inside it, an attention
- * anchored to it, or edits splitting or touching it (see
- * `evictionCandidate` and `chunkHoldReason`). Every edit, undo, redo, and history clear replaces
- * the history object, and every attention change the attention object. So
- * while both are unchanged, the text has changed only by chunks loaded or
- * evicted, which leave what history points inside a chunk, and the
- * attentions anchored to it, as they were. Evicting a chunk only brings text
- * together, and a chunk no edit touches has no add piece beside it to bring
- * to its neighbours. Loading one puts its text between the loaded chunks on
- * either side, which can part one of them from an add piece that touched it.
- * So the chunks returned are each chunk loaded since and the nearest resident
- * chunk below and above it.
- *
- * It lives beside `evictionCandidate` because it holds only while the rules
- * there do: a new reason to keep a chunk resident must keep it true, or callers
- * that cache which chunks cannot go (ChunkManager) miss chunks freed since.
- *
- * `previous` can be just the indices of the chunks then resident, which keeps
- * no chunk bytes in memory. Every load and eviction replaces the chunk map, so
- * when `previous` is `chunkMap` itself this costs O(1). Otherwise finding the
- * chunks loaded since costs O(L) for L resident chunks, and finding their
- * neighbours O(L log k) more for k of them.
- */
-export function chunksMovedByLoads(
-  previous: ChunkMap | ReadonlySet<number>,
-  chunkMap: ChunkMap,
-): ReadonlySet<number> {
-  const moved = new Set<number>();
-  if (chunkMap === previous) return moved;
-  const loaded: number[] = [];
-  for (const chunk of chunkMap.keys()) if (!previous.has(chunk)) loaded.push(chunk);
-  if (loaded.length === 0) return moved;
-  loaded.sort((a, b) => a - b);
-  // The nearest resident chunk below and above each one loaded since. A chunk
-  // with one loaded since between it and another is not the other's nearest.
-  const below = loaded.map(() => -Infinity);
-  const above = loaded.map(() => Infinity);
-  for (const chunk of chunkMap.keys()) {
-    // The first chunk loaded since that lies above `chunk`.
-    const lo = lowerBound(loaded, chunk + 1);
-    if (lo < loaded.length) below[lo] = Math.max(below[lo]!, chunk);
-    const under = loaded[lo - 1] === chunk ? lo - 2 : lo - 1;
-    if (under >= 0) above[under] = Math.min(above[under]!, chunk);
-  }
-  for (const chunk of loaded) moved.add(chunk);
-  for (const chunk of below) if (chunk !== -Infinity) moved.add(chunk);
-  for (const chunk of above) if (chunk !== Infinity) moved.add(chunk);
-  return moved;
 }
 
 export function evictChunk(state: DocumentState, action: EvictChunkAction): DocumentState {
@@ -527,8 +524,7 @@ function evictRange(
  * under `"pin"`: `"drop"` takes them in the order given, and `"pin-bounded"`
  * takes the one that discards the fewest entries each time, which keeps as
  * much undo as the limit allows, with ties going to the earlier candidate
- * (see `createFewestLossQueue`). With `keepHistory`, it stops after the first
- * pass.
+ * (see `createFewestLossQueue`).
  *
  * Each candidate's loss is measured once, and the selection is carried across
  * once, after the last eviction. `reduceDocument` reports the history it
@@ -538,18 +534,25 @@ export function evictChunks(state: DocumentState, action: EvictChunksAction): Do
   const { maxLoaded } = action;
   let next = state;
   const overLimit = () => next.pieceTable.chunkMap.size > maxLoaded;
+  // History never decides under "pin", so only the other policies collect
+  // the candidates whose eviction discards some. A chunk listed twice is
+  // collected once; once evicted, it is no longer a candidate.
+  const policy = state.history.evictionPolicy;
   const lossy: { readonly chunk: number; readonly loss: EvictionHistoryLoss }[] = [];
-  for (const chunk of new Set(action.chunkIndices)) {
+  const collected = policy === "pin" ? null : new Set<number>();
+  for (const chunk of action.chunkIndices) {
     if (!overLimit()) break;
     const candidate = evictionCandidate(next, chunk);
     if (candidate === null) continue;
     const { range, loss } = candidate;
     if (totalLoss(loss) === 0) next = evictRange(next, chunk, range, next.history);
-    else lossy.push({ chunk, loss });
+    else if (collected !== null && !collected.has(chunk)) {
+      collected.add(chunk);
+      lossy.push({ chunk, loss });
+    }
   }
 
-  const policy = next.history.evictionPolicy;
-  if (action.keepHistory !== true && policy !== "pin" && lossy.length > 0) {
+  if (lossy.length > 0) {
     // Evicting other chunks moved each candidate, so tryEvict reads its range
     // again. They cannot have made it unevictable: eviction adds no edits or
     // attention. Should it be refused anyway, no history was dropped, so the

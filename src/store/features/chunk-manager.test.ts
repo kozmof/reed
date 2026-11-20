@@ -450,7 +450,7 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     await manager.ensureLoadedMany([0, 1, 2]);
     expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]![0]).toContain("3 just loaded for the current request");
+    expect(warn.mock.calls[0]![0]).toContain("3 requested by the current call");
     expect(warn.mock.calls[0]![0]).not.toContain("undo history");
 
     // Still over the limit, now because history holds chunk 0 and the others
@@ -560,6 +560,77 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     store.dispatch(DocumentActions.historyClear());
     manager.setActiveChunks([1, 2]);
     expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
+    manager.dispose();
+  });
+
+  it("evicts chunks freed since the last fetch when asked for a resident chunk", async () => {
+    const { store, manager } = setup("pin");
+    await manager.ensureLoaded(0);
+    pinChunk0(store);
+    manager.setActiveChunks([1, 2]);
+    await manager.ensureLoaded(1);
+    await manager.ensureLoaded(2);
+    manager.setActiveChunks([]);
+    // History pins chunk 0, and chunk 1 went when the pins were dropped.
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([0, 2]);
+    manager.setActiveChunks([2]);
+    await manager.ensureLoaded(1);
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+
+    // Clearing history frees chunk 0 without any fetch.
+    store.dispatch(DocumentActions.historyClear());
+    await manager.ensureLoaded(1);
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
+    manager.dispose();
+  });
+
+  it("evicts freed chunks for ensureLoadedMany of resident chunks, keeping those asked for", async () => {
+    const { store, manager } = setup("pin");
+    await manager.ensureLoaded(0);
+    pinChunk0(store);
+    // An attention keeps chunk 1 whatever happens to history.
+    store.dispatch(DocumentActions.loadChunk(1, new TextEncoder().encode(chunks[1])));
+    store.dispatch(DocumentActions.createAttention(byteOffset(10), byteOffset(12)));
+    manager.setActiveChunks([1, 2]);
+    await manager.ensureLoaded(1);
+    await manager.ensureLoaded(2);
+    manager.setActiveChunks([2]);
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+
+    // Freed by clearing history, chunk 0 is the only chunk that could go, but
+    // it is asked for, so it stays.
+    store.dispatch(DocumentActions.historyClear());
+    await manager.ensureLoadedMany([0, 2]);
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+    // Once it is no longer asked for, the next call evicts it.
+    await manager.ensureLoadedMany([2]);
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
+    manager.dispose();
+  });
+
+  it("does not measure refused chunks again on each call for a resident chunk", async () => {
+    const { store, manager } = setup("pin");
+    await manager.ensureLoaded(0);
+    pinChunk0(store);
+    manager.setActiveChunks([1, 2]);
+    await manager.ensureLoaded(1);
+    await manager.ensureLoaded(2);
+    manager.setActiveChunks([]);
+    manager.setActiveChunks([2]);
+    await manager.ensureLoaded(1);
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+
+    const dispatch = vi.spyOn(store, "dispatch");
+    const evictions = () =>
+      dispatch.mock.calls.filter(([action]) => action.type.startsWith("EVICT")).length;
+    // The first call offers chunk 1's neighbour 0 (chunk 1 is asked for); the
+    // next ones offer only chunks not yet refused in this state.
+    await manager.ensureLoaded(1);
+    const first = evictions();
+    await manager.ensureLoaded(1);
+    await manager.ensureLoaded(1);
+    expect(evictions()).toBe(first);
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
     manager.dispose();
   });
 
@@ -678,9 +749,7 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
         };
         return store;
       });
-      expect(
-        seen.some((action) => action.type === "EVICT_CHUNKS" && action.keepHistory !== true),
-      ).toBe(true);
+      expect(seen.some((action) => action.type === "EVICT_CHUNKS")).toBe(true);
     });
 
     it("reports the eviction's own loss for a copy of the store", async () => {
@@ -708,7 +777,7 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
       const wrapped: DocumentStore = {
         ...store,
         dispatch: (action) => {
-          if (action.type === "EVICT_CHUNKS" && action.keepHistory !== true) {
+          if (action.type === "EVICT_CHUNKS") {
             store.dispatch(DocumentActions.historyClear());
           }
           return store.dispatch(action);
@@ -742,7 +811,7 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
       const wrapped: DocumentStore = {
         ...store,
         dispatch: (action) => {
-          if (action.type === "EVICT_CHUNKS" && action.keepHistory !== true) {
+          if (action.type === "EVICT_CHUNKS") {
             store.dispatch(DocumentActions.historyClear());
           }
           return store.dispatch(action);
@@ -815,7 +884,7 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
       const wrapped: DocumentStore = {
         ...store,
         dispatch: (action) => {
-          if (action.type === "EVICT_CHUNKS" && action.keepHistory !== true) {
+          if (action.type === "EVICT_CHUNKS") {
             mirror.dispatch(action);
           }
           return store.dispatch(action);
@@ -907,11 +976,7 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
           dispatch: (action) =>
             store.dispatch(
               action.type === "EVICT_CHUNKS"
-                ? DocumentActions.evictChunks(
-                    [...action.chunkIndices],
-                    action.maxLoaded,
-                    action.keepHistory,
-                  )
+                ? DocumentActions.evictChunks([...action.chunkIndices], action.maxLoaded)
                 : action,
             ),
         }),

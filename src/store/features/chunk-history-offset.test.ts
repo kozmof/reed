@@ -49,7 +49,7 @@ import type {
   HistoryState,
 } from "../../types/state.js";
 import { pstackPeek, pstackPush, pstackToArray } from "../../types/state.js";
-import { anchorSelection, historyForEviction } from "./history-anchor.js";
+import { anchorSelection, historyForEviction, nextBoundary } from "./history-anchor.js";
 import { applyUntrackedEdit, historyPush, makeDeleteChange, makeInsertChange } from "./edit.js";
 import type { DocumentAction } from "../../types/actions.js";
 import { validateAction } from "../../types/actions.js";
@@ -1883,6 +1883,35 @@ describe("seventh review regressions", () => {
       ]);
       expect(cursor(s)).toEqual({ anchor: SIZE + 300, head: SIZE + 300 });
     });
+
+    it("moves to the nearer end of a run just over leftover length", () => {
+      const bytes = Uint8Array.from([0x61, 0x80, 0x80, 0x80, 0x80, 0x62]);
+      const s = createDocumentStore({
+        chunkSize: bytes.length,
+        totalFileSize: bytes.length,
+        reconcileMode: "none",
+      });
+      s.dispatch(DocumentActions.loadChunk(0, bytes));
+      const { pieceTable } = s.getSnapshot();
+      // The run is [1, 5): 1 and 2 are nearer its start, 3 and 4 its end.
+      expect([1, 2, 3, 4].map((offset) => nextBoundary(pieceTable, offset))).toEqual([0, 0, 5, 5]);
+      expect([1, 2, 3, 4].map((offset) => nextBoundary(pieceTable, offset, true))).toEqual([
+        5, 5, 5, 5,
+      ]);
+    });
+
+    it("steps past leftovers whatever the distance back", () => {
+      // Three continuation bytes with no lead byte, as an eviction leaves them.
+      const bytes = Uint8Array.from([0x61, 0x80, 0x80, 0x80, 0x62]);
+      const s = createDocumentStore({
+        chunkSize: bytes.length,
+        totalFileSize: bytes.length,
+        reconcileMode: "none",
+      });
+      s.dispatch(DocumentActions.loadChunk(0, bytes));
+      const { pieceTable } = s.getSnapshot();
+      expect([1, 2, 3].map((offset) => nextBoundary(pieceTable, offset))).toEqual([4, 4, 4]);
+    });
   });
 });
 
@@ -2904,24 +2933,11 @@ describe("nineteenth review regressions", () => {
     }
   });
 
-  it("with keepHistory evicts only candidates that cost no history, whatever the policy", () => {
-    for (const policy of ["pin-bounded", "drop"] as const) {
-      const s = makeStore(3, policy);
-      for (const i of [0, 1, 2]) load(s, i);
-      s.dispatch(DocumentActions.insert(byteOffset(2), "X"));
-      s.dispatch(DocumentActions.undo());
-      s.dispatch(DocumentActions.evictChunks([0, 1, 2], 0, true));
-      expect([...s.getSnapshot().pieceTable.chunkMap.keys()]).toEqual([0]);
-      expect(getRedoCount(s.getSnapshot())).toBe(1);
-    }
-  });
-
-  it("validates keepHistory and round-trips it", () => {
-    const action = DocumentActions.evictChunks([1, 0], 1, true);
+  it("validates EVICT_CHUNKS and round-trips it", () => {
+    const action = DocumentActions.evictChunks([1, 0], 1);
     expect(validateAction(action).valid).toBe(true);
     expect(deserializeAction(serializeAction(action))).toEqual(action);
-    expect(DocumentActions.evictChunks([0], 1)).not.toHaveProperty("keepHistory");
-    const bad = { type: "EVICT_CHUNKS", chunkIndices: [0], maxLoaded: 1, keepHistory: "yes" };
+    const bad = { type: "EVICT_CHUNKS", chunkIndices: [0, -1], maxLoaded: 1 };
     expect(validateAction(bad).valid).toBe(false);
   });
 });

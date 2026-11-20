@@ -98,11 +98,9 @@ describe("eviction warning", () => {
     expect(warn.mock.calls[0]![0]).toContain("within 1 loaded chunks");
   });
 
-  it("does not warn for EVICT_CHUNKS with keepHistory, or for EVICT_CHUNK", () => {
+  it("does not warn for EVICT_CHUNK", () => {
     const warn = vi.fn();
     const store = pinnedStore(warn);
-    store.dispatch(DocumentActions.evictChunks([0], 1, true));
-    expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(true);
     store.dispatch(DocumentActions.evictChunk(0, true));
     expect(getRedoCount(store.getSnapshot())).toBe(0);
     expect(warn).not.toHaveBeenCalled();
