@@ -656,6 +656,76 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     manager.dispose();
   });
 
+  it("keeps the chunks it loads when a fetch it waits on fails first", async () => {
+    const store = createDocumentStore({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 4,
+      reconcileMode: "none",
+    });
+    const all = { ...chunks, 3: "ddddddd\n" };
+    let failChunk2!: (error: Error) => void;
+    let releaseChunk3!: () => void;
+    const chunk2Gate = new Promise<void>((_, reject) => (failChunk2 = reject));
+    const chunk3Gate = new Promise<void>((resolve) => (releaseChunk3 = resolve));
+    const manager = createChunkManager(
+      store,
+      {
+        loadChunk: async (i) => {
+          if (i === 2) await chunk2Gate;
+          if (i === 3) await chunk3Gate;
+          return makeBytes(all[i as keyof typeof all]);
+        },
+      },
+      { maxLoadedChunks: 2 },
+    );
+    manager.setActiveChunks([0, 1]);
+    await manager.ensureLoaded(0);
+    await manager.ensureLoaded(1);
+    // The batch waits on the fetch of chunk 2 already in flight and fetches
+    // chunk 3 itself. Chunk 2 fails while chunk 3 is still loading.
+    const single = manager.ensureLoaded(2).catch(() => {});
+    const batch = manager.ensureLoadedMany([2, 3]);
+    failChunk2(new Error("chunk 2 down"));
+    await single;
+    // Chunks 0 and 1 are pinned, so chunk 3 would be the only candidate of
+    // the pass its load runs, were the batch to release it already.
+    releaseChunk3();
+    await expect(batch).rejects.toThrow("chunk 2 down");
+    expect(store.getSnapshot().pieceTable.chunkMap.has(3)).toBe(true);
+    manager.dispose();
+  });
+
+  it("returns toward the limit after a batch that asked for more than it", async () => {
+    const store = createDocumentStore({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 3,
+      reconcileMode: "none",
+    });
+    const manager = createChunkManager(store, makeLoader(chunks), { maxLoadedChunks: 2 });
+    await manager.ensureLoadedMany([0, 1, 2]);
+    // Every chunk is still loaded as the call resolves.
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+    // A pass in a later task evicts the least recently used one.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
+    manager.dispose();
+  });
+
+  it("does not evict a chunk the app loaded again after the manager evicted it", async () => {
+    const { store, manager, warn } = setup("pin-bounded");
+    await manager.ensureLoaded(0);
+    await manager.ensureLoaded(1);
+    await manager.ensureLoaded(2);
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
+    // The app loads chunk 0 again itself, with bytes of its own.
+    store.dispatch(DocumentActions.loadChunk(0, makeBytes(chunks[0])));
+    manager.setActiveChunks([]);
+    // Chunk 0 is not the manager's to evict; chunk 1 goes instead.
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([0, 2]);
+    expect(warn).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+
   it("offers a refused chunk again once a load parts it from the text that kept it", async () => {
     const store = createDocumentStore({
       chunkSize: CHUNK_SIZE,

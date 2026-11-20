@@ -739,14 +739,26 @@ export function deferAnchorSelection(
 const SCAN_BLOCK = 256;
 
 /**
- * How many continuation bytes `byte`, which is not one, owns after it as the
- * lead byte of a character: none for ASCII or a byte no character starts with.
+ * How many continuation bytes the byte `lead`, which is not one, owns after it
+ * as the lead byte of a character whose next byte is the continuation byte
+ * `next`: none for ASCII, a byte no character starts with, or a pair no
+ * character starts with (an overlong form, a surrogate, or a code point past
+ * U+10FFFF, such as E0 80, ED A0, F0 80, or F4 90). Such a pair is malformed
+ * text, so its continuation bytes belong to the run, not to a character.
  */
-function continuationsOwned(byte: number): number {
-  if (byte < 0xc2) return 0;
-  if (byte < 0xe0) return 1;
-  if (byte < 0xf0) return 2;
-  if (byte < 0xf5) return MAX_CONTINUATION_BYTES;
+function continuationsOwned(lead: number, next: number): number {
+  if (lead < 0xc2) return 0;
+  if (lead < 0xe0) return 1;
+  if (lead < 0xf0) {
+    if (lead === 0xe0 && next < 0xa0) return 0;
+    if (lead === 0xed && next > 0x9f) return 0;
+    return 2;
+  }
+  if (lead < 0xf5) {
+    if (lead === 0xf0 && next < 0x90) return 0;
+    if (lead === 0xf4 && next > 0x8f) return 0;
+    return MAX_CONTINUATION_BYTES;
+  }
   return 0;
 }
 
@@ -806,7 +818,8 @@ export function nextBoundary(
   for (let p = offset - 1; p >= from; p--) {
     if (!isContinuationByte(window[p - from]!)) {
       before = p;
-      const end = p + 1 + continuationsOwned(window[p - from]!);
+      // `offset` is a continuation byte, so the byte after `p` is one too.
+      const end = p + 1 + continuationsOwned(window[p - from]!, window[p + 1 - from]!);
       runStart = end <= offset ? end : p + 1;
       break;
     }

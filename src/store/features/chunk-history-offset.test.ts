@@ -1927,6 +1927,37 @@ describe("seventh review regressions", () => {
       expect([3, 4, 5].map((offset) => nextBoundary(pieceTable, offset))).toEqual([6, 6, 6]);
     });
 
+    it("does not count bytes after a pair no character starts with as a character's", () => {
+      // F4 90 and E0 80 start no character, so each run is malformed and
+      // longer than leftovers: positions move to its nearer end.
+      const cases: Array<[number[], number[]]> = [
+        [
+          [0xf4, 0x90, 0x80, 0x80, 0x80, 0x80, 0x80, 0x62],
+          [0, 0, 0, 7, 7, 7],
+        ],
+        [
+          [0xe0, 0x80, 0x80, 0x80, 0x80, 0x62],
+          [0, 0, 5, 5],
+        ],
+        [
+          [0xed, 0xa0, 0x80, 0x80, 0x80, 0x62],
+          [0, 0, 5, 5],
+        ],
+      ];
+      for (const [raw, expected] of cases) {
+        const bytes = Uint8Array.from(raw);
+        const s = createDocumentStore({
+          chunkSize: bytes.length,
+          totalFileSize: bytes.length,
+          reconcileMode: "none",
+        });
+        s.dispatch(DocumentActions.loadChunk(0, bytes));
+        const { pieceTable } = s.getSnapshot();
+        const offsets = expected.map((_, i) => i + 1);
+        expect(offsets.map((offset) => nextBoundary(pieceTable, offset))).toEqual(expected);
+      }
+    });
+
     it("reaches a 4-byte character's lead byte before the leftovers", () => {
       // A complete 4-byte character, then three leftovers, then "b".
       const bytes = Uint8Array.from([0xf0, 0x9f, 0x98, 0x80, 0x9f, 0x98, 0x80, 0x62]);
