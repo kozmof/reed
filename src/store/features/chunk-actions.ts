@@ -131,63 +131,15 @@ function hasAddPieceTouchingRange(
   );
 }
 
-const NO_CHUNKS: readonly number[] = Object.freeze([]);
-
-// For each attention layer, the chunks an attention is anchored to under each
-// piece node. Immutable subtrees keep their entry across loads, evictions, and
-// edits, so a new root costs O(log n) merges of these short lists, and the
-// whole tree is walked once per attention layer.
-const anchoredChunkCache = new WeakMap<
-  DocumentState["attention"],
-  WeakMap<PieceNode, readonly number[]>
->();
-
-/** Sorted union of `a`, `b`, and `extra` when given. */
-function mergeChunks(
-  a: readonly number[],
-  b: readonly number[],
-  extra?: number,
-): readonly number[] {
-  if (extra === undefined) {
-    if (b.length === 0) return a;
-    if (a.length === 0) return b;
-  }
-  const merged = new Set([...a, ...b]);
-  if (extra !== undefined) merged.add(extra);
-  return Object.freeze([...merged].sort((x, y) => x - y));
-}
-
-function anchoredChunksUnder(
-  node: PieceNode | null,
-  attention: DocumentState["attention"],
-  byNode: WeakMap<PieceNode, readonly number[]>,
-): readonly number[] {
-  if (!node) return NO_CHUNKS;
-  const cached = byNode.get(node);
-  if (cached !== undefined) return cached;
-  const own =
-    node.bufferType === "chunk" && hasAttentionForPiece(attention, node.id)
-      ? node.chunkIndex
-      : undefined;
-  const chunks = mergeChunks(
-    anchoredChunksUnder(node.left, attention, byNode),
-    anchoredChunksUnder(node.right, attention, byNode),
-    own,
-  );
-  byNode.set(node, chunks);
-  return chunks;
-}
-
-/** Whether an attention is anchored to a piece of chunk `chunkIndex`. */
+/**
+ * Whether an attention is anchored to a piece of chunk `chunkIndex`. Visits
+ * only the subtrees whose chunk range holds `chunkIndex`, with no allocation.
+ */
 export function hasAttentionAnchoredToChunk(state: DocumentState, chunkIndex: number): boolean {
-  const { attention } = state;
-  if (attention.attentions.size === 0) return false;
-  let byNode = anchoredChunkCache.get(attention);
-  if (byNode === undefined) {
-    byNode = new WeakMap();
-    anchoredChunkCache.set(attention, byNode);
-  }
-  return anchoredChunksUnder(state.pieceTable.root, attention, byNode).includes(chunkIndex);
+  if (state.attention.attentions.size === 0) return false;
+  return visitChunk(state.pieceTable.root, chunkIndex, (node) =>
+    hasAttentionForPiece(state.attention, node.id),
+  );
 }
 
 export function declareChunkMetadata(

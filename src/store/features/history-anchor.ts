@@ -739,6 +739,18 @@ export function deferAnchorSelection(
 const SCAN_BLOCK = 256;
 
 /**
+ * How many continuation bytes `byte`, which is not one, owns after it as the
+ * lead byte of a character: none for ASCII or a byte no character starts with.
+ */
+function continuationsOwned(byte: number): number {
+  if (byte < 0xc2) return 0;
+  if (byte < 0xe0) return 1;
+  if (byte < 0xf0) return 2;
+  if (byte < 0xf5) return MAX_CONTINUATION_BYTES;
+  return 0;
+}
+
+/**
  * The UTF-8 code-point boundary a position clamped to `offset` moves to.
  *
  * Evicting a chunk can leave the bytes of a character split across its edge
@@ -765,14 +777,18 @@ export function nextBoundary(
   if (isUtf8Boundary(pieceTable, byteOffset(offset))) return offset;
   // `offset` is inside the document, on a continuation byte. Read as far on
   // each side as leftovers can reach, which tells whether the run is short
-  // enough to be leftovers.
+  // enough to be leftovers. Before `offset`, that reaches the lead byte of a
+  // complete character the run may start with: it owns up to three
+  // continuation bytes, and up to two leftovers can follow them before
+  // `offset`.
   const total = pieceTable.totalLength;
-  const from = Math.max(0, offset - MAX_CONTINUATION_BYTES);
+  const from = Math.max(0, offset - 2 * MAX_CONTINUATION_BYTES);
   const to = Math.min(total, offset + 1 + MAX_CONTINUATION_BYTES);
   const window = getBytes(pieceTable, byteOffset(from), byteOffset(to));
   // `after` is the first boundary after `offset` and `before` the last one
   // before it, once found. `runStart` is the first continuation byte of the
-  // run. `ahead` is the first position not yet read after `offset`, `behind`
+  // run, past the character that starts at `before` when that character ends
+  // at or before `offset`: its bytes are complete, not left over. `ahead` is the first position not yet read after `offset`, `behind`
   // the first byte read before it. Every byte read between the ends found so
   // far is a continuation byte.
   let ahead = to;
@@ -790,7 +806,8 @@ export function nextBoundary(
   for (let p = offset - 1; p >= from; p--) {
     if (!isContinuationByte(window[p - from]!)) {
       before = p;
-      runStart = p + 1;
+      const end = p + 1 + continuationsOwned(window[p - from]!);
+      runStart = end <= offset ? end : p + 1;
       break;
     }
   }

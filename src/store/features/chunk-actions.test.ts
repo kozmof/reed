@@ -28,8 +28,8 @@ function anchoredChunks(state: DocumentState): Set<number> {
 }
 
 describe("hasAttentionAnchoredToChunk", () => {
-  // The answer is cached per attention layer and piece node, and shared by
-  // the subtrees a load, eviction, or edit leaves alone.
+  // The lookup prunes subtrees by their chunk range, which loads, evictions,
+  // and edits keep up to date.
   it("matches a walk of every piece across loads, evictions, edits, and attention changes", () => {
     const rng = makeDeterministicRng(0xa77e);
     let checks = 0;

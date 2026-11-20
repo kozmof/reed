@@ -87,10 +87,8 @@ export interface ChunkManager {
   /**
    * Ensure chunk `chunkIndex` is loaded into the store.
    * Resolves when LOAD_CHUNK has been dispatched and the chunk is in memory.
-   * If the chunk is already loaded, resolves immediately without fetching,
-   * after evicting chunks freed since the last eviction pass (by undo,
-   * HISTORY_CLEAR, removing an attention, or a remote edit) when more than
-   * maxLoadedChunks are loaded.
+   * If the chunk is already loaded, resolves immediately without fetching or
+   * evicting.
    * Concurrent calls for the same index share a single in-flight fetch.
    * Rejects if the store is not configured for chunked mode.
    */
@@ -99,7 +97,8 @@ export interface ChunkManager {
   /**
    * Ensure several chunks are loaded with bounded concurrency. Completions in
    * the same turn share a transition; slow fetches do not hold up others.
-   * Evicts as ensureLoaded does, never one of `chunkIndices`.
+   * Until it settles, no eviction pass of this manager evicts one of
+   * `chunkIndices`, including those already loaded.
    * Successful chunks remain loaded if another fetch in the batch fails.
    */
   ensureLoadedMany(chunkIndices: readonly number[]): Promise<void>;
@@ -144,7 +143,8 @@ export interface ChunkManager {
  * Why a chunk stays resident while the cache is over the limit after an
  * eviction pass:
  * - `"pinned"`: in the active set (`setActiveChunks`).
- * - `"requested"`: asked for by the call that ran the pass.
+ * - `"requested"`: asked for by the fetch that ran the pass, or by an
+ *   `ensureLoadedMany` call that has not settled.
  * - `"anchored"`: offered for eviction and refused, since an attention is
  *   anchored inside it.
  * - `"held"`: offered for eviction and refused, since user edits or undo
@@ -159,7 +159,7 @@ type PressureCause = "pinned" | "requested" | "anchored" | "held" | "untracked";
 /** Each cause's text, in the order the pressure warning lists them. */
 const PRESSURE_CAUSE_TEXT: Readonly<Record<PressureCause, string>> = {
   pinned: "pinned as active",
-  requested: "requested by the current call",
+  requested: "requested by a pending call",
   anchored: "hold an attention anchor",
   held: "hold user edits or undo history",
   untracked: "loaded outside this ChunkManager",
@@ -249,8 +249,18 @@ export function createChunkManager(
   // Set iteration runs from least to most recently used.
   const lruOrder = new Set<number>();
 
+  // Chunks lruOrder listed until they left memory, and the manager has not
+  // loaded since. A rollback of a transaction open during an eviction pass
+  // can restore them; a pass then tracks them again instead of taking them
+  // for chunks loaded outside this manager, which it never evicts.
+  const departed = new Set<number>();
+
   // Pinned chunks: never evicted.
   let activeChunks = new Set<number>();
+
+  // How many unsettled ensureLoadedMany calls asked for each chunk. No
+  // eviction pass evicts one of them.
+  const requested = new Map<number, number>();
 
   // While more chunks are loaded than maxLoadedChunks allows, as of the last
   // eviction attempt, the reasons chunks have stayed resident since the cache
@@ -262,13 +272,13 @@ export function createChunkManager(
   // or history would keep too. Reset with `pressureCauses`.
   let anchoredHeldSeen = false;
 
-  // The chunks the last eviction pass offered and the reducer refused, while
-  // the store holds the state that pass measured them in, unchanged by the
-  // pass. The reducer would refuse them again in that state, so a pass skips
-  // them. Under "pin", history keeping chunks resident is a steady state, and
-  // the manager may run a pass on every ensureLoaded call; this keeps those
-  // passes from measuring the same chunks again until the document changes.
-  // Any load, eviction, edit, or attention change drops it.
+  // The chunks eviction passes offered and the reducer refused, while the
+  // store holds the state the last pass left (see `evictIfOverLimit`). The
+  // reducer would refuse them again in that state, so a pass skips them.
+  // Under "pin", history keeping chunks resident is a steady state, and
+  // setActiveChunks runs a pass on every call; this keeps those passes from
+  // measuring the same chunks again until the document changes. Any load,
+  // eviction, edit, or attention change drops it.
   let refused: {
     readonly measuredIn: (state: EvictionInputs) => boolean;
     readonly chunks: Set<number>;
@@ -319,8 +329,33 @@ export function createChunkManager(
     lruOrder.add(chunkIndex);
   }
 
-  function lruRemove(chunkIndex: number): void {
+  /** Track a chunk the manager just loaded as the most recently used. */
+  function lruLoaded(chunkIndex: number): void {
+    departed.delete(chunkIndex);
+    lruTouch(chunkIndex);
+  }
+
+  /** Stop tracking a chunk that is no longer in memory. */
+  function lruDepart(chunkIndex: number): void {
     lruOrder.delete(chunkIndex);
+    departed.add(chunkIndex);
+  }
+
+  /**
+   * Hold `chunkIndices` against eviction until the returned function is
+   * called.
+   */
+  function holdRequested(chunkIndices: readonly number[]): () => void {
+    for (const chunkIndex of chunkIndices) {
+      requested.set(chunkIndex, (requested.get(chunkIndex) ?? 0) + 1);
+    }
+    return () => {
+      for (const chunkIndex of chunkIndices) {
+        const holds = requested.get(chunkIndex) ?? 0;
+        if (holds <= 1) requested.delete(chunkIndex);
+        else requested.set(chunkIndex, holds - 1);
+      }
+    };
   }
 
   // ── Eviction ──────────────────────────────────────────────────────────────
@@ -331,33 +366,51 @@ export function createChunkManager(
    * Chunks the last pass saw refused are skipped while the document is as it
    * was (see `refused`).
    */
-  function evictIfOverLimit(protectedChunkIndices?: number | ReadonlySet<number>): void {
+  function evictIfOverLimit(protectedChunkIndex?: number): void {
     if (disposed) return;
     const isProtected = (chunkIndex: number) =>
-      typeof protectedChunkIndices === "number"
-        ? chunkIndex === protectedChunkIndices
-        : protectedChunkIndices?.has(chunkIndex) === true;
+      chunkIndex === protectedChunkIndex || requested.has(chunkIndex);
     // Usually one pass, and at most two: see the retry below.
     for (let state = store.getSnapshot(), retried = false; ; ) {
       if (refused !== null && !refused.measuredIn(state)) refused = null;
       const resident = state.pieceTable.chunkMap;
       if (resident.size <= maxLoadedChunks) break;
       // Least recently used first: chunks the manager may evict that are still
-      // in memory. Pinned chunks and the chunks the caller asked for stay. The
-      // reducer chooses among them in one transition (see EVICT_CHUNKS): every
-      // chunk whose eviction costs no history first, then as the policy
-      // allows. It stops once the limit is met, so when the least recently
-      // used chunks cost no history it measures only as many as must go.
+      // in memory. Pinned and requested chunks stay. The reducer chooses
+      // among them in one transition (see EVICT_CHUNKS): every chunk whose
+      // eviction costs no history first, then as the policy allows. It stops
+      // once the limit is met, so when the least recently used chunks cost no
+      // history it measures only as many as must go.
+      const isCandidate = (chunkIndex: number) =>
+        !activeChunks.has(chunkIndex) &&
+        !isProtected(chunkIndex) &&
+        refused?.chunks.has(chunkIndex) !== true;
       const candidates: number[] = [];
-      for (const candidate of lruOrder) {
-        // lruOrder can still list chunks another path evicted; forget them.
-        if (!resident.has(candidate)) lruRemove(candidate);
-        else if (
-          !activeChunks.has(candidate) &&
-          !isProtected(candidate) &&
-          refused?.chunks.has(candidate) !== true
-        ) {
-          candidates.push(candidate);
+      let tracked = 0;
+      for (const chunkIndex of lruOrder) {
+        if (!resident.has(chunkIndex)) lruDepart(chunkIndex);
+        else {
+          tracked++;
+          if (isCandidate(chunkIndex)) candidates.push(chunkIndex);
+        }
+      }
+      if (tracked < resident.size && departed.size > 0) {
+        // Resident chunks lruOrder does not list. Those it listed until they
+        // left memory were restored by a rollback; track them again as the
+        // least recently used, which they were when they went.
+        const restored: number[] = [];
+        for (const chunkIndex of resident.keys()) {
+          if (departed.has(chunkIndex) && !lruOrder.has(chunkIndex)) restored.push(chunkIndex);
+        }
+        if (restored.length > 0) {
+          const rest = [...lruOrder];
+          lruOrder.clear();
+          for (const chunkIndex of restored) {
+            departed.delete(chunkIndex);
+            lruOrder.add(chunkIndex);
+          }
+          for (const chunkIndex of rest) lruOrder.add(chunkIndex);
+          candidates.unshift(...restored.filter(isCandidate));
         }
       }
       if (candidates.length === 0) break;
@@ -371,40 +424,50 @@ export function createChunkManager(
       // A listener the eviction notified may have disposed the manager.
       if (disposed) return;
       const after = store.getSnapshot();
-      if (
-        after.pieceTable === state.pieceTable &&
-        after.history === state.history &&
-        after.attention === state.attention
-      ) {
-        // Nothing went, and no listener changed what the reducer measures,
-        // so every candidate was refused in `state`.
-        refused ??= { measuredIn: sameEvictionInputsAs(state), chunks: new Set() };
-        for (const chunk of candidates) refused.chunks.add(chunk);
+      const left = after.pieceTable.chunkMap;
+      if (left.size <= maxLoadedChunks) break;
+      if (after.history === state.history && after.attention === state.attention) {
+        // Still over the limit, the reducer measured every candidate, and
+        // with history unchanged it evicted only those that cost none: the
+        // rest were refused. Evicting chunks adds no edits, attention, or
+        // history, so it frees none of them, and the reducer would refuse
+        // them again while the store holds `after`. A chunk loaded since
+        // could part one from the text that kept it, so record them only
+        // when none was.
+        let loaded = false;
+        if (left !== resident) {
+          for (const chunkIndex of left.keys()) {
+            if (!resident.has(chunkIndex)) {
+              loaded = true;
+              break;
+            }
+          }
+        }
+        if (!loaded) {
+          const chunks = new Set<number>();
+          for (const chunkIndex of refused?.chunks ?? []) {
+            if (left.has(chunkIndex)) chunks.add(chunkIndex);
+          }
+          for (const chunkIndex of candidates) if (left.has(chunkIndex)) chunks.add(chunkIndex);
+          refused = { measuredIn: sameEvictionInputsAs(after), chunks };
+        }
         break;
       }
-      const left = after.pieceTable.chunkMap;
-      for (const chunk of candidates) if (!left.has(chunk)) lruRemove(chunk);
       // The eviction discarded history, or a listener it notified changed
       // history or attention, which may have freed the chunks it refused.
       // Offer them once more, against the state now.
-      if (
-        retried ||
-        left.size <= maxLoadedChunks ||
-        (after.history === state.history && after.attention === state.attention)
-      ) {
-        break;
-      }
+      if (retried) break;
       retried = true;
       state = after;
     }
 
     const current = store.getSnapshot();
     const { chunkMap } = current.pieceTable;
-    // Forget chunks another path evicted while the cache was within the limit.
-    // The scan is O(L), so it runs only once lruOrder must list stale ones.
+    // Forget chunks that left memory, through this pass or another path. The
+    // scan is O(L), so it runs only once lruOrder must list some.
     if (lruOrder.size > chunkMap.size) {
       for (const chunkIndex of lruOrder) {
-        if (!chunkMap.has(chunkIndex)) lruRemove(chunkIndex);
+        if (!chunkMap.has(chunkIndex)) lruDepart(chunkIndex);
       }
     }
 
@@ -515,7 +578,7 @@ export function createChunkManager(
                   `Chunk ${chunkIndex} was fetched but the store did not retain it after LOAD_CHUNK dispatch`,
                 );
               }
-              lruTouch(chunkIndex);
+              lruLoaded(chunkIndex);
               evictIfOverLimit(chunkIndex);
             })
             .catch((error: unknown) => {
@@ -559,12 +622,10 @@ export function createChunkManager(
       return Promise.reject(new RangeError(chunkIndexError));
     }
 
-    // Already in memory. Undo, HISTORY_CLEAR, removing an attention, or a
-    // remote edit may have freed chunks since the last pass, so evict down to
-    // the limit now rather than wait for the next fetch.
+    // Already in memory. No eviction pass runs here: one could evict inside a
+    // transaction the caller has open, and the call stays O(1).
     if (store.getSnapshot().pieceTable.chunkMap.has(chunkIndex)) {
       lruTouch(chunkIndex);
-      evictIfOverLimit(chunkIndex);
       return Promise.resolve();
     }
 
@@ -601,14 +662,11 @@ export function createChunkManager(
       if (existing !== undefined) pending.push(existing);
       else fresh.push(chunkIndex);
     }
-    // Every chunk asked for stays through this call's eviction passes, the
-    // ones already in memory too.
-    const protectedChunks: ReadonlySet<number> = new Set(unique);
-    if (fresh.length === 0) {
-      // As in ensureLoaded, chunks may have been freed since the last pass.
-      evictIfOverLimit(protectedChunks);
-      return Promise.all(pending).then(() => {});
-    }
+    if (fresh.length === 0 && pending.length === 0) return Promise.resolve();
+    // Until the call settles, no eviction pass evicts a chunk it asked for,
+    // the ones already in memory too.
+    const release = holdRequested(unique);
+    if (fresh.length === 0) return Promise.all(pending).then(release, rejectAfter(release));
 
     const controllers = new Map<number, AbortController>();
     for (const chunkIndex of fresh) {
@@ -681,9 +739,9 @@ export function createChunkManager(
                 `Chunk ${chunk.chunkIndex} was fetched but the store did not retain it after LOAD_CHUNKS dispatch`,
               );
             }
-            lruTouch(chunk.chunkIndex);
+            lruLoaded(chunk.chunkIndex);
           }
-          evictIfOverLimit(protectedChunks);
+          evictIfOverLimit();
         }));
       }
       let cursor = 0;
@@ -718,7 +776,15 @@ export function createChunkManager(
 
     for (const chunkIndex of fresh) inFlight.set(chunkIndex, batchPromise);
     pending.push(batchPromise);
-    return Promise.all(pending).then(() => {});
+    return Promise.all(pending).then(release, rejectAfter(release));
+  }
+
+  /** A rejection handler that calls `release`, then rethrows. */
+  function rejectAfter(release: () => void): (error: unknown) => never {
+    return (error) => {
+      release();
+      throw error;
+    };
   }
 
   function prefetch(chunkIndex: number): void {
@@ -761,7 +827,9 @@ export function createChunkManager(
     abortControllers.clear();
     inFlight.clear();
     lruOrder.clear();
+    departed.clear();
     activeChunks.clear();
+    requested.clear();
     refused = null;
     pressureCauses = null;
   }

@@ -450,7 +450,7 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     await manager.ensureLoadedMany([0, 1, 2]);
     expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]![0]).toContain("3 requested by the current call");
+    expect(warn.mock.calls[0]![0]).toContain("3 requested by a pending call");
     expect(warn.mock.calls[0]![0]).not.toContain("undo history");
 
     // Still over the limit, now because history holds chunk 0 and the others
@@ -563,74 +563,96 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     manager.dispose();
   });
 
-  it("evicts chunks freed since the last fetch when asked for a resident chunk", async () => {
+  it("does not evict when asked for resident chunks", async () => {
     const { store, manager } = setup("pin");
     await manager.ensureLoaded(0);
     pinChunk0(store);
     manager.setActiveChunks([1, 2]);
     await manager.ensureLoaded(1);
     await manager.ensureLoaded(2);
-    manager.setActiveChunks([]);
-    // History pins chunk 0, and chunk 1 went when the pins were dropped.
-    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([0, 2]);
-    manager.setActiveChunks([2]);
-    await manager.ensureLoaded(1);
     expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
 
-    // Clearing history frees chunk 0 without any fetch.
+    // Clearing history frees chunk 0, but a call for resident chunks runs no
+    // eviction pass: it could evict inside a transaction the caller has open.
     store.dispatch(DocumentActions.historyClear());
+    const dispatch = vi.spyOn(store, "dispatch");
     await manager.ensureLoaded(1);
+    await manager.ensureLoadedMany([1, 2]);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+    // The next pass evicts it.
+    manager.setActiveChunks([1, 2]);
     expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
     manager.dispose();
   });
 
-  it("evicts freed chunks for ensureLoadedMany of resident chunks, keeping those asked for", async () => {
-    const { store, manager } = setup("pin");
+  it("does not offer refused chunks again after a pass that evicted others", async () => {
+    const store = createDocumentStore({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 3,
+      historyEvictionPolicy: "pin",
+      reconcileMode: "none",
+    });
+    const manager = createChunkManager(store, makeLoader(chunks), { maxLoadedChunks: 1 });
+    manager.setActiveChunks([0, 1, 2]);
     await manager.ensureLoaded(0);
     pinChunk0(store);
-    // An attention keeps chunk 1 whatever happens to history.
-    store.dispatch(DocumentActions.loadChunk(1, new TextEncoder().encode(chunks[1])));
-    store.dispatch(DocumentActions.createAttention(byteOffset(10), byteOffset(12)));
-    manager.setActiveChunks([1, 2]);
     await manager.ensureLoaded(1);
     await manager.ensureLoaded(2);
-    manager.setActiveChunks([2]);
-    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
-
-    // Freed by clearing history, chunk 0 is the only chunk that could go, but
-    // it is asked for, so it stays.
-    store.dispatch(DocumentActions.historyClear());
-    await manager.ensureLoadedMany([0, 2]);
-    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
-    // Once it is no longer asked for, the next call evicts it.
-    await manager.ensureLoadedMany([2]);
-    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
-    manager.dispose();
-  });
-
-  it("does not measure refused chunks again on each call for a resident chunk", async () => {
-    const { store, manager } = setup("pin");
-    await manager.ensureLoaded(0);
-    pinChunk0(store);
-    manager.setActiveChunks([1, 2]);
-    await manager.ensureLoaded(1);
-    await manager.ensureLoaded(2);
-    manager.setActiveChunks([]);
-    manager.setActiveChunks([2]);
-    await manager.ensureLoaded(1);
-    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
 
     const dispatch = vi.spyOn(store, "dispatch");
     const evictions = () =>
       dispatch.mock.calls.filter(([action]) => action.type.startsWith("EVICT")).length;
-    // The first call offers chunk 1's neighbour 0 (chunk 1 is asked for); the
-    // next ones offer only chunks not yet refused in this state.
-    await manager.ensureLoaded(1);
+    // The pass evicts chunk 1, which costs no history, and the reducer
+    // refuses chunk 0, which history pins.
+    manager.setActiveChunks([2]);
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([0, 2]);
     const first = evictions();
-    await manager.ensureLoaded(1);
-    await manager.ensureLoaded(1);
+    // Nothing changed since, so the next passes offer chunk 0 no more.
+    manager.setActiveChunks([2]);
+    manager.setActiveChunks([2]);
     expect(evictions()).toBe(first);
-    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+    // Clearing history changes what the reducer measures, so it is offered.
+    store.dispatch(DocumentActions.historyClear());
+    manager.setActiveChunks([2]);
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()]).toEqual([2]);
+    manager.dispose();
+  });
+
+  it("keeps chunks a pending ensureLoadedMany asked for when another fetch evicts", async () => {
+    const store = createDocumentStore({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 4,
+      reconcileMode: "none",
+    });
+    const all = { ...chunks, 3: "ddddddd\n" };
+    let releaseChunk2!: () => void;
+    const chunk2Gate = new Promise<void>((resolve) => (releaseChunk2 = resolve));
+    const manager = createChunkManager(
+      store,
+      {
+        loadChunk: async (i) => {
+          if (i === 2) await chunk2Gate;
+          return makeBytes(all[i as keyof typeof all]);
+        },
+      },
+      { maxLoadedChunks: 2 },
+    );
+    await manager.ensureLoaded(0);
+    await manager.ensureLoaded(1);
+    // The batch asks for chunk 0, resident, and chunk 2, still loading.
+    const batch = manager.ensureLoadedMany([0, 2]);
+    // Chunk 0 becomes the least recently used again.
+    await manager.ensureLoaded(1);
+    // Loading chunk 3 goes over the limit. Chunk 0 is the least recently
+    // used, but the batch asked for it, so chunk 1 goes.
+    await manager.ensureLoaded(3);
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([0, 3]);
+    releaseChunk2();
+    await batch;
+    const loaded = store.getSnapshot().pieceTable.chunkMap;
+    expect(loaded.has(0)).toBe(true);
+    expect(loaded.has(2)).toBe(true);
     manager.dispose();
   });
 
@@ -1142,6 +1164,19 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
       store.rollbackTransaction();
       expect(getRedoCount(store.getSnapshot())).toBe(1);
       expect(warn).not.toHaveBeenCalled();
+      manager.dispose();
+    });
+
+    it("still evicts a chunk a rollback restored", async () => {
+      const { store, manager, warn } = await overLimit();
+      store.beginTransaction();
+      manager.setActiveChunks([1, 2]);
+      store.rollbackTransaction();
+      expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+      // Chunk 0 is tracked again, not taken for a chunk loaded elsewhere.
+      manager.setActiveChunks([1, 2]);
+      expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
+      expect(warn.mock.calls.some(([message]) => String(message).includes("outside"))).toBe(false);
       manager.dispose();
     });
 

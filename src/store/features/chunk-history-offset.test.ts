@@ -1912,6 +1912,33 @@ describe("seventh review regressions", () => {
       const { pieceTable } = s.getSnapshot();
       expect([1, 2, 3].map((offset) => nextBoundary(pieceTable, offset))).toEqual([4, 4, 4]);
     });
+
+    it("does not count a complete character's bytes as part of the leftovers", () => {
+      // "aé", then three leftovers of a 4-byte character, then "b". The
+      // continuation byte of é belongs to it, so the run is three long.
+      const bytes = Uint8Array.from([0x61, 0xc3, 0xa9, 0x9f, 0x98, 0x80, 0x62]);
+      const s = createDocumentStore({
+        chunkSize: bytes.length,
+        totalFileSize: bytes.length,
+        reconcileMode: "none",
+      });
+      s.dispatch(DocumentActions.loadChunk(0, bytes));
+      const { pieceTable } = s.getSnapshot();
+      expect([3, 4, 5].map((offset) => nextBoundary(pieceTable, offset))).toEqual([6, 6, 6]);
+    });
+
+    it("reaches a 4-byte character's lead byte before the leftovers", () => {
+      // A complete 4-byte character, then three leftovers, then "b".
+      const bytes = Uint8Array.from([0xf0, 0x9f, 0x98, 0x80, 0x9f, 0x98, 0x80, 0x62]);
+      const s = createDocumentStore({
+        chunkSize: bytes.length,
+        totalFileSize: bytes.length,
+        reconcileMode: "none",
+      });
+      s.dispatch(DocumentActions.loadChunk(0, bytes));
+      const { pieceTable } = s.getSnapshot();
+      expect([4, 5, 6].map((offset) => nextBoundary(pieceTable, offset))).toEqual([7, 7, 7]);
+    });
   });
 });
 
