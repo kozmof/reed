@@ -271,10 +271,8 @@ export interface EvictChunkAction {
  * loaded.
  *
  * With `keepHistory`, only the first pass runs: no candidate whose eviction
- * discards history is evicted, whatever the policy. ChunkManager first sends
- * just enough least recently used candidates this way, which is what the full
- * pass would evict first, and sends every candidate only when that falls
- * short. Each load then carries a short list unless something keeps chunks.
+ * discards history is evicted, whatever the policy. ChunkManager sends every
+ * candidate without it, in one action per eviction pass.
  */
 export interface EvictChunksAction {
   readonly type: "EVICT_CHUNKS";

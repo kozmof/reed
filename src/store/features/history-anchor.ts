@@ -472,7 +472,7 @@ export class RemoteBatchSelection {
   readonly #base: Float64Array;
   /** Fenwick tree of the shifts, whose prefix sum at a position applies to it. */
   readonly #tree: Float64Array;
-  /** Per range, the change that last touched it (see `#touch`). */
+  /** Per range, the stamp of the change or key lookup that last visited it. */
   readonly #seen: Int32Array;
   #stamp = 0;
 
@@ -491,16 +491,21 @@ export class RemoteBatchSelection {
   /** The placement key for text inserted at `offset` (see `insertionKey`). */
   insertionKey(pieceTable: PieceTableState, offset: number): FittedKey {
     if (pieceTable.nextExpectedChunk === 0) return asFittedKey(NO_CHUNK);
+    // Each range once: a caret has both endpoints at the offset.
+    const stamp = ++this.#stamp;
     const candidates: number[] = [];
     for (let i = this.#lowerBound(offset); i < this.#order.length; i++) {
       if (this.#offsetAt(i) !== offset) break;
-      candidates.push(this.#order[i]! >> 1);
+      const index = this.#order[i]! >> 1;
+      if (this.#seen[index] === stamp) continue;
+      this.#seen[index] = stamp;
+      candidates.push(index);
     }
     let key: FittedKey | undefined;
     if (candidates.length > 0) {
       // The primary range first, then the others in order, as `insertionKey`.
       const primary = this.#original.primaryIndex;
-      candidates.sort((a, b) => (a === primary ? -1 : b === primary ? 1 : a - b));
+      candidates.sort((a, b) => (a === b ? 0 : a === primary ? -1 : b === primary ? 1 : a - b));
       for (let i = 0; key === undefined && i < candidates.length; i++) {
         key = endpointKeyAt(pieceTable, this.#liveRange(candidates[i]!), offset);
       }
