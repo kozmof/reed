@@ -96,7 +96,7 @@ describe("withEvictionWarnSink", () => {
     expect(evictionWarnSinkFor(from)).toBeUndefined();
   });
 
-  it("gives a nested call's eviction the nested sink, then the outer one back", () => {
+  it("gives a nested call's eviction the nested sink, and leaves the outer one taken", () => {
     const from = pieceTable();
     const outer = { warn: vi.fn() };
     const inner = { warn: vi.fn() };
@@ -104,6 +104,29 @@ describe("withEvictionWarnSink", () => {
       withEvictionWarnSink(inner, from, () => {
         expect(evictionWarnSinkFor(from)).toBe(inner);
       });
+      // The nested eviction replaced the piece table, so nothing reduces from
+      // `from` again for the outer manager.
+      expect(evictionWarnSinkFor(from)).toBeUndefined();
+    });
+    expect(evictionWarnSinkFor(from)).toBeUndefined();
+  });
+
+  it("keeps an eviction from a manager without a logger silent inside another's dispatch", () => {
+    const from = pieceTable();
+    const outer = { warn: vi.fn() };
+    withEvictionWarnSink(outer, from, () => {
+      withEvictionWarnSink(undefined, from, () => {
+        expect(evictionWarnSinkFor(from)).toBeUndefined();
+      });
+      expect(evictionWarnSinkFor(from)).toBeUndefined();
+    });
+  });
+
+  it("puts back the outer sink when a nested call without a logger leaves its own", () => {
+    const from = pieceTable();
+    const outer = { warn: vi.fn() };
+    withEvictionWarnSink(outer, from, () => {
+      withEvictionWarnSink(undefined, from, () => {});
       expect(evictionWarnSinkFor(from)).toBe(outer);
     });
   });

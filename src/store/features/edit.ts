@@ -50,12 +50,7 @@ import {
   repairLineIndexWindow,
 } from "../core/line-index.js";
 import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
-import {
-  contentDecoder,
-  decodeRun,
-  isContinuationByte,
-  utf8ByteLength,
-} from "../core/encoding.js";
+import { contentDecoder, decodeRun, isContinuationByte, utf8ByteLength } from "../core/encoding.js";
 import { NO_CHUNK, placementRuns } from "../core/chunk-anchor.js";
 import { codePointWindow, isSafeSplice, isSafeSplit } from "../core/utf8-seam.js";
 import type { FittedKey, KeyRun } from "../core/chunk-anchor.js";
@@ -785,20 +780,23 @@ export type StructuralEditOperation =
 
 /**
  * An edit `applyEdit` records in history. It reads the deleted text itself,
- * along with the bytes history may need (see `deletedRuns`).
+ * along with the bytes history may need (see `deletedRuns`). It inserts text
+ * only, never raw bytes, so the history change records exactly what was
+ * inserted, and it chooses the placement key itself.
  */
 export type EditOperation = (
-  | ({ readonly kind: "insert"; readonly position: ByteOffset } & InsertFields)
+  | { readonly kind: "insert"; readonly position: ByteOffset; readonly insertText: string }
   | {
       readonly kind: "delete";
       readonly position: ByteOffset;
       readonly deleteEnd: ByteOffset;
     }
-  | ({
+  | {
       readonly kind: "replace";
       readonly position: ByteOffset;
       readonly deleteEnd: ByteOffset;
-    } & InsertFields)
+      readonly insertText: string;
+    }
 ) & {
   readonly timestamp?: number | undefined;
   readonly selection?: NonEmptyReadonlyArray<SelectionRange> | undefined;
@@ -972,13 +970,23 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   // is the whole deleted range.
   const deleted = deletedRuns(pieceTable, runs);
   const placement: InsertKey = { kind: "fitted", key: insertKey };
+  // Name each field the structural edit takes rather than spreading `op`, so
+  // a forged operation cannot pass raw bytes that history would not record.
+  const { position } = op;
   let newState = applyUntrackedEdit(
     state,
     op.kind === "insert"
-      ? { ...op, placement }
+      ? { kind: "insert", position, insertText: op.insertText, placement }
       : op.kind === "delete"
-        ? { ...op, deletedText: deleted.text }
-        : { ...op, deletedText: deleted.text, placement },
+        ? { kind: "delete", position, deleteEnd: op.deleteEnd, deletedText: deleted.text }
+        : {
+            kind: "replace",
+            position,
+            deleteEnd: op.deleteEnd,
+            deletedText: deleted.text,
+            insertText: op.insertText,
+            placement,
+          },
     nextRevision,
   );
 

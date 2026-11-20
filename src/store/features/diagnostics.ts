@@ -35,8 +35,13 @@ export type WarnSink = Pick<ReedLogger, "warn" | "error">;
 
 // The logger of the ChunkManager that is dispatching an eviction, keyed by the
 // piece table of the state it measured the eviction against, while that
-// dispatch call runs (see `withEvictionWarnSink`).
-const evictionWarnSinks = new WeakMap<PieceTableState, WarnSink>();
+// dispatch call runs (see `withEvictionWarnSink`). Each call registers its own
+// entry object, so it can tell whether a store took it. A manager without a
+// logger registers an entry without a sink, which keeps an outer one hidden.
+interface EvictionWarnEntry {
+  readonly sink: WarnSink | undefined;
+}
+const evictionWarnSinks = new WeakMap<PieceTableState, EvictionWarnEntry>();
 
 /**
  * Run `dispatch` with `sink` as the logger that a store without a logger of
@@ -59,33 +64,41 @@ const evictionWarnSinks = new WeakMap<PieceTableState, WarnSink>();
  *
  * A call nested inside another for the same `from`, such as a second manager
  * on the same store that a wrapper runs before forwarding the first one's
- * eviction, sets its own sink for the call and then puts back the outer sink
- * if no store took it.
+ * eviction, sets its own sink for the call, a silent one when its manager has
+ * no logger. When the call ends, it puts back the outer sink only if no store
+ * took its own: an eviction that took it replaced the piece table, so the
+ * outer manager's eviction is no longer measured against `from`.
  */
 export function withEvictionWarnSink<T>(
   sink: WarnSink | undefined,
   from: PieceTableState,
   dispatch: () => T,
 ): T {
-  if (sink?.warn === undefined) return dispatch();
   const outer = evictionWarnSinks.get(from);
-  evictionWarnSinks.set(from, sink);
+  const entry: EvictionWarnEntry = { sink: sink?.warn === undefined ? undefined : sink };
+  evictionWarnSinks.set(from, entry);
   try {
     return dispatch();
   } finally {
-    if (outer === undefined) evictionWarnSinks.delete(from);
-    else evictionWarnSinks.set(from, outer);
+    // Only an entry still in place was not taken. A nested call restores the
+    // entry it found, so this finds its own entry unless a store took it.
+    if (evictionWarnSinks.get(from) === entry) {
+      if (outer === undefined) evictionWarnSinks.delete(from);
+      else evictionWarnSinks.set(from, outer);
+    }
   }
 }
 
 /**
  * Take the sink `withEvictionWarnSink` set for an eviction reduced from
- * `from`, while its dispatch runs. It is taken once.
+ * `from`, while its dispatch runs. It is taken once, and is undefined when the
+ * dispatching manager has no logger.
  */
 export function evictionWarnSinkFor(from: PieceTableState): WarnSink | undefined {
-  const sink = evictionWarnSinks.get(from);
-  if (sink !== undefined) evictionWarnSinks.delete(from);
-  return sink;
+  const entry = evictionWarnSinks.get(from);
+  if (entry === undefined) return undefined;
+  evictionWarnSinks.delete(from);
+  return entry.sink;
 }
 
 function toReportedError(message: string, error: unknown): Error {

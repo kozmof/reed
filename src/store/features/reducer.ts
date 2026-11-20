@@ -12,8 +12,7 @@ import { getText, isUtf8Boundary } from "../core/piece-table.js";
 import { validatePosition, validateRange, applyEdit, applyUntrackedEdit } from "./edit.js";
 import { getRedoCount, getUndoCount, historyUndo, historyRedo } from "./history.js";
 import {
-  insertionKey,
-  moveSelectionPastEdit,
+  RemoteBatchSelection,
   selectionFromRanges,
   selectionRangesWithKeys,
 } from "./history-anchor.js";
@@ -260,18 +259,10 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       let didApplyChange = false;
       // Move the local selection past each change, as a local edit does, so it
       // stays on the text it was on. A caret where a change inserts text stays
-      // before it (see `moveSelectionPastEdit`).
-      const moveSelection = (start: number, end: number, inserted: number) => {
-        const selection = moveSelectionPastEdit(
-          newState.pieceTable,
-          newState.selection,
-          start,
-          end,
-          inserted,
-          true,
-        );
-        if (selection !== newState.selection) newState = withState(newState, { selection });
-      };
+      // before it (see `moveSelectionPastEdit`). The batch carries the
+      // selection across its changes, so a change costs only the ranges next
+      // to it (see `RemoteBatchSelection`).
+      const selection = new RemoteBatchSelection(state.selection);
       for (const change of action.changes) {
         if (change.type === "insert" && change.text.length > 0) {
           // Normalize line endings on remote inserts the same way local inserts are treated,
@@ -290,7 +281,7 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
           // on. Text inserted at the local cursor goes where the cursor is, as
           // local typing would, which keeps remote text typed into a document
           // with every chunk evicted where the cursor was in the file.
-          const afterChunk = insertionKey(newState.pieceTable, newState.selection, position);
+          const afterChunk = selection.insertionKey(newState.pieceTable, position);
           const before = newState.pieceTable.totalLength;
           newState = applyUntrackedEdit(
             newState,
@@ -302,7 +293,12 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
             },
             nextRevision,
           );
-          moveSelection(position, position, newState.pieceTable.totalLength - before);
+          selection.applyEdit(
+            newState.pieceTable,
+            position,
+            position,
+            newState.pieceTable.totalLength - before,
+          );
         } else if (change.type === "delete" && change.length > 0) {
           const { start, end, valid } = validateRange(
             change.start,
@@ -321,11 +317,15 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
             { kind: "delete", position: start, deleteEnd: end, deletedText },
             nextRevision,
           );
-          moveSelection(start, end, 0);
+          selection.applyEdit(newState.pieceTable, start, end, 0);
         }
       }
       if (!didApplyChange) {
         return state;
+      }
+      const selectionAfter = selection.selection();
+      if (selectionAfter !== newState.selection) {
+        newState = withState(newState, { selection: selectionAfter });
       }
       // History positions are not rebased against remote operations, so remote
       // edits invalidate both stacks.

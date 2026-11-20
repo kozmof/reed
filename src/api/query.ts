@@ -9,7 +9,7 @@ import type { ByteOffset } from "../types/branded.js";
 import { $uncostedFn } from "../types/cost-doc.js";
 import {
   getText,
-  residentStartIsFileStart,
+  getPresentedText,
   getLength,
   isUtf8Boundary,
   findPieceAtPosition,
@@ -53,10 +53,7 @@ function getTextAtBoundaries(
   end: Parameters<typeof getText>[2],
 ) {
   assertTextBoundaries(state, start, end);
-  const text = getText(state, start, end);
-  return start === 0 && text.charCodeAt(0) === 0xfeff && residentStartIsFileStart(state)
-    ? text.slice(1)
-    : text;
+  return getPresentedText(state, start, end);
 }
 
 /** Text in [start, end) as the line index counts it, every U+FEFF kept. */

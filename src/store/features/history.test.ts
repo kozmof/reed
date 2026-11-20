@@ -12,7 +12,9 @@ import { DocumentActions } from "./actions.js";
 import type { DocumentState, HistoryState } from "../../types/state.js";
 import { pstackFromArray, pstackPush } from "../../types/state.js";
 import { byteOffset, byteLength } from "../../types/branded.js";
-import { makeInsertChange, makeDeleteChange } from "./edit.js";
+import { applyEdit, makeInsertChange, makeDeleteChange } from "./edit.js";
+import type { EditOperation } from "./edit.js";
+import { getValue } from "../core/piece-table.js";
 
 // =============================================================================
 // canUndo Tests
@@ -758,5 +760,24 @@ describe("Undo coalescing", () => {
     expect(entry?.changes[0]!.type).toBe("delete");
     expect(entry?.changes[1]!.type).toBe("insert");
     expect(entry?.changes[1]!.text).toBe("XY");
+  });
+});
+
+describe("applyEdit records what it inserts", () => {
+  it("ignores raw bytes on a forged operation, so redo inserts the same text", () => {
+    let state = createInitialState({ content: "ab" });
+    // JavaScript callers can pass fields the type leaves out.
+    const forged = {
+      kind: "insert",
+      position: byteOffset(1),
+      insertText: "x",
+      insertBytes: Uint8Array.of(0xe2, 0x82),
+    } as unknown as EditOperation;
+    state = applyEdit(state, forged);
+    expect(getValue(state.pieceTable)).toBe("axb");
+    state = documentReducer(state, DocumentActions.undo());
+    expect(getValue(state.pieceTable)).toBe("ab");
+    state = documentReducer(state, DocumentActions.redo());
+    expect(getValue(state.pieceTable)).toBe("axb");
   });
 });

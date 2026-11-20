@@ -1086,9 +1086,8 @@ export function getValue(state: PieceTableState): LinearCost<string> {
  * `contentDecoder`). Column math, history capture and line-index updates rely
  * on this, so their character counts match the line index.
  *
- * This is the only range reader. Stripping the byte order mark is a
- * presentation concern, done by `getValue` and the public `query.getText`
- * (see `residentStartIsFileStart`).
+ * Stripping the byte order mark is a presentation concern, done by
+ * `getValue` and `getPresentedText`.
  */
 export function getText(
   state: PieceTableState,
@@ -1098,6 +1097,21 @@ export function getText(
   // A negative start reads nothing, where getBytes clamps it to 0.
   if (start < 0) return $proveCtx($beginCost("O(n)"), "");
   return $proveCtx($beginCost("O(n)"), contentDecoder.decode(getBytes(state, start, end)));
+}
+
+/**
+ * Get text in the range [start, end) as `getValue` reads it: a range from
+ * offset 0 strips a byte order mark that starts the file (see
+ * `decoderFromStart`). A U+FEFF anywhere else is content and is kept. The
+ * public `query.getText` reads through this.
+ */
+export function getPresentedText(
+  state: PieceTableState,
+  start: ByteOffset,
+  end: ByteOffset,
+): LinearCost<string> {
+  if (start !== 0) return getText(state, start, end);
+  return $proveCtx($beginCost("O(n)"), decoderFromStart(state).decode(getBytes(state, start, end)));
 }
 
 /**

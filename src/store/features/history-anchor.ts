@@ -268,24 +268,40 @@ export function insertionKey(
   offset: number,
 ): FittedKey {
   if (pieceTable.nextExpectedChunk === 0) return asFittedKey(NO_CHUNK);
-  const fits = (key: number | undefined): key is number =>
-    key !== undefined && endpointKeyFitsAt(pieceTable, offset, key);
-  const keyOf = (range: SelectionRange | undefined): FittedKey | undefined => {
-    if (range === undefined) return undefined;
-    if (range.head === offset && fits(range.headAfterChunk)) {
-      return asFittedKey(range.headAfterChunk);
-    }
-    if (range.anchor === offset && fits(range.anchorAfterChunk)) {
-      return asFittedKey(range.anchorAfterChunk);
-    }
-    return undefined;
-  };
   // The primary range first: it is the one an edit usually comes from.
-  let key = keyOf(selection.ranges[selection.primaryIndex]);
+  let key = endpointKeyAt(pieceTable, selection.ranges[selection.primaryIndex], offset);
   for (let i = 0; key === undefined && i < selection.ranges.length; i++) {
-    key = keyOf(selection.ranges[i]);
+    key = endpointKeyAt(pieceTable, selection.ranges[i], offset);
   }
   return key ?? placementKey(pieceTable, offset, undefined, "before");
+}
+
+/**
+ * The stored key of an endpoint of `range` at `offset` that still fits there,
+ * the head's first (see `insertionKey`).
+ */
+function endpointKeyAt(
+  pieceTable: PieceTableState,
+  range: SelectionRange | undefined,
+  offset: number,
+): FittedKey | undefined {
+  if (range === undefined) return undefined;
+  const { headAfterChunk, anchorAfterChunk } = range;
+  if (
+    range.head === offset &&
+    headAfterChunk !== undefined &&
+    endpointKeyFitsAt(pieceTable, offset, headAfterChunk)
+  ) {
+    return asFittedKey(headAfterChunk);
+  }
+  if (
+    range.anchor === offset &&
+    anchorAfterChunk !== undefined &&
+    endpointKeyFitsAt(pieceTable, offset, anchorAfterChunk)
+  ) {
+    return asFittedKey(anchorAfterChunk);
+  }
+  return undefined;
 }
 
 /** True when an endpoint of `range` stores a placement key. */
@@ -339,6 +355,33 @@ export function moveSelectionPastEdit(
   inserted: number,
   remote = false,
 ): SelectionState {
+  const moveRange = rangeMover(pieceTable, start, end, inserted, remote);
+  let ranges: SelectionRange[] | undefined;
+  for (let i = 0; i < selection.ranges.length; i++) {
+    const range = selection.ranges[i]!;
+    // A range wholly before the edit stays, and its stored keys still fit:
+    // the bytes before `start` keep their keys, and text inserted at `start`
+    // takes a key no lower than the bytes after them.
+    if (range.anchor < start && range.head < start) continue;
+    const moved = moveRange(range);
+    if (moved === range) continue;
+    ranges ??= selection.ranges.slice();
+    ranges[i] = moved;
+  }
+  return ranges ? freezeSelection(ranges, selection.primaryIndex) : selection;
+}
+
+/**
+ * Move one range past an edit as `moveSelectionPastEdit` does, returning the
+ * range itself when it is unchanged.
+ */
+function rangeMover(
+  pieceTable: PieceTableState,
+  start: number,
+  end: number,
+  inserted: number,
+  remote: boolean,
+): (range: SelectionRange) => SelectionRange {
   const landing = start + inserted;
   let boundary: number | undefined;
   // The endpoint's new offset and key. A key fits only the offset it was
@@ -389,21 +432,215 @@ export function moveSelectionPastEdit(
     const next = selectionRange(pieceTable, anchor.offset, head.offset, anchor.key, head.key);
     return unmoved && sameRange(next, range) ? range : next;
   };
-  // APPLY_REMOTE calls this once per change, so skip what cannot move and copy
-  // the ranges only once one does.
-  let ranges: SelectionRange[] | undefined;
-  for (let i = 0; i < selection.ranges.length; i++) {
-    const range = selection.ranges[i]!;
-    // A range wholly before the edit stays, and its stored keys still fit:
-    // the bytes before `start` keep their keys, and text inserted at `start`
-    // takes a key no lower than the bytes after them.
-    if (range.anchor < start && range.head < start) continue;
-    const moved = moveRange(range);
-    if (moved === range) continue;
-    ranges ??= selection.ranges.slice();
-    ranges[i] = moved;
+  return moveRange;
+}
+
+/**
+ * The local selection carried across the changes of one APPLY_REMOTE batch.
+ * Each change moves it as `moveSelectionPastEdit` with `remote` would, and
+ * `insertionKey` reads it as `insertionKey` reads the selection, but a change
+ * costs O(log² R) in the number of ranges R plus the work for the endpoints in
+ * [start, end], where calling those per change costs O(R).
+ *
+ * Endpoints are kept sorted by offset. A change leaves the endpoints before
+ * `start` in place and shifts every endpoint after `end` by the same amount,
+ * so neither group changes order. The shift is added lazily, to a Fenwick tree
+ * over the sorted positions. Only the ranges with an endpoint in [start, end]
+ * are moved, and their endpoints sorted again among themselves.
+ *
+ * A range away from every change keeps its stored keys as it shifts: whether a
+ * key fits, and the gap key there, depend only on the bytes on either side of
+ * the endpoint (see `moveSelectionPastEdit`).
+ */
+export class RemoteBatchSelection {
+  readonly #original: SelectionState;
+  /** Each range with its current stored keys. Its offsets may be stale. */
+  readonly #ranges: SelectionRange[];
+  /** Endpoint ids (range index × 2, + 1 for the head) in offset order. */
+  readonly #order: Int32Array;
+  /** The sorted position of each endpoint id. */
+  readonly #position: Int32Array;
+  /** Offset at each sorted position, less the shifts in the tree. */
+  readonly #base: Float64Array;
+  /** Fenwick tree of the shifts, whose prefix sum at a position applies to it. */
+  readonly #tree: Float64Array;
+  /** Per range, the change that last touched it (see `#touch`). */
+  readonly #seen: Int32Array;
+  #stamp = 0;
+
+  constructor(selection: SelectionState) {
+    this.#original = selection;
+    this.#ranges = selection.ranges.slice();
+    const count = this.#ranges.length * 2;
+    this.#order = new Int32Array(count);
+    this.#position = new Int32Array(count);
+    this.#base = new Float64Array(count);
+    this.#tree = new Float64Array(count + 1);
+    this.#seen = new Int32Array(this.#ranges.length);
+    this.#sortAll((id) => this.#storedOffset(id));
   }
-  return ranges ? freezeSelection(ranges, selection.primaryIndex) : selection;
+
+  /** The placement key for text inserted at `offset` (see `insertionKey`). */
+  insertionKey(pieceTable: PieceTableState, offset: number): FittedKey {
+    if (pieceTable.nextExpectedChunk === 0) return asFittedKey(NO_CHUNK);
+    const candidates: number[] = [];
+    for (let i = this.#lowerBound(offset); i < this.#order.length; i++) {
+      if (this.#offsetAt(i) !== offset) break;
+      candidates.push(this.#order[i]! >> 1);
+    }
+    let key: FittedKey | undefined;
+    if (candidates.length > 0) {
+      // The primary range first, then the others in order, as `insertionKey`.
+      const primary = this.#original.primaryIndex;
+      candidates.sort((a, b) => (a === primary ? -1 : b === primary ? 1 : a - b));
+      for (let i = 0; key === undefined && i < candidates.length; i++) {
+        key = endpointKeyAt(pieceTable, this.#liveRange(candidates[i]!), offset);
+      }
+    }
+    return key ?? placementKey(pieceTable, offset, undefined, "before");
+  }
+
+  /**
+   * Move the selection past a remote edit that replaced [start, end) with
+   * `inserted` bytes, giving `pieceTable`.
+   */
+  applyEdit(pieceTable: PieceTableState, start: number, end: number, inserted: number): void {
+    const count = this.#order.length;
+    const lo = this.#lowerBound(start);
+    const hi = this.#lowerBound(end + 1);
+    const delta = inserted - (end - start);
+    if (lo === hi) {
+      if (delta !== 0 && hi < count) this.#shift(hi, delta);
+      return;
+    }
+    // Move every range with an endpoint in [start, end], reading its offsets
+    // before the shift.
+    const stamp = ++this.#stamp;
+    const touched: number[] = [];
+    for (let i = lo; i < hi; i++) {
+      const index = this.#order[i]! >> 1;
+      if (this.#seen[index] === stamp) continue;
+      this.#seen[index] = stamp;
+      touched.push(index);
+    }
+    const moveRange = rangeMover(pieceTable, start, end, inserted, true);
+    for (const index of touched) this.#ranges[index] = moveRange(this.#liveRange(index));
+    if (delta !== 0 && hi < count) this.#shift(hi, delta);
+    // An endpoint outside [lo, hi) of a moved range lies before `start` or
+    // after `end`, so it stayed or shifted as every endpoint there did.
+    let consistent = true;
+    for (const index of touched) {
+      for (const id of [index * 2, index * 2 + 1]) {
+        const position = this.#position[id]!;
+        if (position >= lo && position < hi) continue;
+        if (this.#offsetAt(position) !== this.#storedOffset(id)) consistent = false;
+      }
+    }
+    if (!consistent) {
+      this.#sortLive(stamp);
+      return;
+    }
+    // Sort the moved endpoints among themselves.
+    const ids = Array.from(this.#order.subarray(lo, hi));
+    ids.sort((a, b) => this.#storedOffset(a) - this.#storedOffset(b));
+    for (let i = 0; i < ids.length; i++) {
+      const position = lo + i;
+      const id = ids[i]!;
+      this.#order[position] = id;
+      this.#position[id] = position;
+      this.#base[position] = this.#storedOffset(id) - this.#prefix(position);
+    }
+    // They land in [start, end + inserted], between the endpoints around
+    // them, except next to a malformed run (see `nextBoundary`).
+    if (
+      (lo > 0 && this.#offsetAt(lo - 1) > this.#offsetAt(lo)) ||
+      (hi < count && this.#offsetAt(hi - 1) > this.#offsetAt(hi))
+    ) {
+      this.#sortLive(stamp);
+    }
+  }
+
+  /**
+   * Sort every endpoint again by its current offset: the stored offset for a
+   * range change `stamp` moved, the tracked one for any other.
+   */
+  #sortLive(stamp: number): void {
+    const offsets = Array.from({ length: this.#order.length }, (_, id) =>
+      this.#seen[id >> 1] === stamp ? this.#storedOffset(id) : this.#offsetAt(this.#position[id]!),
+    );
+    this.#sortAll((id) => offsets[id]!);
+  }
+
+  /** The selection after every change so far, `selection` itself when no range changed. */
+  selection(): SelectionState {
+    const original = this.#original;
+    let ranges: SelectionRange[] | undefined;
+    for (let index = 0; index < this.#ranges.length; index++) {
+      const live = this.#liveRange(index);
+      const old = original.ranges[index]!;
+      if (live === old || sameRange(live, old)) continue;
+      ranges ??= original.ranges.slice();
+      ranges[index] = live;
+    }
+    return ranges ? freezeSelection(ranges, original.primaryIndex) : original;
+  }
+
+  /** The offset stored on the range object of endpoint `id`. */
+  #storedOffset(id: number): number {
+    const range = this.#ranges[id >> 1]!;
+    return id & 1 ? range.head : range.anchor;
+  }
+
+  /** Range `index` at its current offsets, with its stored keys. */
+  #liveRange(index: number): SelectionRange {
+    const range = this.#ranges[index]!;
+    const anchor = this.#offsetAt(this.#position[index * 2]!);
+    const head = this.#offsetAt(this.#position[index * 2 + 1]!);
+    if (anchor === range.anchor && head === range.head) return range;
+    const live = { ...range, anchor: byteOffset(anchor), head: byteOffset(head) };
+    this.#ranges[index] = Object.freeze(live);
+    return this.#ranges[index]!;
+  }
+
+  /** Sort every endpoint by `offsetOf` and clear the shifts. */
+  #sortAll(offsetOf: (id: number) => number): void {
+    const ids = Array.from({ length: this.#order.length }, (_, id) => id);
+    ids.sort((a, b) => offsetOf(a) - offsetOf(b));
+    this.#tree.fill(0);
+    for (let position = 0; position < ids.length; position++) {
+      const id = ids[position]!;
+      this.#order[position] = id;
+      this.#position[id] = position;
+      this.#base[position] = offsetOf(id);
+    }
+  }
+
+  #offsetAt(position: number): number {
+    return this.#base[position]! + this.#prefix(position);
+  }
+
+  /** First sorted position whose offset is at least `offset`. */
+  #lowerBound(offset: number): number {
+    let lo = 0;
+    let hi = this.#order.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.#offsetAt(mid) < offset) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  /** Add `delta` to the offset at every sorted position from `from` on. */
+  #shift(from: number, delta: number): void {
+    for (let i = from + 1; i < this.#tree.length; i += i & -i) this.#tree[i]! += delta;
+  }
+
+  #prefix(position: number): number {
+    let sum = 0;
+    for (let i = position + 1; i > 0; i -= i & -i) sum += this.#tree[i]!;
+    return sum;
+  }
 }
 
 // =============================================================================
