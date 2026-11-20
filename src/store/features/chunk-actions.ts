@@ -7,12 +7,7 @@
  * the chunk lifecycle a focused test boundary.
  */
 
-import type {
-  DocumentState,
-  LineIndexState,
-  PieceNode,
-  SelectionState,
-} from "../../types/state.js";
+import type { DocumentState, LineIndexState, PieceNode } from "../../types/state.js";
 import { pstackSize } from "../../types/state.js";
 import type {
   DeclareChunkMetadataAction,
@@ -32,9 +27,9 @@ import {
 } from "../core/piece-table.js";
 import { hasAttentionForPiece } from "../core/attention.js";
 import { deriveLoadedChunks, keySpan } from "../core/chunk-anchor.js";
-import { lowerBound } from "../core/binary-search.js";
 import {
   carrySelectionAcrossChunks,
+  rangeEndsBefore,
   historyForEviction,
   historyLossForEviction,
   totalLoss,
@@ -254,14 +249,13 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
   let unloadedLineCount = state.lineIndex.unloadedLineCount;
   // Where the lowest chunk goes, in the text before the load. The chunks go
   // in ascending order, so every other one lands after it.
-  let firstInsertion: ByteOffset | null = null;
+  const firstInsertion = keySpan(root, prepared[0]!.chunkIndex).start;
 
   for (const chunk of prepared) {
     // Before the first piece whose key is >= the chunk index: the first piece
     // of a higher chunk, or text recorded as lying after the chunk. For the
     // next chunk in order every key is below it, so that is the end.
     const insertionPos = byteOffset(keySpan(root, chunk.chunkIndex).start);
-    firstInsertion ??= insertionPos;
     const id = pieceID(`p${nextPieceID++}`);
     root = insertChunkPieceAt(root, insertionPos, chunk.chunkIndex, chunk.data.length, id);
     summarizeBytes(chunk.data); // Prepare reusable decoder summaries once during loading.
@@ -309,23 +303,14 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
     lineIndex,
     // Keep the cursor on the same text, as history positions are kept. A
     // selection wholly before every loaded chunk cannot move, which is the
-    // usual case while chunks stream in at the end, so it skips the carry.
+    // usual case while chunks stream in at the end, so it skips the carry
+    // (see `rangeEndsBefore`).
     selection:
       state.pieceTable.nextExpectedChunk !== 0 &&
-      firstInsertion !== null &&
-      selectionEndsBefore(state.selection, firstInsertion)
+      state.selection.ranges.every((range) => rangeEndsBefore(range, firstInsertion))
         ? state.selection
         : carrySelectionAcrossChunks(state.pieceTable, pieceTable, state.selection),
   });
-}
-
-/**
- * True when every endpoint of `selection` lies before `offset`. Text inserted
- * at `offset` or later leaves such endpoints, and the pieces and chunk keys
- * around them, unchanged, so carrying the selection would return it as is.
- */
-function selectionEndsBefore(selection: SelectionState, offset: ByteOffset): boolean {
-  return selection.ranges.every((range) => range.anchor < offset && range.head < offset);
 }
 
 type EvictableRange = { readonly start: ByteOffset; readonly end: ByteOffset } | null;
@@ -390,62 +375,6 @@ export function evictionCandidate(
   if (range === null) return null;
   const loss = historyLossForEviction(state.pieceTable, state.history, chunkIndex, range.start);
   return { range, loss };
-}
-
-type ChunkMap = DocumentState["pieceTable"]["chunkMap"];
-
-/**
- * The resident chunks of `chunkMap` whose standing against edits may differ
- * from when `previous` was the chunk map, history and attention unchanged.
- *
- * What keeps a chunk resident is history pointing inside it, an attention
- * anchored to it, or edits splitting or touching it (see
- * `evictionCandidate` and `chunkHoldReason`). Every edit, undo, redo, and history clear replaces
- * the history object, and every attention change the attention object. So
- * while both are unchanged, the text has changed only by chunks loaded or
- * evicted, which leave what history points inside a chunk, and the
- * attentions anchored to it, as they were. Evicting a chunk only brings text
- * together, and a chunk no edit touches has no add piece beside it to bring
- * to its neighbours. Loading one puts its text between the loaded chunks on
- * either side, which can part one of them from an add piece that touched it.
- * So the chunks returned are each chunk loaded since and the nearest resident
- * chunk below and above it.
- *
- * It lives beside `evictionCandidate` because it holds only while the rules
- * there do: a new reason to keep a chunk resident must keep it true, or callers
- * that cache which chunks cannot go (ChunkManager) miss chunks freed since.
- *
- * `previous` can be just the indices of the chunks then resident, which keeps
- * no chunk bytes in memory. Every load and eviction replaces the chunk map, so
- * when `previous` is `chunkMap` itself this costs O(1). Otherwise finding the
- * chunks loaded since costs O(L) for L resident chunks, and finding their
- * neighbours O(L log k) more for k of them.
- */
-export function chunksMovedByLoads(
-  previous: ChunkMap | ReadonlySet<number>,
-  chunkMap: ChunkMap,
-): ReadonlySet<number> {
-  const moved = new Set<number>();
-  if (chunkMap === previous) return moved;
-  const loaded: number[] = [];
-  for (const chunk of chunkMap.keys()) if (!previous.has(chunk)) loaded.push(chunk);
-  if (loaded.length === 0) return moved;
-  loaded.sort((a, b) => a - b);
-  // The nearest resident chunk below and above each one loaded since. A chunk
-  // with one loaded since between it and another is not the other's nearest.
-  const below = loaded.map(() => -Infinity);
-  const above = loaded.map(() => Infinity);
-  for (const chunk of chunkMap.keys()) {
-    // The first chunk loaded since that lies above `chunk`.
-    const lo = lowerBound(loaded, chunk + 1);
-    if (lo < loaded.length) below[lo] = Math.max(below[lo]!, chunk);
-    const under = loaded[lo - 1] === chunk ? lo - 2 : lo - 1;
-    if (under >= 0) above[under] = Math.min(above[under]!, chunk);
-  }
-  for (const chunk of loaded) moved.add(chunk);
-  for (const chunk of below) if (chunk !== -Infinity) moved.add(chunk);
-  for (const chunk of above) if (chunk !== Infinity) moved.add(chunk);
-  return moved;
 }
 
 export function evictChunk(state: DocumentState, action: EvictChunkAction): DocumentState {

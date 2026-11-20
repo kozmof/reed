@@ -254,7 +254,9 @@ describe("ChunkManager LRU eviction", () => {
     // Pinned chunks keep the cache over the limit, so the manager warns.
     await expect(manager.ensureLoaded(1)).resolves.toBeUndefined();
     expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(2);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("eviction pressure"));
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("eviction pressure: 2 chunks loaded"),
+    );
     expect(error).toHaveBeenCalledWith(expect.any(String), failure);
     // A pass that shrinks the active set returns normally too.
     expect(() => manager.setActiveChunks([1])).not.toThrow();
@@ -540,7 +542,7 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     manager.dispose();
   });
 
-  it("does not offer chunks history pins again until the document changes", async () => {
+  it("keeps a chunk history pins until history changes", async () => {
     const { store, manager } = setup("pin");
     await manager.ensureLoaded(0);
     pinChunk0(store);
@@ -549,12 +551,17 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     await manager.ensureLoaded(2);
     expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
 
-    // History still pins chunk 0, so a pass would evict nothing.
+    // History still pins chunk 0: the bounded pass and the full pass both
+    // offer it, and the reducer refuses it each time.
     const dispatch = vi.spyOn(store, "dispatch");
     manager.setActiveChunks([2, 1]);
-    expect(dispatch.mock.calls.filter(([action]) => action.type.startsWith("EVICT"))).toEqual([]);
+    expect(dispatch.mock.calls.filter(([action]) => action.type.startsWith("EVICT"))).toEqual([
+      [DocumentActions.evictChunks([0], 2, true)],
+      [DocumentActions.evictChunks([0], 2)],
+    ]);
+    expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
 
-    // Once history changes, chunk 0 is offered again and goes.
+    // Once history changes, chunk 0 goes.
     store.dispatch(DocumentActions.historyClear());
     manager.setActiveChunks([1, 2]);
     expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
@@ -1307,7 +1314,7 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
 });
 
 describe("ChunkManager eviction transition", () => {
-  it("evicts down to the limit with a single EVICT_CHUNKS dispatch", async () => {
+  it("offers only as many chunks as must go when they cost no history", async () => {
     const store = createDocumentStore({ chunkSize: CHUNK_SIZE, totalFileSize: CHUNK_SIZE * 3 });
     const chunks = { 0: "aaaaaaa\n", 1: "bbbbbbb\n", 2: "ccccccc\n" };
     const manager = createChunkManager(store, makeLoader(chunks), { maxLoadedChunks: 1 });
@@ -1317,9 +1324,37 @@ describe("ChunkManager eviction transition", () => {
     // Unpinning puts all three over the limit of one.
     manager.setActiveChunks([]);
     const evictions = dispatch.mock.calls.filter(([action]) => action.type.startsWith("EVICT"));
-    // Every unpinned chunk is offered; the reducer stops once two have gone.
-    expect(evictions).toEqual([[DocumentActions.evictChunks([0, 1, 2], 1)]]);
+    // Two must go, so only the two least recently used are offered.
+    expect(evictions).toEqual([[DocumentActions.evictChunks([0, 1], 1, true)]]);
     expect([...store.getSnapshot().pieceTable.chunkMap.keys()]).toEqual([2]);
+    manager.dispose();
+  });
+
+  it("offers every candidate once the least recently used ones cost history", async () => {
+    const store = createDocumentStore({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 3,
+      historyEvictionPolicy: "drop",
+      reconcileMode: "none",
+    });
+    const chunks = { 0: "aaaaaaa\n", 1: "bbbbbbb\n", 2: "ccccccc\n" };
+    const manager = createChunkManager(store, makeLoader(chunks), { maxLoadedChunks: 2 });
+    manager.setActiveChunks([0, 1, 2]);
+    for (const i of [0, 1, 2]) await manager.ensureLoaded(i);
+    // The redo entry points inside chunk 0, so evicting it discards history.
+    store.dispatch(DocumentActions.insert(byteOffset(2), "X"));
+    store.dispatch(DocumentActions.undo());
+    const dispatch = vi.spyOn(store, "dispatch");
+    manager.setActiveChunks([]);
+    const evictions = dispatch.mock.calls.filter(([action]) => action.type.startsWith("EVICT"));
+    // The bounded pass refuses chunk 0, so the full pass offers every
+    // candidate, and the reducer evicts chunk 1, which costs nothing.
+    expect(evictions).toEqual([
+      [DocumentActions.evictChunks([0], 2, true)],
+      [DocumentActions.evictChunks([0, 1, 2], 2)],
+    ]);
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([0, 2]);
+    expect(getRedoCount(store.getSnapshot())).toBe(1);
     manager.dispose();
   });
 });
@@ -1739,7 +1774,7 @@ describe("ChunkManager eviction after another path evicted a chunk", () => {
     const dispatch = vi.spyOn(store, "dispatch");
     manager.setActiveChunks([]);
     const evictions = dispatch.mock.calls.filter(([action]) => action.type.startsWith("EVICT"));
-    expect(evictions).toEqual([[DocumentActions.evictChunks([1, 2, 3], 2)]]);
+    expect(evictions).toEqual([[DocumentActions.evictChunks([1], 2, true)]]);
     expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([2, 3]);
     manager.dispose();
   });

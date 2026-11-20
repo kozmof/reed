@@ -360,16 +360,23 @@ export function moveSelectionPastEdit(
   let ranges: SelectionRange[] | undefined;
   for (let i = 0; i < selection.ranges.length; i++) {
     const range = selection.ranges[i]!;
-    // A range wholly before the edit stays, and its stored keys still fit:
-    // the bytes before `start` keep their keys, and text inserted at `start`
-    // takes a key no lower than the bytes after them.
-    if (range.anchor < start && range.head < start) continue;
+    if (rangeEndsBefore(range, start)) continue;
     const moved = moveRange(range);
     if (moved === range) continue;
     ranges ??= selection.ranges.slice();
     ranges[i] = moved;
   }
   return ranges ? freezeSelection(ranges, selection.primaryIndex) : selection;
+}
+
+/**
+ * True when both endpoints of `range` lie before `offset`. Such a range stays
+ * across an edit or a chunk load at `offset` or later, and its stored keys
+ * still fit: the bytes before `offset` keep their keys, and text inserted at
+ * `offset` takes a key no lower than the bytes after them.
+ */
+export function rangeEndsBefore(range: SelectionRange, offset: number): boolean {
+  return range.anchor < offset && range.head < offset;
 }
 
 /**
@@ -1022,11 +1029,12 @@ interface ChunkTrack {
  *
  * A change keyed below `key` lies wholly before the chunk, and one keyed above
  * it wholly after: every byte a change removes has its key (see
- * `changeReplayFailure`, which UNDO, REDO and checkpoint restore apply). A change keyed `key` lies before the chunk when its position
- * is at or before the chunk's start and it removes nothing from the start on.
- * Past that start it resolves by counting the chunk's bytes, which eviction
- * removes. A change that removes bytes from the start on removes the chunk's
- * own bytes, which only a loaded chunk has.
+ * `changeReplayFailure`, which UNDO, REDO and checkpoint restore apply). A
+ * change keyed `key` lies before the chunk when its position is at or before
+ * the chunk's start and it removes nothing from the start on. Past that start
+ * it resolves by counting the chunk's bytes, which eviction removes. A change
+ * that removes bytes from the start on removes the chunk's own bytes, which
+ * only a loaded chunk has.
  */
 function changeInsideChunk(change: HistoryChange, track: ChunkTrack): boolean {
   if (change.afterChunk > track.key) return false;
@@ -1074,10 +1082,12 @@ interface EvictionCuts {
 
 // The same history is often measured against the same chunk more than once:
 // EVICT_CHUNKS measures a candidate and then evicts it, and ChunkManager
-// offers a refused candidate again once a load next to it may have freed it. The cuts depend only on the history, the chunk, and
-// the chunk's anchored start. Loading or evicting other chunks leaves the
-// anchored start unchanged, and every edit, undo, and redo replaces the
-// history object, so the cuts are kept per history object.
+// offers a candidate to its keepHistory pass and then to its full pass, and
+// offers a refused candidate again on every pass while the cache stays over
+// its limit. The cuts depend only on the history, the chunk, and the chunk's
+// anchored start. Loading or evicting other chunks leaves the anchored start
+// unchanged, and every edit, undo, and redo replaces the history object, so
+// the cuts are kept per history object.
 const evictionCutCache = new WeakMap<HistoryState, Map<number, EvictionCuts>>();
 
 function evictionCuts(history: HistoryState, chunkIndex: number, anchoredStart: number) {
