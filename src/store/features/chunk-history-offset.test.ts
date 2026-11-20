@@ -3548,19 +3548,32 @@ describe("forty-fourth review regressions", () => {
     expect(() => restoreCheckpoint(checkpoint)).toThrow(/outside placement key -1/);
   });
 
-  it("keeps a live delete across chunks replayable after evicting the later chunk", () => {
+  it("keeps a live delete across chunks replayable, keyed per chunk", () => {
     const s = makeStore(3, "drop");
     for (let i = 0; i < 3; i++) load(s, i);
     s.dispatch(DocumentActions.delete(byteOffset(0), byteOffset(10)));
     s.dispatch(DocumentActions.undo());
-    // Undo gave the deleted bytes back under key -1, so redo no longer
-    // points into chunk 1, and evicting it keeps the entry.
+    // Undo gave chunk 0's bytes back under key -1 and chunk 1's "BB" under
+    // key 0, so redo removes each under its own key: no change removes bytes
+    // of another key, as the forged one above would.
+    expect(wireOf(s).history.redo[0].changes).toEqual([
+      ["d", 0, "BB", 0],
+      ["d", 0, "AAAAAAA\n"],
+    ]);
     const restored = createDocumentStoreFromCheckpoint(wireOf(s), { reconcileMode: "none" });
     for (const store of [s, restored]) {
+      // Redo points into chunk 1, so evicting it while keeping history is
+      // refused.
       store.dispatch(DocumentActions.evictChunk(1, true));
+      expect(store.getSnapshot().pieceTable.chunkMap.has(1)).toBe(true);
+      // Chunk 2 lies wholly after the delete, so it goes and redo stays.
+      store.dispatch(DocumentActions.evictChunk(2, true));
+      expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([0, 1]);
       expect(getRedoCount(store.getSnapshot())).toBe(1);
       store.dispatch(DocumentActions.redo());
-      expect(text(store)).toBe("BBBBB\n" + CHUNKS[2]);
+      expect(text(store)).toBe("BBBBB\n");
+      store.dispatch(DocumentActions.undo());
+      expect(text(store)).toBe(CHUNK0 + CHUNK1);
     }
   });
 });

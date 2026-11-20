@@ -27,7 +27,7 @@ import {
   asFittedKey,
   endpointKeyFitsAt,
   gapKey,
-  keyFitsAfterRemoving,
+  isPlacementKey,
   keySpan,
   loadedChunkLengths,
   loadedSumAtOrBelow,
@@ -84,17 +84,20 @@ export function changeReplayFailure(
   inserted: number,
   key: number,
 ): "range" | "key" | "span" | null {
-  if (start < 0 || start + removed > layout.totalLength) return "range";
-  if ((removed > 0 || inserted > 0) && !keyFitsAfterRemoving(layout, start, start + removed, key)) {
-    return "key";
-  }
-  // Without chunks every byte has key NO_CHUNK, which `key` then is.
-  if (removed > 0 && layout.nextExpectedChunk > 0) {
-    // Keys never decrease in document order, so the bytes with key `key` are
-    // exactly [span.start, span.end).
-    const span = keySpan(layout.root, key);
-    if (start < span.start || start + removed > span.end) return "span";
-  }
+  const end = start + removed;
+  if (start < 0 || end > layout.totalLength) return "range";
+  if (removed === 0 && inserted === 0) return null;
+  // Before any chunk loads, NO_CHUNK is the only key, and every byte has it.
+  if (layout.nextExpectedChunk === 0) return key === NO_CHUNK ? null : "key";
+  if (!isPlacementKey(layout, key)) return "key";
+  // Keys never decrease in document order, so the bytes with key `key` are
+  // exactly [span.start, span.end). The key fits at `start` once the removed
+  // bytes are gone when the range touches that span (as in
+  // `keyFitsAfterRemoving`), and every removed byte has the key when the
+  // range lies inside it.
+  const span = keySpan(layout.root, key);
+  if (span.start > end || start > span.end) return "key";
+  if (start < span.start || end > span.end) return "span";
   return null;
 }
 

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { reportCaughtError } from "./diagnostics.js";
+import type { PieceTableState } from "../../types/state.js";
+import { evictionWarnSinkFor, reportCaughtError, withEvictionWarnSink } from "./diagnostics.js";
 
 describe("reportCaughtError", () => {
   afterEach(() => {
@@ -67,5 +68,53 @@ describe("reportCaughtError", () => {
     reportCaughtError(undefined, "Store listener threw", cause);
 
     expect(consoleError).toHaveBeenCalledWith("Store listener threw", cause);
+  });
+});
+
+describe("withEvictionWarnSink", () => {
+  const pieceTable = () => ({}) as PieceTableState;
+
+  it("lets a store take the sink once, only while the call runs", () => {
+    const from = pieceTable();
+    const sink = { warn: vi.fn() };
+    withEvictionWarnSink(sink, from, () => {
+      expect(evictionWarnSinkFor(from)).toBe(sink);
+      expect(evictionWarnSinkFor(from)).toBeUndefined();
+    });
+    withEvictionWarnSink(sink, from, () => {});
+    expect(evictionWarnSinkFor(from)).toBeUndefined();
+  });
+
+  it("puts back the outer sink when a nested call for the same piece table leaves its own", () => {
+    const from = pieceTable();
+    const outer = { warn: vi.fn() };
+    withEvictionWarnSink(outer, from, () => {
+      // The nested call's eviction is refused, so no store takes its sink.
+      withEvictionWarnSink({ warn: vi.fn() }, from, () => {});
+      expect(evictionWarnSinkFor(from)).toBe(outer);
+    });
+    expect(evictionWarnSinkFor(from)).toBeUndefined();
+  });
+
+  it("gives a nested call's eviction the nested sink, then the outer one back", () => {
+    const from = pieceTable();
+    const outer = { warn: vi.fn() };
+    const inner = { warn: vi.fn() };
+    withEvictionWarnSink(outer, from, () => {
+      withEvictionWarnSink(inner, from, () => {
+        expect(evictionWarnSinkFor(from)).toBe(inner);
+      });
+      expect(evictionWarnSinkFor(from)).toBe(outer);
+    });
+  });
+
+  it("does not put back an outer sink a store already took", () => {
+    const from = pieceTable();
+    const outer = { warn: vi.fn() };
+    withEvictionWarnSink(outer, from, () => {
+      expect(evictionWarnSinkFor(from)).toBe(outer);
+      withEvictionWarnSink({ warn: vi.fn() }, from, () => {});
+      expect(evictionWarnSinkFor(from)).toBeUndefined();
+    });
   });
 });

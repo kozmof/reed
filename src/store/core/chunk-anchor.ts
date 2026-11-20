@@ -157,6 +157,14 @@ export function keyFitsAt(pieceTable: KeyLayout, offset: number, key: number): b
 }
 
 /**
+ * True when `key` is a placement key once a chunk has loaded: an integer from
+ * NO_CHUNK up to the last chunk that has loaded, never one that has not. O(1).
+ */
+export function isPlacementKey(pieceTable: KeyLayout, key: number): boolean {
+  return Number.isSafeInteger(key) && key >= NO_CHUNK && key < pieceTable.nextExpectedChunk;
+}
+
+/**
  * True when `key` would fit at resident `start` (see `keyFitsAt`) once the
  * bytes in [start, end) are removed, as a replace removes them before it
  * inserts. Only the bytes on either side of the range must stay in key order
@@ -171,9 +179,7 @@ export function keyFitsAfterRemoving(
   if (start < 0 || end < start || end > pieceTable.totalLength) return false;
   // Before any chunk loads, NO_CHUNK is the only key and fits everywhere.
   if (pieceTable.nextExpectedChunk === 0) return key === NO_CHUNK;
-  if (!Number.isSafeInteger(key) || key < NO_CHUNK || key >= pieceTable.nextExpectedChunk) {
-    return false;
-  }
+  if (!isPlacementKey(pieceTable, key)) return false;
   // Keys never decrease in document order, so the bytes keyed below `key` are
   // [0, span.start) and the bytes keyed at or below it are [0, span.end).
   const span = keySpan(pieceTable.root, key);

@@ -56,6 +56,11 @@ const evictionWarnSinks = new WeakMap<PieceTableState, WarnSink>();
  * Nothing outlives the call, so a later manager on the same store, or a
  * disposed one, neither shares nor keeps the sink. A store with its own logger
  * warns only through that, so the warning comes once.
+ *
+ * A call nested inside another for the same `from`, such as a second manager
+ * on the same store that a wrapper runs before forwarding the first one's
+ * eviction, sets its own sink for the call and then puts back the outer sink
+ * if no store took it.
  */
 export function withEvictionWarnSink<T>(
   sink: WarnSink | undefined,
@@ -63,11 +68,13 @@ export function withEvictionWarnSink<T>(
   dispatch: () => T,
 ): T {
   if (sink?.warn === undefined) return dispatch();
+  const outer = evictionWarnSinks.get(from);
   evictionWarnSinks.set(from, sink);
   try {
     return dispatch();
   } finally {
-    evictionWarnSinks.delete(from);
+    if (outer === undefined) evictionWarnSinks.delete(from);
+    else evictionWarnSinks.set(from, outer);
   }
 }
 
