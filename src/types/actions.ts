@@ -25,9 +25,12 @@ export interface InsertAction {
   /** Optional timestamp for deterministic history coalescing (defaults to Date.now()) */
   readonly timestamp?: number;
   /**
-   * When provided, replaces state.selection before historyPush records selectionBefore.
-   * Use this to pass the logical cursor position inline, eliminating the need for a
-   * separate setSelection dispatch before every edit.
+   * The selection the edit comes from, in the document before the edit. When
+   * omitted, the current selection is used. Undo restores it, and after the edit
+   * state.selection holds it moved past the edit (an endpoint at or inside the
+   * edited range moves after the inserted text). Use this to pass the logical
+   * cursor position inline, eliminating the need for a separate setSelection
+   * dispatch before every edit.
    */
   readonly selection?: NonEmptyReadonlyArray<SelectionRange>;
 }
@@ -44,9 +47,12 @@ export interface DeleteAction {
   /** Optional timestamp for deterministic history coalescing (defaults to Date.now()) */
   readonly timestamp?: number;
   /**
-   * When provided, replaces state.selection before historyPush records selectionBefore.
-   * Use this to pass the logical cursor position inline, eliminating the need for a
-   * separate setSelection dispatch before every edit.
+   * The selection the edit comes from, in the document before the edit. When
+   * omitted, the current selection is used. Undo restores it, and after the edit
+   * state.selection holds it moved past the edit (an endpoint at or inside the
+   * edited range moves after the inserted text). Use this to pass the logical
+   * cursor position inline, eliminating the need for a separate setSelection
+   * dispatch before every edit.
    */
   readonly selection?: NonEmptyReadonlyArray<SelectionRange>;
 }
@@ -65,9 +71,12 @@ export interface ReplaceAction {
   /** Optional timestamp for deterministic history coalescing (defaults to Date.now()) */
   readonly timestamp?: number;
   /**
-   * When provided, replaces state.selection before historyPush records selectionBefore.
-   * Use this to pass the logical cursor position inline, eliminating the need for a
-   * separate setSelection dispatch before every edit.
+   * The selection the edit comes from, in the document before the edit. When
+   * omitted, the current selection is used. Undo restores it, and after the edit
+   * state.selection holds it moved past the edit (an endpoint at or inside the
+   * edited range moves after the inserted text). Use this to pass the logical
+   * cursor position inline, eliminating the need for a separate setSelection
+   * dispatch before every edit.
    */
   readonly selection?: NonEmptyReadonlyArray<SelectionRange>;
 }
@@ -217,6 +226,15 @@ export interface LoadChunksAction {
  * - Structural queries that include pre-declared metadata for unloaded chunks.
  * - Loading the chunk again via `LOAD_CHUNK` to restore text access.
  *
+ * EVICT_CHUNK leaves the state unchanged when the chunk is not loaded, has
+ * edits inside or touching it, has attention anchored inside it, or has undo
+ * or redo history pointing inside it and the history eviction policy keeps it
+ * (see `HistoryEvictionPolicy`). Under the default `"pin-bounded"` policy, a
+ * plain EVICT_CHUNK is refused while history points inside the chunk, even
+ * after the edit there was undone, since redo history still points there. Set
+ * `overLimit` to evict it anyway and discard that history. Check the outcome
+ * with `store.didEvict`.
+ *
  * What callers must do before evicting:
  * - Ensure no in-progress edit (open transaction) spans the chunk's byte range.
  * - Persist unsaved chunk changes before eviction. Eviction does not write
@@ -228,6 +246,36 @@ export interface EvictChunkAction {
   readonly type: "EVICT_CHUNK";
   /** Index of the chunk to evict */
   readonly chunkIndex: number;
+  /**
+   * True when the caller is over its limit of loaded chunks and has nothing
+   * else to evict. Under the `"pin-bounded"` history eviction policy, history
+   * pointing inside the chunk is then discarded instead of refusing the
+   * eviction (see `HistoryEvictionPolicy`). Other policies ignore it.
+   */
+  readonly overLimit?: boolean;
+}
+
+/**
+ * Evict chunks until at most `maxLoaded` stay loaded, choosing among
+ * `chunkIndices` in one reducer transition. ChunkManager sends this to stay
+ * within `maxLoadedChunks`, with its unpinned chunks least recently used first.
+ *
+ * Each eviction follows the EVICT_CHUNK contract (see {@link EvictChunkAction}).
+ * Candidates that edits or attention keep are skipped. Among the rest, every
+ * candidate whose eviction discards no undo or redo history goes first, in the
+ * order given. Only if more must go does the history eviction policy decide
+ * (see `HistoryEvictionPolicy`): `"pin"` evicts no more, `"drop"` evicts in
+ * the order given, and `"pin-bounded"` evicts the candidate that discards the
+ * fewest history entries each time, ties going to the earlier candidate.
+ * Eviction stops as soon as the limit is met, so it may leave candidates
+ * loaded.
+ */
+export interface EvictChunksAction {
+  readonly type: "EVICT_CHUNKS";
+  /** Chunks that may be evicted, in the order to try them */
+  readonly chunkIndices: readonly number[];
+  /** Most chunks to leave loaded */
+  readonly maxLoaded: number;
 }
 
 /**
@@ -264,6 +312,7 @@ export type DocumentAction =
   | LoadChunkAction
   | LoadChunksAction
   | EvictChunkAction
+  | EvictChunksAction
   | DeclareChunkMetadataAction;
 
 /**
@@ -288,6 +337,7 @@ export const DocumentActionTypes = strEnum([
   "LOAD_CHUNK",
   "LOAD_CHUNKS",
   "EVICT_CHUNK",
+  "EVICT_CHUNKS",
   "DECLARE_CHUNK_METADATA",
 ]);
 
@@ -319,10 +369,24 @@ function isValidTimestamp(value: unknown): boolean {
   return value === undefined || (typeof value === "number" && Number.isFinite(value));
 }
 
+/**
+ * An optional chunk placement key: absent, or a safe integer no lower than -1
+ * (the key before every chunk), as checkpoints require. A well-formed key that
+ * does not fit its offset is the reducer's to drop.
+ */
+function isOptionalPlacementKey(value: unknown): boolean {
+  return value === undefined || (Number.isSafeInteger(value) && (value as number) >= -1);
+}
+
 function isSelectionRange(value: unknown): value is SelectionRange {
   if (typeof value !== "object" || value === null) return false;
   const range = value as Partial<SelectionRange>;
-  return isNonNegativeInteger(range.anchor) && isNonNegativeInteger(range.head);
+  return (
+    isNonNegativeInteger(range.anchor) &&
+    isNonNegativeInteger(range.head) &&
+    isOptionalPlacementKey(range.anchorAfterChunk) &&
+    isOptionalPlacementKey(range.headAfterChunk)
+  );
 }
 
 function isSelectionRangeArray(value: unknown): value is readonly SelectionRange[] {
@@ -616,6 +680,26 @@ export function validateAction(value: unknown, documentLength?: number): ActionV
       const evictAction = action as Partial<EvictChunkAction>;
       if (!isNonNegativeInteger(evictAction.chunkIndex)) {
         errors.push('EVICT_CHUNK action requires a non-negative integer "chunkIndex" property');
+      }
+      if (evictAction.overLimit !== undefined && typeof evictAction.overLimit !== "boolean") {
+        errors.push('EVICT_CHUNK "overLimit" must be a boolean when present');
+      }
+      break;
+    }
+
+    case "EVICT_CHUNKS": {
+      const evictAction = action as Partial<EvictChunksAction>;
+      if (!Array.isArray(evictAction.chunkIndices)) {
+        errors.push('EVICT_CHUNKS action requires an array "chunkIndices" property');
+      } else {
+        for (let i = 0; i < evictAction.chunkIndices.length; i++) {
+          if (!isNonNegativeInteger(evictAction.chunkIndices[i])) {
+            errors.push(`EVICT_CHUNKS chunkIndices[${i}] must be a non-negative integer`);
+          }
+        }
+      }
+      if (!isNonNegativeInteger(evictAction.maxLoaded)) {
+        errors.push('EVICT_CHUNKS action requires a non-negative integer "maxLoaded" property');
       }
       break;
     }

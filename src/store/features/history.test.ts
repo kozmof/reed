@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { anchorSelection } from "./history-anchor.js";
 import { canUndo, canRedo, getUndoCount, getRedoCount, isHistoryEmpty } from "./history.js";
 import { createInitialState, withState } from "./../core/state.js";
 import { documentReducer } from "./reducer.js";
@@ -11,7 +12,9 @@ import { DocumentActions } from "./actions.js";
 import type { DocumentState, HistoryState } from "../../types/state.js";
 import { pstackFromArray, pstackPush } from "../../types/state.js";
 import { byteOffset, byteLength } from "../../types/branded.js";
-import { makeInsertChange, makeDeleteChange } from "./edit.js";
+import { applyEdit, makeInsertChange, makeDeleteChange } from "./edit.js";
+import type { EditOperation } from "./edit.js";
+import { getValue } from "../core/piece-table.js";
 
 // =============================================================================
 // canUndo Tests
@@ -41,14 +44,20 @@ describe("canUndo", () => {
       undoStack: pstackFromArray([
         {
           changes: [
-            { type: "insert", position: byteOffset(0), text: "a", byteLength: byteLength(1) },
+            {
+              type: "insert",
+              position: byteOffset(0),
+              afterChunk: -1,
+              text: "a",
+              byteLength: byteLength(1),
+            },
           ],
           selectionBefore: {
-            ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }],
+            ranges: [{ anchor: 0, head: 0, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           selectionAfter: {
-            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            ranges: [{ anchor: 1, head: 1, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           timestamp: Date.now(),
@@ -57,6 +66,7 @@ describe("canUndo", () => {
       redoStack: null,
       limit: 1000,
       coalesceTimeout: 0,
+      evictionPolicy: "pin",
     };
     expect(canUndo(historyState)).toBe(true);
   });
@@ -107,14 +117,20 @@ describe("canRedo", () => {
       redoStack: pstackFromArray([
         {
           changes: [
-            { type: "insert", position: byteOffset(0), text: "a", byteLength: byteLength(1) },
+            {
+              type: "insert",
+              position: byteOffset(0),
+              afterChunk: -1,
+              text: "a",
+              byteLength: byteLength(1),
+            },
           ],
           selectionBefore: {
-            ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }],
+            ranges: [{ anchor: 0, head: 0, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           selectionAfter: {
-            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            ranges: [{ anchor: 1, head: 1, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           timestamp: Date.now(),
@@ -122,6 +138,7 @@ describe("canRedo", () => {
       ]),
       limit: 1000,
       coalesceTimeout: 0,
+      evictionPolicy: "pin",
     };
     expect(canRedo(historyState)).toBe(true);
   });
@@ -164,28 +181,40 @@ describe("getUndoCount", () => {
       undoStack: pstackFromArray([
         {
           changes: [
-            { type: "insert", position: byteOffset(0), text: "a", byteLength: byteLength(1) },
+            {
+              type: "insert",
+              position: byteOffset(0),
+              afterChunk: -1,
+              text: "a",
+              byteLength: byteLength(1),
+            },
           ],
           selectionBefore: {
-            ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }],
+            ranges: [{ anchor: 0, head: 0, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           selectionAfter: {
-            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            ranges: [{ anchor: 1, head: 1, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           timestamp: Date.now(),
         },
         {
           changes: [
-            { type: "insert", position: byteOffset(1), text: "b", byteLength: byteLength(1) },
+            {
+              type: "insert",
+              position: byteOffset(1),
+              afterChunk: -1,
+              text: "b",
+              byteLength: byteLength(1),
+            },
           ],
           selectionBefore: {
-            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            ranges: [{ anchor: 1, head: 1, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           selectionAfter: {
-            ranges: [{ anchor: byteOffset(2), head: byteOffset(2) }],
+            ranges: [{ anchor: 2, head: 2, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           timestamp: Date.now(),
@@ -194,6 +223,7 @@ describe("getUndoCount", () => {
       redoStack: null,
       limit: 1000,
       coalesceTimeout: 0,
+      evictionPolicy: "pin",
     };
     expect(getUndoCount(historyState)).toBe(2);
   });
@@ -240,14 +270,20 @@ describe("getRedoCount", () => {
       redoStack: pstackFromArray([
         {
           changes: [
-            { type: "insert", position: byteOffset(0), text: "a", byteLength: byteLength(1) },
+            {
+              type: "insert",
+              position: byteOffset(0),
+              afterChunk: -1,
+              text: "a",
+              byteLength: byteLength(1),
+            },
           ],
           selectionBefore: {
-            ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }],
+            ranges: [{ anchor: 0, head: 0, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           selectionAfter: {
-            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            ranges: [{ anchor: 1, head: 1, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           timestamp: Date.now(),
@@ -255,6 +291,7 @@ describe("getRedoCount", () => {
       ]),
       limit: 1000,
       coalesceTimeout: 0,
+      evictionPolicy: "pin",
     };
     expect(getRedoCount(historyState)).toBe(1);
   });
@@ -298,6 +335,7 @@ describe("isHistoryEmpty", () => {
       redoStack: null,
       limit: 1000,
       coalesceTimeout: 0,
+      evictionPolicy: "pin",
     };
     expect(isHistoryEmpty(emptyHistory)).toBe(true);
 
@@ -305,14 +343,20 @@ describe("isHistoryEmpty", () => {
       undoStack: pstackFromArray([
         {
           changes: [
-            { type: "insert", position: byteOffset(0), text: "a", byteLength: byteLength(1) },
+            {
+              type: "insert",
+              position: byteOffset(0),
+              afterChunk: -1,
+              text: "a",
+              byteLength: byteLength(1),
+            },
           ],
           selectionBefore: {
-            ranges: [{ anchor: byteOffset(0), head: byteOffset(0) }],
+            ranges: [{ anchor: 0, head: 0, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           selectionAfter: {
-            ranges: [{ anchor: byteOffset(1), head: byteOffset(1) }],
+            ranges: [{ anchor: 1, head: 1, anchorAfterChunk: -1, headAfterChunk: -1 }],
             primaryIndex: 0,
           },
           timestamp: Date.now(),
@@ -321,6 +365,7 @@ describe("isHistoryEmpty", () => {
       redoStack: null,
       limit: 1000,
       coalesceTimeout: 0,
+      evictionPolicy: "pin",
     };
     expect(isHistoryEmpty(nonEmptyHistory)).toBe(false);
   });
@@ -490,8 +535,9 @@ describe("undo and redo caret contract", () => {
       name: "insert without an explicit selection",
       content: "hello world",
       action: DocumentActions.insert(byteOffset(11), "!!!", undefined, 1),
+      // The caret at 0 is before the edit, so neither the edit nor redo moves it.
       undo: 0,
-      redo: 14,
+      redo: 0,
     },
     {
       name: "forward delete",
@@ -691,8 +737,8 @@ describe("Undo coalescing", () => {
     const insertChange = makeInsertChange(byteOffset(0), "X");
     const multiEntry = Object.freeze({
       changes: Object.freeze([deleteChange, insertChange]),
-      selectionBefore: state.selection,
-      selectionAfter: state.selection,
+      selectionBefore: anchorSelection(state.pieceTable, state.selection),
+      selectionAfter: anchorSelection(state.pieceTable, state.selection),
       timestamp: Date.now(),
     });
     state = withState(state, {
@@ -714,5 +760,24 @@ describe("Undo coalescing", () => {
     expect(entry?.changes[0]!.type).toBe("delete");
     expect(entry?.changes[1]!.type).toBe("insert");
     expect(entry?.changes[1]!.text).toBe("XY");
+  });
+});
+
+describe("applyEdit records what it inserts", () => {
+  it("ignores raw bytes on a forged operation, so redo inserts the same text", () => {
+    let state = createInitialState({ content: "ab" });
+    // JavaScript callers can pass fields the type leaves out.
+    const forged = {
+      kind: "insert",
+      position: byteOffset(1),
+      insertText: "x",
+      insertBytes: Uint8Array.of(0xe2, 0x82),
+    } as unknown as EditOperation;
+    state = applyEdit(state, forged);
+    expect(getValue(state.pieceTable)).toBe("axb");
+    state = documentReducer(state, DocumentActions.undo());
+    expect(getValue(state.pieceTable)).toBe("ab");
+    state = documentReducer(state, DocumentActions.redo());
+    expect(getValue(state.pieceTable)).toBe("axb");
   });
 });

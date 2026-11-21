@@ -14,9 +14,17 @@ import {
 } from "./events.js";
 import { createInitialState } from "./../core/state.js";
 import { DocumentActions } from "./actions.js";
-import { createDocumentStoreWithEvents } from "./store.js";
+import { createDocumentStore, createDocumentStoreWithEvents } from "./store.js";
+import { withEvents } from "./event-store.js";
+import type { DocumentAction } from "../../types/actions.js";
+import type { DocumentState, DocumentStoreConfig } from "../../types/state.js";
+import { getValue } from "../core/piece-table.js";
 import { byteOffset, byteLength } from "../../types/branded.js";
-import { MAX_OBSERVER_REENTRANT_STEPS } from "./diagnostics.js";
+import {
+  MAX_OBSERVER_DELIVERED_ACTIONS,
+  MAX_OBSERVER_DELIVERED_ACTIONS_CEILING,
+  MAX_OBSERVER_REENTRANT_STEPS,
+} from "./diagnostics.js";
 
 describe("Event Emitter", () => {
   describe("addEventListener", () => {
@@ -661,6 +669,146 @@ describe("Store event integration", () => {
   });
 });
 
+describe("Store event ordering under nested dispatch", () => {
+  const revisions = (store: ReturnType<typeof createDocumentStoreWithEvents>) => {
+    const seen: string[] = [];
+    store.addEventListener("content-change", (e) =>
+      seen.push(`${e.prevState.revision}->${e.nextState.revision}`),
+    );
+    return seen;
+  };
+
+  it("delivers an action's events before those of an action a store listener dispatches", () => {
+    const store = createDocumentStoreWithEvents({ content: "", reconcileMode: "none" });
+    const seen = revisions(store);
+    let once = true;
+    store.subscribe(() => {
+      if (!once) return;
+      once = false;
+      store.dispatch(DocumentActions.insert(byteOffset(1), "B"));
+    });
+
+    const returned = store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+
+    expect(seen).toEqual(["0->1", "1->2"]);
+    expect(returned).toBe(store.getSnapshot());
+    expect(returned.revision).toBe(2);
+  });
+
+  it("delivers an action's events when a store listener it notifies opens a transaction", () => {
+    const store = createDocumentStoreWithEvents({ content: "", reconcileMode: "none" });
+    const seen = revisions(store);
+    let once = true;
+    store.subscribe(() => {
+      if (!once) return;
+      once = false;
+      store.beginTransaction();
+    });
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+    // The insert committed outside any transaction, so its events are not
+    // buffered in the listener's level, and rolling that back keeps them.
+    expect(seen).toEqual(["0->1"]);
+    store.rollbackTransaction();
+    expect(seen).toEqual(["0->1"]);
+  });
+
+  it("orders events the same for a store listener subscribed before any event handler", () => {
+    const store = createDocumentStoreWithEvents({ content: "", reconcileMode: "none" });
+    let once = true;
+    store.subscribe(() => {
+      if (!once) return;
+      once = false;
+      store.batch([
+        DocumentActions.insert(byteOffset(1), "B"),
+        DocumentActions.insert(byteOffset(2), "C"),
+      ]);
+    });
+    const seen = revisions(store);
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+
+    expect(seen).toEqual(["0->1", "1->2", "2->3"]);
+  });
+
+  it("delivers all of an action's events before those of an action a handler dispatches", () => {
+    const store = createDocumentStoreWithEvents({ content: "", reconcileMode: "none" });
+    const order: string[] = [];
+    let once = true;
+    store.addEventListener("content-change", (e) => {
+      order.push(`content ${e.nextState.revision}`);
+      if (!once) return;
+      once = false;
+      store.dispatch(DocumentActions.insert(byteOffset(1), "B"));
+    });
+    store.addEventListener("dirty-change", (e) => order.push(`dirty ${e.state.revision}`));
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+
+    expect(order).toEqual(["content 1", "dirty 1", "content 2"]);
+  });
+
+  it("delivers a transaction's events before those of an action a store listener dispatches on commit", () => {
+    const store = createDocumentStoreWithEvents({ content: "", reconcileMode: "none" });
+    const seen = revisions(store);
+    let once = true;
+    store.subscribe(() => {
+      if (!once) return;
+      once = false;
+      store.dispatch(DocumentActions.insert(byteOffset(1), "B"));
+    });
+
+    store.batch([DocumentActions.insert(byteOffset(0), "A")]);
+
+    expect(seen).toEqual(["0->1", "1->2"]);
+    expect(store.getSnapshot().revision).toBe(2);
+  });
+
+  it("delivers every event of a handler that dispatches many actions in one go", () => {
+    const error = vi.fn();
+    const store = createDocumentStoreWithEvents({
+      content: "",
+      reconcileMode: "none",
+      logger: { error, warn: vi.fn() },
+    });
+    const fanOut = MAX_OBSERVER_REENTRANT_STEPS + 50;
+    let calls = 0;
+    let once = true;
+    store.addEventListener("content-change", () => {
+      calls++;
+      if (!once) return;
+      once = false;
+      for (let i = 0; i < fanOut; i++) store.dispatch(DocumentActions.insert(byteOffset(0), "y"));
+    });
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "x"));
+
+    expect(calls).toBe(fanOut + 1);
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("bounds an event handler that dispatches indefinitely", () => {
+    const error = vi.fn();
+    const store = createDocumentStoreWithEvents({
+      content: "",
+      reconcileMode: "none",
+      logger: { error, warn: vi.fn() },
+    });
+    let calls = 0;
+    store.addEventListener("content-change", () => {
+      calls++;
+      store.dispatch(DocumentActions.insert(byteOffset(0), "x"));
+    });
+
+    expect(() => store.dispatch(DocumentActions.insert(byteOffset(0), "x"))).not.toThrow();
+    expect(calls).toBe(MAX_OBSERVER_REENTRANT_STEPS);
+    expect(error).toHaveBeenCalledWith(
+      "Document event cycle exceeded the re-entrancy limit",
+      expect.any(Error),
+    );
+  });
+});
+
 describe("Store event transaction guards", () => {
   it("treats commit without an active transaction as a no-op", () => {
     const store = createDocumentStoreWithEvents();
@@ -769,6 +917,24 @@ describe("Store event transaction guards", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
+  it("SET_SELECTION with the current selection emits nothing", () => {
+    const store = createDocumentStoreWithEvents({ content: "hello" });
+    const caret = (offset: number) =>
+      [{ anchor: byteOffset(offset), head: byteOffset(offset) }] as const;
+    store.dispatch(DocumentActions.setSelection(caret(5)));
+    const handler = vi.fn();
+    store.addEventListener("selection-change", handler);
+    // An editor types at the caret and then sets the caret it computed itself,
+    // which the insert already moved the selection to: one event per keystroke.
+    store.dispatch(DocumentActions.insert(byteOffset(5), "!"));
+    const moved = store.getSnapshot().selection;
+    store.dispatch(DocumentActions.setSelection(caret(6)));
+    expect(store.getSnapshot().selection).toBe(moved);
+    expect(handler).toHaveBeenCalledTimes(1);
+    // The echo changes nothing, so selectionRevision agrees with the event.
+    expect(store.getSnapshot().selectionRevision).toBe(1);
+  });
+
   it("dispatching UNDO emits history-change event", () => {
     const store = createDocumentStoreWithEvents({ content: "" });
     store.dispatch(DocumentActions.insert(byteOffset(0), "hello"));
@@ -827,3 +993,349 @@ it("delivers large remote batches through the event-enabled store", () => {
     store.dispose();
   }
 });
+
+describe("Event delivery limits and failed transaction calls", () => {
+  it("bounds a handler that dispatches two actions for every event", () => {
+    const error = vi.fn();
+    const store = createDocumentStoreWithEvents({
+      content: "",
+      reconcileMode: "none",
+      logger: { error, warn: vi.fn() },
+    });
+    let calls = 0;
+    store.addEventListener("content-change", () => {
+      calls++;
+      store.dispatch(DocumentActions.insert(byteOffset(0), "a"));
+      store.dispatch(DocumentActions.insert(byteOffset(0), "b"));
+    });
+
+    expect(() => store.dispatch(DocumentActions.insert(byteOffset(0), "x"))).not.toThrow();
+    // The first action's events, and the two its handler dispatched, are not
+    // counted, and each raises the limit; the limit stops their reactions.
+    const limit = MAX_OBSERVER_DELIVERED_ACTIONS + 3 * MAX_OBSERVER_REENTRANT_STEPS;
+    expect(calls).toBe(limit + 3);
+    expect(error).toHaveBeenCalledWith(
+      "Document event cycle exceeded the re-entrancy limit",
+      expect.objectContaining({
+        message: expect.stringContaining(`${limit} actions`),
+      }),
+    );
+  });
+
+  // About 40,000 dispatches; slow CI runners need more than the default timeout.
+  it("delivers a reaction to each of many actions a handler dispatches", () => {
+    const error = vi.fn();
+    const store = createDocumentStoreWithEvents({
+      content: "",
+      reconcileMode: "none",
+      logger: { error, warn: vi.fn() },
+    });
+    const count = 2 * MAX_OBSERVER_DELIVERED_ACTIONS;
+    let armed = true;
+    // One handler applies a change set one operation at a time (depth 1).
+    store.addEventListener("save", () => {
+      if (!armed) return;
+      armed = false;
+      for (let i = 0; i < count; i++) store.dispatch(DocumentActions.insert(byteOffset(0), "r"));
+    });
+    // Another reacts once to each operation (depth 2).
+    let reactions = 0;
+    store.addEventListener("content-change", (e) => {
+      if (e.action.type !== "INSERT") return;
+      if (e.action.text === "r") store.dispatch(DocumentActions.insert(byteOffset(0), "s"));
+      else reactions++;
+    });
+
+    store.dispatch(DocumentActions.markSaved());
+    expect(error).not.toHaveBeenCalled();
+    expect(reactions).toBe(count);
+  }, 30_000);
+
+  it("stops a fan-out cycle at the ceiling however many actions a handler dispatched", () => {
+    const error = vi.fn();
+    const store = createDocumentStoreWithEvents({
+      content: "ab",
+      reconcileMode: "none",
+      logger: { error, warn: vi.fn() },
+    });
+    const at = (offset: number) =>
+      DocumentActions.setSelection([{ anchor: byteOffset(offset), head: byteOffset(offset) }]);
+    // Enough direct actions that, uncapped, the limit would pass the ceiling.
+    const direct = MAX_OBSERVER_DELIVERED_ACTIONS_CEILING / MAX_OBSERVER_REENTRANT_STEPS;
+    let armed = true;
+    let fanning = false;
+    store.addEventListener("save", () => {
+      if (!armed) return;
+      armed = false;
+      for (let i = 0; i < direct; i++) store.dispatch(at(1 + (i % 2)));
+      fanning = true;
+    });
+    // Dispatch two actions per event once the direct actions are in, each
+    // moving the selection so it changes the state.
+    let reactions = 0;
+    store.addEventListener("selection-change", (e) => {
+      if (!fanning) return;
+      reactions++;
+      const offset = e.nextState.selection.ranges[0]!.head;
+      store.dispatch(at(offset === 0 ? 1 : 0));
+      store.dispatch(at(offset === 0 ? 0 : 1));
+    });
+
+    store.dispatch(DocumentActions.markSaved());
+    expect(reactions).toBeLessThanOrEqual(MAX_OBSERVER_DELIVERED_ACTIONS_CEILING + direct + 1);
+    expect(error).toHaveBeenCalledWith(
+      "Document event cycle exceeded the re-entrancy limit",
+      expect.objectContaining({
+        message: expect.stringContaining(`${MAX_OBSERVER_DELIVERED_ACTIONS_CEILING} actions`),
+      }),
+    );
+  });
+
+  it.each([
+    ["an event handler", 1],
+    ["a store listener", 0],
+  ])("delivers the events of every action %s dispatches one at a time", (_, viaListener) => {
+    const error = vi.fn();
+    const store = createDocumentStoreWithEvents({
+      content: "",
+      reconcileMode: "none",
+      logger: { error, warn: vi.fn() },
+    });
+    const count = MAX_OBSERVER_DELIVERED_ACTIONS + 5;
+    let armed = true;
+    const applyAll = () => {
+      if (!armed) return;
+      armed = false;
+      for (let i = 0; i < count; i++) store.dispatch(DocumentActions.insert(byteOffset(0), "r"));
+    };
+    if (viaListener) store.subscribe(applyAll);
+    else store.addEventListener("save", applyAll);
+    let changes = 0;
+    store.addEventListener("content-change", () => changes++);
+
+    store.dispatch(
+      viaListener ? DocumentActions.insert(byteOffset(0), "a") : DocumentActions.markSaved(),
+    );
+    expect(error).not.toHaveBeenCalled();
+    expect(changes).toBe(count + (viaListener ? 1 : 0));
+  });
+
+  it("does not count a handler's batched or no-op actions toward the delivery limit", () => {
+    const error = vi.fn();
+    const store = createDocumentStoreWithEvents({
+      content: "",
+      reconcileMode: "none",
+      logger: { error, warn: vi.fn() },
+    });
+    const inserted: string[] = [];
+    let armed = true;
+    store.addEventListener("content-change", (e) => {
+      if (e.action.type === "INSERT") inserted.push(e.action.text);
+      if (!armed) return;
+      armed = false;
+      // More no-op actions than the limit, then a batch larger than it.
+      for (let i = 0; i <= MAX_OBSERVER_DELIVERED_ACTIONS; i++) {
+        store.dispatch(
+          DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(0) }]),
+        );
+      }
+      store.batch(
+        Array.from({ length: MAX_OBSERVER_DELIVERED_ACTIONS + 1 }, () =>
+          DocumentActions.insert(byteOffset(0), "b"),
+        ),
+      );
+    });
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "a"));
+    expect(error).not.toHaveBeenCalled();
+    expect(inserted).toHaveLength(MAX_OBSERVER_DELIVERED_ACTIONS + 2);
+  });
+
+  /**
+   * An event store over a base store whose next inner `beginTransaction`,
+   * `commitTransaction` or `rollbackTransaction` fails as an invariant
+   * violation does: it runs emergencyReset, which notifies listeners, and
+   * then throws.
+   */
+  function storeWithFailingCall(
+    call: "beginTransaction" | "commitTransaction" | "rollbackTransaction",
+  ) {
+    const base = createDocumentStore({ content: "", reconcileMode: "none" });
+    let failNext = false;
+    const failing = Object.assign(Object.create(base), {
+      [call]() {
+        if (failNext) {
+          failNext = false;
+          base.emergencyReset();
+          throw new Error("invariant violated");
+        }
+        base[call]();
+      },
+    });
+    const store = withEvents(
+      failing,
+      (action: DocumentAction) => ({ state: base.dispatch(action), historyDropped: null }),
+      undefined,
+    );
+    const inserted: string[] = [];
+    store.addEventListener("content-change", (e) => {
+      if (e.action.type === "INSERT") inserted.push(e.action.text);
+    });
+    return { store, inserted, failNext: () => (failNext = true) };
+  }
+
+  it("emits events for a listener's dispatch while a failed inner commit resets", () => {
+    const { store, inserted, failNext } = storeWithFailingCall("commitTransaction");
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+    store.beginTransaction();
+    let armed = true;
+    store.subscribe(() => {
+      if (!armed) return;
+      armed = false;
+      store.dispatch(DocumentActions.insert(byteOffset(0), "B"));
+    });
+    failNext();
+
+    expect(() => store.commitTransaction()).toThrow("invariant violated");
+    expect(getText(store)).toBe("B");
+    expect(inserted).toEqual(["B"]);
+  });
+
+  it("emits events for a listener's dispatch while a failed inner begin resets", () => {
+    const { store, inserted, failNext } = storeWithFailingCall("beginTransaction");
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+    let armed = true;
+    store.subscribe(() => {
+      if (!armed) return;
+      armed = false;
+      store.dispatch(DocumentActions.insert(byteOffset(0), "B"));
+    });
+    failNext();
+
+    expect(() => store.beginTransaction()).toThrow("invariant violated");
+    expect(getText(store)).toBe("B");
+    expect(inserted).toEqual(["B"]);
+  });
+
+  it("emits events for a listener's dispatch while a failed inner rollback resets", () => {
+    const { store, inserted, failNext } = storeWithFailingCall("rollbackTransaction");
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+    store.beginTransaction();
+    let armed = true;
+    store.subscribe(() => {
+      if (!armed) return;
+      armed = false;
+      store.dispatch(DocumentActions.insert(byteOffset(0), "B"));
+    });
+    failNext();
+
+    expect(() => store.rollbackTransaction()).toThrow("invariant violated");
+    expect(getText(store)).toBe("B");
+    expect(inserted).toEqual(["B"]);
+  });
+
+  it("calls the base store's transaction methods on the base store", () => {
+    const base = createDocumentStore();
+    // A wrapper whose transaction methods reach the base store through `this`.
+    const wrapper = Object.assign(Object.create(base) as typeof base, {
+      inner: base,
+      beginTransaction(this: { inner: typeof base }) {
+        this.inner.beginTransaction();
+      },
+      commitTransaction(this: { inner: typeof base }) {
+        this.inner.commitTransaction();
+      },
+    });
+    const store = withEvents(
+      wrapper,
+      (action: DocumentAction) => ({ state: base.dispatch(action), historyDropped: null }),
+      undefined,
+    );
+    const inserted: string[] = [];
+    store.addEventListener("content-change", (e) => {
+      if (e.action.type === "INSERT") inserted.push(e.action.text);
+    });
+    store.beginTransaction();
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+    store.commitTransaction();
+    store.commitTransaction();
+    expect(getText(store)).toBe("A");
+    expect(inserted).toEqual(["A"]);
+  });
+
+  it("calls the base store's isInTransaction on the base store", () => {
+    const base = createDocumentStore();
+    // A wrapper whose isInTransaction reaches the base store through `this`.
+    const wrapper = Object.assign(Object.create(base) as typeof base, {
+      inner: base,
+      isInTransaction(this: { inner: typeof base }) {
+        return this.inner.isInTransaction();
+      },
+    });
+    const store = withEvents(
+      wrapper,
+      (action: DocumentAction) => ({ state: base.dispatch(action), historyDropped: null }),
+      undefined,
+    );
+    const { isInTransaction } = store;
+    expect(isInTransaction()).toBe(false);
+    store.beginTransaction();
+    expect(store.isInTransaction()).toBe(true);
+    store.commitTransaction();
+    expect(store.isInTransaction()).toBe(false);
+  });
+
+  it("emits events for dispatches after a failed begin", () => {
+    const { store, inserted, failNext } = storeWithFailingCall("beginTransaction");
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+    failNext();
+    expect(() => store.beginTransaction()).toThrow("invariant violated");
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "C"));
+    expect(getText(store)).toBe("C");
+    expect(inserted).toEqual(["C"]);
+  });
+
+  it("emits a transaction's events when the scheduler throws after the commit", () => {
+    const error = vi.fn();
+    const throwingScheduler: DocumentStoreConfig["scheduler"] = () => ({
+      schedule() {
+        throw new Error("scheduler failed");
+      },
+      cancel() {},
+      runNow() {},
+      get isRunning() {
+        return false;
+      },
+    });
+    const store = createDocumentStoreWithEvents({
+      content: "line\n",
+      scheduler: throwingScheduler,
+      logger: { error, warn: vi.fn() },
+    });
+    const seen: string[] = [];
+    store.addEventListener("content-change", () => seen.push("content"));
+    store.addEventListener("dirty-change", () => seen.push("dirty"));
+
+    expect(() => store.batch([DocumentActions.insert(byteOffset(0), "new\n")])).not.toThrow();
+    expect(getText(store)).toBe("new\nline\n");
+    expect(seen).toEqual(["content", "dirty"]);
+    expect(error).toHaveBeenCalledWith(
+      "Reconciliation scheduler threw after a commit",
+      expect.any(Error),
+    );
+
+    seen.length = 0;
+    expect(() => store.dispatch(DocumentActions.insert(byteOffset(0), "x"))).not.toThrow();
+    expect(seen).toEqual(["content"]);
+  });
+});
+
+function getText(store: { getSnapshot(): DocumentState }): string {
+  return getValue(store.getSnapshot().pieceTable);
+}

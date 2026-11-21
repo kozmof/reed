@@ -178,7 +178,14 @@ function setStoreValue(
  * must be present in `prevState.pieceTable.chunkMap` and absent from
  * `nextState.pieceTable.chunkMap`.
  *
- * Returns false when eviction was refused, such as when edits overlap the chunk.
+ * Returns false when eviction was refused. EVICT_CHUNK refuses a chunk that:
+ * - has edits inside or touching it,
+ * - has attention anchored inside it, or
+ * - has undo or redo history pointing inside it, under the `"pin"` policy, or
+ *   under `"pin-bounded"` (the default) unless the action has `overLimit: true`
+ *   (see `HistoryEvictionPolicy`). Undoing an edit inside a chunk leaves redo
+ *   history there, so the chunk stays pinned until that history is gone.
+ *
  * Check the specific chunk with this helper. Comparing `chunkMap.size` can
  * confuse its eviction with another change to the map.
  *
@@ -188,7 +195,9 @@ function setStoreValue(
  * store.dispatch(DocumentActions.evictChunk(chunkIndex));
  * const next = store.getSnapshot();
  * if (!store.didEvict(prev, next, chunkIndex)) {
- *   // Check whether edits or attention anchors prevented eviction.
+ *   // Edits, attention anchors, or history kept the chunk. When it is history,
+ *   // "pin-bounded" evicts anyway with overLimit, discarding that history:
+ *   store.dispatch(DocumentActions.evictChunk(chunkIndex, true));
  * }
  * ```
  */

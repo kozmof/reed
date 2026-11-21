@@ -24,12 +24,13 @@ import type {
   LoadChunksAction,
   ChunkLoad,
   EvictChunkAction,
+  EvictChunksAction,
   DeclareChunkMetadataAction,
 } from "../../types/actions.js";
 import type { AttentionID } from "../../types/branded.js";
 import type { ChunkMetadata } from "../../types/state.js";
 import { isDocumentAction } from "../../types/actions.js";
-import { asReadonlyUint8Array } from "../core/runtime-readonly.js";
+import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
 import { encodeBase64, decodeBase64 } from "../core/base64.js";
 
 function freezeSelection(
@@ -99,7 +100,9 @@ function normalizeDeserializedAction(action: DocumentAction): DocumentAction {
     case "LOAD_CHUNKS":
       return DocumentActions.loadChunks(action.chunks);
     case "EVICT_CHUNK":
-      return DocumentActions.evictChunk(action.chunkIndex);
+      return DocumentActions.evictChunk(action.chunkIndex, action.overLimit);
+    case "EVICT_CHUNKS":
+      return DocumentActions.evictChunks(action.chunkIndices, action.maxLoaded);
     case "DECLARE_CHUNK_METADATA":
       return DocumentActions.declareChunkMetadata(action.metadata);
   }
@@ -293,7 +296,7 @@ export const DocumentActions = {
     return Object.freeze({
       type: "LOAD_CHUNK",
       chunkIndex,
-      data: asReadonlyUint8Array(new Uint8Array(data)),
+      data: asReadonlyUint8Array(new Uint8Array(unwrapReadonlyUint8Array(data))),
     });
   },
 
@@ -305,7 +308,7 @@ export const DocumentActions = {
         chunks.map(({ chunkIndex, data }) =>
           Object.freeze({
             chunkIndex,
-            data: asReadonlyUint8Array(new Uint8Array(data)),
+            data: asReadonlyUint8Array(new Uint8Array(unwrapReadonlyUint8Array(data))),
           }),
         ),
       ),
@@ -317,12 +320,36 @@ export const DocumentActions = {
    *
    * Dispatching this action removes the chunk's pieces and backing bytes from the
    * current in-memory document. Loading it again restores the chunk in index order.
-   * See {@link EvictChunkAction} for the full eviction contract.
+   * See {@link EvictChunkAction} for the full eviction contract, including when
+   * eviction is refused.
    *
    * @param chunkIndex - Zero-based index of the chunk to evict
+   * @param overLimit - Under the default `"pin-bounded"` history eviction
+   *   policy, evict even when undo or redo history points inside the chunk,
+   *   discarding that history. Without it such an eviction is refused.
    */
-  evictChunk(chunkIndex: number): EvictChunkAction {
-    return Object.freeze({ type: "EVICT_CHUNK", chunkIndex });
+  evictChunk(chunkIndex: number, overLimit?: boolean): EvictChunkAction {
+    return Object.freeze(
+      overLimit === undefined
+        ? { type: "EVICT_CHUNK", chunkIndex }
+        : { type: "EVICT_CHUNK", chunkIndex, overLimit },
+    );
+  },
+
+  /**
+   * Create an action that evicts chunks until at most `maxLoaded` stay loaded,
+   * choosing among `chunkIndices` in one transition.
+   * See {@link EvictChunksAction} for how candidates are chosen.
+   *
+   * @param chunkIndices - Chunks that may be evicted, in the order to try them
+   * @param maxLoaded - Most chunks to leave loaded
+   */
+  evictChunks(chunkIndices: readonly number[], maxLoaded: number): EvictChunksAction {
+    return Object.freeze({
+      type: "EVICT_CHUNKS",
+      chunkIndices: Object.freeze([...chunkIndices]),
+      maxLoaded,
+    });
   },
 
   /**
@@ -346,7 +373,7 @@ export const DocumentActions = {
  */
 export function serializeAction(action: DocumentAction): string {
   if (action.type === "LOAD_CHUNK") {
-    const base64 = encodeBase64(new Uint8Array(action.data));
+    const base64 = encodeBase64(unwrapReadonlyUint8Array(action.data));
     return JSON.stringify({ ...action, data: base64 });
   }
   if (action.type === "LOAD_CHUNKS") {
@@ -354,7 +381,7 @@ export function serializeAction(action: DocumentAction): string {
       ...action,
       chunks: action.chunks.map((chunk) => ({
         chunkIndex: chunk.chunkIndex,
-        data: encodeBase64(new Uint8Array(chunk.data)),
+        data: encodeBase64(unwrapReadonlyUint8Array(chunk.data)),
       })),
     });
   }

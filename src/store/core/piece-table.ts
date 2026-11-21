@@ -49,11 +49,23 @@ import {
   type InsertionPathEntry,
   type RootToLeafInsertPath,
 } from "./rb-tree.js";
-import { textEncoder, textDecoder } from "./encoding.js";
+import { textEncoder, textDecoder, contentDecoder, isContinuationByte } from "./encoding.js";
 import { GrowableBuffer } from "./growable-buffer.js";
+import {
+  NO_CHUNK,
+  asFittedKey,
+  keyFitsAt,
+  pieceKey,
+  placementKey,
+  residentStartIsFileStart,
+} from "./chunk-anchor.js";
+import type { FittedKey } from "./chunk-anchor.js";
+import { lastPiece, pieceAt } from "./piece-search.js";
+import type { PathEntry } from "./piece-search.js";
 import { inOrderPieces } from "./piece-table-stream.js";
 
 export { getValueStream, inOrderPieces } from "./piece-table-stream.js";
+export { residentStartIsFileStart } from "./chunk-anchor.js";
 export type { DocumentChunk, StreamOptions } from "./piece-table-stream.js";
 
 // =============================================================================
@@ -256,7 +268,7 @@ export function isUtf8Boundary(state: PieceTableState, position: ByteOffset): bo
   if (position < 0 || position > state.totalLength) return false;
   if (position === 0 || position === state.totalLength) return true;
   const byte = getRawByte(state, position);
-  return byte >= 0 && (byte & 0xc0) !== 0x80;
+  return byte >= 0 && !isContinuationByte(byte);
 }
 
 // =============================================================================
@@ -277,14 +289,7 @@ export interface PieceLocation {
   path: readonly PathEntry[];
 }
 
-/**
- * Entry in the path from root to a node.
- * Used for immutable tree modifications with path copying.
- */
-export interface PathEntry {
-  readonly node: PieceNode;
-  readonly direction: "left" | "right";
-}
+export type { PathEntry } from "./piece-search.js";
 
 // =============================================================================
 // Tree Traversal
@@ -298,59 +303,28 @@ export function findPieceAtPosition(
   root: PieceNode | null,
   position: ByteOffset,
 ): LogCost<PieceLocation> | null {
-  if (root === null) return null;
-  if (position < 0) return null;
-
   const path: PathEntry[] = [];
-  let current: PieceNode | null = root;
-  let currentOffset = 0;
-
-  while (current !== null) {
-    const leftLength = current.left?.subtreeLength ?? 0;
-    const pieceStart = currentOffset + leftLength;
-    const pieceEnd = pieceStart + current.length;
-
-    if (position < pieceStart) {
-      path.push({ node: current, direction: "left" });
-      current = current.left;
-    } else if (position >= pieceEnd) {
-      path.push({ node: current, direction: "right" });
-      currentOffset = pieceEnd;
-      current = current.right;
-    } else {
-      return $proveCtx($beginCost("O(log n)"), {
-        node: current,
-        offsetInPiece: position - pieceStart,
-        pieceStartOffset: pieceStart,
-        path,
-      });
-    }
-  }
-
-  return null;
+  const hit = pieceAt(root, position, path);
+  if (hit === null) return null;
+  return $proveCtx($beginCost("O(log n)"), {
+    node: hit.node,
+    offsetInPiece: position - hit.pieceStart,
+    pieceStartOffset: hit.pieceStart,
+    path,
+  });
 }
 
 /**
  * Find the piece at the end of the document (rightmost node).
  */
 export function findLastPiece(root: PieceNode | null): LogCost<PieceLocation> | null {
-  if (root === null) return null;
-
   const path: PathEntry[] = [];
-  let current = root;
-  let currentOffset = 0;
-
-  while (current.right !== null) {
-    currentOffset += (current.left?.subtreeLength ?? 0) + current.length;
-    path.push({ node: current, direction: "right" });
-    current = current.right;
-  }
-
-  const leftLength = current.left?.subtreeLength ?? 0;
+  const hit = lastPiece(root, path);
+  if (hit === null) return null;
   return $proveCtx($beginCost("O(log n)"), {
-    node: current,
-    offsetInPiece: current.length,
-    pieceStartOffset: currentOffset + leftLength,
+    node: hit.node,
+    offsetInPiece: hit.node.length,
+    pieceStartOffset: hit.pieceStart,
     path,
   });
 }
@@ -389,9 +363,10 @@ export function rbInsertPiece(
   start: ByteOffset,
   length: ByteLength,
   id: PieceID = generatePieceID(),
+  afterChunk: number = NO_CHUNK,
 ): LogCost<PieceNode> {
   // Create the new node (always red initially)
-  const newPiece = createPieceNode(bufferType, start, length, "red", null, null, id);
+  const newPiece = createPieceNode(bufferType, start, length, "red", null, null, id, afterChunk);
 
   if (root === null) {
     // Empty tree - new node becomes black root
@@ -514,6 +489,7 @@ export function splitPiece(
       piece.left,
       null,
       piece.id, // left half inherits the original ID
+      pieceKey(piece),
     );
     rightPiece = createPieceNode(
       piece.bufferType,
@@ -523,6 +499,7 @@ export function splitPiece(
       null,
       piece.right,
       rightID,
+      pieceKey(piece),
     );
   }
 
@@ -577,50 +554,142 @@ export interface PieceTableInsertResult {
 /**
  * Insert text into the piece table at the given position.
  * Returns the new state and the UTF-8 byte length of the inserted text.
+ *
+ * `text` may also be raw bytes, inserted as they are. History replay uses this
+ * to restore deleted bytes that do not survive decoding (see
+ * `HistoryDeleteChange.bytes`).
+ *
+ * `afterChunk` defaults to the gap key at `position` that inserted text takes
+ * (see `placementKey`). An empty tree has no gap to read, so the default there
+ * is `-1`. Pass the key when the caller knows where the text belongs in the
+ * file: the document reducer passes the key a cursor at `position` holds.
+ *
+ * Keys never decrease in document order, and loading, reload placement and
+ * anchored positions all rely on it. A given key that would break that order at
+ * `position` (see `keyFitsAt`) means the caller computed it wrongly, so the
+ * insert throws a RangeError instead of placing the text under another key.
  */
 export function pieceTableInsert(
   state: PieceTableState,
   position: ByteOffset,
-  text: string,
+  text: string | Uint8Array,
+  afterChunk?: number,
+): LinearCost<PieceTableInsertResult> {
+  if (text.length > 0 && afterChunk !== undefined) assertKeyFits(state, position, afterChunk);
+  return pieceTableInsertFitted(
+    state,
+    position,
+    text,
+    afterChunk === undefined ? undefined : asFittedKey(afterChunk),
+  );
+}
+
+/** Throw a RangeError when `key` does not fit at `position` (see `keyFitsAt`). */
+function assertKeyFits(state: PieceTableState, position: number, key: number): void {
+  if (!keyFitsAt(state, position, key)) {
+    throw new RangeError(
+      `placement key ${key} does not fit at offset ${position}: ` +
+        `inserting there would put placement keys out of document order`,
+    );
+  }
+}
+
+/**
+ * `pieceTableInsert` without the check that `afterChunk` fits at `position`.
+ *
+ * For callers that derived the key from the document they insert into, such
+ * as `insertionKey` or `placementRuns`, which only return keys that fit there.
+ * Checking again would cost two more tree walks on every keystroke. The key is
+ * a `FittedKey`, which only those derivations produce. A key that does not fit
+ * breaks the key order, so a key that comes from outside the document, such as
+ * a recorded history key, goes through `pieceTableInsert`.
+ */
+export function pieceTableInsertFitted(
+  state: PieceTableState,
+  position: ByteOffset,
+  text: string | Uint8Array,
+  afterChunk?: FittedKey,
 ): LinearCost<PieceTableInsertResult> {
   if (text.length === 0)
-    return $proveCtx($beginCost("O(n)"), { state, insertedByteLength: 0, splits: [] });
+    return $proveCtx($beginCost("O(n)"), {
+      state,
+      insertedByteLength: 0,
+      splits: [],
+    });
 
-  const textBytes = textEncoder.encode(text);
+  const key = afterChunk ?? placementKey(state, position, undefined, "before");
+
+  const textBytes = typeof text === "string" ? textEncoder.encode(text) : text;
+  return insertAddPiece(
+    state,
+    position,
+    state.addBuffer.length,
+    textBytes.length,
+    key,
+    state.addBuffer.append(textBytes),
+  );
+}
+
+/**
+ * `state` with a placeholder for `length` bytes at `position` under placement
+ * key `afterChunk`: an add piece that reads no bytes, and no bytes move. Only
+ * the lengths and keys of the result may be read. Checks that replay history
+ * over a copy of a document, which need nothing else, use it. A key that does
+ * not fit at `position` throws a RangeError, as in `pieceTableInsert`. O(log n).
+ */
+export function pieceTableInsertPlaceholder(
+  state: PieceTableState,
+  position: ByteOffset,
+  length: number,
+  afterChunk: number,
+): PieceTableState {
+  if (length <= 0) return state;
+  assertKeyFits(state, position, afterChunk);
+  return insertAddPiece(state, position, 0, length, afterChunk, state.addBuffer).state;
+}
+
+/**
+ * `state` with an add piece reading [start, start + length) of `addBuffer`
+ * inserted at `position` under key `key`, and `addBuffer` as its add buffer.
+ */
+function insertAddPiece(
+  state: PieceTableState,
+  position: ByteOffset,
+  newAddStart: number,
+  length: number,
+  key: number,
+  addBuffer: PieceTableState["addBuffer"],
+): LinearCost<PieceTableInsertResult> {
   let nextPieceID = state.nextPieceID;
   const allocatePieceID = (): PieceID => pieceID(`p${nextPieceID++}`);
-
-  // Append text to add buffer
-  const newAddStart = state.addBuffer.length;
-  const addBuffer = state.addBuffer.append(textBytes);
 
   // Handle empty tree
   if (state.root === null) {
     const newRoot = createPieceNode(
       "add",
       byteOffset(newAddStart),
-      byteLength(textBytes.length),
+      byteLength(length),
       "black",
       null,
       null,
       allocatePieceID(),
+      key,
     );
     return $proveCtx($beginCost("O(n)"), {
       state: freezePieceTableState({
         ...state,
         root: carryPieceIdentityIndex(state.root, newRoot),
         addBuffer,
-        totalLength: textBytes.length,
+        totalLength: length,
         nextPieceID,
       }),
-      insertedByteLength: textBytes.length,
+      insertedByteLength: length,
       splits: [],
     });
   }
 
   const location: LogCost<PieceLocation | null> =
     findPieceAtPosition(state.root, position) ?? $proveCtx($beginCost("O(log n)"), null);
-
   // Capture the split reported by the $andThen callback.
   let capturedSplit: SplitRecord | null = null;
 
@@ -637,8 +706,9 @@ export function pieceTableInsert(
                 state.totalLength,
                 "add",
                 byteOffset(newAddStart),
-                byteLength(textBytes.length),
+                byteLength(length),
                 allocatePieceID(),
+                key,
               ),
             );
           }
@@ -649,8 +719,9 @@ export function pieceTableInsert(
                 resolvedLocation.pieceStartOffset,
                 "add",
                 byteOffset(newAddStart),
-                byteLength(textBytes.length),
+                byteLength(length),
                 allocatePieceID(),
+                key,
               ),
             );
           }
@@ -661,8 +732,9 @@ export function pieceTableInsert(
                 resolvedLocation.pieceStartOffset + resolvedLocation.node.length,
                 "add",
                 byteOffset(newAddStart),
-                byteLength(textBytes.length),
+                byteLength(length),
                 allocatePieceID(),
+                key,
               ),
             );
           }
@@ -671,9 +743,10 @@ export function pieceTableInsert(
             resolvedLocation,
             "add",
             byteOffset(newAddStart),
-            byteLength(textBytes.length),
+            byteLength(length),
             allocatePieceID(),
             allocatePieceID(),
+            key,
           );
           capturedSplit = splitRecord;
           return $lift("O(log n)", splitRoot);
@@ -683,10 +756,10 @@ export function pieceTableInsert(
             ...state,
             root: carryPieceIdentityIndex(state.root, newRoot),
             addBuffer,
-            totalLength: state.totalLength + textBytes.length,
+            totalLength: state.totalLength + length,
             nextPieceID,
           }),
-          insertedByteLength: textBytes.length,
+          insertedByteLength: length,
           splits: capturedSplit !== null ? [capturedSplit] : ([] as readonly SplitRecord[]),
         })),
       ),
@@ -695,8 +768,10 @@ export function pieceTableInsert(
 }
 
 /**
- * Insert a chunk piece at the given document byte position.
- * Used for re-loading an evicted chunk at its original document position.
+ * Insert a chunk piece at the given document byte position, which must be a
+ * piece boundary. Used for re-loading an evicted chunk at its original
+ * document position, where the piece covers the whole chunk. `offsetInChunk`
+ * starts the piece later in the chunk, for a piece that covers only part of it.
  * Performs BST insertion + RB fixup, O(log n).
  */
 export function insertChunkPieceAt(
@@ -705,10 +780,11 @@ export function insertChunkPieceAt(
   chunkIndex: number,
   chunkByteLength: number,
   id: PieceID = generatePieceID(),
+  offsetInChunk: number = 0,
 ): PieceNode {
   const newLeaf = createChunkPieceNode(
     chunkIndex,
-    byteOffset(0),
+    byteOffset(offsetInChunk),
     byteLength(chunkByteLength),
     "red",
     null,
@@ -747,6 +823,7 @@ function insertWithSplit(
   length: ByteLength,
   insertedID: PieceID,
   rightID: PieceID,
+  afterChunk: number,
 ): [PieceNode, SplitRecord] {
   // Replace the found piece with its left part, then insert the new piece
   // and the right part of the split.
@@ -762,7 +839,15 @@ function insertWithSplit(
 
   // Insert the new piece after the left part
   const insertPos = location.pieceStartOffset + leftPart.length;
-  let newRoot = rbInsertPiece(replaceResult, insertPos, bufferType, start, length, insertedID);
+  let newRoot = rbInsertPiece(
+    replaceResult,
+    insertPos,
+    bufferType,
+    start,
+    length,
+    insertedID,
+    afterChunk,
+  );
 
   // Insert the right part after the new piece, preserving its full identity
   // (including chunkIndex for 'chunk' pieces, which rbInsertPiece does not support here).
@@ -825,7 +910,7 @@ function makePiece(
 ): PieceNode {
   return node.bufferType === "chunk"
     ? createChunkPieceNode(node.chunkIndex, start, length, "black", null, null, id)
-    : createPieceNode(node.bufferType, start, length, "black", null, null, id);
+    : createPieceNode(node.bufferType, start, length, "black", null, null, id, pieceKey(node));
 }
 
 /**
@@ -949,7 +1034,19 @@ export function pieceTableDelete(
 // =============================================================================
 
 /**
+ * Decoder for resident bytes read from offset 0. It strips a byte order mark
+ * only when that offset is the start of the file (see `residentStartIsFileStart`).
+ */
+function decoderFromStart(state: PieceTableState): TextDecoder {
+  return residentStartIsFileStart(state) ? textDecoder : contentDecoder;
+}
+
+/**
  * Get the entire document content as a string.
+ *
+ * A byte order mark at the start of the file is stripped. In chunk mode, while
+ * a chunk before the first resident byte is not loaded, a U+FEFF that starts
+ * the resident text belongs to a later chunk and is kept.
  */
 export function getValue(state: PieceTableState): LinearCost<string> {
   if (state.root === null) return $proveCtx($beginCost("O(n)"), "");
@@ -976,7 +1073,7 @@ export function getValue(state: PieceTableState): LinearCost<string> {
             offset += piece.length;
           }
 
-          return textDecoder.decode(result);
+          return decoderFromStart(state).decode(result);
         }),
       ),
     ),
@@ -984,27 +1081,49 @@ export function getValue(state: PieceTableState): LinearCost<string> {
 }
 
 /**
- * Get text in the range [start, end).
+ * Get text in the range [start, end) as the line index counts it: every
+ * U+FEFF is kept, a byte order mark at document offset 0 included (see
+ * `contentDecoder`). Column math, history capture and line-index updates rely
+ * on this, so their character counts match the line index.
+ *
+ * Stripping the byte order mark is a presentation concern, done by
+ * `getValue` and `getPresentedText`.
  */
 export function getText(
   state: PieceTableState,
   start: ByteOffset,
   end: ByteOffset,
 ): LinearCost<string> {
-  if (state.root === null) return $proveCtx($beginCost("O(n)"), "");
+  // A negative start reads nothing, where getBytes clamps it to 0.
   if (start < 0) return $proveCtx($beginCost("O(n)"), "");
-  if (start >= end) return $proveCtx($beginCost("O(n)"), "");
-  if (start >= state.totalLength) return $proveCtx($beginCost("O(n)"), "");
+  return $proveCtx($beginCost("O(n)"), contentDecoder.decode(getBytes(state, start, end)));
+}
 
-  const actualEnd = Math.min(end, state.totalLength);
+/**
+ * Get text in the range [start, end) as `getValue` reads it: a range from
+ * offset 0 strips a byte order mark that starts the file (see
+ * `decoderFromStart`). A U+FEFF anywhere else is content and is kept. The
+ * public `query.getText` reads through this.
+ */
+export function getPresentedText(
+  state: PieceTableState,
+  start: ByteOffset,
+  end: ByteOffset,
+): LinearCost<string> {
+  if (start !== 0) return getText(state, start, end);
+  return $proveCtx($beginCost("O(n)"), decoderFromStart(state).decode(getBytes(state, start, end)));
+}
 
-  // Pre-allocate result buffer for the exact range size
-  const rangeLength = actualEnd - start;
-  const result = new Uint8Array(rangeLength);
-  const writeState = { offset: 0 };
-  collectBytesInRange(state, state.root, 0, start, actualEnd, result, writeState);
-
-  return $proveCtx($beginCost("O(n)"), textDecoder.decode(result.subarray(0, writeState.offset)));
+/**
+ * Copy the raw bytes in the range [start, end), clamped to the document.
+ */
+export function getBytes(state: PieceTableState, start: ByteOffset, end: ByteOffset): Uint8Array {
+  const from = Math.max(0, start);
+  const to = Math.min(end, state.totalLength);
+  if (state.root === null || from >= to) return new Uint8Array(0);
+  const result = new Uint8Array(to - from);
+  collectBytesInRange(state, state.root, 0, from, to, result, { offset: 0 });
+  return result;
 }
 
 /**

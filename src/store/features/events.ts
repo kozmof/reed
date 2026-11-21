@@ -44,7 +44,13 @@ export interface ContentChangeEvent extends DocumentEvent {
 }
 
 /**
- * Fired when selection changes.
+ * Fired when the selection changes: on SET_SELECTION, and whenever another
+ * action moves the selection, such as INSERT, DELETE, REPLACE, or APPLY_REMOTE
+ * moving it past the edited text, UNDO or REDO restoring it, or LOAD_CHUNK,
+ * LOAD_CHUNKS, EVICT_CHUNK, or EVICT_CHUNKS shifting it. An action that leaves
+ * the selection in place fires nothing, including a SET_SELECTION with the
+ * ranges the selection already has. An editor that sets the caret an edit
+ * already moved to therefore gets one event per edit.
  */
 export interface SelectionChangeEvent extends DocumentEvent {
   readonly type: "selection-change";
@@ -77,6 +83,32 @@ export interface HistoryChangeEvent extends DocumentEvent {
   readonly direction: "undo" | "redo";
   readonly prevState: DocumentState;
   readonly nextState: DocumentState;
+}
+
+/**
+ * Fired when an action discards undo or redo entries without undoing or
+ * redoing them, so the undo and redo counts drop:
+ * - EVICT_CHUNK or EVICT_CHUNKS discards the entries that point into the
+ *   chunks it evicts, under the `"drop"` eviction policy, or under
+ *   `"pin-bounded"` with `overLimit` or through EVICT_CHUNKS.
+ * - UNDO or REDO meets an entry that no longer resolves inside the document:
+ *   that entry and the entries behind it on the same stack are dropped.
+ * - APPLY_REMOTE clears both stacks, since history is not rebased against
+ *   remote edits.
+ * - HISTORY_CLEAR clears both stacks.
+ *
+ * Nothing is undone or redone. Dropping history does not move the selection,
+ * but the same eviction can: an endpoint inside the evicted chunk collapses to
+ * where the chunk was, and `selection-change` fires for that separately.
+ */
+export interface HistoryDropEvent extends DocumentEvent {
+  readonly type: "history-drop";
+  readonly prevState: DocumentState;
+  readonly nextState: DocumentState;
+  /** Undo entries discarded. */
+  readonly undoDropped: number;
+  /** Redo entries discarded. */
+  readonly redoDropped: number;
 }
 
 /**
@@ -122,6 +154,7 @@ export type AnyDocumentEvent =
   | ContentChangeEvent
   | SelectionChangeEvent
   | HistoryChangeEvent
+  | HistoryDropEvent
   | AttentionChangeEvent
   | SaveEvent
   | DirtyChangeEvent;
@@ -133,6 +166,7 @@ export interface DocumentEventMap {
   "content-change": ContentChangeEvent;
   "selection-change": SelectionChangeEvent;
   "history-change": HistoryChangeEvent;
+  "history-drop": HistoryDropEvent;
   "attention-change": AttentionChangeEvent;
   save: SaveEvent;
   "dirty-change": DirtyChangeEvent;
@@ -330,7 +364,7 @@ export function createSelectionChangeEvent(
  * Create a history change event.
  */
 export function createHistoryChangeEvent(
-  direction: "undo" | "redo",
+  direction: HistoryChangeEvent["direction"],
   prevState: DocumentState,
   nextState: DocumentState,
 ): HistoryChangeEvent {
@@ -340,6 +374,26 @@ export function createHistoryChangeEvent(
     direction,
     prevState,
     nextState,
+  });
+}
+
+/**
+ * Create a history drop event. `dropped` holds the undo and redo entries the
+ * action discarded without undoing or redoing them, as the reducer counted
+ * them, so the event and the store's eviction warning report the same loss.
+ */
+export function createHistoryDropEvent(
+  prevState: DocumentState,
+  nextState: DocumentState,
+  dropped: { readonly undo: number; readonly redo: number },
+): HistoryDropEvent {
+  return Object.freeze({
+    type: "history-drop" as const,
+    timestamp: Date.now(),
+    prevState,
+    nextState,
+    undoDropped: dropped.undo,
+    redoDropped: dropped.redo,
   });
 }
 

@@ -8,9 +8,11 @@
  */
 
 import type { DocumentState, LineIndexState, PieceNode } from "../../types/state.js";
+import { pstackSize } from "../../types/state.js";
 import type {
   DeclareChunkMetadataAction,
   EvictChunkAction,
+  EvictChunksAction,
   LoadChunkAction,
   LoadChunksAction,
 } from "../../types/actions.js";
@@ -24,10 +26,25 @@ import {
   pieceTableDelete,
 } from "../core/piece-table.js";
 import { hasAttentionForPiece } from "../core/attention.js";
+import { deriveLoadedChunks, keySpan } from "../core/chunk-anchor.js";
+import {
+  carrySelectionAcrossChunks,
+  rangeEndsBefore,
+  historyForEviction,
+  historyLossForEviction,
+  totalLoss,
+  type EvictionHistoryLoss,
+} from "./history-anchor.js";
+import { createFewestLossQueue } from "./fewest-loss-queue.js";
 import { repairChunkLines } from "../core/chunk-line-repair.js";
 import { summarizeBytes } from "../core/decoded-metrics.js";
 import { PersistentMap, PersistentSet } from "../core/persistent-map.js";
-import { asReadonlyMap, asReadonlySet, asReadonlyUint8Array } from "../core/runtime-readonly.js";
+import {
+  asReadonlyMap,
+  asReadonlySet,
+  asReadonlyUint8Array,
+  unwrapReadonlyUint8Array,
+} from "../core/runtime-readonly.js";
 
 interface ChunkSummary {
   min: number;
@@ -35,7 +52,11 @@ interface ChunkSummary {
   hasAdd: boolean;
 }
 const chunkSummaries = new WeakMap<PieceNode, ChunkSummary>();
-const emptySummary: ChunkSummary = { min: Infinity, max: -Infinity, hasAdd: false };
+const emptySummary: ChunkSummary = {
+  min: Infinity,
+  max: -Infinity,
+  hasAdd: false,
+};
 
 // Immutable subtrees share their summaries across edits and viewport changes.
 function summarizeChunks(root: PieceNode | null): ChunkSummary {
@@ -71,18 +92,6 @@ function visitChunk(
       visit(root, ownStart) === true) ||
     visitChunk(root.right, chunkIndex, visit, ownStart + root.length)
   );
-}
-
-function findReloadInsertionPos(root: PieceNode | null, targetChunkIndex: number): number {
-  function find(node: PieceNode | null, offset: number): number | null {
-    if (!node || summarizeChunks(node).max <= targetChunkIndex) return null;
-    const ownStart = offset + (node.left?.subtreeLength ?? 0);
-    const left = find(node.left, offset);
-    if (left !== null) return left;
-    if (node.bufferType === "chunk" && node.chunkIndex > targetChunkIndex) return ownStart;
-    return find(node.right, ownStart + node.length);
-  }
-  return find(root, 0) ?? root?.subtreeLength ?? 0;
 }
 
 function findPristineChunkRange(
@@ -127,7 +136,11 @@ function hasAddPieceTouchingRange(
   );
 }
 
-function hasAttentionAnchoredToChunk(state: DocumentState, chunkIndex: number): boolean {
+/**
+ * Whether an attention is anchored to a piece of chunk `chunkIndex`. Visits
+ * only the subtrees whose chunk range holds `chunkIndex`, with no allocation.
+ */
+export function hasAttentionAnchoredToChunk(state: DocumentState, chunkIndex: number): boolean {
   if (state.attention.attentions.size === 0) return false;
   return visitChunk(state.pieceTable.root, chunkIndex, (node) =>
     hasAttentionForPiece(state.attention, node.id),
@@ -221,7 +234,9 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
   for (const chunk of action.chunks) {
     if (seen.has(chunk.chunkIndex) || state.pieceTable.chunkMap.has(chunk.chunkIndex)) continue;
     seen.add(chunk.chunkIndex);
-    const data = new Uint8Array(chunk.data);
+    // Copy from the raw bytes: copying through the read-only proxy reads every
+    // byte through its get trap.
+    const data = new Uint8Array(unwrapReadonlyUint8Array(chunk.data));
     if (
       data.length === 0 ||
       !isChunkByteLengthValid(state.pieceTable, chunk.chunkIndex, data.length)
@@ -243,13 +258,15 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
   let pieceTable = state.pieceTable;
   let lineIndex = state.lineIndex;
   let unloadedLineCount = state.lineIndex.unloadedLineCount;
+  // Where the lowest chunk goes, in the text before the load. The chunks go
+  // in ascending order, so every other one lands after it.
+  const firstInsertion = keySpan(root, prepared[0]!.chunkIndex).start;
 
   for (const chunk of prepared) {
-    const isFirstLoad = !loadedChunks.has(chunk.chunkIndex);
-    const isSequentialFirst = isFirstLoad && chunk.chunkIndex === nextExpectedChunk;
-    const insertionPos = isSequentialFirst
-      ? byteOffset(totalLength)
-      : byteOffset(findReloadInsertionPos(root, chunk.chunkIndex));
+    // Before the first piece whose key is >= the chunk index: the first piece
+    // of a higher chunk, or text recorded as lying after the chunk. For the
+    // next chunk in order every key is below it, so that is the end.
+    const insertionPos = byteOffset(keySpan(root, chunk.chunkIndex).start);
     const id = pieceID(`p${nextPieceID++}`);
     root = insertChunkPieceAt(root, insertionPos, chunk.chunkIndex, chunk.data.length, id);
     summarizeBytes(chunk.data); // Prepare reusable decoder summaries once during loading.
@@ -274,7 +291,6 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
     });
     lineIndex = repairChunkLines(
       lineIndex,
-      pieceTable,
       next,
       insertionPos,
       insertionPos,
@@ -284,32 +300,151 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
     pieceTable = next;
   }
   lineIndex = withUnloadedLineCounts(lineIndex, asReadonlyMap(unloadedCounts), unloadedLineCount);
+  // Extend the loaded-chunk lengths instead of rebuilding them for the new map.
+  deriveLoadedChunks(
+    state.pieceTable.chunkMap,
+    pieceTable.chunkMap,
+    prepared.map((chunk) => [chunk.chunkIndex, chunk.data.length] as const),
+    [],
+  );
 
   return withState(state, {
     revision: state.revision + prepared.length,
     pieceTable,
     lineIndex,
+    // Keep the cursor on the same text, as history positions are kept. A
+    // selection wholly before every loaded chunk cannot move, which is the
+    // usual case while chunks stream in at the end, so it skips the carry
+    // (see `rangeEndsBefore`).
+    selection:
+      state.pieceTable.nextExpectedChunk !== 0 &&
+      state.selection.ranges.every((range) => rangeEndsBefore(range, firstInsertion))
+        ? state.selection
+        : carrySelectionAcrossChunks(state.pieceTable, pieceTable, state.selection),
   });
 }
 
-export function evictChunk(state: DocumentState, action: EvictChunkAction): DocumentState {
-  const { chunkIndex } = action;
-  const chunkBytes = state.pieceTable.chunkMap.get(chunkIndex);
-  if (chunkBytes === undefined) return state;
-  if (hasAttentionAnchoredToChunk(state, chunkIndex)) return state;
+type EvictableRange = { readonly start: ByteOffset; readonly end: ByteOffset } | null;
 
+/**
+ * The resident range of `chunkIndex` when only history could keep it from
+ * being evicted, else null: it is not loaded, an attention is anchored to it,
+ * or edits have split or touched it.
+ */
+function evictableRange(state: DocumentState, chunkIndex: number): EvictableRange {
+  const range = uneditedRange(state, chunkIndex);
+  return range === null || hasAttentionAnchoredToChunk(state, chunkIndex) ? null : range;
+}
+
+/**
+ * The resident range of `chunkIndex` when no edit has split or touched it,
+ * else null, attentions aside.
+ *
+ * O(k + log n) for a chunk in k pieces. The walk stops at the first piece out
+ * of place, so a chunk edits have split costs about as little as one they
+ * have not.
+ */
+function uneditedRange(state: DocumentState, chunkIndex: number): EvictableRange {
+  const chunkBytes = state.pieceTable.chunkMap.get(chunkIndex);
+  if (chunkBytes === undefined) return null;
   const range = findPristineChunkRange(state.pieceTable.root, chunkIndex, chunkBytes.length);
   if (range === null || hasAddPieceTouchingRange(state.pieceTable.root, range.start, range.end)) {
-    return state;
+    return null;
   }
+  return range;
+}
 
+/**
+ * What would keep the loaded chunk `chunkIndex` resident even with no
+ * attention anchored to it: `"edits"` when edits have split or touched it,
+ * `"history"` when history points inside it under `"pin"`, else null. Under
+ * the other policies an over-limit eviction pass discards such history.
+ */
+export function chunkHoldReason(
+  state: DocumentState,
+  chunkIndex: number,
+): "edits" | "history" | null {
+  if (!state.pieceTable.chunkMap.has(chunkIndex)) return null;
+  const range = uneditedRange(state, chunkIndex);
+  if (range === null) return "edits";
+  return state.history.evictionPolicy === "pin" &&
+    totalLoss(historyLossForEviction(state.pieceTable, state.history, chunkIndex, range.start)) > 0
+    ? "history"
+    : null;
+}
+
+/**
+ * The resident range of `chunkIndex` and how many undo and redo entries
+ * evicting it discards when the policy lets it drop history (`"drop"`, or
+ * `"pin-bounded"` with `overLimit`), or null when it cannot be evicted
+ * whatever happens to history (see `evictableRange`). Under `"pin"`, only a
+ * chunk with no loss evicts.
+ */
+export function evictionCandidate(
+  state: DocumentState,
+  chunkIndex: number,
+): { readonly range: NonNullable<EvictableRange>; readonly loss: EvictionHistoryLoss } | null {
+  const range = evictableRange(state, chunkIndex);
+  if (range === null) return null;
+  const loss = historyLossForEviction(state.pieceTable, state.history, chunkIndex, range.start);
+  return { range, loss };
+}
+
+export function evictChunk(state: DocumentState, action: EvictChunkAction): DocumentState {
+  const next = tryEvict(state, action.chunkIndex, action.overLimit === true);
+  return next === null ? state : withSelectionCarried(state, next);
+}
+
+/**
+ * `next`, which evicted chunks from `state`, with the selection of `state`
+ * carried across: an offset inside an evicted chunk lands where the chunk was.
+ * Carrying it once for a whole batch gives the selection carrying it across
+ * each eviction would, since each endpoint keeps its chunk key.
+ */
+function withSelectionCarried(state: DocumentState, next: DocumentState): DocumentState {
+  if (next === state) return state;
+  const selection = carrySelectionAcrossChunks(state.pieceTable, next.pieceTable, state.selection);
+  return selection === next.selection ? next : withState(next, { selection });
+}
+
+/**
+ * Evict `chunkIndex` as EVICT_CHUNK does, or return null when it is refused:
+ * the chunk cannot be evicted (see `evictableRange`), or history points
+ * inside it and the policy keeps it (see `historyForEviction`).
+ */
+function tryEvict(state: DocumentState, chunkIndex: number, overLimit: boolean) {
+  const range = evictableRange(state, chunkIndex);
+  if (range === null) return null;
+  // History positions survive eviction except those inside the chunk.
+  const history = historyForEviction(
+    state.pieceTable,
+    state.history,
+    chunkIndex,
+    range.start,
+    overLimit,
+  );
+  if (history === null) return null;
+  return evictRange(state, chunkIndex, range, history);
+}
+
+/**
+ * Remove `chunkIndex`, which lies at `range`, keeping `history`. The selection
+ * is left as it was, for the caller to carry across (see
+ * `withSelectionCarried`).
+ */
+function evictRange(
+  state: DocumentState,
+  chunkIndex: number,
+  range: { readonly start: ByteOffset; readonly end: ByteOffset },
+  history: DocumentState["history"],
+): DocumentState {
   const deleted = pieceTableDelete(state.pieceTable, range.start, range.end);
   const nextChunkMap = PersistentMap.from(state.pieceTable.chunkMap).without(chunkIndex);
   const nextPieceTable = Object.freeze({ ...deleted, chunkMap: asReadonlyMap(nextChunkMap) });
+  deriveLoadedChunks(state.pieceTable.chunkMap, nextPieceTable.chunkMap, [], [chunkIndex]);
   const nextRevision = state.revision + 1;
   let lineIndex: LineIndexState = repairChunkLines(
     state.lineIndex,
-    state.pieceTable,
     nextPieceTable,
     range.start,
     range.end,
@@ -334,5 +469,76 @@ export function evictChunk(state: DocumentState, action: EvictChunkAction): Docu
     revision: nextRevision,
     pieceTable: nextPieceTable,
     lineIndex,
+    history,
   });
+}
+
+/**
+ * Evict chunks from `chunkIndices` until at most `maxLoaded` chunks stay
+ * loaded (see `EvictChunksAction`).
+ *
+ * First every candidate whose eviction discards no history, in the order
+ * given, whatever the policy. A candidate that edits or an attention keep is
+ * skipped. Only if that is not enough does history decide the rest, and never
+ * under `"pin"`: `"drop"` takes them in the order given, and `"pin-bounded"`
+ * takes the one that discards the fewest entries each time, which keeps as
+ * much undo as the limit allows, with ties going to the earlier candidate
+ * (see `createFewestLossQueue`).
+ *
+ * Each candidate's loss is measured once, and the selection is carried across
+ * once, after the last eviction. `reduceDocument` reports the history it
+ * discarded (see `DocumentTransition`), and the store that commits it warns.
+ */
+export function evictChunks(state: DocumentState, action: EvictChunksAction): DocumentState {
+  const { maxLoaded } = action;
+  let next = state;
+  const overLimit = () => next.pieceTable.chunkMap.size > maxLoaded;
+  // History never decides under "pin", so only the other policies collect
+  // the candidates whose eviction discards some. A chunk listed twice is
+  // collected once; once evicted, it is no longer a candidate.
+  const policy = state.history.evictionPolicy;
+  const lossy: { readonly chunk: number; readonly loss: EvictionHistoryLoss }[] = [];
+  const collected = policy === "pin" ? null : new Set<number>();
+  for (const chunk of action.chunkIndices) {
+    if (!overLimit()) break;
+    const candidate = evictionCandidate(next, chunk);
+    if (candidate === null) continue;
+    const { range, loss } = candidate;
+    if (totalLoss(loss) === 0) next = evictRange(next, chunk, range, next.history);
+    else if (collected !== null && !collected.has(chunk)) {
+      collected.add(chunk);
+      lossy.push({ chunk, loss });
+    }
+  }
+
+  if (lossy.length > 0) {
+    // Evicting other chunks moved each candidate, so tryEvict reads its range
+    // again. They cannot have made it unevictable: eviction adds no edits or
+    // attention. Should it be refused anyway, no history was dropped, so the
+    // other losses stay as measured.
+    if (policy === "drop") {
+      for (const { chunk } of lossy) {
+        if (!overLimit()) break;
+        next = tryEvict(next, chunk, true) ?? next;
+      }
+    } else {
+      // Anything other than "drop" here gets the default "pin-bounded".
+      const queue = createFewestLossQueue(lossy.map(({ loss }) => loss));
+      while (overLimit()) {
+        const pick = queue.take();
+        if (pick === undefined) break;
+        const evicted = tryEvict(next, lossy[pick.index]!.chunk, true);
+        if (evicted === null) continue;
+        // Report what the eviction dropped, not the predicted loss, so the
+        // queue stays exact even if a prediction is off.
+        const before = next.history;
+        next = evicted;
+        queue.dropped({
+          undo: pstackSize(before.undoStack) - pstackSize(next.history.undoStack),
+          redo: pstackSize(before.redoStack) - pstackSize(next.history.redoStack),
+        });
+      }
+    }
+  }
+  return withSelectionCarried(state, next);
 }

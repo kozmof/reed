@@ -18,6 +18,7 @@ export {
   encodeCheckpoint,
   decodeCheckpoint,
   isCheckpoint,
+  isRestorableCheckpoint,
 } from "./features/checkpoint.js";
 
 // Action creators
@@ -48,7 +49,10 @@ export {
   pieceTableInsert,
   pieceTableDelete,
   getValue,
+  // getText keeps a byte order mark at offset 0, as the line index counts it;
+  // getPresentedText strips it, as getValue does.
   getText,
+  getPresentedText,
   getLength,
   getValueStream,
   findPieceAtPosition,
@@ -115,6 +119,7 @@ export {
   createContentChangeEvent,
   createSelectionChangeEvent,
   createHistoryChangeEvent,
+  createHistoryDropEvent,
   createAttentionChangeEvent,
   createSaveEvent,
   createDirtyChangeEvent,
@@ -126,6 +131,7 @@ export type {
   ContentChangeEvent,
   SelectionChangeEvent,
   HistoryChangeEvent,
+  HistoryDropEvent,
   AttentionChangeEvent,
   SaveEvent,
   DirtyChangeEvent,

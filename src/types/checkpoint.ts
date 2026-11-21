@@ -9,12 +9,17 @@
  * its serialized form.
  */
 
+import type { HistoryEvictionPolicy } from "./state.js";
+
 /** Envelope discriminator. Present on every checkpoint. */
 export const CHECKPOINT_FORMAT = "reed-checkpoint";
 export type CheckpointFormat = typeof CHECKPOINT_FORMAT;
 
-/** Current checkpoint format version. This build supports version 1 only. */
-export const CHECKPOINT_VERSION = 1;
+/**
+ * Current checkpoint format version. Restore also accepts version 1, which it
+ * migrates forward (see `checkpoint-migrate.ts`).
+ */
+export const CHECKPOINT_VERSION = 2;
 
 /**
  * Capture fidelity.
@@ -35,10 +40,13 @@ export type CheckpointBufferTag = "o" | "a" | "c";
 
 /**
  * A piece in document order. A chunk piece has a fifth element identifying
- * its chunk, and `start` is a byte offset within that chunk.
+ * its chunk, and `start` is a byte offset within that chunk. An add piece may
+ * have a fifth element holding its chunk placement key (`afterChunk`), omitted
+ * when it is -1.
  */
 export type CheckpointPiece =
-  | readonly [id: string, buffer: "o" | "a", start: number, length: number]
+  | readonly [id: string, buffer: "o", start: number, length: number]
+  | readonly [id: string, buffer: "a", start: number, length: number, afterChunk?: number]
   | readonly [id: string, buffer: "c", start: number, length: number, chunkIndex: number];
 
 /** A chunk index and its base64-encoded bytes. */
@@ -102,28 +110,69 @@ export interface CheckpointLineIndex {
   readonly lines: readonly CheckpointLine[];
 }
 
-/** Serialized `SelectionState`. Ranges are `[anchor, head]` byte offsets. */
+/**
+ * Serialized `SelectionState`. Ranges are `[anchor, head]` byte offsets,
+ * followed by both placement keys when the range stores either (see
+ * `SelectionRange.anchorAfterChunk`). `null` stands for a key the range does
+ * not store.
+ */
 export interface CheckpointSelection {
-  readonly ranges: readonly (readonly [anchor: number, head: number])[];
+  readonly ranges: readonly (
+    | readonly [anchor: number, head: number]
+    | readonly [
+        anchor: number,
+        head: number,
+        anchorAfterChunk: number | null,
+        headAfterChunk: number | null,
+      ]
+  )[];
   readonly primaryIndex: number;
 }
 
 /**
  * An undo/redo change tagged `'i'` for insert, `'d'` for delete, or `'r'` for replace.
  * A replace change carries the displaced text as its fourth element.
+ * `position` is an anchored position (see `HistoryAnchor`) and may be negative.
+ * The placement key `afterChunk` follows the text fields, omitted when it is
+ * -1 and nothing follows it.
  *
- * Restore recomputes byte lengths from text to keep them consistent even
- * when the payload was edited by hand.
+ * The raw bytes of a change (`HistoryChange.bytes` and, for a replace,
+ * `oldBytes`) follow the key as base64 strings, present only when the change
+ * has them. A replace without `bytes` but with `oldBytes` writes `null` for
+ * `bytes`.
+ *
+ * Restore recomputes byte lengths from text, or from raw bytes when present,
+ * to keep them consistent even when the payload was edited by hand.
  */
 export type CheckpointHistoryChange =
-  | readonly [kind: "i" | "d", position: number, text: string]
-  | readonly [kind: "r", position: number, text: string, oldText: string];
+  | readonly [kind: "i" | "d", position: number, text: string, afterChunk?: number, bytes?: string]
+  | readonly [
+      kind: "r",
+      position: number,
+      text: string,
+      oldText: string,
+      afterChunk?: number,
+      bytes?: string | null,
+      oldBytes?: string,
+    ];
+
+/**
+ * A history selection. Ranges are `[anchor, head]` anchored positions,
+ * followed by both placement keys unless both are -1.
+ */
+export interface CheckpointHistorySelection {
+  readonly ranges: readonly (
+    | readonly [anchor: number, head: number]
+    | readonly [anchor: number, head: number, anchorAfterChunk: number, headAfterChunk: number]
+  )[];
+  readonly primaryIndex: number;
+}
 
 /** Serialized `HistoryEntry`. */
 export interface CheckpointHistoryEntry {
   readonly changes: readonly CheckpointHistoryChange[];
-  readonly selectionBefore: CheckpointSelection;
-  readonly selectionAfter: CheckpointSelection;
+  readonly selectionBefore: CheckpointHistorySelection;
+  readonly selectionAfter: CheckpointHistorySelection;
   readonly timestamp: number;
 }
 
@@ -134,6 +183,8 @@ export interface CheckpointHistoryEntry {
 export interface CheckpointHistory {
   readonly limit: number;
   readonly coalesceTimeout: number;
+  /** History eviction policy. Absent means `"pin-bounded"`, the default. */
+  readonly evictionPolicy?: HistoryEvictionPolicy;
   readonly undo: readonly CheckpointHistoryEntry[];
   readonly redo: readonly CheckpointHistoryEntry[];
 }
@@ -164,16 +215,32 @@ export interface CheckpointAttentionLayer {
   readonly attentions: readonly CheckpointAttention[];
 }
 
-/** Envelope accepted by isCheckpoint. Section contents have not been validated. */
+/**
+ * Envelope accepted by isCheckpoint: the current version, with every section
+ * present. Section contents have not been validated.
+ */
 export interface CheckpointEnvelope {
   readonly format: CheckpointFormat;
-  readonly version: number;
+  readonly version: typeof CHECKPOINT_VERSION;
   readonly pieceTable: object;
   readonly lineIndex: object;
   readonly selection: object;
   readonly history: object;
   readonly metadata: object;
   readonly attention: object;
+}
+
+/**
+ * Envelope accepted by isRestorableCheckpoint: any version restore can read,
+ * with every section present. Section contents have not been validated.
+ *
+ * `version` can be older than `CHECKPOINT_VERSION`, and then the sections use
+ * that version's layout, so do not read them as a `DocumentCheckpoint`: pass
+ * the value to `restoreCheckpoint`, which migrates and validates it, or check
+ * it with `isCheckpoint` first.
+ */
+export interface RestorableCheckpointEnvelope extends Omit<CheckpointEnvelope, "version"> {
+  readonly version: number;
 }
 
 /**

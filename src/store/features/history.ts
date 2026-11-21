@@ -4,10 +4,16 @@
  * historyUndo / historyRedo operations that apply stored changes.
  */
 
-import type { DocumentState, HistoryState } from "../../types/state.js";
+import type {
+  DocumentState,
+  HistoryChange,
+  HistoryEntry,
+  HistoryState,
+} from "../../types/state.js";
 import { pstackSize, pstackPush, pstackPop } from "../../types/state.js";
 import { withState } from "../core/state.js";
-import { applyChange, applyInverseChange } from "./edit.js";
+import { applyChange, applyInverseChange, StaleHistoryChangeError } from "./edit.js";
+import { keepSameSelection, resolveSelection } from "./history-anchor.js";
 
 /**
  * Check if undo is available.
@@ -64,78 +70,130 @@ export function isHistoryEmpty(state: DocumentState | HistoryState): boolean {
 // =============================================================================
 
 /**
+ * Apply an entry's changes, or return null when one of them no longer resolves
+ * inside the document. Valid history always replays; a stale entry can only
+ * come from a gap in the eviction guards or a hand-built state.
+ */
+function replayEntry(
+  state: DocumentState,
+  entry: HistoryEntry,
+  apply: (state: DocumentState, change: HistoryChange) => DocumentState,
+  reverse: boolean,
+): DocumentState | null {
+  const { changes } = entry;
+  let next = state;
+  try {
+    for (let n = 0; n < changes.length; n++) {
+      next = apply(next, changes[reverse ? changes.length - 1 - n : n]!);
+    }
+  } catch (error) {
+    if (error instanceof StaleHistoryChangeError) return null;
+    throw error;
+  }
+  return next;
+}
+
+/**
+ * What an undo or redo step did. `"empty"` means there was nothing to undo or
+ * redo and `state` is the input. `"applied"` means the top entry replayed.
+ * `"dropped"` means it no longer replayed and was discarded together with the
+ * entries that depend on it, so only history changed.
+ */
+export interface HistoryStepResult {
+  readonly outcome: "empty" | "applied" | "dropped";
+  readonly state: DocumentState;
+}
+
+/**
  * Perform undo operation.
  * Keeps aggregate-based queries accurate and defers cached offset repair.
  *
+ * When the top entry no longer replays, it is dropped together with every
+ * older undo entry, since each of those applies to the document the dropped
+ * one would have left. The document is unchanged and the redo stack is kept.
+ *
  * @param state - Current document state
  * @param revision - Next revision number (caller is responsible for incrementing)
- * @returns New state with undo applied, or the same state if no undo is available
+ * @returns The step's outcome and resulting state
  */
-export function historyUndo(state: DocumentState, _revision: number): DocumentState {
+export function historyUndo(state: DocumentState, _revision: number): HistoryStepResult {
   const history = state.history;
-  if (history.undoStack === null) return state;
+  if (history.undoStack === null) return { outcome: "empty", state };
 
   const [entry, newUndoStack] = pstackPop(history.undoStack);
-  const newRedoStack = pstackPush(history.redoStack, entry);
 
-  // Apply inverse changes
-  let newState = withState(state, {
+  // Apply inverse of each change (in reverse order) with lazy line index updates
+  const replayed = replayEntry(state, entry, applyInverseChange, true);
+  if (replayed === null) {
+    return {
+      outcome: "dropped",
+      state: withState(state, { history: Object.freeze({ ...history, undoStack: null }) }),
+    };
+  }
+
+  let newState = withState(replayed, {
     history: Object.freeze({
       ...history,
       undoStack: newUndoStack,
-      redoStack: newRedoStack,
+      redoStack: pstackPush(history.redoStack, entry),
     }),
   });
 
-  // Apply inverse of each change (in reverse order) with lazy line index updates
-  for (let i = entry.changes.length - 1; i >= 0; i--) {
-    const change = entry.changes[i]!;
-    newState = applyInverseChange(newState, change);
-  }
-
   // Restore selection
   newState = withState(newState, {
-    selection: entry.selectionBefore,
+    selection: keepSameSelection(
+      state.selection,
+      resolveSelection(newState.pieceTable, entry.selectionBefore),
+    ),
     metadata: Object.freeze({ ...newState.metadata, isDirty: true }),
   });
 
-  return newState;
+  return { outcome: "applied", state: newState };
 }
 
 /**
  * Perform redo operation.
  * Keeps aggregate-based queries accurate and defers cached offset repair.
  *
+ * When the top entry no longer replays, it is dropped together with the rest
+ * of the redo stack, which applies on top of it. The document is unchanged and
+ * the undo stack is kept.
+ *
  * @param state - Current document state
  * @param revision - Next revision number (caller is responsible for incrementing)
- * @returns New state with redo applied, or the same state if no redo is available
+ * @returns The step's outcome and resulting state
  */
-export function historyRedo(state: DocumentState, _revision: number): DocumentState {
+export function historyRedo(state: DocumentState, _revision: number): HistoryStepResult {
   const history = state.history;
-  if (history.redoStack === null) return state;
+  if (history.redoStack === null) return { outcome: "empty", state };
 
   const [entry, newRedoStack] = pstackPop(history.redoStack);
-  const newUndoStack = pstackPush(history.undoStack, entry);
 
-  // Apply changes
-  let newState = withState(state, {
+  // Apply each change with lazy line index updates
+  const replayed = replayEntry(state, entry, applyChange, false);
+  if (replayed === null) {
+    return {
+      outcome: "dropped",
+      state: withState(state, { history: Object.freeze({ ...history, redoStack: null }) }),
+    };
+  }
+
+  let newState = withState(replayed, {
     history: Object.freeze({
       ...history,
-      undoStack: newUndoStack,
+      undoStack: pstackPush(history.undoStack, entry),
       redoStack: newRedoStack,
     }),
   });
 
-  // Apply each change with lazy line index updates
-  for (const change of entry.changes) {
-    newState = applyChange(newState, change);
-  }
-
   // Restore selection
   newState = withState(newState, {
-    selection: entry.selectionAfter,
+    selection: keepSameSelection(
+      state.selection,
+      resolveSelection(newState.pieceTable, entry.selectionAfter),
+    ),
     metadata: Object.freeze({ ...newState.metadata, isDirty: true }),
   });
 
-  return newState;
+  return { outcome: "applied", state: newState };
 }

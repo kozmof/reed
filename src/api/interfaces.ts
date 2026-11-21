@@ -42,6 +42,7 @@ import type {
 import type {
   DocumentCheckpoint,
   CheckpointEnvelope,
+  RestorableCheckpointEnvelope,
   CheckpointOptions,
   CheckpointRestoreOptions,
 } from "../types/checkpoint.js";
@@ -99,6 +100,7 @@ export interface QueryLineIndexApi {
  */
 export interface QueryApi {
   getText(state: PieceTableState, start: ByteOffset, end: ByteOffset): string;
+  getContentText(state: PieceTableState, start: ByteOffset, end: ByteOffset): string;
   getLength(state: PieceTableState): number;
   isUtf8Boundary(state: PieceTableState, position: ByteOffset): boolean;
   getBufferStats(state: PieceTableState): BufferStats;
@@ -267,4 +269,5 @@ export interface CheckpointApi {
   encode(state: DocumentState<"eager">, options?: CheckpointOptions): string;
   decode(json: string, options?: CheckpointRestoreOptions): DocumentState<"eager">;
   isCheckpoint(value: unknown): value is CheckpointEnvelope;
+  isRestorableCheckpoint(value: unknown): value is RestorableCheckpointEnvelope;
 }

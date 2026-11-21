@@ -277,8 +277,8 @@ EVICT_CHUNK { chunkIndex: 3 }
   → totalLength shrinks accordingly
 
 LOAD_CHUNK { chunkIndex: 3, data: Uint8Array }   ← re-load after eviction
-  → findReloadInsertionPos() locates the gap left by the eviction
-    (finds the first node whose chunkIndex > 3 and inserts before it)
+  → keySpan(root, 3).start locates the gap left by the eviction
+    (inserts before the first piece whose placement key is >= 3, see invariant 1.4)
   → piece node re-inserted; chunkMap entry restored
 ```
 

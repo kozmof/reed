@@ -1,4 +1,5 @@
 import { unwrapReadonlyMap, unwrapReadonlySet } from "./runtime-readonly.js";
+import { avlHeight, avlPut, avlRemove } from "./persistent-avl.js";
 /** Immutable ordered map. Updates copy only AVL search paths. */
 type Key = string | number;
 interface Node<K extends Key, V> {
@@ -20,58 +21,15 @@ function node<K extends Key, V>(
     value,
     left,
     right,
-    height: 1 + Math.max(left?.height ?? 0, right?.height ?? 0),
+    height: avlHeight(left, right),
     minKey: left?.minKey ?? key,
   };
 }
-function balance<K extends Key, V>(
-  key: K,
-  value: V,
-  left: Node<K, V> | null,
-  right: Node<K, V> | null,
-): Node<K, V> {
-  if ((left?.height ?? 0) > (right?.height ?? 0) + 1) {
-    const l = left!;
-    if ((l.left?.height ?? 0) >= (l.right?.height ?? 0))
-      return node(l.key, l.value, l.left, node(key, value, l.right, right));
-    const m = l.right!;
-    return node(
-      m.key,
-      m.value,
-      node(l.key, l.value, l.left, m.left),
-      node(key, value, m.right, right),
-    );
-  }
-  if ((right?.height ?? 0) > (left?.height ?? 0) + 1) {
-    const r = right!;
-    if ((r.right?.height ?? 0) >= (r.left?.height ?? 0))
-      return node(r.key, r.value, node(key, value, left, r.left), r.right);
-    const m = r.left!;
-    return node(
-      m.key,
-      m.value,
-      node(key, value, left, m.left),
-      node(r.key, r.value, m.right, r.right),
-    );
-  }
-  return node(key, value, left, right);
-}
 function put<K extends Key, V>(root: Node<K, V> | null, key: K, value: V): Node<K, V> {
-  if (!root) return node(key, value, null, null);
-  if (key === root.key) return node(key, value, root.left, root.right);
-  return key < root.key
-    ? balance(root.key, root.value, put(root.left, key, value), root.right)
-    : balance(root.key, root.value, root.left, put(root.right, key, value));
+  return avlPut<K, V, Node<K, V>>(node, root, key, value);
 }
 function remove<K extends Key, V>(root: Node<K, V> | null, key: K): Node<K, V> | null {
-  if (!root) return null;
-  if (key < root.key) return balance(root.key, root.value, remove(root.left, key), root.right);
-  if (key > root.key) return balance(root.key, root.value, root.left, remove(root.right, key));
-  if (!root.left) return root.right;
-  if (!root.right) return root.left;
-  let successor = root.right;
-  while (successor.left) successor = successor.left;
-  return balance(successor.key, successor.value, root.left, remove(root.right, successor.key));
+  return avlRemove<K, V, Node<K, V>>(node, root, key);
 }
 function find<K extends Key, V>(root: Node<K, V> | null, key: K): V | undefined {
   while (root) {

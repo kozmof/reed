@@ -69,9 +69,29 @@ nodes with structural sharing and never mutate existing nodes.
 
 ### 1.4 Chunk Piece Ordering
 
-Chunk pieces are ordered by `chunkIndex` in in-order traversal. This ensures
-that `findReloadInsertionPos` (an O(n) walk) can locate the correct insertion
-point for re-loaded chunks.
+Chunk pieces are ordered by `chunkIndex` in in-order traversal.
+
+Every piece has a placement key. Chunks with an index at or below the key lie
+wholly before the piece, and higher chunks lie after it.
+
+- chunk piece of chunk `i` — `i - 1`
+- add piece — its stored `afterChunk`
+- original piece — `-1`
+
+Keys never decrease in document order. Loading places a chunk `c` at
+`keySpan(root, c).start`, before the first piece whose key is at least `c`.
+`pieceTableInsert` enforces the order: a given key that does not fit the
+insertion point (see `keyFitsAt`) means the caller computed it wrongly, so the
+insert throws a `RangeError` instead of placing the text under another key.
+That throw is a guard against bugs, not how history is checked. Undo and redo
+check each change first with `changeReplayFailure` (see
+`src/store/features/history-anchor.ts`). A change whose range or key does not
+fit throws `StaleHistoryChangeError`, and the entry is dropped with
+`history-drop`. Checkpoint restore checks every stack with the same rule on
+stand-in bytes and never inserts. `pieceTableInsertFitted` skips the check, for keys
+the caller derived from the same document. An add piece key is always below
+`nextExpectedChunk`, so a sequential first load can append at the end. See
+`src/store/core/chunk-anchor.ts`.
 
 ### 1.5 UTF-8 boundaries
 
@@ -257,9 +277,21 @@ increments by exactly 1 for the following actions when they change state.
 
 - content edits — `INSERT`, `DELETE`, `REPLACE`, `APPLY_REMOTE`
 - `SET_SELECTION`
-- `HISTORY_CLEAR`, `UNDO`, `REDO`
+- `HISTORY_CLEAR`, `UNDO`, `REDO` (including the drop described below)
 - `MARK_SAVED`
 - `LOAD_CHUNK`, `EVICT_CHUNK`
+
+`LOAD_CHUNKS` and `EVICT_CHUNKS` increment it by 1 for each chunk they load
+or evict, so one dispatch can raise it by more than 1, as dispatching the
+single-chunk actions one by one would. Do not assume `next.revision ===
+prev.revision + 1` after a single dispatch; compare with `>` instead.
+
+An `UNDO` or `REDO` whose entry no longer resolves against the current chunk
+layout drops that entry and returns a new state with changed `history` and the next
+`revision`, leaving the document unchanged. The event store reports it as a `history-drop` rather than a
+`history-change`, reading the outcome the step recorded for the state it ran
+on, so a listener that dispatches during notification does not change it. To
+catch every history change, compare `state.history !== prev.history`.
 
 Because it moves on selection and history actions too, `revision` alone cannot
 tell you that content changed. To detect a content change, compare piece-table
@@ -279,8 +311,15 @@ Describe these operations as producing a new immutable state reference without i
 
 ### 5.3 `selectionRevision`
 
-Increments only on `SET_SELECTION`. Inline selections carried by a content edit do
-not move it. It strictly tracks `SET_SELECTION` dispatches.
+Increments only on a `SET_SELECTION` that changes the selection. One with the
+current ranges returns the same state, so neither `revision` nor
+`selectionRevision` moves and no `selection-change` event fires. Inline
+selections carried by a content edit do not move it.
+
+The selection itself also moves on edits, `UNDO`/`REDO`, and chunk loads and
+evictions, none of which move `selectionRevision`. Detect any selection change by
+identity: `state.selection !== prev.selection`. Actions that leave the selection in
+place keep the same object.
 
 ### 5.4 `lineIndex.lastReconciledRevision`
 
@@ -324,12 +363,26 @@ opaque and place no constraint on the allocator.
 
 ### 6.4 History Byte Lengths Are Derived
 
-Restore recomputes `byteLength` and `oldByteLength` from their strings rather than reading
-them, so invariant 4 cannot be violated by an edited payload.
+Restore derives `byteLength` and `oldByteLength` rather than reading them, so invariant 4
+cannot be violated by an edited payload. A change that carries raw `bytes` or `oldBytes` is
+measured by those bytes, since they are what undo and redo insert. Otherwise the length is the
+UTF-8 length of its string.
 
-History selections are checked for shape but not against the current document length. An undo
-entry describes an older revision, so its offsets may legitimately sit past the end of the
-document as it stands now.
+### 6.5 History Anchors Are Checked, and Stacks Replay
+
+Every anchored history position is checked against its placement key (`readAnchor`). The key
+must name a chunk that has been loaded. A change position must resolve to a non-negative offset
+in the restored chunk layout. A selection position is clamped into the document when it is
+restored, so it only needs the bound that holds in any layout, `-(key + 1) * chunkSize`.
+Neither is checked against the current document length: an undo entry describes an older
+revision, so its offsets may sit past the end of the document as it stands now.
+
+Each stack must also replay from its newest entry (`findStackReplayFailure`). Every change has
+to fit inside the document the newer changes left, and its placement key has to keep keys in
+document order. A current-version checkpoint whose stack does not replay is rejected with
+`HISTORY_INVALID`. A migrated payload keeps the newer entries that replay and drops the first
+failing entry and everything older, since older versions could save offsets that had already
+gone stale.
 
 ---
 

@@ -109,6 +109,13 @@ export interface TransactionControl {
 /** Store with reconciliation methods, returned by createDocumentStore. */
 export interface ReconcilableDocumentStore extends DocumentStore, TransactionControl {
   /**
+   * Whether a transaction is open: `beginTransaction` has been called more
+   * often than `commitTransaction` and `rollbackTransaction` since. Listeners
+   * are not notified until the outermost one commits or rolls back.
+   */
+  isInTransaction(): boolean;
+
+  /**
    * Ask the configured scheduler to reconcile the line index.
    * The default idle scheduler uses requestIdleCallback when available and
    * falls back to setTimeout. The "none" preset does no background work.

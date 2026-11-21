@@ -661,13 +661,24 @@ describe("Document Reducer", () => {
     });
 
     it("should increment revision", () => {
+      const state = createInitialState({ content: "hello" });
+      const newState = documentReducer(
+        state,
+        DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(3) }]),
+      );
+
+      expect(newState.revision).toBe(1);
+      expect(newState.selectionRevision).toBe(1);
+    });
+
+    it("returns the same state for the current selection", () => {
       const state = createInitialState();
       const newState = documentReducer(
         state,
         DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(0) }]),
       );
 
-      expect(newState.revision).toBe(1);
+      expect(newState).toBe(state);
     });
 
     it("should not mark dirty", () => {
@@ -1197,6 +1208,25 @@ describe("Type Guards", () => {
       expect(validateAction({ type: "INSERT", start: 0, text: "x", selection: [] }).valid).toBe(
         false,
       );
+    });
+
+    it("should check the placement keys of selection ranges", () => {
+      const select = (range: Record<string, unknown>) =>
+        validateAction({ type: "SET_SELECTION", ranges: [{ anchor: 0, head: 1, ...range }] }).valid;
+      expect(select({ anchorAfterChunk: -1, headAfterChunk: 3 })).toBe(true);
+      expect(select({ anchorAfterChunk: undefined })).toBe(true);
+      expect(select({ anchorAfterChunk: "3" })).toBe(false);
+      expect(select({ headAfterChunk: 1.5 })).toBe(false);
+      expect(select({ headAfterChunk: -2 })).toBe(false);
+      expect(select({ anchorAfterChunk: Number.NaN })).toBe(false);
+      expect(
+        validateAction({
+          type: "INSERT",
+          start: 0,
+          text: "x",
+          selection: [{ anchor: 0, head: 0, headAfterChunk: null }],
+        }).valid,
+      ).toBe(false);
     });
 
     it("should reject malformed remote changes and chunk metadata", () => {

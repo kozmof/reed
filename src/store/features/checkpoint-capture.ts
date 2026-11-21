@@ -8,12 +8,13 @@ import type {
   HistoryState,
   HistoryEntry,
   HistoryChange,
+  HistorySelectionState,
   DocumentMetadata,
   ChunkMetadata,
 } from "../../types/state.js";
 import { pstackToArray } from "../../types/state.js";
 import type { AttentionLayerState } from "../../types/attention.js";
-import type { ReadonlyUint8Array } from "../../types/branded.js";
+import { byteOffset, type ReadonlyUint8Array } from "../../types/branded.js";
 import type {
   DocumentCheckpoint,
   CheckpointOptions,
@@ -28,22 +29,19 @@ import type {
   CheckpointHistory,
   CheckpointHistoryEntry,
   CheckpointHistoryChange,
+  CheckpointHistorySelection,
   CheckpointMetadata,
   CheckpointAttention,
   CheckpointAttentionLayer,
   CheckpointErrorCode,
 } from "../../types/checkpoint.js";
 import { CHECKPOINT_FORMAT, CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
-import { collectPieces, compactAddBuffer, getValue } from "../core/piece-table.js";
+import { collectPieces, compactAddBuffer, getBytes } from "../core/piece-table.js";
 import { collectLines } from "../core/line-index.js";
 import { resolveAllAttentions } from "../core/attention.js";
 import { encodeBase64 } from "../core/base64.js";
 import { unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
-import { textEncoder } from "../core/encoding.js";
-import {
-  findNewlineBytePositions,
-  findNewlineCharPositions,
-} from "../core/line-index-text-scan.js";
+import { scanPieceLines } from "../core/decoded-metrics.js";
 
 function fail(code: CheckpointErrorCode, message: string): never {
   throw new CheckpointError(code, message);
@@ -56,9 +54,16 @@ function fail(code: CheckpointErrorCode, message: string): never {
 const BUFFER_TAG = { original: "o", add: "a", chunk: "c" } as const;
 
 function capturePiece(piece: PieceNode): CheckpointPiece {
-  return piece.bufferType === "chunk"
-    ? [piece.id, "c", piece.start, piece.length, piece.chunkIndex]
-    : [piece.id, BUFFER_TAG[piece.bufferType], piece.start, piece.length];
+  switch (piece.bufferType) {
+    case "chunk":
+      return [piece.id, "c", piece.start, piece.length, piece.chunkIndex];
+    case "add":
+      return piece.afterChunk === -1
+        ? [piece.id, BUFFER_TAG.add, piece.start, piece.length]
+        : [piece.id, BUFFER_TAG.add, piece.start, piece.length, piece.afterChunk];
+    case "original":
+      return [piece.id, BUFFER_TAG.original, piece.start, piece.length];
+  }
 }
 
 function captureChunks(chunkMap: ReadonlyMap<number, ReadonlyUint8Array>): CheckpointChunk[] {
@@ -107,29 +112,85 @@ function captureLineIndex(lineIndex: LineIndexState<"eager">): CheckpointLineInd
   return { maxDirtyRanges: lineIndex.maxDirtyRanges, unloadedLineCounts, lines };
 }
 
+/**
+ * Capture the live selection with the placement keys it stores (see
+ * `SelectionRange.anchorAfterChunk`). Every action that changes the document
+ * moves the selection with it, so a stored key fits its offset.
+ */
 function captureSelection(selection: SelectionState): CheckpointSelection {
+  return captureRanges(selection, null);
+}
+
+/** Capture a history selection, whose key -1 means no chunk (see `HistoryAnchor`). */
+function captureHistorySelection(selection: HistorySelectionState): CheckpointHistorySelection {
+  return captureRanges(selection, -1);
+}
+
+/**
+ * Capture a live or history selection as `[anchor, head]` ranges, followed by
+ * both placement keys unless both are `none`. A key the range does not store
+ * is written as `none`. Both selection formats share this one wire shape and
+ * differ only in what stands for "no key".
+ */
+function captureRanges<N extends null | -1>(
+  selection: {
+    readonly ranges: readonly {
+      readonly anchor: number;
+      readonly head: number;
+      readonly anchorAfterChunk?: number | undefined;
+      readonly headAfterChunk?: number | undefined;
+    }[];
+    readonly primaryIndex: number;
+  },
+  none: N,
+): {
+  ranges: (readonly [number, number] | readonly [number, number, number | N, number | N])[];
+  primaryIndex: number;
+} {
   return {
-    ranges: selection.ranges.map((range) => [range.anchor, range.head] as const),
+    ranges: selection.ranges.map((range) => {
+      const anchorKey: number | N = range.anchorAfterChunk ?? none;
+      const headKey: number | N = range.headAfterChunk ?? none;
+      const keyless = anchorKey === none && headKey === none;
+      return keyless
+        ? ([range.anchor, range.head] as const)
+        : ([range.anchor, range.head, anchorKey, headKey] as const);
+    }),
     primaryIndex: selection.primaryIndex,
   };
 }
 
+function captureBytes(bytes: ReadonlyUint8Array | undefined): string | undefined {
+  return bytes === undefined ? undefined : encodeBase64(unwrapReadonlyUint8Array(bytes));
+}
+
 function captureHistoryChange(change: HistoryChange): CheckpointHistoryChange {
+  const bytes = captureBytes(change.bytes);
   switch (change.type) {
     case "insert":
-      return ["i", change.position, change.text];
-    case "delete":
-      return ["d", change.position, change.text];
-    case "replace":
-      return ["r", change.position, change.text, change.oldText];
+    case "delete": {
+      const kind = change.type === "insert" ? "i" : "d";
+      if (bytes !== undefined)
+        return [kind, change.position, change.text, change.afterChunk, bytes];
+      return change.afterChunk !== -1
+        ? [kind, change.position, change.text, change.afterChunk]
+        : [kind, change.position, change.text];
+    }
+    case "replace": {
+      const oldBytes = captureBytes(change.oldBytes);
+      const head = ["r", change.position, change.text, change.oldText] as const;
+      if (oldBytes !== undefined) return [...head, change.afterChunk, bytes ?? null, oldBytes];
+      if (bytes !== undefined) return [...head, change.afterChunk, bytes];
+      return change.afterChunk !== -1 ? [...head, change.afterChunk] : head;
+    }
   }
 }
 
 function captureHistoryEntry(entry: HistoryEntry): CheckpointHistoryEntry {
   return {
     changes: entry.changes.map(captureHistoryChange),
-    selectionBefore: captureSelection(entry.selectionBefore),
-    selectionAfter: captureSelection(entry.selectionAfter),
+    selectionBefore: captureHistorySelection(entry.selectionBefore),
+    selectionAfter: captureHistorySelection(entry.selectionAfter),
     timestamp: entry.timestamp,
   };
 }
@@ -138,6 +199,7 @@ function captureHistory(history: HistoryState): CheckpointHistory {
   return {
     limit: history.limit,
     coalesceTimeout: history.coalesceTimeout,
+    evictionPolicy: history.evictionPolicy,
     undo: pstackToArray(history.undoStack).map(captureHistoryEntry),
     redo: pstackToArray(history.redoStack).map(captureHistoryEntry),
   };
@@ -181,21 +243,16 @@ function captureNormalizedCheckpoint(state: DocumentState<"eager">): DocumentChe
     );
   }
 
-  const content = getValue(state.pieceTable);
-  const bytes = textEncoder.encode(content);
-  const { positions: breakBytes } = findNewlineBytePositions(content);
-  const breakChars = findNewlineCharPositions(content);
-  const lines: CheckpointLine[] = [];
-  let previousByte = 0;
-  let previousChar = 0;
-  for (let i = 0; i < breakBytes.length; i++) {
-    const endByte = breakBytes[i]! + 1;
-    const endChar = breakChars[i]! + 1;
-    lines.push([endByte - previousByte, endChar - previousChar]);
-    previousByte = endByte;
-    previousChar = endChar;
-  }
-  lines.push([bytes.length - previousByte, content.length - previousChar]);
+  // Copy the bytes as they are. Decoding and re-encoding would drop a leading
+  // U+FEFF and turn malformed bytes into U+FFFD. Either changes the byte
+  // length and moves every history position recorded against these bytes.
+  const total = state.pieceTable.totalLength;
+  const bytes = getBytes(state.pieceTable, byteOffset(0), byteOffset(total));
+  // Lines split and counted by the same scan the line index uses, so restore
+  // accepts them.
+  const lines = scanPieceLines(state.pieceTable, 0, total).map(
+    ({ length, charLength }): CheckpointLine => [length, charLength],
+  );
 
   const attentions: CheckpointAttention[] = [];
   if (bytes.length > 0) {

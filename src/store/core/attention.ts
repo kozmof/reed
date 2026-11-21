@@ -412,6 +412,10 @@ export function resolveAllAttentions(
  * Extract the text covered by an Attention.
  * Returns null when the Attention ID is unknown or a point is dangling.
  *
+ * The text is read as the line index counts it (see `getText`): a byte
+ * order mark at the start of the document is kept, so the text lines up with
+ * line 0 columns.
+ *
  * Identity lookup plus the bytes read. Cold indexing is expected O(P) for
  * bounded-length IDs with well-distributed hashes.
  */
