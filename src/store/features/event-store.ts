@@ -306,7 +306,7 @@ export function withEvents(
    */
   function beginTransaction(): void {
     if (disposed) return;
-    withLevelsDetached(baseStore.beginTransaction);
+    withLevelsDetached(() => baseStore.beginTransaction());
     pendingEventLevels.push([]);
   }
 
@@ -331,7 +331,7 @@ export function withEvents(
 
     const events = pendingEventLevels.pop()!;
     if (pendingEventLevels.length > 0) {
-      withLevelsDetached(baseStore.commitTransaction);
+      withLevelsDetached(() => baseStore.commitTransaction());
       pendingEventLevels[pendingEventLevels.length - 1]!.push(...events);
       return;
     }

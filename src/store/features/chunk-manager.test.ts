@@ -27,6 +27,23 @@ function makeStore() {
   return createDocumentStore({ chunkSize: CHUNK_SIZE });
 }
 
+/**
+ * A wrapper over `store` that forwards its transaction controls but predates
+ * `isInTransaction`, so it cannot say whether a transaction is open.
+ */
+function withoutIsInTransaction(store: ReturnType<typeof createDocumentStore>) {
+  return {
+    subscribe: store.subscribe,
+    getSnapshot: store.getSnapshot,
+    isCurrentSnapshot: store.isCurrentSnapshot,
+    dispatch: store.dispatch,
+    batch: store.batch,
+    beginTransaction: store.beginTransaction,
+    commitTransaction: store.commitTransaction,
+    rollbackTransaction: store.rollbackTransaction,
+  };
+}
+
 function makeLoader(chunks: Record<number, string>) {
   const loadChunk = vi.fn(async (i: number): Promise<Uint8Array> => {
     if (!(i in chunks)) throw new Error(`No chunk ${i}`);
@@ -1214,9 +1231,24 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
   });
 
   describe("inside a transaction", () => {
-    /** Load chunks 0-2 as active, with chunk 0 pinned by a redo entry. */
+    /**
+     * Load chunks 0-2 as active, with chunk 0 pinned by a redo entry. A
+     * manager waits for a transaction the store says is open to close, so
+     * here it runs on a wrapper that cannot say, and evicts inside one.
+     */
     const overLimit = async () => {
-      const { store, manager, warn } = setup("pin-bounded");
+      const warn = vi.fn();
+      const store = createDocumentStore({
+        chunkSize: CHUNK_SIZE,
+        totalFileSize: CHUNK_SIZE * 3,
+        historyEvictionPolicy: "pin-bounded",
+        reconcileMode: "none",
+        logger: { warn },
+      });
+      const manager = createChunkManager(withoutIsInTransaction(store), makeLoader(chunks), {
+        maxLoadedChunks: 2,
+        logger: { warn },
+      });
       await manager.ensureLoaded(0);
       pinChunk0(store);
       manager.setActiveChunks([0, 1, 2]);
@@ -1314,6 +1346,102 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
       store.rollbackTransaction();
       expect(getRedoCount(store.getSnapshot())).toBe(1);
       expect(warn).not.toHaveBeenCalled();
+      manager.dispose();
+    });
+  });
+
+  describe("while the store says a transaction is open", () => {
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    it("puts off setActiveChunks's eviction until the transaction closes", async () => {
+      const { store, manager, warn } = setup("pin-bounded");
+      await manager.ensureLoaded(0);
+      pinChunk0(store);
+      manager.setActiveChunks([0, 1, 2]);
+      await manager.ensureLoaded(1);
+      await manager.ensureLoaded(2);
+      warn.mockClear();
+
+      store.beginTransaction();
+      manager.setActiveChunks([1, 2]);
+      await tick();
+      // Nothing evicted, and no history discarded, inside the transaction.
+      expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+      expect(getRedoCount(store.getSnapshot())).toBe(1);
+      store.commitTransaction();
+      expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2]);
+      expect(getRedoCount(store.getSnapshot())).toBe(0);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]![0]).toContain("discarded 0 undo and 1 redo entries");
+      manager.dispose();
+    });
+
+    it("evicts nothing a rollback would have to restore", async () => {
+      const { store, manager, warn } = setup("pin-bounded");
+      await manager.ensureLoaded(0);
+      pinChunk0(store);
+      manager.setActiveChunks([0, 1, 2]);
+      await manager.ensureLoaded(1);
+      await manager.ensureLoaded(2);
+      warn.mockClear();
+
+      store.beginTransaction();
+      manager.setActiveChunks([1, 2]);
+      // Nothing was evicted inside the transaction, so the rollback has
+      // nothing to restore, and the pass runs after it.
+      expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+      store.rollbackTransaction();
+      manager.setActiveChunks([0, 1, 2]);
+      await tick();
+      expect(store.getSnapshot().pieceTable.chunkMap.size).toBe(3);
+      expect(getRedoCount(store.getSnapshot())).toBe(1);
+      expect(warn).not.toHaveBeenCalled();
+      manager.dispose();
+    });
+
+    it("keeps the chunk a deferred load brought in when the pass runs after the commit", async () => {
+      const store = createDocumentStore({
+        chunkSize: CHUNK_SIZE,
+        totalFileSize: CHUNK_SIZE * 3,
+        historyEvictionPolicy: "pin",
+        reconcileMode: "none",
+      });
+      const manager = createChunkManager(store, makeLoader(chunks), { maxLoadedChunks: 1 });
+      await manager.ensureLoaded(0);
+      // Undo history pins chunk 0, so the only chunk that may go is chunk 1.
+      pinChunk0(store);
+
+      store.beginTransaction();
+      await manager.ensureLoaded(1);
+      await tick();
+      store.commitTransaction();
+      await tick();
+      // The pass the load put off protects chunk 1, as its own pass would.
+      expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([0, 1]);
+
+      // Without a transaction open, the load's pass protects it the same way.
+      await manager.ensureLoaded(2);
+      expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([0, 2]);
+      manager.dispose();
+    });
+
+    it("protects a deferred load's chunk when the pass runs after the commit in a later task", async () => {
+      const store = createDocumentStore({
+        chunkSize: CHUNK_SIZE,
+        totalFileSize: CHUNK_SIZE * 3,
+        historyEvictionPolicy: "pin",
+        reconcileMode: "none",
+      });
+      const manager = createChunkManager(store, makeLoader(chunks), { maxLoadedChunks: 1 });
+      await manager.ensureLoaded(0);
+      pinChunk0(store);
+
+      store.beginTransaction();
+      await manager.ensureLoaded(1);
+      // Committed before the pass's task runs: it finds no transaction open.
+      store.commitTransaction();
+      await tick();
+      expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([0, 1]);
       manager.dispose();
     });
   });
@@ -1915,7 +2043,15 @@ describe("ChunkManager ownership of resident chunks", () => {
     [...store.getSnapshot().pieceTable.chunkMap.keys()].sort();
 
   it("evicts chunks a rolled-back pass evicted, though the rollback restores the map it scanned", async () => {
-    const { store, manager } = setup();
+    const store = createDocumentStore({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 4,
+      reconcileMode: "none",
+    });
+    // Only a store that cannot say a transaction is open gets passes inside one.
+    const manager = createChunkManager(withoutIsInTransaction(store), makeLoader(four), {
+      maxLoadedChunks: 2,
+    });
     // An earlier eviction: chunk 0 leaves memory.
     for (const i of [0, 1, 2]) await manager.ensureLoaded(i);
     expect(resident(store)).toEqual([1, 2]);
@@ -1933,6 +2069,75 @@ describe("ChunkManager ownership of resident chunks", () => {
     // Chunk 1 is still the manager's, and the least recently used.
     manager.setActiveChunks([]);
     expect(resident(store)).toEqual([2, 3]);
+    manager.dispose();
+  });
+
+  it("evicts a chunk a rollback restored after a pass forgot it, on a store that cannot say", async () => {
+    const store = createDocumentStore({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 4,
+      reconcileMode: "none",
+    });
+    const manager = createChunkManager(withoutIsInTransaction(store), makeLoader(four), {
+      maxLoadedChunks: 2,
+    });
+    manager.setActiveChunks([1, 2, 3]);
+    for (const i of [1, 2, 3]) await manager.ensureLoaded(i);
+
+    store.beginTransaction();
+    manager.setActiveChunks([2, 3]);
+    expect(resident(store)).toEqual([2, 3]);
+    // A later pass in the same transaction finds chunk 1 gone and forgets it.
+    manager.setActiveChunks([2, 3, 0]);
+    await manager.ensureLoaded(0);
+    store.rollbackTransaction();
+    expect(resident(store)).toEqual([1, 2, 3]);
+
+    // Chunk 1 is the manager's again, so a pass offers it.
+    manager.setActiveChunks([2, 3]);
+    expect(resident(store)).toEqual([2, 3]);
+    manager.dispose();
+  });
+
+  it("evicts a chunk reloaded and evicted again inside a transaction that rolls back", async () => {
+    const { store, manager } = setup();
+    manager.setActiveChunks([0, 1, 2]);
+    for (const i of [0, 1, 2]) await manager.ensureLoaded(i);
+
+    store.beginTransaction();
+    store.dispatch(DocumentActions.evictChunk(0));
+    // The reload takes ownership of new bytes for chunk 0.
+    await manager.ensureLoaded(0);
+    store.dispatch(DocumentActions.evictChunk(0));
+    // The rollback brings back the bytes chunk 0 had before the transaction.
+    store.rollbackTransaction();
+    expect(resident(store)).toEqual([0, 1, 2]);
+
+    manager.setActiveChunks([1, 2]);
+    expect(resident(store)).toEqual([1, 2]);
+    manager.dispose();
+  });
+
+  it("adopts the rest of a batch when the store drops one of its chunks", async () => {
+    const store = createDocumentStore({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 4,
+      reconcileMode: "none",
+    });
+    const manager = createChunkManager(store, makeLoader(four), { maxLoadedChunks: 1 });
+    // A listener evicts chunk 1 as the batch's LOAD_CHUNKS notifies it.
+    let dropped = false;
+    const unsubscribe = store.subscribe(() => {
+      if (dropped || !store.getSnapshot().pieceTable.chunkMap.has(1)) return;
+      dropped = true;
+      store.dispatch(DocumentActions.evictChunk(1));
+    });
+    await expect(manager.ensureLoadedMany([1, 2])).rejects.toThrow("Chunk 1 was fetched");
+    unsubscribe();
+    expect(resident(store)).toEqual([2]);
+    // Chunk 2 is the manager's, so loading chunk 0 evicts it.
+    await manager.ensureLoaded(0);
+    expect(resident(store)).toEqual([0]);
     manager.dispose();
   });
 

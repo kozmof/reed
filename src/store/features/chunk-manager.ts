@@ -109,7 +109,9 @@ export interface ChunkManager {
 
   /**
    * Ensure several chunks are loaded with bounded concurrency. Completions in
-   * the same turn share a transition; slow fetches do not hold up others.
+   * the same turn share a transition; slow fetches do not hold up others, and
+   * a chunk the store does not keep fails on its own, without failing the
+   * others in that transition.
    * Until it settles, no eviction pass of this manager evicts one of
    * `chunkIndices`, including those already loaded. It settles once every
    * fetch it waits on has settled or been canceled, so its holds last exactly
@@ -134,7 +136,8 @@ export interface ChunkManager {
    * Pin chunks that are currently in active use.
    * Pinned chunks are excluded from LRU eviction until the next call to
    * setActiveChunks removes them from the active set.
-   * Pass an empty array to unpin everything.
+   * Pass an empty array to unpin everything. The eviction pass it runs waits,
+   * like a load's, for a transaction the store has open to close.
    */
   setActiveChunks(chunkIndices: readonly number[]): void;
 
@@ -213,11 +216,21 @@ interface ChunkOwner {
  */
 const chunkOwners = new WeakMap<ReadonlyUint8Array, ChunkOwner>();
 
+/**
+ * How many managers have been disposed, across every store. A manager scans
+ * the resident chunks for ones a disposed manager left only after this has
+ * changed (see `reconcileOwnership`).
+ */
+let managersDisposed = 0;
+
 /** Whether a manager that has not been disposed owns `bytes`. */
 function hasLiveOwner(bytes: ReadonlyUint8Array): boolean {
   const owner = chunkOwners.get(bytes);
   return owner !== undefined && !owner.disposed;
 }
+
+/** No chunks, for passes that protect none beyond the usual. */
+const NONE: ReadonlySet<number> = new Set();
 
 /** What EVICT_CHUNKS measures a candidate in. */
 type EvictionInputs = Pick<DocumentState, "pieceTable" | "history" | "attention">;
@@ -306,15 +319,22 @@ export function createChunkManager(
   // the chunk left memory.
   const self: ChunkOwner = { disposed: false };
 
-  // Recency of the chunks this manager owns, least recently used first, each
-  // with the bytes it last took ownership of, weakly. A chunk that left
-  // memory keeps its place while a rollback could restore it: while the store
-  // may have a transaction open and those bytes are alive. A restored chunk
-  // is then offered as recently used as it was when it went. Passes drop
-  // entries for chunks gone for good, and so does a sweep once the map grows
-  // past `lruSweepAt`, so it stays within twice the chunks it must track.
-  const lru = new Map<number, WeakRef<ReadonlyUint8Array>>();
+  // Recency of the chunks this manager owns, least recently used first.
+  // Eviction passes drop entries for chunks no longer resident with bytes the
+  // manager owns, and so does a sweep once the set grows past `lruSweepAt`,
+  // so it stays within twice the chunks it must track.
+  //
+  // A pass never runs while the store says a transaction is open (see
+  // `evictWhenNoTransaction`), so no rollback can bring back a chunk whose
+  // entry a pass dropped. A chunk that leaves memory inside a transaction
+  // keeps its entry until the next pass, so if a rollback restores it, it is
+  // offered as recently used as it was when it went.
+  const lru = new Set<number>();
   let lruSweepAt = Math.max(16, 2 * maxLoadedChunks);
+
+  // The value of `managersDisposed` at the last ownership scan made with no
+  // transaction open (see `reconcileOwnership`).
+  let ownershipScannedAt = -1;
 
   // Pinned chunks: never evicted.
   let activeChunks = new Set<number>();
@@ -361,6 +381,11 @@ export function createChunkManager(
   // `scheduleEvictionPass`). At most one of them is set.
   let passTimer: ReturnType<typeof setTimeout> | null = null;
   let passAwaitingCommit: Unsubscribe | null = null;
+  // Chunks whose loads put off their eviction pass because a transaction was
+  // open. The deferred pass protects them, as each load's own pass would
+  // have, and then releases them. Other passes do not, just as they would
+  // not protect a chunk loaded with no transaction open.
+  let deferredProtected = new Set<number>();
 
   // When fetchStrategy is 'queue', serialise fetches through this promise chain.
   let fetchQueue: Promise<void> = Promise.resolve();
@@ -424,36 +449,51 @@ export function createChunkManager(
   function adopt(chunkIndex: number, bytes: ReadonlyUint8Array): void {
     chunkOwners.set(bytes, self);
     lru.delete(chunkIndex);
-    lru.set(chunkIndex, new WeakRef(bytes));
+    lru.add(chunkIndex);
   }
 
   /**
-   * Take ownership of the resident chunks a disposed manager owned, as the
-   * least recently used. They were loaded by a manager, not by the app, and
-   * no other manager evicts them any more, such as after a remount that
-   * created this manager before disposing the one it replaced.
+   * Put in `lru`, as the least recently used, the resident chunks a disposed
+   * manager owned. They were loaded by a manager, not by the app, and no
+   * other manager evicts them any more, such as after a remount that created
+   * this manager before disposing the one it replaced.
+   *
+   * Such chunks appear only when a manager is disposed, so the scan runs only
+   * when one has been disposed since the last scan. A rollback can restore a
+   * disposed manager's bytes too, but no pass runs while a transaction is
+   * open, so a dispose inside one is still unseen once it closes.
+   *
+   * On a store that cannot say whether a transaction is open, passes run
+   * inside transactions, so a rollback can restore chunks this manager owns
+   * after a pass dropped their entries. Passes on such a store scan every
+   * time and also put those chunks back, as the least recently used.
    */
-  function adoptOrphans(chunkMap: ReadonlyMap<number, ReadonlyUint8Array>): void {
-    let orphans: Array<readonly [number, ReadonlyUint8Array]> | null = null;
+  function reconcileOwnership(chunkMap: ReadonlyMap<number, ReadonlyUint8Array>): void {
+    const state = transactionState();
+    if (state === "closed" && ownershipScannedAt === managersDisposed) return;
+    let found: Array<readonly [number, ReadonlyUint8Array]> | null = null;
     for (const [chunkIndex, bytes] of chunkMap) {
-      if (chunkOwners.get(bytes)?.disposed === true) (orphans ??= []).push([chunkIndex, bytes]);
+      const owner = chunkOwners.get(bytes);
+      if (owner === undefined) continue;
+      if (owner === self ? !lru.has(chunkIndex) : owner.disposed) {
+        (found ??= []).push([chunkIndex, bytes]);
+      }
     }
-    if (orphans === null) return;
+    if (state === "closed") ownershipScannedAt = managersDisposed;
+    if (found === null) return;
     const rest = [...lru];
     lru.clear();
-    for (const [chunkIndex, bytes] of orphans) {
+    for (const [chunkIndex, bytes] of found) {
       chunkOwners.set(bytes, self);
-      lru.set(chunkIndex, new WeakRef(bytes));
+      lru.add(chunkIndex);
     }
-    for (const [chunkIndex, ref] of rest) if (!lru.has(chunkIndex)) lru.set(chunkIndex, ref);
+    for (const chunkIndex of rest) lru.add(chunkIndex);
   }
 
   /** Mark a chunk this manager owns the most recently used. */
   function lruTouch(chunkIndex: number): void {
-    const ref = lru.get(chunkIndex);
-    if (ref === undefined) return;
-    lru.delete(chunkIndex);
-    lru.set(chunkIndex, ref);
+    if (!lru.delete(chunkIndex)) return;
+    lru.add(chunkIndex);
   }
 
   /**
@@ -471,58 +511,54 @@ export function createChunkManager(
   }
 
   /**
-   * Whether the store may have a transaction open, so a rollback could still
-   * restore chunks that have left memory. A store with transaction controls
-   * but no `isInTransaction`, such as an older wrapper, may.
+   * Whether the store has a transaction open. If one is, an eviction pass
+   * waits until it closes, and a rollback could still restore chunks that
+   * have left memory. Returns `"unknown"` for a store with transaction
+   * controls but no `isInTransaction`, such as a wrapper written before it.
+   *
+   * Every check treats `"unknown"` as no transaction open, because waiting
+   * for one to close could put eviction off for as long as the store stays
+   * idle. A rollback on such a store can still restore chunks, so passes on
+   * it look for them every time (see `reconcileOwnership`).
    */
-  function mayBeInTransaction(): boolean {
+  function transactionState(): "open" | "closed" | "unknown" {
     const { isInTransaction, beginTransaction } = store as Partial<ReconcilableDocumentStore>;
-    if (typeof isInTransaction === "function") return isInTransaction.call(store);
-    return typeof beginTransaction === "function";
+    if (typeof isInTransaction === "function") {
+      return isInTransaction.call(store) ? "open" : "closed";
+    }
+    return typeof beginTransaction === "function" ? "unknown" : "closed";
   }
 
-  /**
-   * Whether the store says a transaction is open, so an eviction pass a load
-   * calls for waits until it closes. A store that cannot say, such as a
-   * wrapper written before `isInTransaction`, is taken to have none open:
-   * waiting for one to close could put eviction off for as long as the store
-   * stays idle.
-   */
+  /** Whether the store says a transaction is open (see `transactionState`). */
   function transactionOpen(): boolean {
-    const { isInTransaction } = store as Partial<ReconcilableDocumentStore>;
-    return typeof isInTransaction === "function" && isInTransaction.call(store);
+    return transactionState() === "open";
   }
 
   /**
-   * Run the eviction pass a load this manager dispatched calls for: at once,
-   * or, when the caller left a transaction open across the await, once it
-   * closes (see `scheduleEvictionPass`), so the pass never evicts, or
-   * discards history, as part of the caller's transaction.
+   * Run an eviction pass that protects `protectedChunks`. It runs at once,
+   * or, if the store has a transaction open (such as one the caller left
+   * open across a load's await), once that transaction closes (see
+   * `scheduleEvictionPass`). The pass then never evicts, or discards
+   * history, as part of the caller's transaction. A deferred pass protects
+   * the same chunks.
    */
-  function evictAfterLoad(protectedChunkIndex?: number): void {
-    if (transactionOpen()) scheduleEvictionPass();
-    else evictIfOverLimit(protectedChunkIndex);
+  function evictWhenNoTransaction(protectedChunks: ReadonlySet<number> = NONE): void {
+    if (disposed) return;
+    if (!transactionOpen()) {
+      evictIfOverLimit(protectedChunks);
+      return;
+    }
+    for (const chunkIndex of protectedChunks) deferredProtected.add(chunkIndex);
+    scheduleEvictionPass();
   }
 
   /**
-   * Whether the `lru` entry for `chunkIndex` is for a chunk gone for good: it
-   * is not resident with bytes this manager owns, and no rollback can bring
-   * back the bytes it took ownership of.
+   * Drop `lru` entries for chunks no longer resident with bytes this manager
+   * owns. O(L), amortized O(1) per load.
    */
-  function isGone(
-    chunkMap: ReadonlyMap<number, ReadonlyUint8Array>,
-    chunkIndex: number,
-    ref: WeakRef<ReadonlyUint8Array>,
-    rollbackPossible: boolean,
-  ): boolean {
-    return !isOwnedIn(chunkMap, chunkIndex) && (!rollbackPossible || ref.deref() === undefined);
-  }
-
-  /** Drop `lru` entries for chunks gone for good. O(L), amortized O(1) per load. */
   function sweepLru(chunkMap: ReadonlyMap<number, ReadonlyUint8Array>): void {
-    const rollbackPossible = mayBeInTransaction();
-    for (const [chunkIndex, ref] of lru) {
-      if (isGone(chunkMap, chunkIndex, ref, rollbackPossible)) lru.delete(chunkIndex);
+    for (const chunkIndex of lru) {
+      if (!isOwnedIn(chunkMap, chunkIndex)) lru.delete(chunkIndex);
     }
     lruSweepAt = Math.max(16, 2 * maxLoadedChunks, 2 * lru.size);
   }
@@ -566,18 +602,19 @@ export function createChunkManager(
    * Evict least recently used chunks until at most maxLoadedChunks remain, or
    * none that may go is left, then warn when the cache stays over the limit.
    * Chunks the last pass saw refused are skipped while the document is as it
-   * was (see `refused`).
+   * was (see `refused`). Chunks in `protectedChunks` and chunks still
+   * requested stay.
    */
-  function evictIfOverLimit(protectedChunkIndex?: number): void {
+  function evictIfOverLimit(protectedChunks: ReadonlySet<number> = NONE): void {
     if (disposed) return;
     const isProtected = (chunkIndex: number) =>
-      chunkIndex === protectedChunkIndex || requested.has(chunkIndex);
+      protectedChunks.has(chunkIndex) || requested.has(chunkIndex);
     // Usually one pass, and at most two: see the retry below.
     for (let state = store.getSnapshot(), retried = false; ; ) {
       if (refused !== null && !refused.measuredIn(state)) refused = null;
       const resident = state.pieceTable.chunkMap;
       if (resident.size <= maxLoadedChunks) break;
-      adoptOrphans(resident);
+      reconcileOwnership(resident);
       // Least recently used first: chunks the manager may evict that are still
       // in memory. Pinned and requested chunks stay. The reducer chooses
       // among them in one transition (see EVICT_CHUNKS): every chunk whose
@@ -591,12 +628,12 @@ export function createChunkManager(
       const candidates: number[] = [];
       // Chunks a rollback restored are still in `lru`, in the place they had
       // when they went. Forget chunks that left memory, or came back with
-      // bytes loaded outside the manager, once no rollback can restore them.
-      const rollbackPossible = mayBeInTransaction();
-      for (const [chunkIndex, ref] of lru) {
+      // bytes loaded outside the manager: with no transaction open, no
+      // rollback can restore them (see `lru`).
+      for (const chunkIndex of lru) {
         if (isOwnedIn(resident, chunkIndex)) {
           if (mayGo(chunkIndex)) candidates.push(chunkIndex);
-        } else if (isGone(resident, chunkIndex, ref, rollbackPossible)) lru.delete(chunkIndex);
+        } else lru.delete(chunkIndex);
       }
       if (candidates.length === 0) break;
       // The eviction may discard history, as the policy allows. The store
@@ -610,8 +647,6 @@ export function createChunkManager(
       if (disposed) return;
       const after = store.getSnapshot();
       const left = after.pieceTable.chunkMap;
-      // The chunks this pass evicted keep their place in `lru` while a
-      // rollback could restore them; later passes forget them after that.
       if (left.size <= maxLoadedChunks) break;
       if (after.history === state.history && after.attention === state.attention) {
         // Still over the limit, the reducer measured every candidate, and
@@ -859,7 +894,7 @@ export function createChunkManager(
             );
           }
           adoptLoaded(chunkIndex, before);
-          evictAfterLoad(chunkIndex);
+          evictWhenNoTransaction(new Set([chunkIndex]));
         })
         .catch((error: unknown) => {
           // Manager-owned cancellation settles pending calls without loading.
@@ -999,29 +1034,36 @@ export function createChunkManager(
     };
 
     // Coalesce completions without waiting for a slow sibling. Workers bound
-    // outstanding I/O and completed buffers waiting for dispatch.
+    // outstanding I/O and completed buffers waiting for dispatch. A commit
+    // resolves to the chunks the store did not keep. Each of those fails on
+    // its own; the rest of the transition is adopted and its waiters resolve.
     let ready: Array<{ chunkIndex: number; data: Uint8Array }> = [];
-    let commit: Promise<void> | undefined;
+    let commit: Promise<ReadonlySet<number>> | undefined;
     function enqueue(chunkIndex: number, data: Uint8Array): Promise<void> {
       ready.push({ chunkIndex, data });
-      return (commit ??= Promise.resolve().then(() => {
+      commit ??= Promise.resolve().then((): ReadonlySet<number> => {
         const chunks = ready.filter((chunk) => !controllers.get(chunk.chunkIndex)!.signal.aborted);
         ready = [];
         commit = undefined;
-        if (disposed || chunks.length === 0) return;
+        if (disposed || chunks.length === 0) return NONE;
         const before = store.getSnapshot().pieceTable.chunkMap;
         store.dispatch(DocumentActions.loadChunks(chunks));
-        const after = store.getSnapshot();
+        const { chunkMap } = store.getSnapshot().pieceTable;
+        let dropped: Set<number> | null = null;
         for (const chunk of chunks) {
-          if (!after.pieceTable.chunkMap.has(chunk.chunkIndex)) {
-            throw new Error(
-              `Chunk ${chunk.chunkIndex} was fetched but the store did not retain it after LOAD_CHUNKS dispatch`,
-            );
-          }
-          adoptLoaded(chunk.chunkIndex, before);
+          if (chunkMap.has(chunk.chunkIndex)) adoptLoaded(chunk.chunkIndex, before);
+          else (dropped ??= new Set()).add(chunk.chunkIndex);
         }
-        evictAfterLoad();
-      }));
+        evictWhenNoTransaction();
+        return dropped ?? NONE;
+      });
+      return commit.then((dropped) => {
+        if (dropped.has(chunkIndex)) {
+          throw new Error(
+            `Chunk ${chunkIndex} was fetched but the store did not retain it after LOAD_CHUNKS dispatch`,
+          );
+        }
+      });
     }
 
     // Each chunk settles on its own, so a caller waiting on one, and the
@@ -1074,8 +1116,10 @@ export function createChunkManager(
    * that task finds the store has a transaction open, the pass runs at the
    * first store notification after it has closed; a store notifies only once
    * its outermost transaction has closed. A store that cannot say whether one
-   * is open is taken to have none (see `transactionOpen`). Nothing waits on
-   * the pass, so an error it throws goes to the logger's `error`.
+   * is open is taken to have none (see `transactionState`). The pass protects
+   * the chunks deferred loads asked it to protect (`deferredProtected`), then
+   * releases them. Nothing waits on the pass, so an error it throws goes to
+   * the logger's `error`.
    */
   function scheduleEvictionPass(): void {
     if (disposed || passTimer !== null || passAwaitingCommit !== null) return;
@@ -1086,12 +1130,17 @@ export function createChunkManager(
         reportCaughtError(logger, "The ChunkManager deferred eviction pass failed", error);
       }
     };
+    const evictDeferred = () => {
+      const kept = deferredProtected;
+      deferredProtected = new Set();
+      evictIfOverLimit(kept);
+    };
     passTimer = setTimeout(() => {
       passTimer = null;
       run(() => {
         if (disposed) return;
         if (!transactionOpen()) {
-          evictIfOverLimit();
+          evictDeferred();
           return;
         }
         passAwaitingCommit = store.subscribe(() => {
@@ -1099,7 +1148,7 @@ export function createChunkManager(
             if (transactionOpen()) return;
             passAwaitingCommit?.();
             passAwaitingCommit = null;
-            evictIfOverLimit();
+            evictDeferred();
           });
         });
       });
@@ -1118,7 +1167,7 @@ export function createChunkManager(
 
   function setActiveChunks(chunkIndices: readonly number[]): void {
     activeChunks = new Set(chunkIndices);
-    evictIfOverLimit();
+    evictWhenNoTransaction();
   }
 
   function cancelPendingOutside(chunkIndices: readonly number[]): void {
@@ -1142,6 +1191,7 @@ export function createChunkManager(
     disposed = true;
     // Another manager on the store may take over the chunks this one owned.
     self.disposed = true;
+    managersDisposed++;
     for (const controller of abortControllers.values()) {
       controller.abort();
     }
@@ -1154,6 +1204,7 @@ export function createChunkManager(
     passAwaitingCommit = null;
     activeChunks.clear();
     requested.clear();
+    deferredProtected.clear();
     refused = null;
     pressureCauses = null;
     pressureMemo = null;

@@ -1215,6 +1215,36 @@ describe("Event delivery limits and failed transaction calls", () => {
     expect(inserted).toEqual(["B"]);
   });
 
+  it("calls the base store's transaction methods on the base store", () => {
+    const base = createDocumentStore();
+    // A wrapper whose transaction methods reach the base store through `this`.
+    const wrapper = Object.assign(Object.create(base) as typeof base, {
+      inner: base,
+      beginTransaction(this: { inner: typeof base }) {
+        this.inner.beginTransaction();
+      },
+      commitTransaction(this: { inner: typeof base }) {
+        this.inner.commitTransaction();
+      },
+    });
+    const store = withEvents(
+      wrapper,
+      (action: DocumentAction) => ({ state: base.dispatch(action), historyDropped: null }),
+      undefined,
+    );
+    const inserted: string[] = [];
+    store.addEventListener("content-change", (e) => {
+      if (e.action.type === "INSERT") inserted.push(e.action.text);
+    });
+    store.beginTransaction();
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+    store.commitTransaction();
+    store.commitTransaction();
+    expect(getText(store)).toBe("A");
+    expect(inserted).toEqual(["A"]);
+  });
+
   it("emits events for dispatches after a failed begin", () => {
     const { store, inserted, failNext } = storeWithFailingCall("beginTransaction");
     store.beginTransaction();
