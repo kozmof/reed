@@ -30,7 +30,7 @@ import type {
 import type { AttentionID } from "../../types/branded.js";
 import type { ChunkMetadata } from "../../types/state.js";
 import { isDocumentAction } from "../../types/actions.js";
-import { asReadonlyUint8Array } from "../core/runtime-readonly.js";
+import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
 import { encodeBase64, decodeBase64 } from "../core/base64.js";
 
 function freezeSelection(
@@ -296,7 +296,7 @@ export const DocumentActions = {
     return Object.freeze({
       type: "LOAD_CHUNK",
       chunkIndex,
-      data: asReadonlyUint8Array(new Uint8Array(data)),
+      data: asReadonlyUint8Array(new Uint8Array(unwrapReadonlyUint8Array(data))),
     });
   },
 
@@ -308,7 +308,7 @@ export const DocumentActions = {
         chunks.map(({ chunkIndex, data }) =>
           Object.freeze({
             chunkIndex,
-            data: asReadonlyUint8Array(new Uint8Array(data)),
+            data: asReadonlyUint8Array(new Uint8Array(unwrapReadonlyUint8Array(data))),
           }),
         ),
       ),
@@ -373,7 +373,7 @@ export const DocumentActions = {
  */
 export function serializeAction(action: DocumentAction): string {
   if (action.type === "LOAD_CHUNK") {
-    const base64 = encodeBase64(new Uint8Array(action.data));
+    const base64 = encodeBase64(unwrapReadonlyUint8Array(action.data));
     return JSON.stringify({ ...action, data: base64 });
   }
   if (action.type === "LOAD_CHUNKS") {
@@ -381,7 +381,7 @@ export function serializeAction(action: DocumentAction): string {
       ...action,
       chunks: action.chunks.map((chunk) => ({
         chunkIndex: chunk.chunkIndex,
-        data: encodeBase64(new Uint8Array(chunk.data)),
+        data: encodeBase64(unwrapReadonlyUint8Array(chunk.data)),
       })),
     });
   }

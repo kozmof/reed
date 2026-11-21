@@ -39,7 +39,12 @@ import { createFewestLossQueue } from "./fewest-loss-queue.js";
 import { repairChunkLines } from "../core/chunk-line-repair.js";
 import { summarizeBytes } from "../core/decoded-metrics.js";
 import { PersistentMap, PersistentSet } from "../core/persistent-map.js";
-import { asReadonlyMap, asReadonlySet, asReadonlyUint8Array } from "../core/runtime-readonly.js";
+import {
+  asReadonlyMap,
+  asReadonlySet,
+  asReadonlyUint8Array,
+  unwrapReadonlyUint8Array,
+} from "../core/runtime-readonly.js";
 
 interface ChunkSummary {
   min: number;
@@ -229,7 +234,9 @@ export function loadChunks(state: DocumentState, action: LoadChunksAction): Docu
   for (const chunk of action.chunks) {
     if (seen.has(chunk.chunkIndex) || state.pieceTable.chunkMap.has(chunk.chunkIndex)) continue;
     seen.add(chunk.chunkIndex);
-    const data = new Uint8Array(chunk.data);
+    // Copy from the raw bytes: copying through the read-only proxy reads every
+    // byte through its get trap.
+    const data = new Uint8Array(unwrapReadonlyUint8Array(chunk.data));
     if (
       data.length === 0 ||
       !isChunkByteLengthValid(state.pieceTable, chunk.chunkIndex, data.length)

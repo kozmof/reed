@@ -13,6 +13,7 @@ import type {
   PieceNode,
   OriginalPieceNode,
   AddPieceNode,
+  ChunkPieceNode,
   EvaluationMode,
   LineIndexState,
   LineIndexNode,
@@ -283,10 +284,26 @@ export function createPieceNode(
   const leftAddLength = left?.subtreeAddLength ?? 0;
   const rightAddLength = right?.subtreeAddLength ?? 0;
   const subtreeLength = length + leftLength + rightLength;
-  const isAdd = bufferType === "add";
 
   // Only add pieces carry a placement key, and only their own bytes count
-  // toward subtreeAddLength.
+  // toward subtreeAddLength. Each buffer type gets its own literal rather than
+  // a conditional spread: a spread takes V8's slow object-construction path,
+  // and this function runs for every node an edit rebuilds.
+  if (bufferType === "add") {
+    return Object.freeze({
+      _nodeKind: "piece" as const,
+      id,
+      color,
+      left,
+      right,
+      bufferType,
+      afterChunk,
+      start,
+      length,
+      subtreeLength,
+      subtreeAddLength: length + leftAddLength + rightAddLength,
+    }) satisfies AddPieceNode;
+  }
   return Object.freeze({
     _nodeKind: "piece" as const,
     id,
@@ -294,12 +311,11 @@ export function createPieceNode(
     left,
     right,
     bufferType,
-    ...(isAdd && { afterChunk }),
     start,
     length,
     subtreeLength,
-    subtreeAddLength: (isAdd ? length : 0) + leftAddLength + rightAddLength,
-  }) as OriginalPieceNode | AddPieceNode;
+    subtreeAddLength: leftAddLength + rightAddLength,
+  }) satisfies OriginalPieceNode;
 }
 
 /**
@@ -811,24 +827,69 @@ export type PieceNodeUpdates = Partial<
  * subtreeLength and subtreeAddLength when children or piece length change.
  */
 export function withPieceNode<T extends PieceNode>(node: T, changes: PieceNodeUpdates): T {
-  const base = { ...node, ...changes };
+  // Rebuilt field by field instead of spreading `node` and `changes`: object
+  // spread is V8's slow construction path, and every edit rebuilds the nodes
+  // along its tree path through here. Each literal mirrors the field order of
+  // the matching create*PieceNode so all nodes of one buffer type share a shape.
+  const color = changes.color ?? node.color;
+  const left = "left" in changes ? (changes.left ?? null) : node.left;
+  const right = "right" in changes ? (changes.right ?? null) : node.right;
+  const start = changes.start ?? node.start;
+  const length = changes.length ?? node.length;
 
+  let subtreeLength = node.subtreeLength;
+  let subtreeAddLength = node.subtreeAddLength;
   if ("left" in changes || "right" in changes || "length" in changes) {
-    const leftLength = base.left?.subtreeLength ?? 0;
-    const rightLength = base.right?.subtreeLength ?? 0;
-    const subtreeLength = base.length + leftLength + rightLength;
-    const selfAddLength = base.bufferType === "add" ? base.length : 0;
-    const leftAddLength = base.left?.subtreeAddLength ?? 0;
-    const rightAddLength = base.right?.subtreeAddLength ?? 0;
-    const subtreeAddLength = selfAddLength + leftAddLength + rightAddLength;
-    return Object.freeze({
-      ...base,
-      subtreeLength,
-      subtreeAddLength,
-    }) as unknown as T;
+    subtreeLength = length + (left?.subtreeLength ?? 0) + (right?.subtreeLength ?? 0);
+    subtreeAddLength =
+      (node.bufferType === "add" ? length : 0) +
+      (left?.subtreeAddLength ?? 0) +
+      (right?.subtreeAddLength ?? 0);
   }
 
-  return Object.freeze(base) as T;
+  switch (node.bufferType) {
+    case "add":
+      return Object.freeze({
+        _nodeKind: "piece" as const,
+        id: node.id,
+        color,
+        left,
+        right,
+        bufferType: "add" as const,
+        afterChunk: node.afterChunk,
+        start,
+        length,
+        subtreeLength,
+        subtreeAddLength,
+      }) satisfies AddPieceNode as T;
+    case "chunk":
+      return Object.freeze({
+        _nodeKind: "piece" as const,
+        id: node.id,
+        color,
+        left,
+        right,
+        bufferType: "chunk" as const,
+        chunkIndex: node.chunkIndex,
+        start,
+        length,
+        subtreeLength,
+        subtreeAddLength,
+      }) satisfies ChunkPieceNode as T;
+    default:
+      return Object.freeze({
+        _nodeKind: "piece" as const,
+        id: node.id,
+        color,
+        left,
+        right,
+        bufferType: "original" as const,
+        start,
+        length,
+        subtreeLength,
+        subtreeAddLength,
+      }) satisfies OriginalPieceNode as T;
+  }
 }
 
 /**
