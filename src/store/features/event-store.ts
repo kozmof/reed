@@ -9,7 +9,7 @@ import type {
 } from "../../types/store.js";
 import { makeBatch } from "./transaction.js";
 import {
-  createEventEmitter,
+  createProbedEventEmitter,
   createContentChangeEvent,
   createSelectionChangeEvent,
   createHistoryChangeEvent,
@@ -48,7 +48,7 @@ export function withEvents(
   commit: (action: DocumentAction) => DocumentTransition,
   logger: DocumentStoreRuntimeConfig["logger"],
 ): DocumentStoreWithEvents {
-  const emitter = createEventEmitter(logger);
+  const { emitter, hasListeners } = createProbedEventEmitter(logger);
   let disposed = false;
 
   // Depth-indexed event buffer. Each entry corresponds to one open transaction level.
@@ -258,7 +258,9 @@ export function withEvents(
     // transaction the commit notifies store listeners, and one that opens a
     // transaction must not pull this action's events into its level. Inside
     // one the commit notifies no one, so the level stays open until it returns.
-    const target = pendingEventLevels[pendingEventLevels.length - 1] ?? reserveSlot().events;
+    const level = pendingEventLevels[pendingEventLevels.length - 1];
+    const slot = level === undefined ? reserveSlot() : undefined;
+    const target = level ?? slot!.events;
     try {
       committing++;
       let transition: DocumentTransition;
@@ -268,7 +270,14 @@ export function withEvents(
         committing--;
       }
 
-      if (transition.state !== prevState) {
+      // When this action's slot heads the queue and no delivery is running, no
+      // handler runs before its events would be emitted. With no handler
+      // registered by then, none could receive them, so skip building them.
+      // The check comes after the commit, whose store listeners can add
+      // handlers.
+      const unheard =
+        slot !== undefined && !delivering && deliveryQueue[0] === slot && !hasListeners();
+      if (transition.state !== prevState && !unheard) {
         try {
           target.push(...prepareEventsForAction(action, prevState, transition));
         } catch (error) {

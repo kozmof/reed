@@ -669,6 +669,74 @@ describe("Store event integration", () => {
   });
 });
 
+describe("Store events with no handler registered", () => {
+  it("delivers to a handler a store listener registers while the action commits", () => {
+    const store = createDocumentStoreWithEvents({ content: "", reconcileMode: "none" });
+    const handler = vi.fn();
+    const unsubscribe = store.subscribe(() => {
+      unsubscribe();
+      store.addEventListener("content-change", handler);
+    });
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0]![0].nextState.revision).toBe(1);
+  });
+
+  it("delivers a transaction's events to a handler registered before it commits", () => {
+    const store = createDocumentStoreWithEvents({ content: "", reconcileMode: "none" });
+    const handler = vi.fn();
+
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+    store.addEventListener("content-change", handler);
+    store.commitTransaction();
+
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("delivers to a handler another handler registers for a later event of the same action", () => {
+    const store = createDocumentStoreWithEvents({ content: "", reconcileMode: "none" });
+    const selection = vi.fn();
+    store.addEventListener("content-change", () => {
+      store.addEventListener("selection-change", selection);
+    });
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+
+    expect(selection).toHaveBeenCalledTimes(1);
+  });
+
+  it("delivers to a handler registered after the dispatch of the last handler, which unsubscribed itself", () => {
+    const store = createDocumentStoreWithEvents({ content: "", reconcileMode: "none" });
+    const seen: number[] = [];
+    const unsubscribe = store.addEventListener("content-change", () => {
+      unsubscribe();
+      // No handler is registered while B commits, but B's events are
+      // delivered only after this handler returns.
+      store.dispatch(DocumentActions.insert(byteOffset(1), "B"));
+      store.addEventListener("content-change", (e) => seen.push(e.nextState.revision));
+    });
+
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+
+    expect(seen).toEqual([2]);
+  });
+
+  it("emits again once a handler is registered after actions no handler heard", () => {
+    const store = createDocumentStoreWithEvents({ content: "", reconcileMode: "none" });
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+    const handler = vi.fn();
+    store.addEventListener("content-change", handler);
+
+    store.dispatch(DocumentActions.insert(byteOffset(1), "B"));
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0]![0].prevState.revision).toBe(1);
+  });
+});
+
 describe("Store event ordering under nested dispatch", () => {
   const revisions = (store: ReturnType<typeof createDocumentStoreWithEvents>) => {
     const seen: string[] = [];

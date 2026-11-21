@@ -227,6 +227,20 @@ export interface DocumentEventEmitter {
  * Create a new document event emitter.
  */
 export function createEventEmitter(logger?: Pick<ReedLogger, "error">): DocumentEventEmitter {
+  return createProbedEventEmitter(logger).emitter;
+}
+
+/**
+ * An emitter together with a check for whether any handler is registered.
+ * The event store uses it to skip building events no handler can receive.
+ */
+export interface ProbedEventEmitter {
+  readonly emitter: DocumentEventEmitter;
+  readonly hasListeners: () => boolean;
+}
+
+/** Create an emitter as `createEventEmitter` does, with a listener check. */
+export function createProbedEventEmitter(logger?: Pick<ReedLogger, "error">): ProbedEventEmitter {
   const handlers = new Map<string, Set<EventHandler<AnyDocumentEvent>>>();
   type QueuedEvent = {
     [K in keyof DocumentEventMap]: { readonly type: K; readonly event: DocumentEventMap[K] };
@@ -272,7 +286,7 @@ export function createEventEmitter(logger?: Pick<ReedLogger, "error">): Document
     }
   }
 
-  return {
+  const emitter: DocumentEventEmitter = {
     addEventListener<K extends keyof DocumentEventMap>(
       type: K,
       handler: EventHandler<DocumentEventMap[K]>,
@@ -320,6 +334,12 @@ export function createEventEmitter(logger?: Pick<ReedLogger, "error">): Document
       handlers.clear();
     },
   };
+  // Emptied Sets leave the map, but checking sizes does not rely on it.
+  const hasListeners = (): boolean => {
+    for (const typeHandlers of handlers.values()) if (typeHandlers.size > 0) return true;
+    return false;
+  };
+  return { emitter, hasListeners };
 }
 
 // =============================================================================
