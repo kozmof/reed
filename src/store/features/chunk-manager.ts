@@ -245,26 +245,159 @@ function ownerOf(bytes: ReadonlyUint8Array): RecordedOwner {
   return ref.deref() ?? "gone";
 }
 
-/**
- * Every manager not yet disposed, held weakly so a manager the app drops
- * without disposing it is not kept alive. A manager being disposed marks
- * those whose stores hold chunks it owned to scan for them (see
- * `markOrphanScans`).
- */
-const liveOwners = new Set<WeakRef<ChunkOwner>>();
+/** A store's chunk map, as ownership checks read it. */
+type ChunkMap = ReadonlyMap<number, ReadonlyUint8Array>;
 
 /**
- * Forgets a manager the app dropped without disposing it, once it is
- * collected. Its chunks are then orphans, recorded as `"gone"`, and which
- * stores hold them can no longer be told, so every live manager scans.
+ * Every manager not yet disposed, held weakly so a manager the app drops
+ * without disposing it is not kept alive, with its store, held weakly too.
+ * A manager leaving this map, by being disposed or collected, marks those
+ * that may hold chunks it owned to scan for them (see `markOrphanHolders`).
  */
-const droppedOwners = new FinalizationRegistry<WeakRef<ChunkOwner>>((ref) => {
-  liveOwners.delete(ref);
-  for (const other of liveOwners) {
-    const owner = other.deref();
-    if (owner !== undefined) owner.scanForOrphans = true;
+const liveOwners = new Map<WeakRef<ChunkOwner>, WeakRef<DocumentStore>>();
+
+/**
+ * Whether `store` has a transaction open. Returns `"unknown"` for a store
+ * with transaction controls but no `isInTransaction`, such as a wrapper
+ * written before it.
+ */
+function transactionStateOf(store: DocumentStore): "open" | "closed" | "unknown" {
+  const { isInTransaction, beginTransaction } = store as Partial<ReconcilableDocumentStore>;
+  if (typeof isInTransaction === "function") {
+    return isInTransaction.call(store) ? "open" : "closed";
   }
-});
+  return typeof beginTransaction === "function" ? "unknown" : "closed";
+}
+
+/**
+ * Mark to scan, on their next pass, the live managers that may now find
+ * chunks a manager on `store` owned and no live manager does: those on
+ * `store` itself, those whose chunk map `holds` says holds such a chunk, and,
+ * when `rollbacks` is set, those whose store has a transaction open, or one
+ * it cannot rule out, since a rollback there could restore such a chunk.
+ * Every live manager is marked when `holds` is null.
+ *
+ * Managers on one store, or on wrappers of it, share its chunk map, so each
+ * map is asked once; store identity alone would miss wrappers. A store whose
+ * `getSnapshot` throws, such as a wrapper that throws once disposed, is taken
+ * as holding such chunks, so this never throws.
+ */
+function markOrphanHolders(
+  store: DocumentStore | undefined,
+  holds: ((chunkMap: ChunkMap) => boolean) | null,
+  rollbacks: boolean,
+): void {
+  const answers = new Map<ChunkMap, boolean>();
+  for (const ref of liveOwners.keys()) {
+    const owner = ref.deref();
+    if (owner === undefined || owner.scanForOrphans) continue;
+    if (holds === null || owner.store === store) {
+      owner.scanForOrphans = true;
+      continue;
+    }
+    let theirs: ChunkMap;
+    try {
+      if (rollbacks && transactionStateOf(owner.store) !== "closed") {
+        owner.scanForOrphans = true;
+        continue;
+      }
+      theirs = owner.store.getSnapshot().pieceTable.chunkMap;
+    } catch {
+      owner.scanForOrphans = true;
+      continue;
+    }
+    let answer = answers.get(theirs);
+    if (answer === undefined) {
+      answer = holds(theirs);
+      answers.set(theirs, answer);
+    }
+    if (answer) owner.scanForOrphans = true;
+  }
+}
+
+/** A test of whether a chunk map is `ours` or holds one of `orphans`. */
+function holdsAnyOf(
+  ours: ChunkMap,
+  orphans: ReadonlyArray<readonly [number, ReadonlyUint8Array]>,
+): (theirs: ChunkMap) => boolean {
+  return (theirs) =>
+    theirs === ours || orphans.some(([chunkIndex, bytes]) => theirs.get(chunkIndex) === bytes);
+}
+
+/**
+ * Forget `ref`, a manager the app dropped without disposing it, once it has
+ * been collected. Its chunks are then orphans, recorded as `"gone"`, so the
+ * live managers that may hold them scan for them. If its store is still
+ * alive, they are found from its chunk map, as for a dispose (see
+ * `markOrphanScans`). If the store was collected too, a manager on a store it
+ * wrapped may still hold them, so each live chunk map is searched once for
+ * bytes recorded for `ref`. Forgetting a manager already forgotten does
+ * nothing.
+ */
+function forgetOwner(ref: WeakRef<ChunkOwner>): void {
+  const storeRef = liveOwners.get(ref);
+  if (storeRef === undefined) return;
+  liveOwners.delete(ref);
+  const store = storeRef.deref();
+  if (store === undefined) {
+    const recordedForRef = (chunkMap: ChunkMap) => {
+      for (const bytes of chunkMap.values()) {
+        if (chunkOwners.get(bytes) === ref) return true;
+      }
+      return false;
+    };
+    markOrphanHolders(undefined, recordedForRef, true);
+    return;
+  }
+  let ours: ChunkMap | null = null;
+  try {
+    if (transactionStateOf(store) === "closed") ours = store.getSnapshot().pieceTable.chunkMap;
+  } catch {
+    // A store that cannot answer is treated as having a transaction open.
+  }
+  if (ours === null) {
+    markOrphanHolders(store, null, false);
+    return;
+  }
+  const orphans: Array<readonly [number, ReadonlyUint8Array]> = [];
+  for (const [chunkIndex, bytes] of ours) {
+    if (chunkOwners.get(bytes) === ref) orphans.push([chunkIndex, bytes]);
+  }
+  if (orphans.length === 0) return;
+  markOrphanHolders(store, holdsAnyOf(ours, orphans), false);
+}
+
+/**
+ * Forget the managers that have been collected but whose finalizer has not
+ * run. A finalizer may run long after its manager is collected, or never, so
+ * eviction passes call this rather than rely on `droppedOwners`. It costs a
+ * deref per live manager.
+ */
+function forgetCollectedOwners(): void {
+  for (const ref of liveOwners.keys()) {
+    if (ref.deref() === undefined) forgetOwner(ref);
+  }
+}
+
+/** Forgets a manager the app dropped without disposing it, once it is collected. */
+const droppedOwners = new FinalizationRegistry<WeakRef<ChunkOwner>>(forgetOwner);
+
+/**
+ * Subscribe `listener` to `store` without the store keeping it alive, so a
+ * listener that holds a manager does not keep a manager the app dropped
+ * alive. The caller must hold `listener` for as long as it should run. Once
+ * it has been collected, the next notification unsubscribes it.
+ */
+function subscribeWeakly(store: DocumentStore, listener: () => void): Unsubscribe {
+  const ref = new WeakRef(listener);
+  let unsubscribe: Unsubscribe | null = null;
+  unsubscribe = store.subscribe(() => {
+    const live = ref.deref();
+    if (live !== undefined) live();
+    else unsubscribe?.();
+  });
+  return unsubscribe;
+}
 
 /** A chunk's fetched bytes, ready to load. */
 interface FetchedChunk {
@@ -379,7 +512,7 @@ export function createChunkManager(
   // was created leaves chunks a rollback can restore.
   const self: ChunkOwner = { disposed: false, scanForOrphans: true, store };
   const selfRef = new WeakRef(self);
-  liveOwners.add(selfRef);
+  liveOwners.set(selfRef, new WeakRef(store));
   droppedOwners.register(self, selfRef, selfRef);
 
   // Recency of the chunks this manager owns, least recently used first.
@@ -436,10 +569,13 @@ export function createChunkManager(
   } | null = null;
 
   // The timer of an eviction pass scheduled for a later task, and while that
-  // pass waits for a transaction to close, its store subscription (see
-  // `scheduleEvictionPass`). At most one of them is set.
+  // pass waits for a transaction to close, its store subscription and the
+  // listener it runs (see `scheduleEvictionPass`). At most one of the timer
+  // and the subscription is set. The store holds the listener only weakly,
+  // so this keeps it alive exactly as long as the manager.
   let passTimer: ReturnType<typeof setTimeout> | null = null;
   let passAwaitingCommit: Unsubscribe | null = null;
+  let commitListener: (() => void) | null = null;
   // Chunks whose loads put off their eviction pass because a transaction was
   // open. The deferred pass protects them, as each load's own pass would
   // have, and then releases them. Other passes do not, just as they would
@@ -530,6 +666,7 @@ export function createChunkManager(
    * time and also put those chunks back, as the least recently used.
    */
   function reconcileOwnership(chunkMap: ReadonlyMap<number, ReadonlyUint8Array>): void {
+    forgetCollectedOwners();
     const state = transactionState();
     if (state === "closed" && !self.scanForOrphans) return;
     let found: Array<readonly [number, ReadonlyUint8Array]> | null = null;
@@ -583,11 +720,7 @@ export function createChunkManager(
    * it look for them every time (see `reconcileOwnership`).
    */
   function transactionState(): "open" | "closed" | "unknown" {
-    const { isInTransaction, beginTransaction } = store as Partial<ReconcilableDocumentStore>;
-    if (typeof isInTransaction === "function") {
-      return isInTransaction.call(store) ? "open" : "closed";
-    }
-    return typeof beginTransaction === "function" ? "unknown" : "closed";
+    return transactionStateOf(store);
   }
 
   /**
@@ -959,11 +1092,14 @@ export function createChunkManager(
    * load that succeeds always leaves its chunk in memory, as `ensureLoaded`
    * promises. A state change alone does not show the load took effect: a
    * store wrapper can change state before forwarding a load the reducer then
-   * refuses. The error tells the two apart as far as it can: the chunk map
-   * left as it was means the store refused the load, while a changed one
-   * means a listener may have evicted the chunk, which a retry would not
-   * help while that listener keeps evicting it. `batch` chooses LOAD_CHUNKS
-   * over LOAD_CHUNK.
+   * refuses. The error says a listener may have evicted the chunk, which a
+   * retry would not help while that listener keeps evicting it, only when
+   * both signs of one are there: the chunk map changed, and the store
+   * notified more than once during the dispatch, as it does when a listener
+   * changes the state again. Either alone misleads: a wrapper may hand back
+   * a new map on every read, a batch's other chunks change the map, and a
+   * wrapper may dispatch other actions before forwarding the load. `batch` chooses LOAD_CHUNKS over
+   * LOAD_CHUNK.
    */
   function commitLoads(
     chunks: readonly FetchedChunk[],
@@ -988,7 +1124,15 @@ export function createChunkManager(
       ? DocumentActions.loadChunks(valid)
       : DocumentActions.loadChunk(valid[0]!.chunkIndex, valid[0]!.data);
     const before = store.getSnapshot().pieceTable.chunkMap;
-    store.dispatch(action);
+    let notifications = 0;
+    const unsubscribe = store.subscribe(() => {
+      notifications++;
+    });
+    try {
+      store.dispatch(action);
+    } finally {
+      unsubscribe();
+    }
     const after = store.getSnapshot().pieceTable.chunkMap;
     for (const { chunkIndex } of valid) {
       if (after.has(chunkIndex)) {
@@ -998,7 +1142,7 @@ export function createChunkManager(
       fail(
         chunkIndex,
         new Error(
-          after === before
+          after === before || notifications < 2
             ? `Chunk ${chunkIndex} was fetched but the store did not load it on ${action.type} dispatch`
             : `Chunk ${chunkIndex} was fetched and dispatched with ${action.type}, but was not in memory afterwards: the store refused it, or a store listener evicted it`,
         ),
@@ -1267,16 +1411,26 @@ export function createChunkManager(
           evictDeferred();
           return;
         }
-        passAwaitingCommit = store.subscribe(() => {
+        // Subscribed weakly, so a manager the app drops while the
+        // transaction stays open can still be collected and its chunks taken
+        // over (see `forgetOwner`).
+        commitListener = () => {
           run(() => {
             if (transactionState() === "open") return;
-            passAwaitingCommit?.();
-            passAwaitingCommit = null;
+            stopAwaitingCommit();
             evictDeferred();
           });
-        });
+        };
+        passAwaitingCommit = subscribeWeakly(store, commitListener);
       });
     }, 0);
+  }
+
+  /** Stop the deferred eviction pass's wait for a transaction to close. */
+  function stopAwaitingCommit(): void {
+    passAwaitingCommit?.();
+    passAwaitingCommit = null;
+    commitListener = null;
   }
 
   function prefetch(chunkIndex: number): void {
@@ -1323,56 +1477,23 @@ export function createChunkManager(
    * throws once disposed, is taken as possibly holding the orphans.
    */
   function markOrphanScans(): void {
-    let everyone = true;
-    let ours: ReadonlyMap<number, ReadonlyUint8Array> | null = null;
+    let ours: ChunkMap | null = null;
     try {
-      everyone = transactionState() !== "closed";
-      if (!everyone) ours = store.getSnapshot().pieceTable.chunkMap;
+      if (transactionState() === "closed") ours = store.getSnapshot().pieceTable.chunkMap;
     } catch {
       // A store that cannot answer is treated as having a transaction open.
-      everyone = true;
+    }
+    if (ours === null) {
+      markOrphanHolders(store, null, false);
+      return;
     }
     const orphans: Array<readonly [number, ReadonlyUint8Array]> = [];
-    if (ours !== null) {
-      for (const chunkIndex of lru) {
-        const bytes = ours.get(chunkIndex);
-        if (bytes !== undefined && ownerOf(bytes) === self) {
-          orphans.push([chunkIndex, bytes]);
-        }
-      }
-      if (orphans.length === 0) return;
+    for (const chunkIndex of lru) {
+      const bytes = ours.get(chunkIndex);
+      if (bytes !== undefined && ownerOf(bytes) === self) orphans.push([chunkIndex, bytes]);
     }
-    // A manager on this very store holds the orphans. Managers on one store,
-    // or on wrappers of it, share its chunk map, so each other map is
-    // searched once; store identity alone would miss wrappers.
-    const holdsOrphans = new Map<ReadonlyMap<number, ReadonlyUint8Array>, boolean>();
-    for (const ref of liveOwners) {
-      const owner = ref.deref();
-      if (owner === undefined || owner.disposed) {
-        liveOwners.delete(ref);
-        continue;
-      }
-      if (owner.scanForOrphans) continue;
-      if (everyone || owner.store === store) {
-        owner.scanForOrphans = true;
-        continue;
-      }
-      let theirs: ReadonlyMap<number, ReadonlyUint8Array>;
-      try {
-        theirs = owner.store.getSnapshot().pieceTable.chunkMap;
-      } catch {
-        owner.scanForOrphans = true;
-        continue;
-      }
-      let holds = holdsOrphans.get(theirs);
-      if (holds === undefined) {
-        holds =
-          theirs === ours ||
-          orphans.some(([chunkIndex, bytes]) => theirs.get(chunkIndex) === bytes);
-        holdsOrphans.set(theirs, holds);
-      }
-      if (holds) owner.scanForOrphans = true;
-    }
+    if (orphans.length === 0) return;
+    markOrphanHolders(store, holdsAnyOf(ours, orphans), false);
   }
 
   function dispose(): void {
@@ -1391,8 +1512,7 @@ export function createChunkManager(
     lru.clear();
     if (passTimer !== null) clearTimeout(passTimer);
     passTimer = null;
-    passAwaitingCommit?.();
-    passAwaitingCommit = null;
+    stopAwaitingCommit();
     activeChunks.clear();
     requested.clear();
     deferredProtected.clear();
