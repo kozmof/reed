@@ -258,6 +258,12 @@ function sameEvictionInputsAs(state: EvictionInputs): (other: EvictionInputs) =>
 /**
  * Create a ChunkManager that wraps `store` and uses `loader` to fetch chunks.
  *
+ * The manager evicts the chunks it owns: those it loads, and those already
+ * resident when it is created that no live manager owns, whoever loaded them,
+ * such as a checkpoint restore, an earlier manager or the app. A chunk the app
+ * loads with LOAD_CHUNK after the manager exists is never evicted by it. To
+ * keep a chunk resident either way, pin it with `setActiveChunks`.
+ *
  * @example
  * ```typescript
  * const manager = createChunkManager(store, {
@@ -529,11 +535,6 @@ export function createChunkManager(
     return typeof beginTransaction === "function" ? "unknown" : "closed";
   }
 
-  /** Whether the store says a transaction is open (see `transactionState`). */
-  function transactionOpen(): boolean {
-    return transactionState() === "open";
-  }
-
   /**
    * Run an eviction pass that protects `protectedChunks`. It runs at once,
    * or, if the store has a transaction open (such as one the caller left
@@ -544,12 +545,26 @@ export function createChunkManager(
    */
   function evictWhenNoTransaction(protectedChunks: ReadonlySet<number> = NONE): void {
     if (disposed) return;
-    if (!transactionOpen()) {
+    if (transactionState() !== "open") {
       evictIfOverLimit(protectedChunks);
       return;
     }
     for (const chunkIndex of protectedChunks) deferredProtected.add(chunkIndex);
     scheduleEvictionPass();
+  }
+
+  /**
+   * Run `evictWhenNoTransaction` after a load the manager has adopted. The
+   * chunk is resident and owned whatever the pass does, so an error the pass
+   * throws, such as from a store wrapper's dispatch of EVICT_CHUNKS, goes to
+   * the logger's `error`, as for a deferred pass, and does not fail the load.
+   */
+  function evictAfterLoad(protectedChunks: ReadonlySet<number> = NONE): void {
+    try {
+      evictWhenNoTransaction(protectedChunks);
+    } catch (error) {
+      reportCaughtError(logger, "The ChunkManager eviction pass after a load failed", error);
+    }
   }
 
   /**
@@ -894,7 +909,7 @@ export function createChunkManager(
             );
           }
           adoptLoaded(chunkIndex, before);
-          evictWhenNoTransaction(new Set([chunkIndex]));
+          evictAfterLoad(new Set([chunkIndex]));
         })
         .catch((error: unknown) => {
           // Manager-owned cancellation settles pending calls without loading.
@@ -930,7 +945,9 @@ export function createChunkManager(
 
     // Already in memory. No eviction pass runs here: one could evict inside a
     // transaction the caller has open, and the call stays O(1). A chunk loaded
-    // outside the manager stays untracked, so the manager never evicts it.
+    // outside the manager after it was created stays untracked, so the manager
+    // never evicts it. One already resident when it was created, with no live
+    // manager owning it, is this manager's (see `createChunkManager`).
     const { chunkMap } = store.getSnapshot().pieceTable;
     if (chunkMap.has(chunkIndex)) {
       touchIfOwned(chunkMap, chunkIndex);
@@ -1054,7 +1071,7 @@ export function createChunkManager(
           if (chunkMap.has(chunk.chunkIndex)) adoptLoaded(chunk.chunkIndex, before);
           else (dropped ??= new Set()).add(chunk.chunkIndex);
         }
-        evictWhenNoTransaction();
+        evictAfterLoad();
         return dropped ?? NONE;
       });
       return commit.then((dropped) => {
@@ -1139,13 +1156,13 @@ export function createChunkManager(
       passTimer = null;
       run(() => {
         if (disposed) return;
-        if (!transactionOpen()) {
+        if (transactionState() !== "open") {
           evictDeferred();
           return;
         }
         passAwaitingCommit = store.subscribe(() => {
           run(() => {
-            if (transactionOpen()) return;
+            if (transactionState() === "open") return;
             passAwaitingCommit?.();
             passAwaitingCommit = null;
             evictDeferred();

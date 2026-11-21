@@ -106,6 +106,8 @@ Requires a user-supplied `ChunkLoader` with
 `loadChunk(chunkIndex, signal?): Promise<Uint8Array>`. The optional abort signal is canceled when
 the manager drops a pending load or is disposed.
 
+The manager evicts only chunks it owns: the ones it loads, and the ones already loaded when it is created that no live manager owns, whoever loaded them (a checkpoint restore, an earlier manager or the app). It never evicts a chunk the app loads with `LOAD_CHUNK` after creating it. Pin a chunk with `setActiveChunks` to keep it loaded either way.
+
 Config (`ChunkManagerConfig`): `maxLoadedChunks`, `fetchStrategy`, `logger`. The manager's `logger` hears when chunks stay loaded over `maxLoadedChunks`. History an eviction discards is reported by the store's own `logger`, or, for an eviction the manager dispatches, by the manager's `logger` when the store has none, also through a wrapper that forwards `dispatch` synchronously, and by the store's `history-drop` event. A throw from the manager's `warn` there is reported through its `error`, if it has one.
 
 ### 2.5 Flat `createStreamingDocumentLoader(store, loader, metadata, config?)`

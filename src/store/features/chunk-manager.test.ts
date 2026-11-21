@@ -2586,3 +2586,52 @@ describe("ChunkManager bytes identity of resident chunks", () => {
     expect(store.getSnapshot().pieceTable.chunkMap.get(0)).not.toBe(reloaded);
   });
 });
+
+describe("ChunkManager eviction pass after a load", () => {
+  function throwingOnEvict(store: DocumentStore): DocumentStore {
+    return {
+      ...store,
+      dispatch: (action) => {
+        if (action.type === "EVICT_CHUNKS") throw new Error("evict refused by wrapper");
+        return store.dispatch(action);
+      },
+    };
+  }
+
+  it("resolves ensureLoaded and reports the error when the pass throws", async () => {
+    const store = makeStore();
+    const error = vi.fn();
+    const manager = createChunkManager(
+      throwingOnEvict(store),
+      makeLoader({ 0: "aaaabbbb", 1: "ccccdddd" }),
+      { maxLoadedChunks: 1, logger: { error } },
+    );
+    await manager.ensureLoaded(0);
+    await expect(manager.ensureLoaded(1)).resolves.toBeUndefined();
+    expect(store.getSnapshot().pieceTable.chunkMap.has(1)).toBe(true);
+    expect(error).toHaveBeenCalledWith(
+      "The ChunkManager eviction pass after a load failed",
+      expect.objectContaining({ message: "evict refused by wrapper" }),
+    );
+    manager.dispose();
+  });
+
+  it("resolves every chunk of ensureLoadedMany when the pass throws", async () => {
+    const store = makeStore();
+    const error = vi.fn();
+    const manager = createChunkManager(
+      throwingOnEvict(store),
+      makeLoader({ 0: "aaaabbbb", 1: "ccccdddd", 2: "eeeeffff" }),
+      { maxLoadedChunks: 1, logger: { error } },
+    );
+    await manager.ensureLoaded(0);
+    await expect(manager.ensureLoadedMany([1, 2])).resolves.toBeUndefined();
+    const { chunkMap } = store.getSnapshot().pieceTable;
+    expect(chunkMap.has(1) && chunkMap.has(2)).toBe(true);
+    expect(error).toHaveBeenCalledWith(
+      "The ChunkManager eviction pass after a load failed",
+      expect.objectContaining({ message: "evict refused by wrapper" }),
+    );
+    manager.dispose();
+  });
+});
