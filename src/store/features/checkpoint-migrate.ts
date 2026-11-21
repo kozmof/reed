@@ -619,53 +619,83 @@ function unapplyShape(
  * is for the validators to report.
  */
 function migrateV1ToV2(data: CheckpointWireData): CheckpointWireData {
-  return anchorV1Positions(trimV1Selections(data));
+  return anchorV1Positions(trimV1Tuples(data));
 }
 
 /**
- * Cut every version 1 selection range, live and in history, to its
- * [anchor, head]. Version 1 restore read only those two elements and ignored
- * the rest, while version 2 reads a third and fourth as chunk keys, so a range
- * that carried extras would fail to restore or take wrong keys.
+ * How many elements version 1 restore read from a history change of each
+ * kind: kind, offset and text, and for a replace the old text too.
  */
-function trimV1Selections(data: CheckpointWireData): CheckpointWireData {
-  const trim = (raw: unknown): unknown => {
+const V1_CHANGE_LENGTH: Readonly<Record<string, number>> = { i: 3, d: 3, r: 4 };
+
+/**
+ * Cut every version 1 tuple that version 2 reads further than version 1 did
+ * back to the elements version 1 read: selection ranges, live and in
+ * history, to [anchor, head]; add pieces to [id, "a", start, length]; and
+ * history changes as `V1_CHANGE_LENGTH` gives. Version 1 restore ignored the
+ * rest, while version 2 reads the next elements as chunk keys or raw bytes,
+ * so a tuple that carried extras would fail to restore or take wrong keys.
+ * A change of unknown kind is left for restore to report.
+ */
+function trimV1Tuples(data: CheckpointWireData): CheckpointWireData {
+  /** `raw` with each element mapped by `cut`, or `raw` itself when `cut` changes none. */
+  const mapArray = (raw: unknown, cut: (item: unknown) => unknown): unknown => {
+    if (!Array.isArray(raw)) return raw;
+    let changed = false;
+    const items = raw.map((item: unknown) => {
+      const next = cut(item);
+      if (next !== item) changed = true;
+      return next;
+    });
+    return changed ? items : raw;
+  };
+  const cutTo = (tuple: unknown, length: number | undefined): unknown =>
+    isTuple(tuple) && length !== undefined && tuple.length > length
+      ? tuple.slice(0, length)
+      : tuple;
+  const trimSelection = (raw: unknown): unknown => {
     if (typeof raw !== "object" || raw === null) return raw;
     const selection = raw as Record<string, unknown>;
-    const { ranges } = selection;
-    if (!Array.isArray(ranges) || !ranges.some((range) => isTuple(range) && range.length > 2)) {
-      return raw;
-    }
-    return {
-      ...selection,
-      ranges: ranges.map((range: unknown) =>
-        isTuple(range) && range.length > 2 ? range.slice(0, 2) : range,
-      ),
-    };
+    const ranges = mapArray(selection.ranges, (range) => cutTo(range, 2));
+    return ranges === selection.ranges ? raw : { ...selection, ranges };
   };
+  const trimChange = (change: unknown): unknown =>
+    isTuple(change) && typeof change[0] === "string" && Object.hasOwn(V1_CHANGE_LENGTH, change[0])
+      ? cutTo(change, V1_CHANGE_LENGTH[change[0]])
+      : change;
   // Rebuild only what changes, so other input reaches restore as it was.
   const trimEntry = (entry: unknown): unknown => {
     if (typeof entry !== "object" || entry === null) return entry;
-    const { selectionBefore, selectionAfter } = entry as Record<string, unknown>;
-    const before = trim(selectionBefore);
-    const after = trim(selectionAfter);
-    return before === selectionBefore && after === selectionAfter
-      ? entry
-      : { ...entry, selectionBefore: before, selectionAfter: after };
-  };
-  const trimEntries = (raw: unknown): unknown => {
-    if (!Array.isArray(raw)) return raw;
-    const entries = raw.map(trimEntry);
-    return entries.every((entry, i) => entry === raw[i]) ? raw : entries;
+    const { changes, selectionBefore, selectionAfter } = entry as Record<string, unknown>;
+    const trimmedChanges = mapArray(changes, trimChange);
+    const before = trimSelection(selectionBefore);
+    const after = trimSelection(selectionAfter);
+    if (trimmedChanges === changes && before === selectionBefore && after === selectionAfter) {
+      return entry;
+    }
+    return {
+      ...entry,
+      ...(trimmedChanges !== changes && { changes: trimmedChanges }),
+      ...(before !== selectionBefore && { selectionBefore: before }),
+      ...(after !== selectionAfter && { selectionAfter: after }),
+    };
   };
   let result = data;
-  const selection = trim(data.selection);
+  const selection = trimSelection(data.selection);
   if (selection !== data.selection) result = { ...result, selection };
+  const rawTable = data.pieceTable;
+  if (typeof rawTable === "object" && rawTable !== null) {
+    const table = rawTable as Record<string, unknown>;
+    const pieces = mapArray(table.pieces, (piece) =>
+      isTuple(piece) && piece[1] === "a" ? cutTo(piece, 4) : piece,
+    );
+    if (pieces !== table.pieces) result = { ...result, pieceTable: { ...table, pieces } };
+  }
   const rawHistory = data.history;
   if (typeof rawHistory === "object" && rawHistory !== null) {
     const { undo, redo } = rawHistory as Record<string, unknown>;
-    const newUndo = trimEntries(undo);
-    const newRedo = trimEntries(redo);
+    const newUndo = mapArray(undo, trimEntry);
+    const newRedo = mapArray(redo, trimEntry);
     if (newUndo !== undo || newRedo !== redo) {
       result = { ...result, history: { ...rawHistory, undo: newUndo, redo: newRedo } };
     }

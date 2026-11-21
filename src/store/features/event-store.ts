@@ -284,8 +284,8 @@ export function withEvents(
   }
 
   /**
-   * Run a base store begin or inner commit with the open event levels
-   * detached, and put them back when it returns.
+   * Run a base store begin, inner commit, or rollback with the open event
+   * levels detached, and put them back when it returns.
    *
    * When such a call throws, the base store has already run emergencyReset,
    * which notifies store listeners before rethrowing. A listener that
@@ -352,7 +352,9 @@ export function withEvents(
 
   /**
    * Rollback the current transaction level.
-   * Discards the current depth's buffered events before delegating to the base store.
+   * Discards the current depth's buffered events before delegating to the
+   * base store, with the outer levels detached as for begin and commit (see
+   * `withLevelsDetached`), so a throw from it clears every pending level.
    */
   function rollbackTransaction(): void {
     if (disposed) return;
@@ -361,7 +363,7 @@ export function withEvents(
     }
 
     pendingEventLevels.pop();
-    baseStore.rollbackTransaction();
+    withLevelsDetached(() => baseStore.rollbackTransaction());
   }
 
   /**

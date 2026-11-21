@@ -1151,11 +1151,14 @@ describe("Event delivery limits and failed transaction calls", () => {
   });
 
   /**
-   * An event store over a base store whose next inner `beginTransaction` or
-   * `commitTransaction` fails as an invariant violation does: it runs
-   * emergencyReset, which notifies listeners, and then throws.
+   * An event store over a base store whose next inner `beginTransaction`,
+   * `commitTransaction` or `rollbackTransaction` fails as an invariant
+   * violation does: it runs emergencyReset, which notifies listeners, and
+   * then throws.
    */
-  function storeWithFailingCall(call: "beginTransaction" | "commitTransaction") {
+  function storeWithFailingCall(
+    call: "beginTransaction" | "commitTransaction" | "rollbackTransaction",
+  ) {
     const base = createDocumentStore({ content: "", reconcileMode: "none" });
     let failNext = false;
     const failing = Object.assign(Object.create(base), {
@@ -1211,6 +1214,24 @@ describe("Event delivery limits and failed transaction calls", () => {
     failNext();
 
     expect(() => store.beginTransaction()).toThrow("invariant violated");
+    expect(getText(store)).toBe("B");
+    expect(inserted).toEqual(["B"]);
+  });
+
+  it("emits events for a listener's dispatch while a failed inner rollback resets", () => {
+    const { store, inserted, failNext } = storeWithFailingCall("rollbackTransaction");
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(0), "A"));
+    store.beginTransaction();
+    let armed = true;
+    store.subscribe(() => {
+      if (!armed) return;
+      armed = false;
+      store.dispatch(DocumentActions.insert(byteOffset(0), "B"));
+    });
+    failNext();
+
+    expect(() => store.rollbackTransaction()).toThrow("invariant violated");
     expect(getText(store)).toBe("B");
     expect(inserted).toEqual(["B"]);
   });

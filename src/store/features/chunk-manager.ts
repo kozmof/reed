@@ -209,8 +209,12 @@ interface ChunkOwner {
    * them (see `reconcileOwnership`).
    */
   scanForOrphans: boolean;
-  /** The chunks resident in this manager's store now. */
-  readonly resident: () => ReadonlyMap<number, ReadonlyUint8Array>;
+  /**
+   * The store this manager wraps. A plain property, not a closure: a closure
+   * made inside `createChunkManager` would keep the manager's whole scope,
+   * its loader included, alive for as long as `chunkOwners` holds the owner.
+   */
+  readonly store: DocumentStore;
 }
 
 /**
@@ -234,6 +238,23 @@ const chunkOwners = new WeakMap<ReadonlyUint8Array, ChunkOwner>();
  * `markOrphanScans`).
  */
 const liveOwners = new Set<WeakRef<ChunkOwner>>();
+
+/**
+ * Forget managers the app dropped without disposing them, which a dispose
+ * would otherwise be the only thing to prune. O(M) for M live managers.
+ */
+function pruneLiveOwners(): void {
+  for (const ref of liveOwners) {
+    const owner = ref.deref();
+    if (owner === undefined || owner.disposed) liveOwners.delete(ref);
+  }
+}
+
+/** A chunk's fetched bytes, ready to load. */
+interface FetchedChunk {
+  readonly chunkIndex: number;
+  readonly data: Uint8Array;
+}
 
 /** No failures, for commits whose every chunk the store kept. */
 const NO_FAILURES: ReadonlyMap<number, unknown> = new Map();
@@ -340,12 +361,9 @@ export function createChunkManager(
   // the chunk left memory.
   // It starts out scanning, since a dispose inside a transaction open when it
   // was created leaves chunks a rollback can restore.
-  const self: ChunkOwner = {
-    disposed: false,
-    scanForOrphans: true,
-    resident: () => store.getSnapshot().pieceTable.chunkMap,
-  };
+  const self: ChunkOwner = { disposed: false, scanForOrphans: true, store };
   const selfRef = new WeakRef(self);
+  pruneLiveOwners();
   liveOwners.add(selfRef);
 
   // Recency of the chunks this manager owns, least recently used first.
@@ -913,16 +931,59 @@ export function createChunkManager(
   }
 
   /**
-   * Whether the store kept `chunkIndex` from a load dispatched against
-   * `before`. The snapshot after dispatch already includes what the
-   * listeners the load notified did, so a chunk missing from it may have
-   * been loaded and then evicted by one of them. The reducer refuses a load
-   * by leaving the state unchanged, which notifies no one, so the load was
-   * refused only when the chunk is missing and the state is still `before`.
+   * Load `chunks` in one transition, take ownership of those it brought into
+   * memory, and run an eviction pass protecting `protectedChunks`. Returns
+   * the chunks that failed, each with its error.
+   *
+   * Each chunk's bytes are checked against the document as it is now, since
+   * it may have changed since the fetch, such as with DECLARE_CHUNK_METADATA,
+   * and LOAD_CHUNKS loads every chunk or none: a chunk that fails the check
+   * fails alone. A chunk not resident after dispatch fails too, whether the
+   * store refused the load or a listener the load notified evicted it, so a
+   * load that succeeds always leaves its chunk in memory, as `ensureLoaded`
+   * promises. A state change alone does not show the load took effect: a
+   * store wrapper can change state before forwarding a load the reducer then
+   * refuses. `batch` chooses LOAD_CHUNKS over LOAD_CHUNK.
    */
-  function retained(before: DocumentState, chunkIndex: number): boolean {
-    const after = store.getSnapshot();
-    return after !== before || after.pieceTable.chunkMap.has(chunkIndex);
+  function commitLoads(
+    chunks: readonly FetchedChunk[],
+    batch: boolean,
+    protectedChunks: ReadonlySet<number>,
+  ): ReadonlyMap<number, unknown> {
+    let failures: Map<number, unknown> | null = null;
+    const fail = (chunkIndex: number, error: unknown) => {
+      (failures ??= new Map()).set(chunkIndex, error);
+    };
+    const valid = chunks.filter((chunk) => {
+      try {
+        checkLoadedBytes(chunk.chunkIndex, chunk.data);
+        return true;
+      } catch (error) {
+        fail(chunk.chunkIndex, error);
+        return false;
+      }
+    });
+    if (valid.length === 0) return failures ?? NO_FAILURES;
+    const action = batch
+      ? DocumentActions.loadChunks(valid)
+      : DocumentActions.loadChunk(valid[0]!.chunkIndex, valid[0]!.data);
+    const before = store.getSnapshot().pieceTable.chunkMap;
+    store.dispatch(action);
+    const after = store.getSnapshot().pieceTable.chunkMap;
+    for (const { chunkIndex } of valid) {
+      if (after.has(chunkIndex)) {
+        adoptLoaded(chunkIndex, before);
+        continue;
+      }
+      fail(
+        chunkIndex,
+        new Error(
+          `Chunk ${chunkIndex} was fetched but the store did not retain it after ${action.type} dispatch`,
+        ),
+      );
+    }
+    evictSafely(protectedChunks, AFTER_LOAD);
+    return failures ?? NO_FAILURES;
   }
 
   function doFetch(chunkIndex: number): Promise<void> {
@@ -937,16 +998,8 @@ export function createChunkManager(
       return loadAbortable(chunkIndex, abortController.signal, idle)
         .then((data) => {
           if (disposed || abortController.signal.aborted) return;
-          checkLoadedBytes(chunkIndex, data);
-          const before = store.getSnapshot();
-          store.dispatch(DocumentActions.loadChunk(chunkIndex, data));
-          if (!retained(before, chunkIndex)) {
-            throw new Error(
-              `Chunk ${chunkIndex} was fetched but the store did not retain it after LOAD_CHUNK dispatch`,
-            );
-          }
-          adoptLoaded(chunkIndex, before.pieceTable.chunkMap);
-          evictSafely(new Set([chunkIndex]), AFTER_LOAD);
+          const failures = commitLoads([{ chunkIndex, data }], false, new Set([chunkIndex]));
+          if (failures.has(chunkIndex)) throw failures.get(chunkIndex);
         })
         .catch((error: unknown) => {
           // Manager-owned cancellation settles pending calls without loading.
@@ -1073,10 +1126,10 @@ export function createChunkManager(
           idle();
           return null;
         }
+        // The commit checks the bytes, against the document as it is then.
         try {
           const data = await loadAbortable(chunkIndex, controller.signal, idle);
           if (disposed || controller.signal.aborted) return null;
-          checkLoadedBytes(chunkIndex, data);
           return data;
         } catch (error) {
           if (controller.signal.aborted) return null;
@@ -1092,7 +1145,7 @@ export function createChunkManager(
     // resolves to the chunks that failed, each with its error. Each of those
     // fails on its own; the rest of the transition is adopted and its
     // waiters resolve.
-    let ready: Array<{ chunkIndex: number; data: Uint8Array }> = [];
+    let ready: FetchedChunk[] = [];
     let commit: Promise<ReadonlyMap<number, unknown>> | undefined;
     function enqueue(chunkIndex: number, data: Uint8Array): Promise<void> {
       ready.push({ chunkIndex, data });
@@ -1101,37 +1154,7 @@ export function createChunkManager(
         ready = [];
         commit = undefined;
         if (disposed || chunks.length === 0) return NO_FAILURES;
-        // LOAD_CHUNKS loads every chunk or none, so a chunk whose geometry the
-        // document changed since its fetch checked it, such as with
-        // DECLARE_CHUNK_METADATA, would fail the others. Check each again
-        // against the document now, and fail those alone.
-        let failures: Map<number, unknown> | null = null;
-        const valid = chunks.filter((chunk) => {
-          try {
-            checkLoadedBytes(chunk.chunkIndex, chunk.data);
-            return true;
-          } catch (error) {
-            (failures ??= new Map()).set(chunk.chunkIndex, error);
-            return false;
-          }
-        });
-        if (valid.length === 0) return failures ?? NO_FAILURES;
-        const before = store.getSnapshot();
-        store.dispatch(DocumentActions.loadChunks(valid));
-        for (const chunk of valid) {
-          if (retained(before, chunk.chunkIndex)) {
-            adoptLoaded(chunk.chunkIndex, before.pieceTable.chunkMap);
-            continue;
-          }
-          (failures ??= new Map()).set(
-            chunk.chunkIndex,
-            new Error(
-              `Chunk ${chunk.chunkIndex} was fetched but the store did not retain it after LOAD_CHUNKS dispatch`,
-            ),
-          );
-        }
-        evictSafely(NONE, AFTER_LOAD);
-        return failures ?? NO_FAILURES;
+        return commitLoads(chunks, true, NONE);
       });
       return commit.then((failures) => {
         if (failures.has(chunkIndex)) throw failures.get(chunkIndex);
@@ -1281,16 +1304,20 @@ export function createChunkManager(
       // A store that cannot answer is treated as having a transaction open.
     }
     const orphans: Array<readonly [number, ReadonlyUint8Array]> = [];
-    if (!everyone) {
-      const resident = store.getSnapshot().pieceTable.chunkMap;
+    const ours = everyone ? null : store.getSnapshot().pieceTable.chunkMap;
+    if (ours !== null) {
       for (const chunkIndex of lru) {
-        const bytes = resident.get(chunkIndex);
+        const bytes = ours.get(chunkIndex);
         if (bytes !== undefined && chunkOwners.get(bytes) === self) {
           orphans.push([chunkIndex, bytes]);
         }
       }
       if (orphans.length === 0) return;
     }
+    // A manager on this very store holds the orphans. Managers on one store,
+    // or on wrappers of it, share its chunk map, so each other map is
+    // searched once; store identity alone would miss wrappers.
+    const holdsOrphans = new Map<ReadonlyMap<number, ReadonlyUint8Array>, boolean>();
     for (const ref of liveOwners) {
       const owner = ref.deref();
       if (owner === undefined || owner.disposed) {
@@ -1298,14 +1325,19 @@ export function createChunkManager(
         continue;
       }
       if (owner.scanForOrphans) continue;
-      if (everyone) {
+      if (everyone || owner.store === store) {
         owner.scanForOrphans = true;
         continue;
       }
-      const theirs = owner.resident();
-      if (orphans.some(([chunkIndex, bytes]) => theirs.get(chunkIndex) === bytes)) {
-        owner.scanForOrphans = true;
+      const theirs = owner.store.getSnapshot().pieceTable.chunkMap;
+      let holds = holdsOrphans.get(theirs);
+      if (holds === undefined) {
+        holds =
+          theirs === ours ||
+          orphans.some(([chunkIndex, bytes]) => theirs.get(chunkIndex) === bytes);
+        holdsOrphans.set(theirs, holds);
       }
+      if (holds) owner.scanForOrphans = true;
     }
   }
 

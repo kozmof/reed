@@ -212,6 +212,54 @@ describe("restore limits before migration", () => {
     expect(undone).toEqual(undoOnce(checkpoint));
   });
 
+  it("ignores extra elements in v1 add pieces and history changes, as v1 restore did", () => {
+    // Undo holds the insert and redo the replace.
+    const store = createDocumentStore({ content: "reed" });
+    store.dispatch(DocumentActions.insert(byteOffset(4), "!"));
+    store.dispatch(DocumentActions.replace(byteOffset(1), byteOffset(3), "oa"));
+    store.dispatch(DocumentActions.undo());
+    const checkpoint = {
+      ...createCheckpoint(store.reconcileNow()),
+      version: 1,
+    } as Record<string, unknown>;
+    store.dispose();
+    const table = checkpoint.pieceTable as { pieces: unknown[][] };
+    const history = checkpoint.history as {
+      undo: { changes: unknown[][] }[];
+      redo: { changes: unknown[][] }[];
+    };
+    expect(table.pieces.some((piece) => piece[1] === "a")).toBe(true);
+    const pad = (entries: { changes: unknown[][] }[]) =>
+      entries.map((entry) => ({
+        ...entry,
+        // A key v2 would read, then a value it would read as raw bytes.
+        changes: entry.changes.map((change) => [...change, 7, "stray"]),
+      }));
+    const payload = {
+      ...checkpoint,
+      pieceTable: {
+        ...table,
+        pieces: table.pieces.map((piece) => (piece[1] === "a" ? [...piece, "x"] : piece)),
+      },
+      history: { ...history, undo: pad(history.undo), redo: pad(history.redo) },
+    };
+
+    const replay = (raw: unknown) => {
+      const restored = createDocumentStoreFromCheckpoint(raw);
+      const texts = [getValue(restored.getSnapshot().pieceTable)];
+      restored.dispatch(DocumentActions.undo());
+      texts.push(getValue(restored.getSnapshot().pieceTable));
+      restored.dispatch(DocumentActions.redo());
+      restored.dispatch(DocumentActions.redo());
+      texts.push(getValue(restored.getSnapshot().pieceTable));
+      restored.dispose();
+      return texts;
+    };
+    // Restores and replays exactly as the same payload without the extras does.
+    expect(replay(checkpoint)).toEqual(["reed!", "reed", "road!"]);
+    expect(replay(payload)).toEqual(replay(checkpoint));
+  });
+
   it("rejects too many pieces or history entries in a v1 payload", () => {
     const checkpoint = v1Checkpoint();
     expect(codeOf(() => restoreCheckpoint(checkpoint, { maxPieces: 0 })).code).toBe(

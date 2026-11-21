@@ -2118,7 +2118,7 @@ describe("ChunkManager ownership of resident chunks", () => {
     manager.dispose();
   });
 
-  it("succeeds a batch one of whose chunks a listener evicts as the load notifies it", async () => {
+  it("fails only the batch chunk a listener evicts as the load notifies it", async () => {
     const store = createDocumentStore({
       chunkSize: CHUNK_SIZE,
       totalFileSize: CHUNK_SIZE * 4,
@@ -2126,14 +2126,16 @@ describe("ChunkManager ownership of resident chunks", () => {
     });
     const manager = createChunkManager(store, makeLoader(four), { maxLoadedChunks: 1 });
     // A listener evicts chunk 1 as the batch's LOAD_CHUNKS notifies it. The
-    // store kept the load, so the call does not fail.
+    // caller cannot read chunk 1, so it fails; chunk 2 is adopted.
     let dropped = false;
     const unsubscribe = store.subscribe(() => {
       if (dropped || !store.getSnapshot().pieceTable.chunkMap.has(1)) return;
       dropped = true;
       store.dispatch(DocumentActions.evictChunk(1));
     });
-    await expect(manager.ensureLoadedMany([1, 2])).resolves.toBeUndefined();
+    await expect(manager.ensureLoadedMany([1, 2])).rejects.toThrow(
+      "Chunk 1 was fetched but the store did not retain it after LOAD_CHUNKS dispatch",
+    );
     unsubscribe();
     expect(dropped).toBe(true);
     expect(resident(store)).toEqual([2]);
@@ -2699,13 +2701,13 @@ describe("ChunkManager batch commit", () => {
         }),
     );
     // Declare chunk 3's length, contradicting its bytes, after both fetches
-    // checked their bytes and before the batch commits: the snapshot read
-    // that follows the fetches' two checks.
+    // returned and before the batch commits: the first snapshot read after
+    // the fetches, which is the commit's check of chunk 2.
     let reads = -1;
     const wrapper: DocumentStore = {
       ...store,
       getSnapshot: () => {
-        if (reads >= 0 && ++reads === 3) {
+        if (reads >= 0 && ++reads === 1) {
           store.dispatch(
             DocumentActions.declareChunkMetadata([{ chunkIndex: 3, byteLength: 4, lineCount: 1 }]),
           );
@@ -2720,14 +2722,14 @@ describe("ChunkManager batch commit", () => {
     finish.get(2)!();
     finish.get(3)!();
     await expect(call).rejects.toThrow(/declared byteLength=4/);
-    expect(reads).toBeGreaterThanOrEqual(3);
+    expect(reads).toBeGreaterThanOrEqual(1);
     const { chunkMap } = store.getSnapshot().pieceTable;
     expect(chunkMap.has(2)).toBe(true);
     expect(chunkMap.has(3)).toBe(false);
     manager.dispose();
   });
 
-  it("succeeds ensureLoaded when a listener evicts the chunk as the load notifies it", async () => {
+  it("rejects ensureLoaded when a listener evicts the chunk as the load notifies it", async () => {
     const store = makeStore();
     const manager = createChunkManager(store, makeLoader({ 0: "aaaabbbb" }));
     const unsubscribe = store.subscribe(() => {
@@ -2735,8 +2737,37 @@ describe("ChunkManager batch commit", () => {
         store.dispatch(DocumentActions.evictChunk(0));
       }
     });
-    await expect(manager.ensureLoaded(0)).resolves.toBeUndefined();
+    // The chunk is not in memory, so the load does not report success.
+    await expect(manager.ensureLoaded(0)).rejects.toThrow(
+      "Chunk 0 was fetched but the store did not retain it after LOAD_CHUNK dispatch",
+    );
     unsubscribe();
+    expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
+    manager.dispose();
+  });
+
+  it("rejects a load a wrapper refuses after changing state first", async () => {
+    const store = makeStore();
+    // The wrapper sets the selection, then forwards a LOAD_CHUNK the reducer
+    // refuses: its bytes contradict a geometry declared after the fetch.
+    const wrapper: DocumentStore = {
+      ...store,
+      dispatch: (action) => {
+        if (action.type === "LOAD_CHUNK") {
+          store.dispatch(
+            DocumentActions.setSelection([{ anchor: byteOffset(0), head: byteOffset(0) }]),
+          );
+          store.dispatch(
+            DocumentActions.declareChunkMetadata([{ chunkIndex: 0, byteLength: 4, lineCount: 1 }]),
+          );
+        }
+        return store.dispatch(action);
+      },
+    };
+    const manager = createChunkManager(wrapper, makeLoader({ 0: "aaaabbbb" }));
+    await expect(manager.ensureLoaded(0)).rejects.toThrow(
+      "Chunk 0 was fetched but the store did not retain it after LOAD_CHUNK dispatch",
+    );
     expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
     manager.dispose();
   });
