@@ -207,7 +207,27 @@ describe("RemoteBatchSelection", () => {
       }
     };
     const rangeCount = 500;
-    // One move per change would freeze every range on every change.
-    expect(frozenWith(rangeCount) - frozenWith(1)).toBeLessThan(4 * rangeCount);
+    // One move per change would freeze every range on every change. The
+    // baseline has two ranges: a single range moves past each change in turn
+    // (see `remoteSelectionTracker`), so it freezes once per change.
+    expect(frozenWith(rangeCount) - frozenWith(2)).toBeLessThan(4 * rangeCount);
+  });
+
+  it("moves a single range past each change in turn", () => {
+    // 2,000 changes before one caret: each moves it, and none is batched.
+    const changes: RemoteChange[] = Array.from({ length: 2_000 }, (_, i) => ({
+      type: "insert" as const,
+      start: byteOffset(i * 3),
+      text: "a",
+    }));
+    const store = createDocumentStore({ content: "x".repeat(20_000), reconcileMode: "none" });
+    store.dispatch(
+      DocumentActions.setSelection([{ anchor: byteOffset(19_000), head: byteOffset(19_000) }]),
+    );
+    const state = store.getSnapshot();
+    const actual = documentReducer(state, DocumentActions.applyRemote(changes));
+    const expected = referenceRemote(state, changes);
+    expect(actual.selection).toEqual(expected.selection);
+    expect(actual.selection.ranges[0]!.anchor).toBe(21_000);
   });
 });

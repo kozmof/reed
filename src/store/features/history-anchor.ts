@@ -356,12 +356,15 @@ export function moveSelectionPastEdit(
   inserted: number,
   remote = false,
 ): SelectionState {
-  const moveRange = rangeMover(pieceTable, start, end, inserted, remote);
+  // Built for the first range the edit can move: a selection wholly before
+  // the edit needs none.
+  let mover: RangeMover | undefined;
   let ranges: SelectionRange[] | undefined;
   for (let i = 0; i < selection.ranges.length; i++) {
     const range = selection.ranges[i]!;
     if (rangeEndsBefore(range, start)) continue;
-    const moved = moveRange(range);
+    mover ??= new RangeMover(pieceTable, start, end, inserted, remote);
+    const moved = mover.moveRange(range);
     if (moved === range) continue;
     ranges ??= selection.ranges.slice();
     ranges[i] = moved;
@@ -379,46 +382,84 @@ export function rangeEndsBefore(range: SelectionRange, offset: number): boolean 
   return range.anchor < offset && range.head < offset;
 }
 
+/** An endpoint's new offset and stored key. */
+interface MovedEndpoint {
+  readonly offset: ByteOffset;
+  readonly key: number | undefined;
+}
+
 /**
- * Move one range past an edit as `moveSelectionPastEdit` does, returning the
- * range itself when it is unchanged.
+ * Moves ranges past one edit as `moveSelectionPastEdit` does: `moveRange`
+ * returns the range itself when it is unchanged. A class rather than
+ * closures, as every edit that moves a selection builds one.
  */
-function rangeMover(
-  pieceTable: PieceTableState,
-  start: number,
-  end: number,
-  inserted: number,
-  remote: boolean,
-): (range: SelectionRange) => SelectionRange {
-  const landing = start + inserted;
-  let boundary: number | undefined;
-  // The endpoint's new offset and key. A key fits only the offset it was
-  // stored for, so a snapped endpoint drops it.
-  const move = (offset: ByteOffset, key: number | undefined) => {
+class RangeMover {
+  readonly #pieceTable: PieceTableState;
+  readonly #start: number;
+  readonly #end: number;
+  readonly #inserted: number;
+  readonly #remote: boolean;
+  readonly #landing: number;
+  #boundary: number | undefined = undefined;
+
+  constructor(
+    pieceTable: PieceTableState,
+    start: number,
+    end: number,
+    inserted: number,
+    remote: boolean,
+  ) {
+    this.#pieceTable = pieceTable;
+    this.#start = start;
+    this.#end = end;
+    this.#inserted = inserted;
+    this.#remote = remote;
+    this.#landing = start + inserted;
+  }
+
+  /**
+   * The endpoint's new offset and key. A key fits only the offset it was
+   * stored for, so a snapped endpoint drops it.
+   */
+  #move(offset: ByteOffset, key: number | undefined): MovedEndpoint {
+    const start = this.#start;
     if (offset < start) return { offset, key };
-    const moved = offset >= end ? offset - (end - start) + inserted : landing;
+    const landing = this.#landing;
+    const moved = offset >= this.#end ? offset - (this.#end - start) + this.#inserted : landing;
     if (moved !== landing) return { offset: byteOffset(moved), key };
-    boundary ??= nextBoundary(pieceTable, landing, true);
+    const boundary = (this.#boundary ??= nextBoundary(this.#pieceTable, landing, true));
     return { offset: byteOffset(boundary), key: boundary === landing ? key : undefined };
-  };
-  // An endpoint that stays before text inserted at `start`, as the end of a
-  // non-empty range does: one inside the removed range moves to `start`. Its
-  // key was stored for its old offset, so it keeps the key only when that
-  // offset was `start`.
-  const stay = (offset: ByteOffset, key: number | undefined) =>
-    offset === start
-      ? { offset, key }
-      : offset > start && offset < end
-        ? { offset: byteOffset(start), key: undefined }
-        : move(offset, key);
-  const nextToEdit = (offset: number, key: number | undefined) =>
-    key !== undefined && offset >= start && offset <= end;
-  const moveRange = (range: SelectionRange): SelectionRange => {
+  }
+
+  /**
+   * An endpoint that stays before text inserted at `start`, as the end of a
+   * non-empty range does: one inside the removed range moves to `start`. Its
+   * key was stored for its old offset, so it keeps the key only when that
+   * offset was `start`.
+   */
+  #stay(offset: ByteOffset, key: number | undefined): MovedEndpoint {
+    const start = this.#start;
+    if (offset === start) return { offset, key };
+    if (offset > start && offset < this.#end) return { offset: byteOffset(start), key: undefined };
+    return this.#move(offset, key);
+  }
+
+  #nextToEdit(offset: number, key: number | undefined): boolean {
+    return key !== undefined && offset >= this.#start && offset <= this.#end;
+  }
+
+  moveRange(range: SelectionRange): SelectionRange {
     const forward = range.anchor < range.head;
     const backward = range.anchor > range.head;
-    const remoteCaret = remote && range.anchor === range.head;
-    let anchor = (remoteCaret || backward ? stay : move)(range.anchor, range.anchorAfterChunk);
-    let head = (remoteCaret || forward ? stay : move)(range.head, range.headAfterChunk);
+    const remoteCaret = this.#remote && range.anchor === range.head;
+    let anchor =
+      remoteCaret || backward
+        ? this.#stay(range.anchor, range.anchorAfterChunk)
+        : this.#move(range.anchor, range.anchorAfterChunk);
+    let head =
+      remoteCaret || forward
+        ? this.#stay(range.head, range.headAfterChunk)
+        : this.#move(range.head, range.headAfterChunk);
     // A range wholly inside the removed range: its start moved past the
     // inserted text and its end to before it. Collapse it to a caret there.
     if (forward && head.offset < anchor.offset) head = anchor;
@@ -432,15 +473,69 @@ function rangeMover(
     // range again and keep the old object when nothing changed.
     if (
       unmoved &&
-      !nextToEdit(range.anchor, range.anchorAfterChunk) &&
-      !nextToEdit(range.head, range.headAfterChunk)
+      !this.#nextToEdit(range.anchor, range.anchorAfterChunk) &&
+      !this.#nextToEdit(range.head, range.headAfterChunk)
     ) {
       return range;
     }
-    const next = selectionRange(pieceTable, anchor.offset, head.offset, anchor.key, head.key);
+    const next = selectionRange(this.#pieceTable, anchor.offset, head.offset, anchor.key, head.key);
     return unmoved && sameRange(next, range) ? range : next;
-  };
-  return moveRange;
+  }
+}
+
+/**
+ * The local selection carried across the changes of one APPLY_REMOTE batch:
+ * `insertionKey` gives the placement key for text a change inserts, and
+ * `applyEdit` moves the selection past the change.
+ */
+export interface RemoteSelectionTracker {
+  insertionKey(pieceTable: PieceTableState, offset: number): FittedKey;
+  applyEdit(pieceTable: PieceTableState, start: number, end: number, inserted: number): void;
+  selection(): SelectionState;
+}
+
+/**
+ * A tracker for `selection` across one APPLY_REMOTE batch. A single range,
+ * the usual selection, moves past each change directly, which costs O(1) per
+ * change without the sorted index `RemoteBatchSelection` builds. More ranges
+ * use that index, so a change costs only the ranges next to it.
+ */
+export function remoteSelectionTracker(selection: SelectionState): RemoteSelectionTracker {
+  return selection.ranges.length === 1
+    ? new SequentialRemoteSelection(selection)
+    : new RemoteBatchSelection(selection);
+}
+
+/**
+ * Carries the selection across a batch by moving it past each change in turn,
+ * O(R) per change in the number of ranges R. `RemoteBatchSelection` gives the
+ * same selections and keys.
+ */
+class SequentialRemoteSelection implements RemoteSelectionTracker {
+  #selection: SelectionState;
+
+  constructor(selection: SelectionState) {
+    this.#selection = selection;
+  }
+
+  insertionKey(pieceTable: PieceTableState, offset: number): FittedKey {
+    return insertionKey(pieceTable, this.#selection, offset);
+  }
+
+  applyEdit(pieceTable: PieceTableState, start: number, end: number, inserted: number): void {
+    this.#selection = moveSelectionPastEdit(
+      pieceTable,
+      this.#selection,
+      start,
+      end,
+      inserted,
+      true,
+    );
+  }
+
+  selection(): SelectionState {
+    return this.#selection;
+  }
 }
 
 /**
@@ -460,7 +555,7 @@ function rangeMover(
  * key fits, and the gap key there, depend only on the bytes on either side of
  * the endpoint (see `moveSelectionPastEdit`).
  */
-export class RemoteBatchSelection {
+export class RemoteBatchSelection implements RemoteSelectionTracker {
   readonly #original: SelectionState;
   /** Each range with its current stored keys. Its offsets may be stale. */
   readonly #ranges: SelectionRange[];
@@ -536,8 +631,8 @@ export class RemoteBatchSelection {
       this.#seen[index] = stamp;
       touched.push(index);
     }
-    const moveRange = rangeMover(pieceTable, start, end, inserted, true);
-    for (const index of touched) this.#ranges[index] = moveRange(this.#liveRange(index));
+    const mover = new RangeMover(pieceTable, start, end, inserted, true);
+    for (const index of touched) this.#ranges[index] = mover.moveRange(this.#liveRange(index));
     if (delta !== 0 && hi < count) this.#shift(hi, delta);
     // An endpoint outside [lo, hi) of a moved range lies before `start` or
     // after `end`, so it stayed or shifted as every endpoint there did.
@@ -657,6 +752,11 @@ export class RemoteBatchSelection {
 // its offset, so the anchored form depends only on the selection. Selections
 // are immutable, so cache it per selection object and share it across edits.
 const unchunkedCache = new WeakMap<SelectionState, HistorySelectionState>();
+/**
+ * The live selection each unchunked history selection was anchored from, when
+ * that selection stores no keys (see `resolveSelection`).
+ */
+const unchunkedSource = new WeakMap<HistorySelectionState, SelectionState>();
 
 function anchorUnchunked(selection: SelectionState): HistorySelectionState {
   const cached = unchunkedCache.get(selection);
@@ -674,6 +774,11 @@ function anchorUnchunked(selection: SelectionState): HistorySelectionState {
     selection.primaryIndex,
   );
   unchunkedCache.set(selection, anchored);
+  // Without stored keys, resolving `anchored` where its offsets are still
+  // boundaries builds ranges equal to `selection`'s, so it can be reused.
+  if (selection.ranges.every((range) => !rangeHasKey(range))) {
+    unchunkedSource.set(anchored, selection);
+  }
   return anchored;
 }
 
@@ -682,6 +787,48 @@ function anchorUnchunked(selection: SelectionState): HistorySelectionState {
  * loaded-chunk lengths (see `anchorSelection`).
  */
 function anchorChunked(
+  layout: KeyLayout,
+  loaded: LoadedNode | null,
+  selection: SelectionState,
+): HistorySelectionState {
+  // An edit anchors the selection it comes from in the document before it,
+  // and the entry before it anchors the same selection in the same document
+  // as its selection after. The result depends only on these inputs, which
+  // are immutable, so the second call reuses the first.
+  const memo = chunkedMemo.get(selection);
+  if (
+    memo !== undefined &&
+    memo.root === layout.root &&
+    memo.totalLength === layout.totalLength &&
+    memo.nextExpectedChunk === layout.nextExpectedChunk &&
+    memo.loaded === loaded
+  ) {
+    return memo.anchored;
+  }
+  const anchored = anchorChunkedUncached(layout, loaded, selection);
+  chunkedMemo.set(selection, {
+    root: layout.root,
+    totalLength: layout.totalLength,
+    nextExpectedChunk: layout.nextExpectedChunk,
+    loaded,
+    anchored,
+  });
+  return anchored;
+}
+
+/** The latest chunked anchoring of each selection, with the inputs it used. */
+const chunkedMemo = new WeakMap<
+  SelectionState,
+  {
+    readonly root: KeyLayout["root"];
+    readonly totalLength: number;
+    readonly nextExpectedChunk: number;
+    readonly loaded: LoadedNode | null;
+    readonly anchored: HistorySelectionState;
+  }
+>();
+
+function anchorChunkedUncached(
   layout: KeyLayout,
   loaded: LoadedNode | null,
   selection: SelectionState,
@@ -885,6 +1032,17 @@ export function resolveSelection(
     const total = pieceTable.totalLength;
     const within = (offset: number) =>
       byteOffset(nextBoundary(pieceTable, Math.max(0, Math.min(offset, total))));
+    // The selection this was anchored from resolves to itself while every
+    // offset is still a boundary in the document.
+    const source = unchunkedSource.get(selection);
+    if (
+      source !== undefined &&
+      source.ranges.every(
+        (range) => within(range.anchor) === range.anchor && within(range.head) === range.head,
+      )
+    ) {
+      return source;
+    }
     return freezeSelection(
       selection.ranges.map(
         (range): SelectionRange =>

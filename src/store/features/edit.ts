@@ -618,35 +618,40 @@ function pushEntry(state: DocumentState, entry: HistoryEntry): DocumentState {
  * This formalizes the duality between applyChange and applyInverseChange.
  */
 export function invertChange(change: HistoryChange): HistoryChange {
-  const anchor = { position: change.position, afterChunk: change.afterChunk };
+  // Built field by field rather than with conditional spreads, which are slow
+  // on this per-step path. Optional byte fields are set only when present.
+  const { position, afterChunk } = change;
   switch (change.type) {
     case "insert":
-      return Object.freeze({
-        type: "delete" as const,
-        ...anchor,
-        ...(change.bytes !== undefined && { bytes: change.bytes }),
+    case "delete": {
+      const inverted: {
+        -readonly [K in keyof HistoryDeleteChange]: K extends "type"
+          ? "insert" | "delete"
+          : HistoryDeleteChange[K];
+      } = {
+        type: change.type === "insert" ? "delete" : "insert",
+        position,
+        afterChunk,
         text: change.text,
         byteLength: change.byteLength,
-      });
-    case "delete":
-      return Object.freeze({
-        type: "insert" as const,
-        ...anchor,
-        ...(change.bytes !== undefined && { bytes: change.bytes }),
-        text: change.text,
-        byteLength: change.byteLength,
-      });
-    case "replace":
-      return Object.freeze({
-        type: "replace" as const,
-        ...anchor,
-        ...(change.oldBytes !== undefined && { bytes: change.oldBytes }),
+      };
+      if (change.bytes !== undefined) inverted.bytes = change.bytes;
+      return Object.freeze(inverted as HistoryChange);
+    }
+    case "replace": {
+      const inverted: { -readonly [K in keyof HistoryReplaceChange]: HistoryReplaceChange[K] } = {
+        type: "replace",
+        position,
+        afterChunk,
         text: change.oldText,
         byteLength: change.oldByteLength,
-        ...(change.bytes !== undefined && { oldBytes: change.bytes }),
         oldText: change.text,
         oldByteLength: change.byteLength,
-      });
+      };
+      if (change.oldBytes !== undefined) inverted.bytes = change.oldBytes;
+      if (change.bytes !== undefined) inverted.oldBytes = change.bytes;
+      return Object.freeze(inverted);
+    }
   }
 }
 
@@ -692,8 +697,10 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
             : "which holds bytes under another key"),
     );
   }
+  // Fields are listed outright, with undefined or false for absent bytes,
+  // rather than spread in: this runs for every change undo and redo replay.
   const insertBytes =
-    change.bytes !== undefined ? { insertBytes: unwrapReadonlyUint8Array(change.bytes) } : {};
+    change.bytes !== undefined ? unwrapReadonlyUint8Array(change.bytes) : undefined;
   switch (change.type) {
     case "insert":
       return applyUntrackedEdit(
@@ -702,7 +709,7 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
           kind: "insert",
           position,
           insertText: change.text,
-          ...insertBytes,
+          insertBytes,
           placement: { kind: "checked", key: change.afterChunk },
         },
         state.revision + 1,
@@ -716,7 +723,7 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
           position,
           deleteEnd: byteOffset(position + change.byteLength),
           deletedText: change.text,
-          ...(change.bytes !== undefined && { deletedTextInexact: true }),
+          deletedTextInexact: change.bytes !== undefined,
         },
         state.revision + 1,
         true,
@@ -729,9 +736,9 @@ export function applyChange(state: DocumentState, change: HistoryChange): Docume
           position,
           deleteEnd: byteOffset(position + change.oldByteLength),
           deletedText: change.oldText,
-          ...(change.oldBytes !== undefined && { deletedTextInexact: true }),
+          deletedTextInexact: change.oldBytes !== undefined,
           insertText: change.text,
-          ...insertBytes,
+          insertBytes,
           placement: { kind: "checked", key: change.afterChunk },
         },
         state.revision + 1,
@@ -1034,34 +1041,42 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   }
   const first = deleted.runs[0] ?? { text: "", length: 0 };
   const firstBytes = first.bytes;
-  changes.push(
-    Object.freeze(
-      op.kind === "replace"
-        ? {
-            type: "replace" as const,
-            ...anchor,
-            text: op.insertText,
-            byteLength: byteLength(insertedLength),
-            ...(firstBytes !== undefined && { oldBytes: firstBytes }),
-            oldText: first.text,
-            oldByteLength: byteLength(first.length),
-          }
-        : op.kind === "insert"
-          ? {
-              type: "insert" as const,
-              ...anchor,
-              text: op.insertText,
-              byteLength: byteLength(insertedLength),
-            }
-          : {
-              type: "delete" as const,
-              ...anchor,
-              ...(firstBytes !== undefined && { bytes: firstBytes }),
-              text: first.text,
-              byteLength: byteLength(first.length),
-            },
-    ),
-  );
+  // Built without object spread, as this runs on every edit. The exact bytes
+  // are set only when the text does not encode them.
+  const { position: anchoredPosition, afterChunk } = anchor;
+  let change: HistoryChange;
+  if (op.kind === "replace") {
+    const replace: { -readonly [K in keyof HistoryReplaceChange]: HistoryReplaceChange[K] } = {
+      type: "replace",
+      position: anchoredPosition,
+      afterChunk,
+      text: op.insertText,
+      byteLength: byteLength(insertedLength),
+      oldText: first.text,
+      oldByteLength: byteLength(first.length),
+    };
+    if (firstBytes !== undefined) replace.oldBytes = firstBytes;
+    change = replace;
+  } else if (op.kind === "insert") {
+    change = {
+      type: "insert",
+      position: anchoredPosition,
+      afterChunk,
+      text: op.insertText,
+      byteLength: byteLength(insertedLength),
+    };
+  } else {
+    const deletion: { -readonly [K in keyof HistoryDeleteChange]: HistoryDeleteChange[K] } = {
+      type: "delete",
+      position: anchoredPosition,
+      afterChunk,
+      text: first.text,
+      byteLength: byteLength(first.length),
+    };
+    if (firstBytes !== undefined) deletion.bytes = firstBytes;
+    change = deletion;
+  }
+  changes.push(Object.freeze(change));
   // Timestamp-less hand-written actions remain deterministic. Normal callers use
   // DocumentActions, which captures wall-clock time before reduction.
   newState = historyPush(

@@ -12,7 +12,7 @@ import { getText, isUtf8Boundary } from "../core/piece-table.js";
 import { validatePosition, validateRange, applyEdit, applyUntrackedEdit } from "./edit.js";
 import { getRedoCount, getUndoCount, historyUndo, historyRedo } from "./history.js";
 import {
-  RemoteBatchSelection,
+  remoteSelectionTracker,
   selectionFromRanges,
   selectionRangesWithKeys,
 } from "./history-anchor.js";
@@ -261,8 +261,8 @@ export function documentReducer(state: DocumentState, action: DocumentAction): D
       // stays on the text it was on. A caret where a change inserts text stays
       // before it (see `moveSelectionPastEdit`). The batch carries the
       // selection across its changes, so a change costs only the ranges next
-      // to it (see `RemoteBatchSelection`).
-      const selection = new RemoteBatchSelection(state.selection);
+      // to it (see `remoteSelectionTracker`).
+      const selection = remoteSelectionTracker(state.selection);
       for (const change of action.changes) {
         if (change.type === "insert" && change.text.length > 0) {
           // Normalize line endings on remote inserts the same way local inserts are treated,
