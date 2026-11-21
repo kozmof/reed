@@ -1880,10 +1880,13 @@ it("bounds batch fetch concurrency and continues after individual failures", asy
   resolvers.get(1)!(makeBytes("ccccdddd"));
   await vi.waitFor(() => expect(resolvers.has(3)).toBe(true));
   expect(loadChunk).toHaveBeenCalledTimes(4);
+  // The call rejected at the first failure; the other fetches still load.
+  await rejected;
   resolvers.get(2)!(makeBytes("eeeeffff"));
   resolvers.get(3)!(makeBytes("gggghhhh"));
-  await rejected;
-  expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2, 3]);
+  await vi.waitFor(() =>
+    expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([1, 2, 3]),
+  );
   manager.dispose();
   store.dispose();
 });
@@ -1898,6 +1901,164 @@ it.each([0, -1, NaN, 1.5, Infinity])(
     store.dispose();
   },
 );
+
+describe("ChunkManager ownership of resident chunks", () => {
+  const four = { 0: "aaaaaaa\n", 1: "bbbbbbb\n", 2: "ccccccc\n", 3: "ddddddd\n" };
+  const setup = (loader = makeLoader(four)) => {
+    const store = createDocumentStore({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 4,
+      reconcileMode: "none",
+    });
+    const manager = createChunkManager(store, loader, { maxLoadedChunks: 2 });
+    return { store, manager };
+  };
+  const resident = (store: DocumentStore) =>
+    [...store.getSnapshot().pieceTable.chunkMap.keys()].sort();
+
+  it("evicts chunks a rolled-back pass evicted, though the rollback restores the map it scanned", async () => {
+    const { store, manager } = setup();
+    // An earlier eviction: chunk 0 leaves memory.
+    for (const i of [0, 1, 2]) await manager.ensureLoaded(i);
+    expect(resident(store)).toEqual([1, 2]);
+    manager.setActiveChunks([1, 2, 3]);
+    await manager.ensureLoaded(3);
+    expect(resident(store)).toEqual([1, 2, 3]);
+
+    store.beginTransaction();
+    manager.setActiveChunks([]);
+    expect(resident(store)).toEqual([2, 3]);
+    // The rollback restores the very chunkMap the pass scanned.
+    store.rollbackTransaction();
+    expect(resident(store)).toEqual([1, 2, 3]);
+
+    // Chunk 1 is still the manager's, and the least recently used.
+    manager.setActiveChunks([]);
+    expect(resident(store)).toEqual([2, 3]);
+    manager.dispose();
+  });
+
+  it("evicts a chunk another path evicted once a rollback restores it", async () => {
+    const { store, manager } = setup();
+    manager.setActiveChunks([0, 1, 2]);
+    for (const i of [0, 1, 2]) await manager.ensureLoaded(i);
+
+    store.beginTransaction();
+    store.dispatch(DocumentActions.evictChunk(0));
+    // The pass forgets chunk 0, which another path evicted.
+    manager.setActiveChunks([1, 2]);
+    store.rollbackTransaction();
+    expect(resident(store)).toEqual([0, 1, 2]);
+
+    manager.setActiveChunks([1, 2]);
+    expect(resident(store)).toEqual([1, 2]);
+    manager.dispose();
+  });
+
+  it("does not evict a chunk the app loaded with the buffer the manager's loader returned", async () => {
+    const cache = new Map<number, Uint8Array>();
+    const loader = {
+      loadChunk: vi.fn(async (i: number) => {
+        if (!cache.has(i)) cache.set(i, makeBytes(four[i as keyof typeof four]));
+        return cache.get(i)!;
+      }),
+    };
+    const { store, manager } = setup(loader);
+    for (const i of [0, 1, 2]) await manager.ensureLoaded(i);
+    expect(resident(store)).toEqual([1, 2]);
+    // The app loads chunk 0 itself, with the very buffer the loader cached.
+    store.dispatch(DocumentActions.loadChunk(0, cache.get(0)!));
+    manager.setActiveChunks([]);
+    expect(resident(store)).toEqual([0, 2]);
+    manager.dispose();
+  });
+
+  it("does not take over a chunk loaded outside it when asked to ensure it", async () => {
+    const { store, manager } = setup();
+    store.dispatch(DocumentActions.loadChunk(0, makeBytes(four[0])));
+    await manager.ensureLoaded(0);
+    await manager.ensureLoadedMany([0]);
+    await manager.ensureLoaded(1);
+    await manager.ensureLoaded(2);
+    // Chunk 0 is not the manager's to evict; chunk 1 goes instead.
+    expect(resident(store)).toEqual([0, 2]);
+    manager.dispose();
+  });
+});
+
+describe("ChunkManager.ensureLoadedMany settling", () => {
+  const four = { 0: "aaaaaaa\n", 1: "bbbbbbb\n", 2: "ccccccc\n", 3: "ddddddd\n" };
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const resident = (store: DocumentStore) =>
+    [...store.getSnapshot().pieceTable.chunkMap.keys()].sort();
+
+  it("rejects at the first failure while a sibling fetch hangs, and holds until it is canceled", async () => {
+    const store = createDocumentStore({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 4,
+      reconcileMode: "none",
+    });
+    const loader = {
+      // Chunk 1 never settles and ignores its abort signal.
+      loadChunk: vi.fn(async (i: number): Promise<Uint8Array> => {
+        if (i === 0) throw new Error("chunk 0 down");
+        if (i === 1) return new Promise<Uint8Array>(() => {});
+        return makeBytes(four[i as keyof typeof four]);
+      }),
+    };
+    const manager = createChunkManager(store, loader, { maxLoadedChunks: 1 });
+    manager.setActiveChunks([2, 3]);
+    await manager.ensureLoaded(2);
+    await manager.ensureLoaded(3);
+
+    await expect(manager.ensureLoadedMany([2, 0, 1])).rejects.toThrow("chunk 0 down");
+    // Chunk 1's fetch is still running, so chunk 2 stays held.
+    manager.setActiveChunks([3]);
+    expect(resident(store)).toEqual([2, 3]);
+
+    // Canceling the hung fetch settles it, releasing the holds.
+    manager.cancelPendingOutside([]);
+    await tick();
+    await tick();
+    expect(resident(store)).toEqual([3]);
+    manager.dispose();
+  });
+
+  it("waits for an open transaction to close before its deferred eviction pass", async () => {
+    const store = createDocumentStore({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 3,
+      reconcileMode: "none",
+    });
+    const manager = createChunkManager(store, makeLoader(four), { maxLoadedChunks: 2 });
+    await manager.ensureLoadedMany([0, 1, 2]);
+    store.beginTransaction();
+    await tick();
+    expect(resident(store)).toEqual([0, 1, 2]);
+    store.commitTransaction();
+    await tick();
+    expect(resident(store)).toEqual([1, 2]);
+    manager.dispose();
+  });
+
+  it("leaves no timer behind once disposed", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const store = createDocumentStore({
+        chunkSize: CHUNK_SIZE,
+        totalFileSize: CHUNK_SIZE * 3,
+        reconcileMode: "none",
+      });
+      const manager = createChunkManager(store, makeLoader(four), { maxLoadedChunks: 2 });
+      await manager.ensureLoadedMany([0, 1, 2]);
+      expect(vi.getTimerCount()).toBe(1);
+      manager.dispose();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe("ChunkManager eviction after another path evicted a chunk", () => {
   it("does not offer a chunk that is already gone", async () => {

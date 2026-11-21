@@ -530,6 +530,11 @@ function createStoreOverState(
     }
   }
 
+  /** Whether a transaction is open. A disposed store has none. */
+  function isInTransaction(): boolean {
+    return !disposed && transaction.isActive;
+  }
+
   /**
    * Batch multiple actions into a single state update.
    * Listeners are notified only once after all actions complete.
@@ -686,6 +691,7 @@ function createStoreOverState(
     beginTransaction,
     commitTransaction,
     rollbackTransaction,
+    isInTransaction,
     getEagerSnapshot,
     scheduleReconciliation,
     reconcileNow,

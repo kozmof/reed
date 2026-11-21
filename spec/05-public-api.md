@@ -44,6 +44,7 @@ Returns `ReconcilableDocumentStore` with:
 - `beginTransaction()`
 - `commitTransaction()`
 - `rollbackTransaction()`
+- `isInTransaction()` — whether a transaction is open
 - `scheduleReconciliation()`
 - `reconcileNow()` — reconcile and return `DocumentState<'eager'>`
 - `reconcileIfCurrent(snapshot)` — reconcile only if `snapshot` is still current, returning `DocumentState<'eager'> | null`

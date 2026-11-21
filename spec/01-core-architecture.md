@@ -84,7 +84,7 @@ Notes:
 - `subscribe`, `getSnapshot`, `getServerSnapshot`
 - `isCurrentSnapshot`
 - `dispatch`, `batch`
-- explicit transaction controls: `beginTransaction`, `commitTransaction`, `rollbackTransaction`
+- explicit transaction controls: `beginTransaction`, `commitTransaction`, `rollbackTransaction`, `isInTransaction`
 - `scheduleReconciliation`, `reconcileNow`, `setViewport`
 - `reconcileIfCurrent`, `getEagerSnapshot`, `whenReconciled`
 - `emergencyReset`
