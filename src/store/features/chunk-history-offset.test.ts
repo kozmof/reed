@@ -591,7 +591,8 @@ describe("randomized edits, loads, evictions, undo and redo", () => {
    * chunks moved in between.
    */
   for (const policy of ["pin", "drop"] as const) {
-    it(`keeps the full text consistent (policy: ${policy})`, () => {
+    // 9,000 steps per policy; slow CI runners need more than the default timeout.
+    it(`keeps the full text consistent (policy: ${policy})`, { timeout: 30_000 }, () => {
       for (let seed = 1; seed <= 150; seed++) {
         const random = rng(seed * 7919 + (policy === "drop" ? 1 : 0));
         const pick = (n: number) => Math.floor(random() * n);

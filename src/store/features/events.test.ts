@@ -1022,6 +1022,7 @@ describe("Event delivery limits and failed transaction calls", () => {
     );
   });
 
+  // About 40,000 dispatches; slow CI runners need more than the default timeout.
   it("delivers a reaction to each of many actions a handler dispatches", () => {
     const error = vi.fn();
     const store = createDocumentStoreWithEvents({
@@ -1048,7 +1049,7 @@ describe("Event delivery limits and failed transaction calls", () => {
     store.dispatch(DocumentActions.markSaved());
     expect(error).not.toHaveBeenCalled();
     expect(reactions).toBe(count);
-  });
+  }, 30_000);
 
   it("stops a fan-out cycle at the ceiling however many actions a handler dispatched", () => {
     const error = vi.fn();

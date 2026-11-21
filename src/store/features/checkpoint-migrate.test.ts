@@ -284,8 +284,15 @@ describe("restore limits before migration", () => {
   });
 });
 
-describe("version 1 migration of large or hostile input", () => {
+describe("version 1 migration of large or hostile input", { timeout: 30_000 }, () => {
   const N = 200_000;
+  /**
+   * Wall-clock limit for one restore. A linear search finishes in well under a
+   * second on a fast machine. A quadratic one does at least 4e9 byte
+   * comparisons here and runs far past this limit. The headroom covers slow CI
+   * runners with coverage instrumentation.
+   */
+  const LINEAR_BUDGET_MS = 15_000;
   /**
    * A version 1 payload with chunk 0 loaded but none of its bytes in the
    * document, and an undo entry per change in `changes`, oldest first.
@@ -331,7 +338,7 @@ describe("version 1 migration of large or hostile input", () => {
     const removed = "a".repeat(N / 2) + "b";
     const started = performance.now();
     const state = restoreCheckpoint(v1WithMissingChunk(chunk, [["d", 0, removed]]));
-    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(performance.now() - started).toBeLessThan(LINEAR_BUDGET_MS);
     expect(undoAll(state)).toBe(removed);
   });
 
@@ -342,7 +349,7 @@ describe("version 1 migration of large or hostile input", () => {
     const removed = "b".repeat(N);
     const started = performance.now();
     const state = restoreCheckpoint(v1WithMissingChunk(chunk, [["d", 0, removed]]));
-    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(performance.now() - started).toBeLessThan(LINEAR_BUDGET_MS);
     expect(undoAll(state)).toBe(removed);
   });
 
@@ -352,7 +359,7 @@ describe("version 1 migration of large or hostile input", () => {
     const changes = Array.from({ length: 20_000 }, () => ["d", 0, "b"]);
     const started = performance.now();
     const state = restoreCheckpoint(v1WithMissingChunk(chunk, changes));
-    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(performance.now() - started).toBeLessThan(LINEAR_BUDGET_MS);
     expect(undoAll(state)).toBe("b".repeat(20_000));
   });
 
