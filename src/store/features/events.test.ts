@@ -1245,6 +1245,28 @@ describe("Event delivery limits and failed transaction calls", () => {
     expect(inserted).toEqual(["A"]);
   });
 
+  it("calls the base store's isInTransaction on the base store", () => {
+    const base = createDocumentStore();
+    // A wrapper whose isInTransaction reaches the base store through `this`.
+    const wrapper = Object.assign(Object.create(base) as typeof base, {
+      inner: base,
+      isInTransaction(this: { inner: typeof base }) {
+        return this.inner.isInTransaction();
+      },
+    });
+    const store = withEvents(
+      wrapper,
+      (action: DocumentAction) => ({ state: base.dispatch(action), historyDropped: null }),
+      undefined,
+    );
+    const { isInTransaction } = store;
+    expect(isInTransaction()).toBe(false);
+    store.beginTransaction();
+    expect(store.isInTransaction()).toBe(true);
+    store.commitTransaction();
+    expect(store.isInTransaction()).toBe(false);
+  });
+
   it("emits events for dispatches after a failed begin", () => {
     const { store, inserted, failNext } = storeWithFailingCall("beginTransaction");
     store.beginTransaction();

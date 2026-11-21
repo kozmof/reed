@@ -2118,22 +2118,24 @@ describe("ChunkManager ownership of resident chunks", () => {
     manager.dispose();
   });
 
-  it("adopts the rest of a batch when the store drops one of its chunks", async () => {
+  it("succeeds a batch one of whose chunks a listener evicts as the load notifies it", async () => {
     const store = createDocumentStore({
       chunkSize: CHUNK_SIZE,
       totalFileSize: CHUNK_SIZE * 4,
       reconcileMode: "none",
     });
     const manager = createChunkManager(store, makeLoader(four), { maxLoadedChunks: 1 });
-    // A listener evicts chunk 1 as the batch's LOAD_CHUNKS notifies it.
+    // A listener evicts chunk 1 as the batch's LOAD_CHUNKS notifies it. The
+    // store kept the load, so the call does not fail.
     let dropped = false;
     const unsubscribe = store.subscribe(() => {
       if (dropped || !store.getSnapshot().pieceTable.chunkMap.has(1)) return;
       dropped = true;
       store.dispatch(DocumentActions.evictChunk(1));
     });
-    await expect(manager.ensureLoadedMany([1, 2])).rejects.toThrow("Chunk 1 was fetched");
+    await expect(manager.ensureLoadedMany([1, 2])).resolves.toBeUndefined();
     unsubscribe();
+    expect(dropped).toBe(true);
     expect(resident(store)).toEqual([2]);
     // Chunk 2 is the manager's, so loading chunk 0 evicts it.
     await manager.ensureLoaded(0);
@@ -2632,6 +2634,110 @@ describe("ChunkManager eviction pass after a load", () => {
       "The ChunkManager eviction pass after a load failed",
       expect.objectContaining({ message: "evict refused by wrapper" }),
     );
+    manager.dispose();
+  });
+
+  it("applies setActiveChunks and reports the error when its pass throws", async () => {
+    const store = makeStore();
+    const error = vi.fn();
+    const manager = createChunkManager(
+      throwingOnEvict(store),
+      makeLoader({ 0: "aaaabbbb", 1: "ccccdddd" }),
+      { maxLoadedChunks: 1, logger: { error } },
+    );
+    manager.setActiveChunks([0, 1]);
+    await manager.ensureLoadedMany([0, 1]);
+    expect(() => manager.setActiveChunks([])).not.toThrow();
+    expect(error).toHaveBeenCalledWith(
+      "The ChunkManager eviction pass after setActiveChunks failed",
+      expect.objectContaining({ message: "evict refused by wrapper" }),
+    );
+    manager.dispose();
+  });
+
+  it("ignores setActiveChunks after dispose", async () => {
+    const store = makeStore();
+    const manager = createChunkManager(store, makeLoader({ 0: "aaaabbbb", 1: "ccccdddd" }), {
+      maxLoadedChunks: 1,
+    });
+    await manager.ensureLoadedMany([0, 1]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const dispatch = vi.spyOn(store, "dispatch");
+    manager.dispose();
+    manager.setActiveChunks([]);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+});
+
+describe("ChunkManager batch commit", () => {
+  it("settles a caller deduped onto a batch chunk canceled before a worker reached it", async () => {
+    const store = makeStore();
+    // Chunk 0's loader ignores its signal and never settles, so the batch's
+    // only worker never reaches chunk 1.
+    const loadChunk = vi.fn(async (i: number): Promise<Uint8Array> => {
+      if (i === 0) return new Promise<Uint8Array>(() => {});
+      return makeBytes("ccccdddd");
+    });
+    const manager = createChunkManager(store, { loadChunk }, { maxConcurrentFetches: 1 });
+    const call = manager.ensureLoadedMany([0, 1]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const deduped = manager.ensureLoaded(1);
+    manager.cancelPendingOutside([0]);
+    await expect(deduped).resolves.toBeUndefined();
+    expect(loadChunk).toHaveBeenCalledTimes(1);
+    manager.dispose();
+    await expect(call).resolves.toBeUndefined();
+  });
+
+  it("fails only the chunk whose declared geometry changed before the commit", async () => {
+    const store = createDocumentStore({ chunkSize: CHUNK_SIZE, reconcileMode: "none" });
+    const finish = new Map<number, () => void>();
+    const loadChunk = vi.fn(
+      (i: number) =>
+        new Promise<Uint8Array>((resolve) => {
+          finish.set(i, () => resolve(makeBytes(i === 2 ? "aaaabbbb" : "ccccdddd")));
+        }),
+    );
+    // Declare chunk 3's length, contradicting its bytes, after both fetches
+    // checked their bytes and before the batch commits: the snapshot read
+    // that follows the fetches' two checks.
+    let reads = -1;
+    const wrapper: DocumentStore = {
+      ...store,
+      getSnapshot: () => {
+        if (reads >= 0 && ++reads === 3) {
+          store.dispatch(
+            DocumentActions.declareChunkMetadata([{ chunkIndex: 3, byteLength: 4, lineCount: 1 }]),
+          );
+        }
+        return store.getSnapshot();
+      },
+    };
+    const manager = createChunkManager(wrapper, { loadChunk }, { maxLoadedChunks: 4 });
+    const call = manager.ensureLoadedMany([2, 3]);
+    await vi.waitFor(() => expect(loadChunk).toHaveBeenCalledTimes(2));
+    reads = 0;
+    finish.get(2)!();
+    finish.get(3)!();
+    await expect(call).rejects.toThrow(/declared byteLength=4/);
+    expect(reads).toBeGreaterThanOrEqual(3);
+    const { chunkMap } = store.getSnapshot().pieceTable;
+    expect(chunkMap.has(2)).toBe(true);
+    expect(chunkMap.has(3)).toBe(false);
+    manager.dispose();
+  });
+
+  it("succeeds ensureLoaded when a listener evicts the chunk as the load notifies it", async () => {
+    const store = makeStore();
+    const manager = createChunkManager(store, makeLoader({ 0: "aaaabbbb" }));
+    const unsubscribe = store.subscribe(() => {
+      if (store.getSnapshot().pieceTable.chunkMap.has(0)) {
+        store.dispatch(DocumentActions.evictChunk(0));
+      }
+    });
+    await expect(manager.ensureLoaded(0)).resolves.toBeUndefined();
+    unsubscribe();
+    expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
     manager.dispose();
   });
 });

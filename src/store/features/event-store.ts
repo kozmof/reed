@@ -427,7 +427,7 @@ export function withEvents(
     beginTransaction,
     commitTransaction,
     rollbackTransaction,
-    isInTransaction: baseStore.isInTransaction,
+    isInTransaction: () => baseStore.isInTransaction(),
     emergencyReset,
 
     // Event emitter methods
