@@ -2298,69 +2298,75 @@ describe("ChunkManager ownership of resident chunks", () => {
     second.dispose();
   });
 
-  itWithGc("takes over chunks a manager dropped without dispose owned, once it is collected", async () => {
-    const store = createDocumentStore({
-      chunkSize: CHUNK_SIZE,
-      totalFileSize: CHUNK_SIZE * 4,
-      reconcileMode: "none",
-    });
-    // Held until the first check, so that check always sees it alive.
-    let first: ReturnType<typeof createChunkManager> | null = createChunkManager(
-      store,
-      makeLoader(four),
-      { maxLoadedChunks: 4 },
-    );
-    first.setActiveChunks([0, 1]);
-    await first.ensureLoaded(0);
-    await first.ensureLoaded(1);
-    const dropped = new WeakRef(first);
+  itWithGc(
+    "takes over chunks a manager dropped without dispose owned, once it is collected",
+    async () => {
+      const store = createDocumentStore({
+        chunkSize: CHUNK_SIZE,
+        totalFileSize: CHUNK_SIZE * 4,
+        reconcileMode: "none",
+      });
+      // Held until the first check, so that check always sees it alive.
+      let first: ReturnType<typeof createChunkManager> | null = createChunkManager(
+        store,
+        makeLoader(four),
+        { maxLoadedChunks: 4 },
+      );
+      first.setActiveChunks([0, 1]);
+      await first.ensureLoaded(0);
+      await first.ensureLoaded(1);
+      const dropped = new WeakRef(first);
 
-    const second = createChunkManager(store, makeLoader(four), { maxLoadedChunks: 1 });
-    await second.ensureLoaded(2);
-    await second.ensureLoaded(3);
-    second.setActiveChunks([3]);
-    // Not collected yet, so the first manager's chunks stay.
-    expect(resident(store)).toEqual([0, 1, 3]);
-    first = null;
-
-    const tookOver = await collectUntil(() => {
+      const second = createChunkManager(store, makeLoader(four), { maxLoadedChunks: 1 });
+      await second.ensureLoaded(2);
+      await second.ensureLoaded(3);
       second.setActiveChunks([3]);
-      return resident(store).length === 1;
-    });
-    expect(dropped.deref()).toBeUndefined();
-    expect(tookOver).toBe(true);
-    expect(resident(store)).toEqual([3]);
-    second.dispose();
-  });
+      // Not collected yet, so the first manager's chunks stay.
+      expect(resident(store)).toEqual([0, 1, 3]);
+      first = null;
 
-  itWithGc("takes over chunks of a manager dropped while its eviction pass awaits a commit", async () => {
-    const store = createDocumentStore({
-      chunkSize: CHUNK_SIZE,
-      totalFileSize: CHUNK_SIZE * 4,
-      reconcileMode: "none",
-    });
-    let first: ReturnType<typeof createChunkManager> | null = createChunkManager(
-      store,
-      makeLoader(four),
-      { maxLoadedChunks: 4 },
-    );
-    store.beginTransaction();
-    await first.ensureLoaded(0);
-    await first.ensureLoaded(1);
-    // The deferred pass finds the transaction open and waits for its commit.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const dropped = new WeakRef(first);
-    first = null;
-    // The store's subscription for that pass does not keep the manager alive.
-    expect(await collectUntil(() => dropped.deref() === undefined)).toBe(true);
-    store.commitTransaction();
+      const tookOver = await collectUntil(() => {
+        second.setActiveChunks([3]);
+        return resident(store).length === 1;
+      });
+      expect(dropped.deref()).toBeUndefined();
+      expect(tookOver).toBe(true);
+      expect(resident(store)).toEqual([3]);
+      second.dispose();
+    },
+  );
 
-    const second = createChunkManager(store, makeLoader(four), { maxLoadedChunks: 1 });
-    await second.ensureLoaded(2);
-    second.setActiveChunks([2]);
-    expect(resident(store)).toEqual([2]);
-    second.dispose();
-  });
+  itWithGc(
+    "takes over chunks of a manager dropped while its eviction pass awaits a commit",
+    async () => {
+      const store = createDocumentStore({
+        chunkSize: CHUNK_SIZE,
+        totalFileSize: CHUNK_SIZE * 4,
+        reconcileMode: "none",
+      });
+      let first: ReturnType<typeof createChunkManager> | null = createChunkManager(
+        store,
+        makeLoader(four),
+        { maxLoadedChunks: 4 },
+      );
+      store.beginTransaction();
+      await first.ensureLoaded(0);
+      await first.ensureLoaded(1);
+      // The deferred pass finds the transaction open and waits for its commit.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const dropped = new WeakRef(first);
+      first = null;
+      // The store's subscription for that pass does not keep the manager alive.
+      expect(await collectUntil(() => dropped.deref() === undefined)).toBe(true);
+      store.commitTransaction();
+
+      const second = createChunkManager(store, makeLoader(four), { maxLoadedChunks: 1 });
+      await second.ensureLoaded(2);
+      second.setActiveChunks([2]);
+      expect(resident(store)).toEqual([2]);
+      second.dispose();
+    },
+  );
 
   itWithGc("does not keep a dropped store alive through its chunks' bytes", async () => {
     const { bytes, storeRef } = await (async () => {
@@ -2893,11 +2899,9 @@ describe("ChunkManager batch commit", () => {
             : action,
         ),
     };
-    const manager = createChunkManager(
-      wrapper,
-      makeLoader({ 1: "aaaabbbb", 2: "ccccdddd" }),
-      { maxLoadedChunks: 4 },
-    );
+    const manager = createChunkManager(wrapper, makeLoader({ 1: "aaaabbbb", 2: "ccccdddd" }), {
+      maxLoadedChunks: 4,
+    });
     await expect(manager.ensureLoadedMany([1, 2])).rejects.toThrow(
       "Chunk 1 was fetched but the store did not load it on LOAD_CHUNKS dispatch",
     );

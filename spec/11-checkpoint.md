@@ -186,22 +186,22 @@ string code units. Omitted limits remain unrestricted for backward compatibility
 
 `CheckpointError` carries a stable `code`.
 
-| Code                     | Rejected because                                                                                                                   |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `NOT_A_CHECKPOINT`       | Not an object, wrong `format`, or unparseable JSON                                                                                 |
-| `VERSION_UNSUPPORTED`    | The checkpoint version is not supported by this build                                                                              |
-| `MALFORMED`              | A field is missing or has the wrong runtime type                                                                                   |
-| `PIECE_OUT_OF_BOUNDS`    | A piece range falls outside the buffer it reads from                                                                               |
-| `CHUNK_MISSING`          | A chunk piece names a chunk absent from the payload                                                                                |
-| `CHUNK_ORDER`            | Chunk pieces are not in ascending `chunkIndex` order                                                                               |
-| `LENGTH_MISMATCH`        | Piece lengths do not sum to `totalLength`                                                                                          |
-| `LINE_INDEX_MISMATCH`    | Line lengths do not cover the document                                                                                             |
-| `ID_COLLISION`           | A duplicate id, or an allocator cursor that would reissue one                                                                      |
-| `SELECTION_OUT_OF_RANGE` | A selection offset past the document, or no ranges at all                                                                          |
+| Code                     | Rejected because                                                                                                                                                                               |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NOT_A_CHECKPOINT`       | Not an object, wrong `format`, or unparseable JSON                                                                                                                                             |
+| `VERSION_UNSUPPORTED`    | The checkpoint version is not supported by this build                                                                                                                                          |
+| `MALFORMED`              | A field is missing or has the wrong runtime type                                                                                                                                               |
+| `PIECE_OUT_OF_BOUNDS`    | A piece range falls outside the buffer it reads from                                                                                                                                           |
+| `CHUNK_MISSING`          | A chunk piece names a chunk absent from the payload                                                                                                                                            |
+| `CHUNK_ORDER`            | Chunk pieces are not in ascending `chunkIndex` order                                                                                                                                           |
+| `LENGTH_MISMATCH`        | Piece lengths do not sum to `totalLength`                                                                                                                                                      |
+| `LINE_INDEX_MISMATCH`    | Line lengths do not cover the document                                                                                                                                                         |
+| `ID_COLLISION`           | A duplicate id, or an allocator cursor that would reissue one                                                                                                                                  |
+| `SELECTION_OUT_OF_RANGE` | A selection offset past the document, or no ranges at all                                                                                                                                      |
 | `HISTORY_INVALID`        | Bad limit, bad coalesce timeout, a stack deeper than its limit, a history placement key naming a chunk that has not been loaded, or a history change that replays past the end of its document |
-| `ATTENTION_DANGLING`     | An attention names an unknown piece or an out-of-range boundary                                                                    |
-| `CHUNKED_NORMALIZE`      | `normalized` capture requested for a chunked document                                                                              |
-| `RESOURCE_LIMIT`         | A configured restore resource limit was exceeded                                                                                   |
+| `ATTENTION_DANGLING`     | An attention names an unknown piece or an out-of-range boundary                                                                                                                                |
+| `CHUNKED_NORMALIZE`      | `normalized` capture requested for a chunked document                                                                                                                                          |
+| `RESOURCE_LIMIT`         | A configured restore resource limit was exceeded                                                                                                                                               |
 
 Error messages name the failing field by path, for example
 `pieceTable.pieces[3][2] must be a non-negative safe integer`.
