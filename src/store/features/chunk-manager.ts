@@ -210,12 +210,19 @@ interface ChunkOwner {
    */
   scanForOrphans: boolean;
   /**
-   * The store this manager wraps. A plain property, not a closure: a closure
-   * made inside `createChunkManager` would keep the manager's whole scope,
-   * its loader included, alive for as long as `chunkOwners` holds the owner.
+   * The store this manager wraps. Only the manager holds its owner strongly
+   * (`chunkOwners` and `liveOwners` hold it weakly), so this keeps the store
+   * alive no longer than the manager does.
    */
   readonly store: DocumentStore;
 }
+
+/**
+ * What `chunkOwners` records for a chunk's bytes: undefined when no manager
+ * owns them, `"gone"` when the manager that owned them was dropped without
+ * being disposed and has been collected, and otherwise the owning manager.
+ */
+type RecordedOwner = ChunkOwner | "gone" | undefined;
 
 /**
  * The manager that owns each chunk, keyed by the bytes the store holds for
@@ -229,7 +236,14 @@ interface ChunkOwner {
  * on every load bringing bytes of its own (`DocumentActions.loadChunk` copies
  * them). chunk-manager.test.ts pins both ("bytes identity of resident chunks").
  */
-const chunkOwners = new WeakMap<ReadonlyUint8Array, ChunkOwner>();
+const chunkOwners = new WeakMap<ReadonlyUint8Array, WeakRef<ChunkOwner>>();
+
+/** The manager recorded as owning `bytes` (see `RecordedOwner`). */
+function ownerOf(bytes: ReadonlyUint8Array): RecordedOwner {
+  const ref = chunkOwners.get(bytes);
+  if (ref === undefined) return undefined;
+  return ref.deref() ?? "gone";
+}
 
 /**
  * Every manager not yet disposed, held weakly so a manager the app drops
@@ -240,15 +254,17 @@ const chunkOwners = new WeakMap<ReadonlyUint8Array, ChunkOwner>();
 const liveOwners = new Set<WeakRef<ChunkOwner>>();
 
 /**
- * Forget managers the app dropped without disposing them, which a dispose
- * would otherwise be the only thing to prune. O(M) for M live managers.
+ * Forgets a manager the app dropped without disposing it, once it is
+ * collected. Its chunks are then orphans, recorded as `"gone"`, and which
+ * stores hold them can no longer be told, so every live manager scans.
  */
-function pruneLiveOwners(): void {
-  for (const ref of liveOwners) {
-    const owner = ref.deref();
-    if (owner === undefined || owner.disposed) liveOwners.delete(ref);
+const droppedOwners = new FinalizationRegistry<WeakRef<ChunkOwner>>((ref) => {
+  liveOwners.delete(ref);
+  for (const other of liveOwners) {
+    const owner = other.deref();
+    if (owner !== undefined) owner.scanForOrphans = true;
   }
-}
+});
 
 /** A chunk's fetched bytes, ready to load. */
 interface FetchedChunk {
@@ -261,8 +277,8 @@ const NO_FAILURES: ReadonlyMap<number, unknown> = new Map();
 
 /** Whether a manager that has not been disposed owns `bytes`. */
 function hasLiveOwner(bytes: ReadonlyUint8Array): boolean {
-  const owner = chunkOwners.get(bytes);
-  return owner !== undefined && !owner.disposed;
+  const owner = ownerOf(bytes);
+  return owner !== undefined && owner !== "gone" && !owner.disposed;
 }
 
 /** No chunks, for passes that protect none beyond the usual. */
@@ -363,8 +379,8 @@ export function createChunkManager(
   // was created leaves chunks a rollback can restore.
   const self: ChunkOwner = { disposed: false, scanForOrphans: true, store };
   const selfRef = new WeakRef(self);
-  pruneLiveOwners();
   liveOwners.add(selfRef);
+  droppedOwners.register(self, selfRef, selfRef);
 
   // Recency of the chunks this manager owns, least recently used first.
   // Eviction passes drop entries for chunks no longer resident with bytes the
@@ -485,12 +501,12 @@ export function createChunkManager(
     chunkIndex: number,
   ): boolean {
     const bytes = chunkMap.get(chunkIndex);
-    return bytes !== undefined && chunkOwners.get(bytes) === self;
+    return bytes !== undefined && ownerOf(bytes) === self;
   }
 
   /** Take ownership of `chunkIndex`, resident with `bytes`, as the most recently used. */
   function adopt(chunkIndex: number, bytes: ReadonlyUint8Array): void {
-    chunkOwners.set(bytes, self);
+    chunkOwners.set(bytes, selfRef);
     lru.delete(chunkIndex);
     lru.add(chunkIndex);
   }
@@ -518,9 +534,9 @@ export function createChunkManager(
     if (state === "closed" && !self.scanForOrphans) return;
     let found: Array<readonly [number, ReadonlyUint8Array]> | null = null;
     for (const [chunkIndex, bytes] of chunkMap) {
-      const owner = chunkOwners.get(bytes);
+      const owner = ownerOf(bytes);
       if (owner === undefined) continue;
-      if (owner === self ? !lru.has(chunkIndex) : owner.disposed) {
+      if (owner === self ? !lru.has(chunkIndex) : owner === "gone" || owner.disposed) {
         (found ??= []).push([chunkIndex, bytes]);
       }
     }
@@ -529,7 +545,7 @@ export function createChunkManager(
     const rest = [...lru];
     lru.clear();
     for (const [chunkIndex, bytes] of found) {
-      chunkOwners.set(bytes, self);
+      chunkOwners.set(bytes, selfRef);
       lru.add(chunkIndex);
     }
     for (const chunkIndex of rest) lru.add(chunkIndex);
@@ -943,7 +959,11 @@ export function createChunkManager(
    * load that succeeds always leaves its chunk in memory, as `ensureLoaded`
    * promises. A state change alone does not show the load took effect: a
    * store wrapper can change state before forwarding a load the reducer then
-   * refuses. `batch` chooses LOAD_CHUNKS over LOAD_CHUNK.
+   * refuses. The error tells the two apart as far as it can: the chunk map
+   * left as it was means the store refused the load, while a changed one
+   * means a listener may have evicted the chunk, which a retry would not
+   * help while that listener keeps evicting it. `batch` chooses LOAD_CHUNKS
+   * over LOAD_CHUNK.
    */
   function commitLoads(
     chunks: readonly FetchedChunk[],
@@ -978,7 +998,9 @@ export function createChunkManager(
       fail(
         chunkIndex,
         new Error(
-          `Chunk ${chunkIndex} was fetched but the store did not retain it after ${action.type} dispatch`,
+          after === before
+            ? `Chunk ${chunkIndex} was fetched but the store did not load it on ${action.type} dispatch`
+            : `Chunk ${chunkIndex} was fetched and dispatched with ${action.type}, but was not in memory afterwards: the store refused it, or a store listener evicted it`,
         ),
       );
     }
@@ -1295,20 +1317,26 @@ export function createChunkManager(
    * With a transaction open, or one the store cannot rule out, a rollback
    * could still restore chunks it owned that have left memory, so every live
    * manager scans. Call before `lru` is cleared.
+   *
+   * Never throws, so a dispose always finishes: a store, this one or
+   * another manager's, whose `getSnapshot` throws, such as a wrapper that
+   * throws once disposed, is taken as possibly holding the orphans.
    */
   function markOrphanScans(): void {
     let everyone = true;
+    let ours: ReadonlyMap<number, ReadonlyUint8Array> | null = null;
     try {
       everyone = transactionState() !== "closed";
+      if (!everyone) ours = store.getSnapshot().pieceTable.chunkMap;
     } catch {
       // A store that cannot answer is treated as having a transaction open.
+      everyone = true;
     }
     const orphans: Array<readonly [number, ReadonlyUint8Array]> = [];
-    const ours = everyone ? null : store.getSnapshot().pieceTable.chunkMap;
     if (ours !== null) {
       for (const chunkIndex of lru) {
         const bytes = ours.get(chunkIndex);
-        if (bytes !== undefined && chunkOwners.get(bytes) === self) {
+        if (bytes !== undefined && ownerOf(bytes) === self) {
           orphans.push([chunkIndex, bytes]);
         }
       }
@@ -1329,7 +1357,13 @@ export function createChunkManager(
         owner.scanForOrphans = true;
         continue;
       }
-      const theirs = owner.store.getSnapshot().pieceTable.chunkMap;
+      let theirs: ReadonlyMap<number, ReadonlyUint8Array>;
+      try {
+        theirs = owner.store.getSnapshot().pieceTable.chunkMap;
+      } catch {
+        owner.scanForOrphans = true;
+        continue;
+      }
       let holds = holdsOrphans.get(theirs);
       if (holds === undefined) {
         holds =
@@ -1347,6 +1381,7 @@ export function createChunkManager(
     // Another manager on the store may take over the chunks this one owned.
     self.disposed = true;
     liveOwners.delete(selfRef);
+    droppedOwners.unregister(selfRef);
     markOrphanScans();
     for (const controller of abortControllers.values()) {
       controller.abort();

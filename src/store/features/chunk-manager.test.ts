@@ -4,6 +4,8 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { createChunkManager } from "./chunk-manager.js";
 import { createDocumentStore, createDocumentStoreWithEvents } from "./store.js";
 import { DocumentActions, deserializeAction, serializeAction } from "./actions.js";
@@ -42,6 +44,26 @@ function withoutIsInTransaction(store: ReturnType<typeof createDocumentStore>) {
     commitTransaction: store.commitTransaction,
     rollbackTransaction: store.rollbackTransaction,
   };
+}
+
+/** A full garbage collection, for tests of what managers keep alive. */
+setFlagsFromString("--expose-gc");
+const gc = runInNewContext("gc") as () => void;
+
+/**
+ * Collect garbage, and let finalizers run, until `done` holds or the tries
+ * run out. Returns whether `done` held. Each collection runs in a task of
+ * its own, since a WeakRef keeps what it derefs alive until its job ends.
+ */
+async function collectUntil(done: () => boolean): Promise<boolean> {
+  const nextTask = () => new Promise((resolve) => setTimeout(resolve, 0));
+  for (let i = 0; i < 20; i++) {
+    await nextTask();
+    gc();
+    await nextTask();
+    if (done()) return true;
+  }
+  return false;
 }
 
 function makeLoader(chunks: Record<number, string>) {
@@ -216,7 +238,7 @@ describe("ChunkManager.ensureLoaded", () => {
     const manager = createChunkManager(fakeStore, loader);
 
     await expect(manager.ensureLoaded(0)).rejects.toThrow(
-      "Chunk 0 was fetched but the store did not retain it after LOAD_CHUNK dispatch",
+      "Chunk 0 was fetched but the store did not load it on LOAD_CHUNK dispatch",
     );
     expect(loader.loadChunk).toHaveBeenCalledTimes(1);
     manager.dispose();
@@ -1853,6 +1875,40 @@ describe("ChunkManager.cancelPendingOutside", () => {
   });
 });
 describe("ChunkManager.dispose", () => {
+  it("finishes when another manager's store throws from getSnapshot", async () => {
+    const store = makeStore();
+    let broken = false;
+    const throwing: DocumentStore = {
+      ...store,
+      getSnapshot: () => {
+        if (broken) throw new Error("disposed");
+        return store.getSnapshot();
+      },
+    };
+    const other = createChunkManager(throwing, makeLoader({}));
+    let receivedSignal: AbortSignal | undefined;
+    const loader = {
+      loadChunk: vi.fn(async (i: number, signal?: AbortSignal): Promise<Uint8Array> => {
+        if (i === 1) {
+          receivedSignal = signal;
+          return new Promise(() => {});
+        }
+        return makeBytes("aaaabbbb");
+      }),
+    };
+    // A second store, so the dispose searches the other manager's map.
+    const manager = createChunkManager(createDocumentStore({ chunkSize: CHUNK_SIZE }), loader);
+    await manager.ensureLoaded(0);
+    // The other manager's next pass scans once; clear that.
+    other.setActiveChunks([]);
+    void manager.ensureLoaded(1);
+
+    broken = true;
+    expect(() => manager.dispose()).not.toThrow();
+    expect(receivedSignal?.aborted).toBe(true);
+    other.dispose();
+  });
+
   it("prevents ensureLoaded from dispatching after disposal", async () => {
     const store = makeStore();
     let resolveLoad!: (v: Uint8Array) => void;
@@ -2134,7 +2190,7 @@ describe("ChunkManager ownership of resident chunks", () => {
       store.dispatch(DocumentActions.evictChunk(1));
     });
     await expect(manager.ensureLoadedMany([1, 2])).rejects.toThrow(
-      "Chunk 1 was fetched but the store did not retain it after LOAD_CHUNKS dispatch",
+      "Chunk 1 was fetched and dispatched with LOAD_CHUNKS, but was not in memory afterwards: the store refused it, or a store listener evicted it",
     );
     unsubscribe();
     expect(dropped).toBe(true);
@@ -2238,6 +2294,50 @@ describe("ChunkManager ownership of resident chunks", () => {
     second.setActiveChunks([3]);
     expect(resident(store)).toEqual([3]);
     second.dispose();
+  });
+
+  it("takes over chunks a manager dropped without dispose owned, once it is collected", async () => {
+    const store = createDocumentStore({
+      chunkSize: CHUNK_SIZE,
+      totalFileSize: CHUNK_SIZE * 4,
+      reconcileMode: "none",
+    });
+    const dropped = await (async () => {
+      const first = createChunkManager(store, makeLoader(four), { maxLoadedChunks: 4 });
+      first.setActiveChunks([0, 1]);
+      await first.ensureLoaded(0);
+      await first.ensureLoaded(1);
+      return new WeakRef(first);
+    })();
+
+    const second = createChunkManager(store, makeLoader(four), { maxLoadedChunks: 1 });
+    await second.ensureLoaded(2);
+    await second.ensureLoaded(3);
+    second.setActiveChunks([3]);
+    // Not collected yet, so the first manager's chunks stay.
+    if (dropped.deref() !== undefined) expect(resident(store)).toEqual([0, 1, 3]);
+
+    const tookOver = await collectUntil(() => {
+      second.setActiveChunks([3]);
+      return resident(store).length === 1;
+    });
+    expect(dropped.deref()).toBeUndefined();
+    expect(tookOver).toBe(true);
+    expect(resident(store)).toEqual([3]);
+    second.dispose();
+  });
+
+  it("does not keep a dropped store alive through its chunks' bytes", async () => {
+    const { bytes, storeRef } = await (async () => {
+      const store = createDocumentStore({ chunkSize: CHUNK_SIZE, totalFileSize: CHUNK_SIZE * 4 });
+      const manager = createChunkManager(store, makeLoader(four));
+      await manager.ensureLoaded(0);
+      const chunk = store.getSnapshot().pieceTable.chunkMap.get(0)!;
+      manager.dispose();
+      return { bytes: chunk, storeRef: new WeakRef(store) };
+    })();
+    expect(await collectUntil(() => storeRef.deref() === undefined)).toBe(true);
+    expect(bytes.length).toBe(CHUNK_SIZE);
   });
 
   it("evicts a chunk after a transaction it loaded in closes, not inside it", async () => {
@@ -2739,7 +2839,7 @@ describe("ChunkManager batch commit", () => {
     });
     // The chunk is not in memory, so the load does not report success.
     await expect(manager.ensureLoaded(0)).rejects.toThrow(
-      "Chunk 0 was fetched but the store did not retain it after LOAD_CHUNK dispatch",
+      "Chunk 0 was fetched and dispatched with LOAD_CHUNK, but was not in memory afterwards: the store refused it, or a store listener evicted it",
     );
     unsubscribe();
     expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
@@ -2766,7 +2866,7 @@ describe("ChunkManager batch commit", () => {
     };
     const manager = createChunkManager(wrapper, makeLoader({ 0: "aaaabbbb" }));
     await expect(manager.ensureLoaded(0)).rejects.toThrow(
-      "Chunk 0 was fetched but the store did not retain it after LOAD_CHUNK dispatch",
+      "Chunk 0 was fetched but the store did not load it on LOAD_CHUNK dispatch",
     );
     expect(store.getSnapshot().pieceTable.chunkMap.has(0)).toBe(false);
     manager.dispose();
