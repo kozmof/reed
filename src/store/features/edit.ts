@@ -558,7 +558,13 @@ export function historyPush(
     // Preserve the array API while keeping repeated tail updates constant-space.
     const mergedEntry: HistoryEntry = Object.freeze({
       get changes() {
-        return (materialized ??= Object.freeze([...base.slice(0, -1), merged]));
+        if (materialized === undefined) {
+          // Copy by spread: slice() is slow on the frozen `base`.
+          const changes = [...base];
+          changes[changes.length - 1] = merged;
+          materialized = Object.freeze(changes);
+        }
+        return materialized;
       },
       selectionBefore: lastEntry.selectionBefore,
       get selectionAfter() {

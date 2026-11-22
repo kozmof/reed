@@ -73,6 +73,12 @@ let sink: Checksum | undefined;
 for (let i = 0; i < warmup + samples; i++) {
   if (result.times.length >= MIN_SAMPLES && spentMs > budgetMs) break;
   const fixture = workload.prepare(R, size);
+  // End the current macrotask first. V8 keeps WeakRef targets alive until the
+  // job ends, and run() awaits only microtasks, so without this every earlier
+  // sample's fixture stays reachable through WeakRefs, inflating the heap and
+  // the cost of WeakMap processing in later samples. It also lets
+  // FinalizationRegistry callbacks run, as they would between real events.
+  await new Promise<void>((resolve) => setImmediate(resolve));
   gc();
   const before = heapUsed();
 

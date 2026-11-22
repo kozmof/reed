@@ -366,7 +366,9 @@ export function moveSelectionPastEdit(
     mover ??= new RangeMover(pieceTable, start, end, inserted, remote);
     const moved = mover.moveRange(range);
     if (moved === range) continue;
-    ranges ??= selection.ranges.slice();
+    // Spread, not slice(): V8's slice() leaves its fast path on a frozen
+    // array, as every selection's ranges are, and costs ~25x more.
+    ranges ??= [...selection.ranges];
     ranges[i] = moved;
   }
   return ranges ? freezeSelection(ranges, selection.primaryIndex) : selection;
@@ -573,7 +575,8 @@ export class RemoteBatchSelection implements RemoteSelectionTracker {
 
   constructor(selection: SelectionState) {
     this.#original = selection;
-    this.#ranges = selection.ranges.slice();
+    // Spread, not slice(), which is slow on frozen arrays.
+    this.#ranges = [...selection.ranges];
     const count = this.#ranges.length * 2;
     this.#order = new Int32Array(count);
     this.#position = new Int32Array(count);
@@ -687,7 +690,8 @@ export class RemoteBatchSelection implements RemoteSelectionTracker {
       const live = this.#liveRange(index);
       const old = original.ranges[index]!;
       if (live === old || sameRange(live, old)) continue;
-      ranges ??= original.ranges.slice();
+      // Spread, not slice(), which is slow on frozen arrays.
+      ranges ??= [...original.ranges];
       ranges[index] = live;
     }
     return ranges ? freezeSelection(ranges, original.primaryIndex) : original;
