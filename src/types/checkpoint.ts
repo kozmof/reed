@@ -231,13 +231,11 @@ export interface CheckpointEnvelope {
 }
 
 /**
- * Envelope accepted by isRestorableCheckpoint: any version restore can read,
- * with every section present. Section contents have not been validated.
+ * Envelope with all sections present in a version restore supports.
+ * Use `restoreCheckpoint` to validate section contents.
  *
- * `version` can be older than `CHECKPOINT_VERSION`, and then the sections use
- * that version's layout, so do not read them as a `DocumentCheckpoint`: pass
- * the value to `restoreCheckpoint`, which migrates and validates it, or check
- * it with `isCheckpoint` first.
+ * Use `isCheckpoint` to narrow to the current version before reading the
+ * sections directly. Pass older envelopes to `restoreCheckpoint` for migration.
  */
 export interface RestorableCheckpointEnvelope extends Omit<CheckpointEnvelope, "version"> {
   readonly version: number;

@@ -591,7 +591,7 @@ describe("randomized edits, loads, evictions, undo and redo", () => {
    * chunks moved in between.
    */
   for (const policy of ["pin", "drop"] as const) {
-    // 9,000 steps per policy; slow CI runners need more than the default timeout.
+    // Allow extra time for 9,000 steps per policy on slow CI runners.
     it(`keeps the full text consistent (policy: ${policy})`, { timeout: 30_000 }, () => {
       for (let seed = 1; seed <= 150; seed++) {
         const random = rng(seed * 7919 + (policy === "drop" ? 1 : 0));
@@ -1333,7 +1333,7 @@ describe("fifth review regressions: checkpoints", () => {
     restored.dispatch(DocumentActions.loadChunk(1, enc(CHUNK1)));
     expect(getValue(restored.getSnapshot().pieceTable)).toBe("AAAAAAA\nBBBBBBB\nX");
 
-    // One stored key; null stands for the other.
+    // The range stores one key and uses null for the other.
     checkpoint.selection.ranges = [[0, 8, null, 1]];
     expect(restoreCheckpoint(checkpoint).selection.ranges[0]).toEqual({
       anchor: 0,
@@ -2159,7 +2159,7 @@ describe("tenth review regressions", () => {
     s.dispatch(DocumentActions.delete(byteOffset(10), byteOffset(11)));
     const checkpoint = wireOf(s);
     expect(checkpoint.history.undo[0].changes[0]).toEqual(["d", 2, "B", 0]);
-    // Undo re-inserts the byte at anchored 12 with key 0: resident 20, inside
+    // Undo reinserts the byte at anchored 12 with key 0: resident 20, inside
     // chunk 2, whose bytes have key 1.
     checkpoint.history.undo[0].changes[0] = ["d", 12, "B", 0];
     const error = checkpointError(() => restoreCheckpoint(checkpoint));
@@ -2192,7 +2192,7 @@ describe("tenth review regressions", () => {
     expect(getValue(state.pieceTable)).toBe("AAAAAABBBBB\n");
     state = documentReducer(state, DocumentActions.undo());
     expect(getValue(state.pieceTable)).toBe(CHUNK0 + CHUNK1);
-    // Each re-inserted byte has back the key it had.
+    // Each reinserted byte has back the key it had.
     expect([6, 7, 8, 9].map((offset) => byteKeyAt(state, offset))).toEqual([-1, -1, 0, 0]);
   });
 

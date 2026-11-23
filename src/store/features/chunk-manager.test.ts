@@ -761,7 +761,7 @@ describe("ChunkManager with the 'pin-bounded' history policy", () => {
     // The app loads chunk 0 again itself, with bytes of its own.
     store.dispatch(DocumentActions.loadChunk(0, makeBytes(chunks[0])));
     manager.setActiveChunks([]);
-    // Chunk 0 is not the manager's to evict; chunk 1 goes instead.
+    // The manager owns chunk 1 and evicts it.
     expect([...store.getSnapshot().pieceTable.chunkMap.keys()].sort()).toEqual([0, 2]);
     expect(warn).not.toHaveBeenCalled();
     manager.dispose();
@@ -1641,7 +1641,7 @@ describe("ChunkManager eviction transition", () => {
     // Unpinning puts all three over the limit of one.
     manager.setActiveChunks([]);
     const evictions = dispatch.mock.calls.filter(([action]) => action.type.startsWith("EVICT"));
-    // Every unpinned chunk is offered; the reducer stops once two have gone.
+    // Offer every unpinned chunk so the reducer can choose which two to evict.
     expect(evictions).toEqual([[DocumentActions.evictChunks([0, 1, 2], 1)]]);
     expect([...store.getSnapshot().pieceTable.chunkMap.keys()]).toEqual([2]);
     manager.dispose();
@@ -1901,7 +1901,7 @@ describe("ChunkManager.dispose", () => {
     // A second store, so the dispose searches the other manager's map.
     const manager = createChunkManager(createDocumentStore({ chunkSize: CHUNK_SIZE }), loader);
     await manager.ensureLoaded(0);
-    // The other manager's next pass scans once; clear that.
+    // Clear the scan count from the other manager's next pass.
     other.setActiveChunks([]);
     void manager.ensureLoaded(1);
 
@@ -2245,7 +2245,7 @@ describe("ChunkManager ownership of resident chunks", () => {
     await manager.ensureLoadedMany([0]);
     await manager.ensureLoaded(1);
     await manager.ensureLoaded(2);
-    // Chunk 0 is not the manager's to evict; chunk 1 goes instead.
+    // The manager owns chunk 1 and evicts it.
     expect(resident(store)).toEqual([0, 2]);
     manager.dispose();
   });

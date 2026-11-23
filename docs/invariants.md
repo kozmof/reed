@@ -80,11 +80,9 @@ wholly before the piece, and higher chunks lie after it.
 
 Keys never decrease in document order. Loading places a chunk `c` at
 `keySpan(root, c).start`, before the first piece whose key is at least `c`.
-`pieceTableInsert` enforces the order: a given key that does not fit the
-insertion point (see `keyFitsAt`) means the caller computed it wrongly, so the
-insert throws a `RangeError` instead of placing the text under another key.
-That throw is a guard against bugs, not how history is checked. Undo and redo
-check each change first with `changeReplayFailure` (see
+`pieceTableInsert` throws a `RangeError` if the caller supplies a key that
+violates this order at the insertion point (see `keyFitsAt`). Undo and redo
+check each change before applying it with `changeReplayFailure` (see
 `src/store/features/history-anchor.ts`). A change whose range or key does not
 fit throws `StaleHistoryChangeError`, and the entry is dropped with
 `history-drop`. Checkpoint restore checks every stack with the same rule on
@@ -316,8 +314,8 @@ current ranges returns the same state, so neither `revision` nor
 selections carried by a content edit do not move it.
 
 The selection itself also moves on edits, `UNDO`/`REDO`, and chunk loads and
-evictions, none of which move `selectionRevision`. Detect any selection change by
-identity: `state.selection !== prev.selection`. Actions that leave the selection in
+evictions, none of which move `selectionRevision`. Use
+`state.selection !== prev.selection` to detect any selection change. Actions that leave the selection in
 place keep the same object.
 
 ### 5.4 `lineIndex.lastReconciledRevision`

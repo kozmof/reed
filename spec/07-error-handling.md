@@ -18,7 +18,7 @@ Reed validates actions and isolates failures at store boundaries. This document 
 - Event handler exceptions are caught per handler in the emitter.
 - Event payload preparation errors are caught after dispatch, so a committed edit still returns successfully.
 - Nested store notifications and typed events drain iteratively instead of recursing.
-- Callback cycles are bounded and reported through the configured logger:
+- Reed caps synchronous callback delivery and reports cycles through the configured logger.
   - Store listeners get at most 100 synchronous notification passes.
   - The emitter delivers at most 100 events that handlers queue while it emits.
   - Event handler dispatches nest at most 100 levels deep, and one synchronous
@@ -32,10 +32,9 @@ Reed validates actions and isolates failures at store boundaries. This document 
     grows exponentially.
   - Actions dispatched past a limit still commit. Only their notifications or
     events are dropped.
-- Once a change commits, `dispatch()` and `commitTransaction()` do not throw.
-  A reconciliation scheduler that throws after a commit is reported through
-  the logger, so a throw from either call means the change did not take
-  effect, and no events are emitted for it.
+- A throw from `dispatch()` or `commitTransaction()` means the change failed
+  before commit and emitted no events. If the reconciliation scheduler throws
+  after a commit, Reed reports the failure through the logger.
 
 ### 1.3 Transaction safety
 

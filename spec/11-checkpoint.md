@@ -232,15 +232,14 @@ store.createDocumentStoreWithEventsFromCheckpoint(checkpoint, config?, restoreOp
 narrows to `CheckpointEnvelope`, whose section contents remain unvalidated.
 `isRestorableCheckpoint` makes the same checks but also accepts the older versions restore
 migrates. It narrows to `RestorableCheckpointEnvelope`, whose `version` is any number and whose
-sections may use an older layout; code that reads them directly must first narrow the value
-with `isCheckpoint`. Pass the value to
-`restore` for full validation. Restore entry points accept `unknown` input and check
+sections may use an older layout. Use `isCheckpoint` to narrow to the current
+envelope before reading its sections directly. Pass the value to `restore` for
+full validation. Restore entry points accept `unknown` input and check
 line boundaries and UTF-16 lengths against the resident document bytes.
 
 The store entry points accept `DocumentStoreRestoreConfig`, which is `logger` plus
-`reconcileMode` or `scheduler`, and optionally `historyEvictionPolicy`. The policy only
-decides what a later `EVICT_CHUNK` does, so it may change on restore: when given, it replaces
-`history.evictionPolicy`. Content, history limit, line ending, chunk size, and the other
+`reconcileMode` or `scheduler`, and optionally `historyEvictionPolicy`. Set `historyEvictionPolicy` to replace
+`history.evictionPolicy` for future evictions. Content, history limit, line ending, chunk size, and the other
 state-bearing options come from the checkpoint. Passing one throws rather than being ignored.
 
 Restoring into an event store emits nothing. The first event a subscriber sees is the one their

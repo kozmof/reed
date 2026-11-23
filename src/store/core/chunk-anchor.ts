@@ -403,8 +403,8 @@ export interface KeyRun<Key extends number = number> {
  * Split the resident range [start, end) into runs of bytes that share a
  * placement key.
  *
- * Undo re-inserts each run with its own key, so every byte gets back the key
- * it had. Re-inserting runs with different keys under one key would give the
+ * Undo reinserts each run with its own key, so every byte gets back the key
+ * it had. Reinserting runs with different keys under one key would give the
  * later bytes a smaller key, and an older change replayed among them would
  * then leave keys decreasing in document order. Usually there is one run.
  */

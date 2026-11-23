@@ -88,9 +88,9 @@ Returns a `ReconcilableDocumentStore` whose state comes from a checkpoint. Throw
 counterpart. Restoring emits no events.
 
 Config is `DocumentStoreRestoreConfig`, which accepts `logger`, either `reconcileMode` or
-`scheduler`, and `historyEvictionPolicy`. The policy, when given, replaces the one in the
-checkpoint; a version 1 checkpoint stores none and otherwise restores with `'pin-bounded'`. Other
-state-bearing options come from the checkpoint, and passing one throws.
+`scheduler`, and `historyEvictionPolicy`. Set `historyEvictionPolicy` to override the checkpoint's policy. Version 1 checkpoints
+default to `'pin-bounded'`. Restore reads other state settings from the checkpoint
+and throws if you pass them in the config.
 
 ### 2.4 Flat `createChunkManager(store, loader, config?)`
 
@@ -106,7 +106,11 @@ Requires a user-supplied `ChunkLoader` with
 `loadChunk(chunkIndex, signal?): Promise<Uint8Array>`. The optional abort signal is canceled when
 the manager drops a pending load or is disposed.
 
-The manager evicts only chunks it owns: the ones it loads, and the ones already loaded when it is created that no live manager owns, whoever loaded them (a checkpoint restore, an earlier manager or the app). It never evicts a chunk the app loads with `LOAD_CHUNK` after creating it. Pin a chunk with `setActiveChunks` to keep it loaded either way.
+The manager can evict chunks it loads and any resident chunks it adopts at
+creation. It adopts chunks with no live owner, including chunks from a
+checkpoint restore, an earlier manager, or the app. If the app dispatches
+`LOAD_CHUNK` after creating the manager, the app retains control of that chunk's
+eviction. Use `setActiveChunks` to keep a chunk loaded during a manager eviction pass.
 
 Config (`ChunkManagerConfig`): `maxLoadedChunks`, `fetchStrategy`, `logger`. The manager's `logger` hears when chunks stay loaded over `maxLoadedChunks`. History an eviction discards is reported by the store's own `logger`, or, for an eviction the manager dispatches, by the manager's `logger` when the store has none, also through a wrapper that forwards `dispatch` synchronously, and by the store's `history-drop` event. A throw from the manager's `warn` there is reported through its `error`, if it has one.
 
@@ -297,4 +301,6 @@ Anchored history positions (chunk-safe undo and redo) change the meaning of expo
 - `selection-change` fires whenever an action replaces the selection, including `INSERT`, `DELETE`, `REPLACE`, `APPLY_REMOTE`, `UNDO`, and `REDO`.
 - `rendering` (`getLineContent`, `getVisibleLines`, `getVisibleLine`) keeps a byte order mark at the start of the file as a U+FEFF at line 0, column 0, so line content agrees with the columns the line index counts. `getTextForAttention` keeps it too, for an attention that starts at offset 0. In 4.x both stripped it. Code that copies rendered line text or attention text, or measures its width, and does not want the mark should drop a leading U+FEFF itself.
 - `UNDO` and `REDO` never apply an entry that no longer resolves inside the document. They drop it, together with the entries behind it on the same stack, leave the document unchanged, and emit `history-drop` instead of `history-change`. In 4.x such an entry was clamped to the document and applied.
-- Checkpoints are written as version 2. Restore still reads version 1. `isCheckpoint` still accepts only the version the library writes, so a stored version 1 checkpoint now fails it; use `isRestorableCheckpoint` to accept every version `restore` can read.
+- Reed writes version 2 checkpoints and restores versions 1 and 2. Use
+  `isCheckpoint` to check for the current envelope version or
+  `isRestorableCheckpoint` to check for any supported envelope version.

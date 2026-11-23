@@ -115,11 +115,10 @@ Positions on a chunk boundary do not block eviction.
 
 ### 2.3 Text next to chunks that are not loaded
 
-New text attaches to the content before it: text typed right after a chunk stays next to that
-chunk when a chunk that was missing after it loads, and text typed at the end of the document
-stays before chunks that stream in later. At the start of the document there is no content
-before, so text typed before visible content stays with that content when an earlier chunk
-loads.
+Text typed after a chunk stays next to that chunk as later chunks load. Text
+typed at the end of the resident document stays before chunks that stream in
+after it. At the start of the resident document, new text stays next to the
+visible content that follows it when an earlier chunk loads.
 
 A cursor follows the same rule as text typed there. A selection's start stays with the content
 after it and its end with the content before it, so a chunk that loads at either edge of a

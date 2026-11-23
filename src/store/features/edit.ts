@@ -315,7 +315,7 @@ function canCoalesce(
   // A change with raw bytes restores exactly the bytes one edit removed. Keep
   // it separate rather than merge decoded text with a neighbour.
   if (last.bytes !== undefined || newChange.bytes !== undefined) return false;
-  // A merged change re-inserts all its text with one placement key, so only
+  // A merged change reinserts all its text with one placement key, so only
   // changes with the same key merge (see `placementRuns`).
   if (last.afterChunk !== newChange.afterChunk) return false;
   const lastPosition = last.position;
@@ -422,7 +422,7 @@ function deletedRuns(
     const length = run.end - run.start;
     if (exact) return { text, length };
     exactRuns = false;
-    // A single run's bytes are the range's own copy; a subarray shares them.
+    // A single run owns the byte copy. Subarrays share that copy.
     return { text, length, bytes: asReadonlyUint8Array(runs.length === 1 ? raw : raw.slice()) };
   });
   if (deleted.length === 1) return { runs: deleted, text: deleted[0]!.text };
@@ -974,7 +974,7 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   // at the insertion point holds, or the gap's key.
   const insertKey =
     runs.length > 0 ? runs[0]!.key : insertionKey(pieceTable, selectionBefore, op.position);
-  // Deleted text as undo re-inserts it. Decoding replaces malformed bytes with
+  // Deleted text as undo reinserts it. Decoding replaces malformed bytes with
   // U+FFFD, so the text can encode to different bytes than were deleted. Bytes
   // at the edge of an unloaded chunk are often an incomplete character. When
   // the text does not encode back to the deleted bytes, history keeps the
@@ -1030,7 +1030,7 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   const anchor = anchorAt(pieceTable, insertKey, op.position);
   // Each run except the first becomes its own delete, ordered right to left so
   // every position is valid when its change is applied. Undo applies them in
-  // reverse, re-inserting each run with its own key.
+  // reverse, reinserting each run with its own key.
   const changes: HistoryChange[] = [];
   for (let i = runs.length - 1; i >= 1; i--) {
     const run = runs[i]!;

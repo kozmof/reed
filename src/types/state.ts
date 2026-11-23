@@ -455,7 +455,7 @@ export interface HistoryDeleteChange extends HistoryAnchor {
   readonly type: "delete";
   /**
    * Exact bytes deleted, present only when `text` does not encode back to
-   * them (see `HistoryInsertChange.bytes`). Undo re-inserts these bytes.
+   * them (see `HistoryInsertChange.bytes`). Undo reinserts these bytes.
    */
   readonly bytes?: ReadonlyUint8Array;
   /** Text that was deleted, as decoded */
@@ -477,7 +477,7 @@ export interface HistoryReplaceChange extends HistoryAnchor {
   readonly byteLength: ByteLength;
   /**
    * Exact bytes replaced, present only when `oldText` does not encode back to
-   * them (see `HistoryInsertChange.bytes`). Undo re-inserts these bytes.
+   * them (see `HistoryInsertChange.bytes`). Undo reinserts these bytes.
    */
   readonly oldBytes?: ReadonlyUint8Array;
   /** The original text that was replaced, as decoded */

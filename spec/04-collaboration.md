@@ -31,9 +31,9 @@ fresh history after the remote edit. Manage collaborative undo outside Reed if y
 
 `APPLY_REMOTE` adjusts the local selection after each remote change.
 
-- An endpoint before the change stays, and one after it shifts by the change in length.
+- An endpoint before the change keeps its offset. An endpoint after the change shifts by the net change in byte length.
 - A caret at the insertion point stays before the remote text.
-- A range never grows to take in remote text at its edges. Text inserted at its start lands before it, and text inserted at its end lands after it.
+- Text inserted at either edge of a range stays outside the range.
 - An endpoint inside deleted text moves to the start of the deletion.
 
 ## 4. Event Semantics (Current)

@@ -1090,7 +1090,7 @@ describe("Event delivery limits and failed transaction calls", () => {
     );
   });
 
-  // About 40,000 dispatches; slow CI runners need more than the default timeout.
+  // Allow extra time for about 40,000 dispatches on slow CI runners.
   it("delivers a reaction to each of many actions a handler dispatches", () => {
     const error = vi.fn();
     const store = createDocumentStoreWithEvents({

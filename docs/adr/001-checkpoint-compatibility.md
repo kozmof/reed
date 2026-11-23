@@ -42,9 +42,8 @@ would have to be rewritten each time the format moves again.
 Migrations operate on raw wire data, before validation. The validators
 describe the current format, so an older payload must be migrated first.
 Field-level resource limits apply when validation reads the migrated payload.
-Before a migration runs, restore checks what it reads against the same limits:
-the arrays it walks, the chunk data it decodes, and the change text it
-encodes. These checks count only what validation counts as well, so they never
+Before running a migration, restore applies the same limits to the arrays,
+chunk data, and change text the migration reads. These checks count only what validation counts as well, so they never
 reject a payload that validation would accept. The searches the version 1 step
 makes run in linear time, and their total work is bounded by a multiple of the
 payload's size.

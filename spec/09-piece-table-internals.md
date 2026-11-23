@@ -278,7 +278,7 @@ EVICT_CHUNK { chunkIndex: 3 }
 
 LOAD_CHUNK { chunkIndex: 3, data: Uint8Array }   ← re-load after eviction
   → keySpan(root, 3).start locates the gap left by the eviction
-    (inserts before the first piece whose placement key is >= 3, see invariant 1.4)
+    (inserts before the first piece with a placement key of 3 or higher)
   → piece node re-inserted; chunkMap entry restored
 ```
 

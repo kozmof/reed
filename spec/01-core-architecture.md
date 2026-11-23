@@ -75,7 +75,7 @@ Notes:
 
 ### 3.3 Remote edits
 
-`APPLY_REMOTE` sends insert/delete changes through the same untracked structural edit path as local edits. That path updates the piece table, lazy line index, and attention layer together. The local selection moves past each change as it does for a local edit, except that a caret where a change inserts text stays before it. Effective remote edits mark the document dirty, increment the revision, and clear local undo and redo history because stored offsets are not rebased.
+`APPLY_REMOTE` sends insert/delete changes through the same untracked structural edit path as local edits. That path updates the piece table, lazy line index, and attention layer together. Each change moves the local selection. A caret at the insertion point stays before the inserted text. Effective remote edits mark the document dirty, increment the revision, and clear local undo and redo history because Reed does not rebase stored history positions.
 
 ## 4. Store Runtime
 

@@ -44,7 +44,7 @@ Functional suites (`pnpm test`):
 - `src/store/features/chunk-metadata.test.ts`: DECLARE_CHUNK_METADATA and pre-declared line-count queries
 - `src/store/features/streaming-loader.test.ts`: `createStreamingDocumentLoader` viewport/prefetch lifecycle
 - `src/store/features/chunk-stress.test.ts`: seeded randomized high-scale streaming stress (load/evict/reload consistency)
-- `src/store/features/chunk-history-offset.test.ts`: undo/redo, selection, and text placement across chunk load/evict, eviction policies, checkpoint v1 migration, and a seeded check that loads and evictions never change the full text
+- `src/store/features/chunk-history-offset.test.ts`: undo and redo, selection, and text placement across chunk loads and evictions. Also covers eviction policies, version 1 checkpoint migration, and seeded checks that loads and evictions preserve the full text.
 - `src/store/features/checkpoint.test.ts`: checkpoint capture/restore round trips, store entry points, and the payload rejection matrix
 - `src/store/features/model-based.test.ts`: seeded edit sequences checked against a string model, including mid-sequence checkpoint restore
 - `src/store/core/piece-table-rb.test.ts`: red-black contract of the persistent piece tree — minimal deletion reproducers, deletion shapes, and the height bound

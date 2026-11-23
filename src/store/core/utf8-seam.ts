@@ -83,9 +83,9 @@ export function isSafeSplice(
  *
  * Spliced bytes can join the bytes beside them into one character, for example
  * a chunk whose leading continuation bytes complete a lead byte before it, or
- * a lead byte that undo re-inserts before such a chunk. Counted apart, those
+ * a lead byte that undo reinserts before such a chunk. Counted apart, those
  * bytes give one U+FFFD each. The bytes the window gains are the same in both
- * documents, so they count as deleted and re-inserted. A safe split lies
+ * documents, so they count as deleted and reinserted. A safe split lies
  * within four bytes of any offset.
  */
 export function codePointWindow(
