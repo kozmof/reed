@@ -66,9 +66,8 @@ function decodeBase64Char(base64: string, index: number): number {
 
 /**
  * Byte length that `decodeBase64` produces for `base64`, without decoding it.
- * The string is not validated: a length that is not a multiple of four counts
- * only its complete quartets, and only padding in the last complete quartet
- * shortens the result.
+ * Count complete groups of four characters and subtract padding from the
+ * last complete group. This calculation skips validation.
  */
 export function base64DecodedLength(base64: string): number {
   const end = base64.length - (base64.length % 4);

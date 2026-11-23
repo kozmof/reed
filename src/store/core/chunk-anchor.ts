@@ -1,9 +1,8 @@
 /**
  * Chunk placement keys and anchored positions.
  *
- * In chunk mode only some chunks are resident, so a resident byte offset does
- * not identify a place in the file: loading or evicting a chunk shifts every
- * offset after it. This module gives positions a coordinate that survives that.
+ * Loading or evicting a chunk shifts the resident offsets that follow it.
+ * Anchored positions track the same place across those shifts.
  *
  * Placement key (K) of a resident byte: every chunk with index <= K lies wholly
  * before the byte, and every higher chunk lies after it.
@@ -420,7 +419,8 @@ export function placementRuns(
   if (pieceTable.nextExpectedChunk === 0) return [{ start, end, key: asFittedKey(NO_CHUNK) }];
   // A run's key is the key of its own bytes, so it fits anywhere in the run.
   const firstKey = asFittedKey(byteKey(pieceTable.root, start));
-  // Keys never decrease, so equal first and last keys mean one run: O(log n).
+  // Equal first and last keys imply one run because keys never decrease.
+  // Checking those two keys takes O(log n).
   if (firstKey === byteKey(pieceTable.root, end - 1)) return [{ start, end, key: firstKey }];
   let runStart = start;
   let runKey = firstKey;

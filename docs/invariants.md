@@ -283,8 +283,7 @@ increments by exactly 1 for the following actions when they change state.
 
 `LOAD_CHUNKS` and `EVICT_CHUNKS` increment it by 1 for each chunk they load
 or evict, so one dispatch can raise it by more than 1, as dispatching the
-single-chunk actions one by one would. Do not assume `next.revision ===
-prev.revision + 1` after a single dispatch; compare with `>` instead.
+single-chunk actions one by one would. Check for a newer revision with `next.revision > prev.revision`.
 
 An `UNDO` or `REDO` whose entry no longer resolves against the current chunk
 layout drops that entry and returns a new state with changed `history` and the next
@@ -374,8 +373,8 @@ Every anchored history position is checked against its placement key (`readAncho
 must name a chunk that has been loaded. A change position must resolve to a non-negative offset
 in the restored chunk layout. A selection position is clamped into the document when it is
 restored, so it only needs the bound that holds in any layout, `-(key + 1) * chunkSize`.
-Neither is checked against the current document length: an undo entry describes an older
-revision, so its offsets may sit past the end of the document as it stands now.
+History offsets can exceed the current document length because an undo entry
+describes an older revision.
 
 Each stack must also replay from its newest entry (`findStackReplayFailure`). Every change has
 to fit inside the document the newer changes left, and its placement key has to keep keys in

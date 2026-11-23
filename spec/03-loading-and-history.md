@@ -103,9 +103,9 @@ A position strictly inside an evicted chunk cannot be resolved after eviction. T
 when an edit inside a chunk is undone, or when inserted text is deleted again, which leaves the
 chunk unedited. `historyEvictionPolicy` decides what `EVICT_CHUNK` does then.
 
-Each entry is checked against the document as it was when that entry applies, not the current
-one. An edit before the chunk moves it, so an older entry inside the chunk can have a position
-outside the chunk's current span, and one outside it can have a position inside that span.
+The eviction check uses the document layout in which each history entry applies.
+An edit before a chunk can move its current span away from offsets recorded in an
+older entry.
 
 - `'pin'` — refuse the eviction. The chunk stays loaded until those entries leave history. Only the history limit bounds how many chunks this keeps loaded, whatever `maxLoadedChunks` a ChunkManager has.
 - `'drop'` — evict and discard those entries, along with every entry that can only be undone or redone after them. `EVICT_CHUNKS`, which ChunkManager sends, first evicts every candidate it can without discarding history, then the others in the order given (least recently used first).

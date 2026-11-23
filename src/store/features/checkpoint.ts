@@ -1289,9 +1289,8 @@ function restoreAttention(
  * Check the format tag, the current version, and required checkpoint sections.
  *
  * Use this envelope check to route values before restoring them.
- * `restoreCheckpoint` validates the payload's internal consistency. An older
- * checkpoint that restore can still migrate fails this check; use
- * `isRestorableCheckpoint` to accept those too.
+ * `restoreCheckpoint` validates the payload's internal consistency. Use
+ * `isRestorableCheckpoint` to accept older versions supported by restore.
  */
 export function isCheckpoint(value: unknown): value is CheckpointEnvelope {
   return envelopeVersion(value) === CHECKPOINT_VERSION;
@@ -1301,10 +1300,9 @@ export function isCheckpoint(value: unknown): value is CheckpointEnvelope {
  * Check the format tag, a version `restoreCheckpoint` can read, and required
  * checkpoint sections.
  *
- * Unlike `isCheckpoint`, this accepts the older versions restore migrates
- * forward, so a true result may be an older layout (see
- * `RestorableCheckpointEnvelope`): read the sections only through
- * `restoreCheckpoint`, or narrow the value with `isCheckpoint` first.
+ * The envelope can use any version in `RestorableCheckpointEnvelope`. Pass it
+ * to `restoreCheckpoint` to migrate it, or narrow it with `isCheckpoint` before
+ * reading sections that require the current layout.
  */
 export function isRestorableCheckpoint(value: unknown): value is RestorableCheckpointEnvelope {
   const version = envelopeVersion(value);

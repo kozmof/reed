@@ -29,10 +29,10 @@ fresh history after the remote edit. Manage collaborative undo outside Reed if y
 
 ## 3. Local Selection
 
-`APPLY_REMOTE` moves the local selection past each change, as `INSERT` and `DELETE` do:
+`APPLY_REMOTE` adjusts the local selection after each remote change.
 
 - An endpoint before the change stays, and one after it shifts by the change in length.
-- A caret where a change inserts text stays before that text: the local user did not type it.
+- A caret at the insertion point stays before the remote text.
 - A range never grows to take in remote text at its edges. Text inserted at its start lands before it, and text inserted at its end lands after it.
 - An endpoint inside deleted text moves to the start of the deletion.
 

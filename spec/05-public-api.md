@@ -156,9 +156,14 @@ Supported event types:
 Auto-emitted by `store.createDocumentStoreWithEvents`:
 
 - `content-change` (`INSERT/DELETE/REPLACE/APPLY_REMOTE`)
-- `selection-change` (`SET_SELECTION`, and any other action that moves the selection: `INSERT`/`DELETE`/`REPLACE`/`APPLY_REMOTE` moving it past the edit, `UNDO`/`REDO`, `LOAD_CHUNK`/`LOAD_CHUNKS`/`EVICT_CHUNK`/`EVICT_CHUNKS`)
+- `selection-change` fires when an action replaces the selection. This includes
+  explicit selection changes and changes caused by edits, undo or redo, chunk
+  loads, and chunk evictions.
 - `history-change` (`UNDO/REDO`)
-- `history-drop` (`EVICT_CHUNK` or `EVICT_CHUNKS` when the `'drop'` policy, or `'pin-bounded'` with `overLimit` or through `EVICT_CHUNKS`, discards entries; `UNDO` or `REDO` when the next entry no longer resolves inside the document, which drops it and the rest of its stack; `APPLY_REMOTE` and `HISTORY_CLEAR` when they clear a non-empty history). The event carries `undoDropped` and `redoDropped`, the entries discarded
+- `history-drop` reports discarded entries in `undoDropped` and `redoDropped`.
+  - Eviction emits it when the history policy discards entries.
+  - `UNDO` and `REDO` emit it when the next entry fails to resolve. They discard that entry and the rest of its stack.
+  - `APPLY_REMOTE` and `HISTORY_CLEAR` emit it when they clear a non-empty history.
 - `attention-change` (create, delete, or content edits that rewrite stored points)
 - `save` (`MARK_SAVED`)
 - `dirty-change` (when dirty flag changes)
