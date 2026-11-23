@@ -6,7 +6,7 @@ export default defineConfig({
     maxWorkers: 4,
     // Let tests of what stays reachable force a garbage collection.
     execArgv: ["--expose-gc"],
-    exclude: [...configDefaults.exclude, "**/perf.test.ts"],
+    exclude: [...configDefaults.exclude, "tmp/**", "**/perf.test.ts"],
     coverage: {
       provider: "v8",
       // Enumerate all production modules, including files no test imports.
