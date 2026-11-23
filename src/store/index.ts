@@ -49,8 +49,8 @@ export {
   pieceTableInsert,
   pieceTableDelete,
   getValue,
-  // getText keeps a byte order mark at offset 0, as the line index counts it;
-  // getPresentedText strips it, as getValue does.
+  // Use getText for line-index coordinates, which count a leading byte order
+  // mark. Use getPresentedText for the same decoding rules as getValue.
   getText,
   getPresentedText,
   getLength,

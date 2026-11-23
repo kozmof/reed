@@ -159,7 +159,12 @@ History boundaries:
 - `content-change` for local text edits and `APPLY_REMOTE`
 - `selection-change` whenever an action moves the selection, including an edit, undo, redo, and a chunk load or eviction
 - `history-change` for undo and redo
-- `history-drop` when eviction discards entries under the `'drop'` policy, or under `'pin-bounded'` with `overLimit` or through `EVICT_CHUNKS`, and when undo or redo meets an entry that no longer resolves inside the document: that entry and the rest of its stack are dropped and the document is unchanged, and when `APPLY_REMOTE` or `HISTORY_CLEAR` clears a non-empty history. It carries `undoDropped` and `redoDropped`
+- `history-drop` reports discarded entries in `undoDropped` and `redoDropped`.
+  Eviction can discard entries under `'drop'` or under `'pin-bounded'` with
+  `overLimit` or `EVICT_CHUNKS`. If an undo or redo entry fails to resolve,
+  Reed drops it and the rest of its stack while preserving the document.
+  `APPLY_REMOTE` and `HISTORY_CLEAR` emit this event when they clear a
+  non-empty history.
 - `attention-change` when attention records are created, deleted, or migrated
 - `dirty-change`
 

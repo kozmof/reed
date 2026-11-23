@@ -112,7 +112,7 @@ checkpoint restore, an earlier manager, or the app. If the app dispatches
 `LOAD_CHUNK` after creating the manager, the app retains control of that chunk's
 eviction. Use `setActiveChunks` to keep a chunk loaded during a manager eviction pass.
 
-Config (`ChunkManagerConfig`): `maxLoadedChunks`, `fetchStrategy`, `logger`. The manager's `logger` hears when chunks stay loaded over `maxLoadedChunks`. History an eviction discards is reported by the store's own `logger`, or, for an eviction the manager dispatches, by the manager's `logger` when the store has none, also through a wrapper that forwards `dispatch` synchronously, and by the store's `history-drop` event. A throw from the manager's `warn` there is reported through its `error`, if it has one.
+Config (`ChunkManagerConfig`): `maxLoadedChunks`, `fetchStrategy`, `logger`. The manager’s `logger` warns when the resident chunk count stays above `maxLoadedChunks`. The store reports history discarded by eviction through its `logger` and the `history-drop` event. If the store has no logger, the manager supplies its own for evictions it dispatches, including through wrappers that forward `dispatch` synchronously. If the manager’s `warn` throws, its `error` receives the failure when available.
 
 ### 2.5 Flat `createStreamingDocumentLoader(store, loader, metadata, config?)`
 
@@ -286,7 +286,7 @@ Choose the helper for the state you own.
 
 ## 6. Breaking Changes in 5.0.0
 
-Anchored history positions (chunk-safe undo and redo) change the meaning of exported types:
+Anchored positions let undo and redo survive chunk loads and evictions. These exported types now describe positions relative to chunks.
 
 - `HistoryChange.position` is an anchored position (`HistoryAnchor`), not a `ByteOffset`. In a chunked document it is the resident offset minus the lengths of loaded chunks at or below `afterChunk`, and it can be negative. Resolve it against the current document rather than using it as an offset.
 - `HistoryEntry.selectionBefore` and `selectionAfter` are `HistorySelectionState` (anchored positions with placement keys), not `SelectionState`.

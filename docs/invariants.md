@@ -85,9 +85,9 @@ violates this order at the insertion point (see `keyFitsAt`). Undo and redo
 check each change before applying it with `changeReplayFailure` (see
 `src/store/features/history-anchor.ts`). A change whose range or key does not
 fit throws `StaleHistoryChangeError`, and the entry is dropped with
-`history-drop`. Checkpoint restore checks every stack with the same rule on
-stand-in bytes and never inserts. `pieceTableInsertFitted` skips the check, for keys
-the caller derived from the same document. An add piece key is always below
+`history-drop`. Checkpoint restore simulates replay of each stack to check the same rule.
+Use `pieceTableInsertFitted` when the caller has already derived a fitting key
+from the same document. An add piece key is always below
 `nextExpectedChunk`, so a sequential first load can append at the end. See
 `src/store/core/chunk-anchor.ts`.
 

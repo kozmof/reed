@@ -4,15 +4,15 @@
  * Loading or evicting a chunk shifts the resident offsets that follow it.
  * Anchored positions track the same place across those shifts.
  *
- * Placement key (K) of a resident byte: every chunk with index <= K lies wholly
- * before the byte, and every higher chunk lies after it.
+ * A resident byte’s placement key K divides the chunks around that byte.
+ * Chunks with index <= K lie wholly before it. Higher chunks lie after it.
  * - A byte of chunk `i` has key `i - 1`.
  * - A byte of an add piece has the key stored on the piece (`afterChunk`).
  * - A byte of the original buffer has key `-1`.
  * Keys never decrease in document order. Loading relies on that to place a
  * chunk `c` before the first piece whose key is >= c (`keySpan(root, c).start`).
  *
- * Anchored position: the pair (K, n) with
+ * An anchored position pairs the placement key K with the adjusted offset n.
  *   n = residentOffset - (sum of original lengths of loaded chunks with index <= K).
  * Loading or evicting a chunk `c <= K` changes both terms by the chunk length,
  * and a chunk `c > K` changes neither, so the pair stays valid while chunks
@@ -37,7 +37,7 @@ declare const fittedKeyBrand: unique symbol;
  */
 export type FittedKey = number & { readonly [fittedKeyBrand]: true };
 
-/** Brand `key`, which the caller derived to fit where it will be used. */
+/** Mark a placement key as fitting the position where the caller derived it. */
 export function asFittedKey(key: number): FittedKey {
   return key as FittedKey;
 }
@@ -135,8 +135,8 @@ function lengthWithKeyAtMost(root: PieceNode | null, key: number): number {
  * Resident span [start, end] of the gaps whose key is `key`.
  *
  * Every resident position recorded with key `key` lies in this span. A position
- * that resolves outside it pointed into a chunk that has since been evicted;
- * clamping it to the span puts it where that chunk was. O(log n).
+ * outside the span resolves to the boundary left by the evicted chunk when
+ * clamped to the span. O(log n).
  */
 export function keySpan(root: PieceNode | null, key: number): { start: number; end: number } {
   return { start: lengthWithKeyAtMost(root, key - 1), end: lengthWithKeyAtMost(root, key) };

@@ -167,9 +167,8 @@ export const query: QueryApi = {
   /** @complexity O(log n + m) — tree traversal to collect byte range */
   getText: $uncostedFn(getTextAtBoundaries),
   /**
-   * Text as the line index counts it: a byte order mark at the start of the
-   * document is kept, so char positions from `getCharStartOffset` and
-   * `findLineAtCharPosition` index into it.
+   * Read text with the leading byte order mark intact. Char positions from
+   * `getCharStartOffset` and `findLineAtCharPosition` index into this text.
    * @complexity O(log n + m) — tree traversal to collect byte range
    */
   getContentText: $uncostedFn(getContentTextAtBoundaries),
