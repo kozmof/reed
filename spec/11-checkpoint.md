@@ -50,15 +50,28 @@ open transaction, so that state becomes its committed baseline.
 
 ## 3. Format
 
-The envelope is `{ format: 'reed-checkpoint', version: 1, mode, ... }`. Restore rejects an
-unknown `format` and unsupported versions. A migration registry routes supported older versions before validation. The registry is currently empty, so only version `1` is supported. See [the migration policy](../docs/adr/001-checkpoint-compatibility.md#decision-1--migration-policy-accepted-implemented).
+The envelope is `{ format: 'reed-checkpoint', version: 2, mode, ... }`. Restore rejects an
+unknown `format` and unsupported versions. A migration registry routes supported older versions before validation. Versions `1` and `2` are supported. See [the migration policy](../docs/adr/001-checkpoint-compatibility.md#decision-1--migration-policy-accepted-implemented).
+
+Version 2 stores chunk placement keys and anchors for history positions.
+
+- An add piece tuple may carry a fifth element, its placement key (`afterChunk`). It is omitted when the key is `-1`.
+- A history change tuple ends with its placement key, omitted when `-1`. Its position is an anchored position and may be negative.
+- A history change may carry the exact bytes undo restores, encoded as base64 after the placement key. The tuple shapes are `["i" | "d", position, text, afterChunk, bytes]` or `["r", position, text, oldText, afterChunk, bytes | null, oldBytes]`. `null` holds the place of `bytes` only when `oldBytes` follows, and restore rejects a tuple with more elements than these. They are present only when the text does not encode back to those bytes (malformed UTF-8 or a byte order mark), and the key is then written even when `-1`. Restore takes the byte length from them and counts them toward the decoded-bytes limit.
+- A history placement key must be at most `nextExpectedChunk - 1`. Without chunking, the only valid key is `-1`. A change's anchored position with key `K` must resolve to a non-negative offset in the restored layout, so it is at least minus the lengths of the loaded chunks at or below `K`. A history selection is clamped when undo or redo restores it, so its positions need only be at least `-(K + 1) * chunkSize`. Positions with key `-1` are non-negative. Restore also replays each stack from its newest entry, undo last change first and redo first change first, by the rule `UNDO` and `REDO` apply. It rejects a change that removes bytes past the end of the document it applies to, or whose placement key does not fit there for the text either direction inserts.
+- `UNDO` and `REDO` never apply a change that does not replay by that rule. They drop the entry and the rest of its stack, leave the document unchanged, and emit `history-drop` (see [the public API](05-public-api.md)). A restored version 2 stack replays in full, so this only happens after later loads, evictions, or edits. During version 1 migration, replay keeps the newest valid entries on each stack. It drops the first entry that fails and every older entry.
+- A history selection range is `[anchor, head]` or `[anchor, head, anchorAfterChunk, headAfterChunk]`.
+- A live selection range is `[anchor, head]` byte offsets, or `[anchor, head, anchorAfterChunk, headAfterChunk]` when it stores a placement key (see `SelectionRange.anchorAfterChunk`). `null` stands for a key the range does not store. Every action that changes the document moves the selection with it, so a captured key fits its offset. Restore ignores a key that does not fit, as the live selection does.
+- `history.evictionPolicy` is `'pin'`, `'drop'` or `'pin-bounded'`. Restore treats a missing value as `'pin-bounded'`, the default.
+
+The version 1 migration derives each key in the document layout where its history entry applies. It replays undo backward and redo forward from the captured document to recover the original chunk placement. Documents without chunks need no change.
 
 Byte buffers are base64. Both trees are stored as flat in-order lists. The following example illustrates the wire shape. Its placeholder buffers and abbreviated lists are not a restorable payload.
 
 ```jsonc
 {
   "format": "reed-checkpoint",
-  "version": 1,
+  "version": 2,
   "mode": "exact",
   "revision": 42,
   "selectionRevision": 7,
@@ -87,7 +100,13 @@ Byte buffers are base64. Both trees are stored as flat in-order lists. The follo
     ],
   },
   "selection": { "ranges": [[3, 7]], "primaryIndex": 0 },
-  "history": { "limit": 1000, "coalesceTimeout": 0, "undo": [], "redo": [] },
+  "history": {
+    "limit": 1000,
+    "coalesceTimeout": 0,
+    "evictionPolicy": "pin",
+    "undo": [],
+    "redo": [],
+  },
   "metadata": {
     "encoding": "utf-8",
     "lineEnding": "lf",
@@ -138,11 +157,12 @@ constraint on the allocator.
 | `exact`      | Piece list, piece identities, both buffers | Payload carries the original and add buffers    |
 | `normalized` | Text, history, selection, metadata         | Piece identities change, attentions re-anchored |
 
-`normalized` collapses the document to a single original-buffer piece and rebuilds the line
+`normalized` collapses the document to a single original-buffer piece holding its bytes as they are,
+including a leading U+FEFF and malformed sequences, and rebuilds the line
 index from the text. Attentions are resolved to byte ranges at capture and re-created against
 the new piece, so they keep resolving to the same text under their original ids. History
-survives either mode, because a `HistoryChange` records a byte offset and text rather than a
-piece.
+survives either mode, because a `HistoryChange` records an anchored position and text rather
+than a piece.
 
 `normalized` throws `CHUNKED_NORMALIZE` for a chunked document. Flattening a partially-loaded
 file to text would silently drop its unloaded ranges.
@@ -166,28 +186,32 @@ string code units. Omitted limits remain unrestricted for backward compatibility
 
 `CheckpointError` carries a stable `code`.
 
-| Code                     | Rejected because                                                  |
-| ------------------------ | ----------------------------------------------------------------- |
-| `NOT_A_CHECKPOINT`       | Not an object, wrong `format`, or unparseable JSON                |
-| `VERSION_UNSUPPORTED`    | The checkpoint version is not supported by this build             |
-| `MALFORMED`              | A field is missing or has the wrong runtime type                  |
-| `PIECE_OUT_OF_BOUNDS`    | A piece range falls outside the buffer it reads from              |
-| `CHUNK_MISSING`          | A chunk piece names a chunk absent from the payload               |
-| `CHUNK_ORDER`            | Chunk pieces are not in ascending `chunkIndex` order              |
-| `LENGTH_MISMATCH`        | Piece lengths do not sum to `totalLength`                         |
-| `LINE_INDEX_MISMATCH`    | Line lengths do not cover the document                            |
-| `ID_COLLISION`           | A duplicate id, or an allocator cursor that would reissue one     |
-| `SELECTION_OUT_OF_RANGE` | A selection offset past the document, or no ranges at all         |
-| `HISTORY_INVALID`        | Bad limit, bad coalesce timeout, or a stack deeper than its limit |
-| `ATTENTION_DANGLING`     | An attention names an unknown piece or an out-of-range boundary   |
-| `CHUNKED_NORMALIZE`      | `normalized` capture requested for a chunked document             |
-| `RESOURCE_LIMIT`         | A configured restore resource limit was exceeded                  |
+| Code                     | Rejected because                                                                                                                                                                               |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NOT_A_CHECKPOINT`       | Not an object, wrong `format`, or unparseable JSON                                                                                                                                             |
+| `VERSION_UNSUPPORTED`    | The checkpoint version is not supported by this build                                                                                                                                          |
+| `MALFORMED`              | A field is missing or has the wrong runtime type                                                                                                                                               |
+| `PIECE_OUT_OF_BOUNDS`    | A piece range falls outside the buffer it reads from                                                                                                                                           |
+| `CHUNK_MISSING`          | A chunk piece names a chunk absent from the payload                                                                                                                                            |
+| `CHUNK_ORDER`            | Chunk pieces are not in ascending `chunkIndex` order                                                                                                                                           |
+| `LENGTH_MISMATCH`        | Piece lengths do not sum to `totalLength`                                                                                                                                                      |
+| `LINE_INDEX_MISMATCH`    | Line lengths do not cover the document                                                                                                                                                         |
+| `ID_COLLISION`           | A duplicate id, or an allocator cursor that would reissue one                                                                                                                                  |
+| `SELECTION_OUT_OF_RANGE` | A selection offset past the document, or no ranges at all                                                                                                                                      |
+| `HISTORY_INVALID`        | Bad limit, bad coalesce timeout, a stack deeper than its limit, a history placement key naming a chunk that has not been loaded, or a history change that cannot replay in its document layout |
+| `ATTENTION_DANGLING`     | An attention names an unknown piece or an out-of-range boundary                                                                                                                                |
+| `CHUNKED_NORMALIZE`      | `normalized` capture requested for a chunked document                                                                                                                                          |
+| `RESOURCE_LIMIT`         | A configured restore resource limit was exceeded                                                                                                                                               |
 
 Error messages name the failing field by path, for example
 `pieceTable.pieces[3][2] must be a non-negative safe integer`.
 
-History selections are checked for shape but not for range. An undo entry describes an older
-revision, so its offsets may legitimately point past the end of the current document.
+Restore checks the shape and lower bounds of history selection positions. These
+positions may resolve past the current document’s end because the entry
+describes an older revision.
+
+Placement keys must not decrease in document order. An add piece key must also be below
+`nextExpectedChunk`. Restore reports a violation as `CHUNK_ORDER`.
 
 ## 6. API
 
@@ -199,18 +223,24 @@ checkpoint.restore(checkpoint, restoreOptions?) // unknown -> DocumentState<'eag
 checkpoint.encode(state, options?)   // DocumentState<'eager'> -> string
 checkpoint.decode(json, restoreOptions?)        // string -> DocumentState<'eager'>
 checkpoint.isCheckpoint(value)       // value is CheckpointEnvelope
+checkpoint.isRestorableCheckpoint(value) // value is RestorableCheckpointEnvelope, older versions too
 
 store.createDocumentStoreFromCheckpoint(checkpoint, config?, restoreOptions?)
 store.createDocumentStoreWithEventsFromCheckpoint(checkpoint, config?, restoreOptions?)
 ```
 
-`isCheckpoint` checks the format, version, and non-null object sections. It narrows to
-`CheckpointEnvelope`, whose section contents remain unvalidated. Pass the value to
-`restore` for full validation. Restore entry points accept `unknown` input and check
+`isCheckpoint` checks the format, the current version, and non-null object sections. It
+narrows to `CheckpointEnvelope`, whose section contents remain unvalidated.
+`isRestorableCheckpoint` makes the same checks but also accepts the older versions restore
+migrates. It narrows to `RestorableCheckpointEnvelope`, whose `version` is any number and whose
+sections may use an older layout. Use `isCheckpoint` to narrow to the current
+envelope before reading its sections directly. Pass the value to `restore` for
+full validation. Restore entry points accept `unknown` input and check
 line boundaries and UTF-16 lengths against the resident document bytes.
 
-The store entry points accept `DocumentStoreRuntimeConfig`, which is `logger` plus
-`reconcileMode` or `scheduler`. Content, history limit, line ending, chunk size, and the other
+The store entry points accept `DocumentStoreRestoreConfig`, which is `logger` plus
+`reconcileMode` or `scheduler`, and optionally `historyEvictionPolicy`. Set `historyEvictionPolicy` to replace
+`history.evictionPolicy` for future evictions. Content, history limit, line ending, chunk size, and the other
 state-bearing options come from the checkpoint. Passing one throws rather than being ignored.
 
 Restoring into an event store emits nothing. The first event a subscriber sees is the one their
@@ -235,5 +265,5 @@ Capture includes base64 encoding of the buffers. Measure capture and restore wit
 - Chunked capture inlines every loaded chunk buffer. A policy for checkpointing an unloaded
   skeleton needs the eviction-refusal path from `chunk-actions.ts`, because a chunk with
   overlapping user edits cannot be dropped.
-- Version `1` is the only supported format. Migration routing is implemented, but the registry has no upgrade steps yet.
+- The registry has one upgrade step, from version `1` to `2`.
 - `normalized` capture is unavailable for chunked documents.

@@ -22,21 +22,29 @@ import type {
   HistoryState,
   HistoryEntry,
   HistoryChange,
+  HistorySelectionRange,
+  HistorySelectionState,
   DocumentMetadata,
   ChunkMetadata,
 } from "../../types/state.js";
-import { pstackFromArray } from "../../types/state.js";
+import { HISTORY_EVICTION_POLICIES, pstackFromArray } from "../../types/state.js";
 import type { NonEmptyReadonlyArray } from "../../types/utils.js";
 import type { AttentionLayerState, Attention } from "../../types/attention.js";
 import type { PieceID, AttentionID, ReadonlyUint8Array } from "../../types/branded.js";
 import { byteOffset, byteLength, pieceID, attentionID } from "../../types/branded.js";
 import type {
   CheckpointEnvelope,
+  RestorableCheckpointEnvelope,
   CheckpointRestoreOptions,
   CheckpointErrorCode,
 } from "../../types/checkpoint.js";
 import { CHECKPOINT_FORMAT, CHECKPOINT_VERSION, CheckpointError } from "../../types/checkpoint.js";
-import { migrateCheckpointData } from "./checkpoint-migrate.js";
+import {
+  isInt,
+  migrateCheckpointData,
+  migrationPath,
+  minimumSupportedVersion,
+} from "./checkpoint-migrate.js";
 import type { PieceDescriptor, LineDescriptor } from "../core/state.js";
 import {
   buildPieceTree,
@@ -44,11 +52,16 @@ import {
   freezePieceTableState,
   freezeLineIndexState,
 } from "../core/state.js";
-import { decodeBase64 } from "../core/base64.js";
+import { base64DecodedLength, decodeBase64 } from "../core/base64.js";
 import { inOrderPieces } from "../core/piece-table-stream.js";
 import { decodedCharLength, joinDecoded, type DecodedSummary } from "../core/decoded-metrics.js";
 import { utf8ByteLength } from "../core/encoding.js";
+import { loadedLengthAtOrBelow } from "../core/chunk-anchor.js";
+import { pieceTableDelete, pieceTableInsertPlaceholder } from "../core/piece-table.js";
+import { changeReplayFailure, nextBoundary, selectionRange } from "./history-anchor.js";
+import { insertedLength, removedLength } from "./history-entry.js";
 import { GrowableBuffer } from "../core/growable-buffer.js";
+import { errorMessage } from "./diagnostics.js";
 import {
   asReadonlyMap,
   asReadonlyUint8Array,
@@ -112,6 +125,67 @@ function assertResourceLimit(actual: number, limit: number, what: string): void 
   }
 }
 
+/**
+ * Check the collections a migration walks before it runs.
+ *
+ * Migration copies, sorts, and searches raw wire data, decodes chunk data, and
+ * encodes change text, so untrusted input must meet the restore limits first.
+ * The checks here cover only what the migration reads, which validation counts
+ * as well, so they never reject a payload that validation would accept:
+ *
+ * - Validation reads every array counted here.
+ * - Validation reads and decodes the chunk strings as they are.
+ * - Migration keeps a change's text, or splits it into runs whose texts are
+ *   together at least as long: a run edge inside a character decodes to a
+ *   replacement character on each side, and keeps the bytes as well.
+ *
+ * Validation repeats the full check.
+ */
+function assertMigrationLimits(source: Record<string, unknown>, limits: RestoreLimits): void {
+  const length = (value: unknown): number => (Array.isArray(value) ? value.length : 0);
+  const section = (value: unknown): Record<string, unknown> =>
+    typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+  const units = (value: unknown): number => (typeof value === "string" ? value.length : 0);
+  const pieceTable = section(source.pieceTable);
+  const history = section(source.history);
+  assertResourceLimit(length(pieceTable.pieces), limits.maxPieces, "pieceTable.pieces");
+  assertResourceLimit(
+    length(history.undo) + length(history.redo),
+    limits.maxHistoryEntries,
+    "history entries",
+  );
+  // The entry count is bounded above, so this walk is too.
+  let items = length(pieceTable.pieces) + length(pieceTable.chunks);
+  let codeUnits = 0;
+  let decodedBytes = 0;
+  if (Array.isArray(pieceTable.chunks)) {
+    for (const chunk of pieceTable.chunks) {
+      if (!Array.isArray(chunk) || typeof chunk[1] !== "string") continue;
+      codeUnits += chunk[1].length;
+      decodedBytes += decodedLengthBound(chunk[1]);
+    }
+  }
+  for (const entries of [history.undo, history.redo]) {
+    if (!Array.isArray(entries)) continue;
+    for (const raw of entries) {
+      const entry = section(raw);
+      items +=
+        length(entry.changes) +
+        length(section(entry.selectionBefore).ranges) +
+        length(section(entry.selectionAfter).ranges);
+      if (!Array.isArray(entry.changes)) continue;
+      // The texts a version 1 change holds: inserted text, then a replace's old text.
+      for (const change of entry.changes) {
+        if (!Array.isArray(change)) continue;
+        codeUnits += units(change[2]) + (change[0] === "r" ? units(change[3]) : 0);
+      }
+    }
+  }
+  assertResourceLimit(items, limits.maxCollectionItems, "checkpoint collection items");
+  assertResourceLimit(codeUnits, limits.maxStringCodeUnits, "checkpoint string code units");
+  assertResourceLimit(decodedBytes, limits.maxBufferBytes, "pieceTable.chunks decoded bytes");
+}
+
 function createRestoreBudget(limits: RestoreLimits): RestoreBudget {
   return {
     limits,
@@ -170,12 +244,30 @@ function readBoolean(value: unknown, what: string): boolean {
   return value;
 }
 
-/** Validate a non-negative safe integer for an offset, length, or count. */
-function readCount(value: unknown, what: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    fail("MALFORMED", `${what} must be a non-negative safe integer`);
+/** Validate a safe integer no smaller than `min`. `expected` words the error. */
+function readInteger(
+  value: unknown,
+  what: string,
+  min: number = Number.MIN_SAFE_INTEGER,
+  expected = `a safe integer of at least ${min}`,
+): number {
+  if (!isInt(value) || value < min) {
+    fail("MALFORMED", `${what} must be ${expected}`);
   }
   return value;
+}
+
+/**
+ * Validate a non-negative safe integer for an offset, length, or count,
+ * worded as the spec's error messages are.
+ */
+function readCount(value: unknown, what: string): number {
+  return readInteger(value, what, 0, "a non-negative safe integer");
+}
+
+/** Read an optional chunk placement key (>= -1), defaulting to -1. */
+function readPlacementKey(value: unknown, what: string): number {
+  return value === undefined ? -1 : readInteger(value, what, -1);
 }
 
 function readFiniteNumber(value: unknown, what: string): number {
@@ -206,11 +298,18 @@ function readOptionalString(
   return value === undefined ? undefined : readString(value, what, budget);
 }
 
+/**
+ * The decoded length of `base64`, checked against limits before decoding.
+ * decodeBase64 rejects a length that is not a multiple of four, but the limit
+ * is checked first, so that case rounds up.
+ */
+function decodedLengthBound(base64: string): number {
+  return base64.length % 4 === 0 ? base64DecodedLength(base64) : Math.ceil(base64.length / 4) * 3;
+}
+
 function readBytes(value: unknown, what: string, budget: RestoreBudget): Uint8Array {
   const base64 = readString(value, what, budget);
-  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
-  const decodedLength =
-    base64.length % 4 === 0 ? (base64.length / 4) * 3 - padding : Math.ceil(base64.length / 4) * 3;
+  const decodedLength = decodedLengthBound(base64);
   assertResourceLimit(decodedLength, budget.remainingBufferBytes, `${what} decoded bytes`);
   try {
     const bytes = decodeBase64(base64);
@@ -219,7 +318,7 @@ function readBytes(value: unknown, what: string, budget: RestoreBudget): Uint8Ar
     return bytes;
   } catch (error) {
     if (error instanceof CheckpointError) throw error;
-    fail("MALFORMED", `${what} is not valid base64: ${(error as Error).message}`);
+    fail("MALFORMED", `${what} is not valid base64: ${errorMessage(error)}`);
   }
 }
 
@@ -247,12 +346,24 @@ function restorePieces(
   originalLength: number,
   addLength: number,
   chunkMap: Map<number, Uint8Array>,
+  nextExpectedChunk: number,
   budget: RestoreBudget,
 ): { pieces: PieceDescriptor[]; totalLength: number; lengthByID: Map<PieceID, number> } {
   const pieces: PieceDescriptor[] = [];
   const lengthByID = new Map<PieceID, number>();
   let totalLength = 0;
   let lastChunkIndex = -1;
+  // Placement keys never decrease in document order (see core/chunk-anchor.ts).
+  let lastKey = -1;
+  const checkKey = (key: number, what: string) => {
+    if (key < lastKey) {
+      fail(
+        "CHUNK_ORDER",
+        `${what} has placement key ${key} after ${lastKey}: keys must not decrease in document order`,
+      );
+    }
+    lastKey = key;
+  };
 
   for (let i = 0; i < raw.length; i++) {
     const what = `pieceTable.pieces[${i}]`;
@@ -285,7 +396,7 @@ function restorePieces(
         );
       }
       // Invariants §1.4: chunk pieces appear in ascending chunkIndex order, which
-      // findReloadInsertionPos relies on to place a re-loaded chunk.
+      // loading relies on to place a re-loaded chunk.
       if (chunkIndex < lastChunkIndex) {
         fail(
           "CHUNK_ORDER",
@@ -293,6 +404,7 @@ function restorePieces(
         );
       }
       lastChunkIndex = chunkIndex;
+      checkKey(chunkIndex - 1, what);
       pieces.push({
         id,
         bufferType: "chunk",
@@ -309,7 +421,29 @@ function restorePieces(
           `${what} covers [${start}, ${start + length}) of the ${bufferType} buffer, which holds ${bufferLength} bytes`,
         );
       }
-      pieces.push({ id, bufferType, start: byteOffset(start), length: byteLength(length) });
+      if (tag === "a") {
+        const afterChunk = readPlacementKey(tuple[4], `${what}[4]`);
+        checkKey(afterChunk, what);
+        // Text can only follow chunks that have been loaded. A higher key would
+        // place the next sequentially streamed chunk on the wrong side of it.
+        if (afterChunk >= nextExpectedChunk) {
+          fail(
+            "CHUNK_ORDER",
+            `${what} has placement key ${afterChunk} but only chunks below ${nextExpectedChunk} have been loaded`,
+          );
+        }
+        pieces.push({
+          id,
+          bufferType,
+          start: byteOffset(start),
+          length: byteLength(length),
+          afterChunk,
+        });
+      } else {
+        // Original bytes have key -1, so they cannot follow chunk text.
+        checkKey(-1, what);
+        pieces.push({ id, bufferType, start: byteOffset(start), length: byteLength(length) });
+      }
     }
 
     lengthByID.set(id, length);
@@ -440,6 +574,7 @@ function restorePieceTable(
     originalBuffer.length,
     addBytes.length,
     chunkMap,
+    nextExpectedChunk,
     budget,
   );
 
@@ -651,35 +786,34 @@ function restoreLineIndex(
 }
 
 /**
- * @param maxOffset - Upper bound for offsets, or `null` to accept any offset.
- *   History entries describe older revisions, so their selections may point past
- *   the end of the current document and are only checked structurally.
+ * Read a selection's ranges and primary index. `readRange` validates one range
+ * tuple of 2 or 4 elements; the tuple length, empty-selection and
+ * primary-index rules are shared by live and history selections.
  */
-function restoreSelection(
+function restoreSelectionShape<R>(
   raw: unknown,
   what: string,
-  maxOffset: number | null,
   budget: RestoreBudget,
-): SelectionState {
+  readRange: (tuple: readonly unknown[], rangeWhat: string) => R,
+): { ranges: NonEmptyReadonlyArray<R>; primaryIndex: number } {
   const source = readObject(raw, what);
   const rawRanges = readArray(source.ranges, `${what}.ranges`, budget);
   if (rawRanges.length === 0) {
     fail("SELECTION_OUT_OF_RANGE", `${what}.ranges is empty: a selection always has one range`);
   }
 
-  const ranges: SelectionRange[] = [];
+  const ranges: R[] = [];
   for (let i = 0; i < rawRanges.length; i++) {
     const rangeWhat = `${what}.ranges[${i}]`;
     const tuple = readArray(rawRanges[i], rangeWhat, budget);
-    const anchor = readCount(tuple[0], `${rangeWhat}[0]`);
-    const head = readCount(tuple[1], `${rangeWhat}[1]`);
-    if (maxOffset !== null && (anchor > maxOffset || head > maxOffset)) {
+    // When a range stores placement keys, require one for each endpoint.
+    if (tuple.length !== 2 && tuple.length !== 4) {
       fail(
-        "SELECTION_OUT_OF_RANGE",
-        `${rangeWhat} spans [${anchor}, ${head}] but the document holds ${maxOffset} bytes`,
+        "MALFORMED",
+        `${rangeWhat} has ${tuple.length} elements: expected [anchor, head] or [anchor, head, anchorAfterChunk, headAfterChunk]`,
       );
     }
-    ranges.push(Object.freeze({ anchor: byteOffset(anchor), head: byteOffset(head) }));
+    ranges.push(Object.freeze(readRange(tuple, rangeWhat)));
   }
 
   const primaryIndex = readCount(source.primaryIndex, `${what}.primaryIndex`);
@@ -690,61 +824,326 @@ function restoreSelection(
     );
   }
 
-  return Object.freeze({
-    ranges: Object.freeze(ranges) as NonEmptyReadonlyArray<SelectionRange>,
+  return {
+    ranges: Object.freeze(ranges) as unknown as NonEmptyReadonlyArray<R>,
     primaryIndex,
-  });
+  };
 }
 
-function restoreHistoryChange(raw: unknown, what: string, budget: RestoreBudget): HistoryChange {
+/**
+ * Restore the live selection. Every offset must lie within the document. An
+ * offset inside a character moves to a code-point boundary, as a history
+ * selection does (see `nextBoundary`), since edits and SET_SELECTION reject
+ * it; a key stored for an endpoint that moved is dropped.
+ */
+function restoreSelection(
+  raw: unknown,
+  what: string,
+  pieceTable: PieceTableState,
+  budget: RestoreBudget,
+): SelectionState {
+  const maxOffset = pieceTable.totalLength;
+  return Object.freeze(
+    restoreSelectionShape(raw, what, budget, (tuple, rangeWhat): SelectionRange => {
+      const anchor = readCount(tuple[0], `${rangeWhat}[0]`);
+      const head = readCount(tuple[1], `${rangeWhat}[1]`);
+      if (anchor > maxOffset || head > maxOffset) {
+        fail(
+          "SELECTION_OUT_OF_RANGE",
+          `${rangeWhat} spans [${anchor}, ${head}] but the document holds ${maxOffset} bytes`,
+        );
+      }
+      // null stands for no stored key. A key text at its offset could not
+      // take is ignored, as it is on the live selection (see
+      // `SelectionRange.anchorAfterChunk`). A captured selection's keys fit
+      // (see `captureSelection`), but a checkpoint built by hand or by an
+      // older version may store one that does not.
+      const readKey = (index: 2 | 3): number | undefined => {
+        const value = tuple[index];
+        if (value === null || value === undefined) return undefined;
+        return readPlacementKey(value, `${rangeWhat}[${index}]`);
+      };
+      const anchorKey = readKey(2);
+      const headKey = readKey(3);
+      const anchorAt = nextBoundary(pieceTable, anchor);
+      const headAt = nextBoundary(pieceTable, head);
+      return selectionRange(
+        pieceTable,
+        byteOffset(anchorAt),
+        byteOffset(headAt),
+        anchorAt === anchor ? anchorKey : undefined,
+        headAt === head ? headKey : undefined,
+      );
+    }),
+  );
+}
+
+/**
+ * Read and validate one anchored history position and its placement key.
+ *
+ * A placement key can only name a chunk that has been loaded, so it is at most
+ * `nextExpectedChunk - 1` (always `-1` without chunking).
+ *
+ * An anchored position subtracts the lengths of loaded chunks at or below its
+ * key from a non-negative resident offset. `kind` picks the lower bound:
+ *
+ * - `"change"`: undo and redo replay a change in the restored chunk layout,
+ *   where it must resolve to a non-negative offset, so the position is at
+ *   least minus the loaded chunks at or below its key. Only an edited chunk
+ *   makes a position negative, and an edited chunk cannot be evicted, so a
+ *   valid history meets this bound.
+ * - `"selection"`: a selection is clamped into the document when restored,
+ *   so it only needs the bound that holds in any layout, `-(key + 1) * chunkSize`.
+ *
+ * Both are `0` for key `-1`.
+ */
+function readAnchor(
+  rawPosition: unknown,
+  rawKey: unknown,
+  positionWhat: string,
+  keyWhat: string,
+  pieceTable: PieceTableState,
+  kind: "change" | "selection",
+): { position: number; afterChunk: number } {
+  const afterChunk = readPlacementKey(rawKey, keyWhat);
+  const maxKey = pieceTable.nextExpectedChunk - 1;
+  if (afterChunk > maxKey) {
+    fail(
+      "HISTORY_INVALID",
+      `${keyWhat} is placement key ${afterChunk} but only chunks up to ${maxKey} have been loaded`,
+    );
+  }
+  const minPosition =
+    kind === "change"
+      ? -loadedLengthAtOrBelow(pieceTable, afterChunk)
+      : Math.max(-(afterChunk + 1) * pieceTable.chunkSize, Number.MIN_SAFE_INTEGER);
+  return { position: readInteger(rawPosition, positionWhat, minPosition), afterChunk };
+}
+
+function restoreHistoryChange(
+  raw: unknown,
+  what: string,
+  pieceTable: PieceTableState,
+  budget: RestoreBudget,
+): HistoryChange {
   const tuple = readArray(raw, what, budget);
   const kind = readEnum(tuple[0], ["i", "d", "r"] as const, `${what}[0]`, budget);
-  const position = byteOffset(readCount(tuple[1], `${what}[1]`));
   const text = readString(tuple[2], `${what}[2]`, budget);
-  // Derive byte lengths from text so an incorrect stored length cannot
-  // shift the offsets computed during undo.
-  const textLength = byteLength(utf8ByteLength(text));
+  // Anchored positions may be negative (see HistoryAnchor). The placement key
+  // follows the text fields, so its index depends on the change kind.
+  const keyIndex = kind === "r" ? 4 : 3;
+  const anchor = readAnchor(
+    tuple[1],
+    tuple[keyIndex],
+    `${what}[1]`,
+    `${what}[${keyIndex}]`,
+    pieceTable,
+    "change",
+  );
+  // After the key, read `bytes` and then `oldBytes` for a replacement.
+  const maxLength = kind === "r" ? keyIndex + 3 : keyIndex + 2;
+  if (tuple.length > maxLength) {
+    fail("MALFORMED", `${what} has ${tuple.length} elements: expected at most ${maxLength}`);
+  }
+  // A null `bytes` only holds the place of a replace's `oldBytes`, so it is
+  // accepted only when `oldBytes` follows.
+  const readRawBytes = (index: number): { bytes: ReadonlyUint8Array } | undefined => {
+    const value = tuple[index];
+    if (value === undefined) return undefined;
+    if (value === null && kind === "r" && index === keyIndex + 1 && tuple.length === maxLength) {
+      return undefined;
+    }
+    return {
+      bytes: asReadonlyUint8Array(readBytes(value, `${what}[${index}]`, budget)),
+    };
+  };
+  const bytes = readRawBytes(keyIndex + 1);
+  // Derive byte lengths from the bytes undo inserts, so an incorrect stored
+  // length cannot shift the offsets computed during undo.
+  const lengthOf = (value: string, raw: { bytes: ReadonlyUint8Array } | undefined) =>
+    byteLength(raw?.bytes.length ?? utf8ByteLength(value));
 
   if (kind === "r") {
     const oldText = readString(tuple[3], `${what}[3]`, budget);
+    const oldBytes = readRawBytes(keyIndex + 2);
     return Object.freeze({
       type: "replace",
-      position,
+      ...anchor,
+      ...bytes,
       text,
-      byteLength: textLength,
+      byteLength: lengthOf(text, bytes),
+      ...(oldBytes !== undefined && { oldBytes: oldBytes.bytes }),
       oldText,
-      oldByteLength: byteLength(utf8ByteLength(oldText)),
+      oldByteLength: lengthOf(oldText, oldBytes),
     });
   }
   return Object.freeze({
     type: kind === "i" ? "insert" : "delete",
-    position,
+    ...anchor,
+    ...bytes,
     text,
-    byteLength: textLength,
+    byteLength: lengthOf(text, bytes),
   });
 }
 
-function restoreHistoryEntry(raw: unknown, what: string, budget: RestoreBudget): HistoryEntry {
+/** Restore a history selection from anchored positions and optional placement keys. */
+function restoreHistorySelection(
+  raw: unknown,
+  what: string,
+  pieceTable: PieceTableState,
+  budget: RestoreBudget,
+): HistorySelectionState {
+  return Object.freeze(
+    restoreSelectionShape(raw, what, budget, (tuple, rangeWhat): HistorySelectionRange => {
+      const read = (index: 0 | 1) =>
+        readAnchor(
+          tuple[index],
+          tuple[index + 2],
+          `${rangeWhat}[${index}]`,
+          `${rangeWhat}[${index + 2}]`,
+          pieceTable,
+          "selection",
+        );
+      const anchor = read(0);
+      const head = read(1);
+      return {
+        anchor: anchor.position,
+        head: head.position,
+        anchorAfterChunk: anchor.afterChunk,
+        headAfterChunk: head.afterChunk,
+      };
+    }),
+  );
+}
+
+function restoreHistoryEntry(
+  raw: unknown,
+  what: string,
+  pieceTable: PieceTableState,
+  budget: RestoreBudget,
+): HistoryEntry {
   const source = readObject(raw, what);
   const rawChanges = readArray(source.changes, `${what}.changes`, budget);
   const changes = rawChanges.map((change, i) =>
-    restoreHistoryChange(change, `${what}.changes[${i}]`, budget),
+    restoreHistoryChange(change, `${what}.changes[${i}]`, pieceTable, budget),
   );
 
   return Object.freeze({
     changes: Object.freeze(changes),
-    selectionBefore: restoreSelection(
+    selectionBefore: restoreHistorySelection(
       source.selectionBefore,
       `${what}.selectionBefore`,
-      null,
+      pieceTable,
       budget,
     ),
-    selectionAfter: restoreSelection(source.selectionAfter, `${what}.selectionAfter`, null, budget),
+    selectionAfter: restoreHistorySelection(
+      source.selectionAfter,
+      `${what}.selectionAfter`,
+      pieceTable,
+      budget,
+    ),
     timestamp: readFiniteNumber(source.timestamp, `${what}.timestamp`),
   });
 }
 
-function restoreHistory(raw: unknown, budget: RestoreBudget): HistoryState {
+/**
+ * Check that a stack replays inside the document: undo (`direction` -1) walks
+ * changes last to first, and redo (1) first to last, both from the newest
+ * entry. Each change applies to the document the newer ones left. A change
+ * would make UNDO or REDO drop the entry when it does not replay there by the
+ * rule `applyChange` applies (see `changeReplayFailure`). Restore catches
+ * that here instead.
+ *
+ * A replayed entry moves to the other stack, and the next replay applies it in
+ * the other direction, so the key must also fit for the text that direction
+ * inserts. Undoing changes n-1 down to i leaves the document that redoing
+ * change i starts from, and the other way round. Both directions insert at the
+ * same offset, into the document left once this direction's removed bytes are
+ * gone, so the one rule covers both.
+ *
+ * Without chunks every key is NO_CHUNK and fits everywhere, so the walk
+ * tracks only the length. With chunks it replays each change on stand-in
+ * bytes, since whether a key fits depends on the keys around it. That costs
+ * O(log n) per change.
+ *
+ * Replay loads and evicts no chunks, so every position resolves against the
+ * restored layout. `readAnchor` has already checked each against zero.
+ *
+ * Returns the index of the newest entry that does not replay, with the
+ * reason, or null when the whole stack replays.
+ */
+function findStackReplayFailure(
+  entries: readonly HistoryEntry[],
+  pieceTable: PieceTableState,
+  direction: 1 | -1,
+  what: string,
+): { readonly index: number; readonly message: string } | null {
+  const chunked = pieceTable.nextExpectedChunk > 0;
+  let doc = pieceTable;
+  let length = pieceTable.totalLength;
+  for (let e = entries.length - 1; e >= 0; e--) {
+    const { changes } = entries[e]!;
+    for (let n = 0; n < changes.length; n++) {
+      const i = direction < 0 ? changes.length - 1 - n : n;
+      const change = changes[i]!;
+      const remove = removedLength(change, direction);
+      const insert = insertedLength(change, direction);
+      const start = change.position + loadedLengthAtOrBelow(pieceTable, change.afterChunk);
+      // Without chunks only the length matters, and every key is NO_CHUNK.
+      const layout = chunked ? doc : { root: null, totalLength: length, nextExpectedChunk: 0 };
+      const failure = changeReplayFailure(layout, start, remove, insert, change.afterChunk);
+      if (failure === "range") {
+        return {
+          index: e,
+          message:
+            `${what}[${e}].changes[${i}] resolves to [${start}, ${start + remove}), past the ` +
+            `end of the ${length}-byte document it applies to`,
+        };
+      }
+      if (failure === "key") {
+        return {
+          index: e,
+          message:
+            `${what}[${e}].changes[${i}] inserts text with placement key ${change.afterChunk} ` +
+            `at offset ${start} on undo or redo, which would put placement keys out of ` +
+            `document order`,
+        };
+      }
+      if (failure === "span") {
+        return {
+          index: e,
+          message:
+            `${what}[${e}].changes[${i}] removes [${start}, ${start + remove}) on undo or ` +
+            `redo, which holds bytes outside placement key ${change.afterChunk}`,
+        };
+      }
+      length += insert - remove;
+      if (!chunked) continue;
+      if (remove > 0) doc = pieceTableDelete(doc, byteOffset(start), byteOffset(start + remove));
+      // Only lengths and keys are checked, so the inserted text stands in as
+      // a placeholder: no bytes move.
+      doc = pieceTableInsertPlaceholder(doc, byteOffset(start), insert, change.afterChunk);
+    }
+  }
+  return null;
+}
+
+/**
+ * Restore the undo and redo stacks.
+ *
+ * A stack that does not replay (see `findStackReplayFailure`) rejects the
+ * checkpoint unless `dropStale` is set. Version 1 could save offsets that had
+ * already gone stale when a chunk was evicted, and its restore still kept the
+ * document. A migrated payload does the same: each stack keeps the newer
+ * entries that replay and drops the failing entry and everything older, since
+ * each older entry applies to the document the failing one would have left.
+ */
+function restoreHistory(
+  raw: unknown,
+  pieceTable: PieceTableState,
+  budget: RestoreBudget,
+  dropStale: boolean,
+): HistoryState {
   const { limits } = budget;
   const source = readObject(raw, "history");
   const limit = readCount(source.limit, "history.limit");
@@ -757,6 +1156,16 @@ function restoreHistory(raw: unknown, budget: RestoreBudget): HistoryState {
     fail("HISTORY_INVALID", "history.coalesceTimeout must be a non-negative number");
   }
 
+  const evictionPolicy =
+    source.evictionPolicy === undefined
+      ? "pin-bounded"
+      : readEnum(
+          source.evictionPolicy,
+          HISTORY_EVICTION_POLICIES,
+          "history.evictionPolicy",
+          budget,
+        );
+
   const rawUndo = readArray(source.undo, "history.undo", budget);
   const rawRedo = readArray(source.redo, "history.redo", budget);
   assertResourceLimit(rawUndo.length + rawRedo.length, limits.maxHistoryEntries, "history entries");
@@ -767,14 +1176,25 @@ function restoreHistory(raw: unknown, budget: RestoreBudget): HistoryState {
         `${what} holds ${rawEntries.length} entries, past the declared limit of ${limit}`,
       );
     }
-    return rawEntries.map((entry, i) => restoreHistoryEntry(entry, `${what}[${i}]`, budget));
+    return rawEntries.map((entry, i) =>
+      restoreHistoryEntry(entry, `${what}[${i}]`, pieceTable, budget),
+    );
   };
+  const replayable = (entries: HistoryEntry[], direction: 1 | -1, what: string) => {
+    const failure = findStackReplayFailure(entries, pieceTable, direction, what);
+    if (failure === null) return entries;
+    if (!dropStale) fail("HISTORY_INVALID", failure.message);
+    return entries.slice(failure.index + 1);
+  };
+  const undo = replayable(readStack(rawUndo, "history.undo"), -1, "history.undo");
+  const redo = replayable(readStack(rawRedo, "history.redo"), 1, "history.redo");
 
   return Object.freeze({
-    undoStack: pstackFromArray(readStack(rawUndo, "history.undo")),
-    redoStack: pstackFromArray(readStack(rawRedo, "history.redo")),
+    undoStack: pstackFromArray(undo),
+    redoStack: pstackFromArray(redo),
     limit,
     coalesceTimeout,
+    evictionPolicy,
   });
 }
 
@@ -865,22 +1285,53 @@ function restoreAttention(
 }
 
 /**
- * Check the format tag, supported version, and required checkpoint sections.
+ * Check the format tag, the current version, and required checkpoint sections.
  *
  * Use this envelope check to route values before restoring them.
- * `restoreCheckpoint` validates the payload's internal consistency.
+ * `restoreCheckpoint` validates the payload's internal consistency. Use
+ * `isRestorableCheckpoint` to accept older versions supported by restore.
  */
 export function isCheckpoint(value: unknown): value is CheckpointEnvelope {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return envelopeVersion(value) === CHECKPOINT_VERSION;
+}
+
+/**
+ * Check the format tag, a version `restoreCheckpoint` can read, and required
+ * checkpoint sections.
+ *
+ * The envelope can use any version in `RestorableCheckpointEnvelope`. Pass it
+ * to `restoreCheckpoint` to migrate it, or narrow it with `isCheckpoint` before
+ * reading sections that require the current layout.
+ */
+export function isRestorableCheckpoint(value: unknown): value is RestorableCheckpointEnvelope {
+  const version = envelopeVersion(value);
+  return version !== null && version >= minimumSupportedVersion();
+}
+
+/**
+ * The version of a checkpoint envelope no newer than this build, or null when
+ * `value` is not one.
+ */
+function envelopeVersion(value: unknown): number | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
-  if (candidate.format !== CHECKPOINT_FORMAT) return false;
-  if (candidate.version !== CHECKPOINT_VERSION) return false;
-  return ["pieceTable", "lineIndex", "selection", "history", "metadata", "attention"].every(
-    (key) => {
-      const section = candidate[key];
-      return typeof section === "object" && section !== null && !Array.isArray(section);
-    },
-  );
+  if (candidate.format !== CHECKPOINT_FORMAT) return null;
+  const version = candidate.version;
+  if (typeof version !== "number" || !Number.isInteger(version) || version > CHECKPOINT_VERSION) {
+    return null;
+  }
+  const sectionsPresent = [
+    "pieceTable",
+    "lineIndex",
+    "selection",
+    "history",
+    "metadata",
+    "attention",
+  ].every((key) => {
+    const section = candidate[key];
+    return typeof section === "object" && section !== null && !Array.isArray(section);
+  });
+  return sectionsPresent ? version : null;
 }
 
 function validateChunkLineIndex(
@@ -908,6 +1359,26 @@ function validateChunkLineIndex(
     }
   }
 }
+
+/**
+ * Bring an older payload to the current version. Migration runs before
+ * validation and returns malformed input as is for the validators to report,
+ * but any other error it raises still means the payload is not restorable,
+ * so it surfaces as `CheckpointError('MALFORMED')` as `restoreCheckpoint`
+ * promises.
+ */
+function migrate(source: Record<string, unknown>, version: number): Record<string, unknown> {
+  try {
+    return migrateCheckpointData(source, version).data;
+  } catch (error) {
+    if (error instanceof CheckpointError) throw error;
+    fail(
+      "MALFORMED",
+      `checkpoint version ${version} could not be migrated: ${errorMessage(error)}`,
+    );
+  }
+}
+
 /**
  * Rebuild a document state from a checkpoint.
  *
@@ -942,8 +1413,10 @@ export function restoreCheckpoint(
   const version = readCount(source.version, "checkpoint.version");
   // Migrate older payloads before validating fields against the current
   // format. Raise VERSION_UNSUPPORTED when no migration path exists.
-  const migrated =
-    version === CHECKPOINT_VERSION ? source : migrateCheckpointData(source, version).data;
+  if (version !== CHECKPOINT_VERSION && migrationPath(version) !== null) {
+    assertMigrationLimits(source, limits);
+  }
+  const migrated = version === CHECKPOINT_VERSION ? source : migrate(source, version);
   readEnum(migrated.mode, ["exact", "normalized"] as const, "checkpoint.mode", budget);
 
   const revision = readCount(migrated.revision, "checkpoint.revision");
@@ -956,8 +1429,8 @@ export function restoreCheckpoint(
     selectionRevision: readCount(migrated.selectionRevision, "checkpoint.selectionRevision"),
     pieceTable,
     lineIndex,
-    selection: restoreSelection(migrated.selection, "selection", pieceTable.totalLength, budget),
-    history: restoreHistory(migrated.history, budget),
+    selection: restoreSelection(migrated.selection, "selection", pieceTable, budget),
+    history: restoreHistory(migrated.history, pieceTable, budget, version !== CHECKPOINT_VERSION),
     metadata: restoreMetadata(migrated.metadata, budget),
     attention: restoreAttention(migrated.attention, lengthByID, budget),
   });
@@ -983,7 +1456,7 @@ export function decodeCheckpoint(
   try {
     parsed = JSON.parse(json);
   } catch (error) {
-    fail("NOT_A_CHECKPOINT", `checkpoint is not valid JSON: ${(error as Error).message}`);
+    fail("NOT_A_CHECKPOINT", `checkpoint is not valid JSON: ${errorMessage(error)}`);
   }
   return restoreCheckpoint(parsed, options);
 }

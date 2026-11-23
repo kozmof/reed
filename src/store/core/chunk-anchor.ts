@@ -1,0 +1,447 @@
+/**
+ * Chunk placement keys and anchored positions.
+ *
+ * Loading or evicting a chunk shifts the resident offsets that follow it.
+ * Anchored positions track the same place across those shifts.
+ *
+ * A resident byte’s placement key K divides the chunks around that byte.
+ * Chunks with index <= K lie wholly before it. Higher chunks lie after it.
+ * - A byte of chunk `i` has key `i - 1`.
+ * - A byte of an add piece has the key stored on the piece (`afterChunk`).
+ * - A byte of the original buffer has key `-1`.
+ * Keys never decrease in document order. Loading relies on that to place a
+ * chunk `c` before the first piece whose key is >= c (`keySpan(root, c).start`).
+ *
+ * An anchored position pairs the placement key K with the adjusted offset n.
+ *   n = residentOffset - (sum of original lengths of loaded chunks with index <= K).
+ * Loading or evicting a chunk `c <= K` changes both terms by the chunk length,
+ * and a chunk `c > K` changes neither, so the pair stays valid while chunks
+ * come and go. History stores positions this way.
+ */
+
+import type { PieceNode, PieceTableState } from "../../types/state.js";
+import { lastPiece, pieceAt } from "./piece-search.js";
+import { avlHeight, avlPut, avlRemove } from "./persistent-avl.js";
+
+/** Key for positions before every chunk, and for every position without chunking. */
+export const NO_CHUNK = -1;
+
+declare const fittedKeyBrand: unique symbol;
+
+/**
+ * A placement key derived from a document at an offset where it fits (see
+ * `keyFitsAt`). Only the derivations in this module and `insertionKey` produce
+ * one, so an insert given a `FittedKey` can skip checking it again. Use it on
+ * the document it was derived from, before that document changes near the
+ * offset.
+ */
+export type FittedKey = number & { readonly [fittedKeyBrand]: true };
+
+/** Mark a placement key as fitting the position where the caller derived it. */
+export function asFittedKey(key: number): FittedKey {
+  return key as FittedKey;
+}
+
+/**
+ * The parts of a piece table that placement keys are read from: the piece
+ * tree and which chunks have ever loaded. It holds no text, so keeping it
+ * does not keep chunk bytes alive.
+ */
+export type KeyLayout = Pick<PieceTableState, "root" | "totalLength" | "nextExpectedChunk">;
+
+/** Placement key of the bytes in `piece` (constant across the piece). */
+export function pieceKey(piece: PieceNode): number {
+  switch (piece.bufferType) {
+    case "chunk":
+      return piece.chunkIndex - 1;
+    case "add":
+      return piece.afterChunk;
+    case "original":
+      return NO_CHUNK;
+  }
+}
+
+/**
+ * Key just after the last byte of `piece`, when nothing follows it. After a
+ * chunk piece, that whole chunk lies before the position.
+ */
+function keyAfterPiece(piece: PieceNode): number {
+  return piece.bufferType === "chunk" ? piece.chunkIndex : pieceKey(piece);
+}
+
+/** The piece holding resident byte `offset`, or null when `offset` is out of range. */
+function pieceAtByte(root: PieceNode | null, offset: number): PieceNode | null {
+  return pieceAt(root, offset)?.node ?? null;
+}
+
+/** Placement key of the resident byte at `offset` (`offset < totalLength`). */
+export function byteKey(root: PieceNode | null, offset: number): number {
+  const piece = pieceAtByte(root, offset);
+  return piece === null ? gapKey(root, offset, "before") : pieceKey(piece);
+}
+
+/**
+ * Which resident content a gap position stays with when a chunk that is not
+ * loaded, sitting between the bytes on either side, loads:
+ *
+ * - `"before"`: the content before the gap. The chunk loads after the position.
+ * - `"after"`: the content after the gap. The chunk loads before the position.
+ */
+export type GapSide = "before" | "after";
+
+/**
+ * Placement key for the gap at resident `offset`.
+ *
+ * Inside a piece both sides agree. Between pieces, `side` picks the content
+ * the position stays with (see `GapSide`). With no content on that side (the
+ * start or end of the document), the position stays with the other side.
+ *
+ * Inserted text and cursors use `"before"`, so text typed after a chunk stays
+ * next to it when an unloaded chunk that follows loads. A selection's start
+ * uses `"after"` and its end `"before"`, so a loaded chunk never lands inside
+ * a selection that did not cover it.
+ */
+export function gapKey(root: PieceNode | null, offset: number, side: GapSide): number {
+  if (root === null) return NO_CHUNK;
+  const after = offset < root.subtreeLength ? pieceAtByte(root, offset) : null;
+  if (offset <= 0) return after === null ? NO_CHUNK : pieceKey(after);
+  if (after === null) return keyAfterPiece(lastPiece(root)!.node);
+  if (side === "after") return pieceKey(after);
+  const before = pieceAtByte(root, offset - 1)!;
+  if (before === after) return pieceKey(after);
+  // `before` may be a chunk piece followed by a later piece of the same chunk.
+  // The smaller key keeps keys in document order.
+  return Math.min(keyAfterPiece(before), pieceKey(after));
+}
+
+/** Total length of the pieces whose placement key is at most `key`. O(log n). */
+function lengthWithKeyAtMost(root: PieceNode | null, key: number): number {
+  // Keys never decrease in document order, so the pieces with key <= `key`
+  // form a prefix of the document.
+  let node = root;
+  let length = 0;
+  while (node !== null) {
+    if (pieceKey(node) <= key) {
+      length += (node.left?.subtreeLength ?? 0) + node.length;
+      node = node.right;
+    } else {
+      node = node.left;
+    }
+  }
+  return length;
+}
+
+/**
+ * Resident span [start, end] of the gaps whose key is `key`.
+ *
+ * Every resident position recorded with key `key` lies in this span. A position
+ * outside the span resolves to the boundary left by the evicted chunk when
+ * clamped to the span. O(log n).
+ */
+export function keySpan(root: PieceNode | null, key: number): { start: number; end: number } {
+  return { start: lengthWithKeyAtMost(root, key - 1), end: lengthWithKeyAtMost(root, key) };
+}
+
+/**
+ * True when `key` is a placement key text inserted at resident `offset` could
+ * take: every byte before the offset has a key at or below it, every byte after
+ * has a key at or above it, and it names no chunk that has never loaded. O(log n).
+ *
+ * This is the one rule for whether a recorded key still applies at an offset.
+ * Inserted text and history anchors check keys here. Selection endpoints check
+ * the narrower `endpointKeyFitsAt`.
+ */
+export function keyFitsAt(pieceTable: KeyLayout, offset: number, key: number): boolean {
+  return keyFitsAfterRemoving(pieceTable, offset, offset, key);
+}
+
+/**
+ * True when `key` is a placement key once a chunk has loaded: an integer from
+ * NO_CHUNK up to the last chunk that has loaded, never one that has not. O(1).
+ */
+export function isPlacementKey(pieceTable: KeyLayout, key: number): boolean {
+  return Number.isSafeInteger(key) && key >= NO_CHUNK && key < pieceTable.nextExpectedChunk;
+}
+
+/**
+ * True when `key` would fit at resident `start` (see `keyFitsAt`) once the
+ * bytes in [start, end) are removed, as a replace removes them before it
+ * inserts. Only the bytes on either side of the range must stay in key order
+ * around it. O(log n).
+ */
+export function keyFitsAfterRemoving(
+  pieceTable: KeyLayout,
+  start: number,
+  end: number,
+  key: number,
+): boolean {
+  if (start < 0 || end < start || end > pieceTable.totalLength) return false;
+  // Before any chunk loads, NO_CHUNK is the only key and fits everywhere.
+  if (pieceTable.nextExpectedChunk === 0) return key === NO_CHUNK;
+  if (!isPlacementKey(pieceTable, key)) return false;
+  // Keys never decrease in document order, so the bytes keyed below `key` are
+  // [0, span.start) and the bytes keyed at or below it are [0, span.end).
+  const span = keySpan(pieceTable.root, key);
+  return span.start <= end && start <= span.end;
+}
+
+/**
+ * True when a selection endpoint at resident `offset` can store `key`: it fits
+ * there (see `keyFitsAt`), and it does not put a resident chunk after the
+ * endpoint when the chunk's last resident byte lies before it. O(log n).
+ *
+ * `keyFitsAt` accepts key `i - 1` just past the last resident byte of chunk
+ * `i`, because that byte's own key is `i - 1`. History needs that: undoing a
+ * delete of the chunk's tail inserts the tail back there under the chunk's
+ * key. An endpoint there with that key would claim to be inside the chunk,
+ * where its tail was, which no live selection can mean. Text typed there would
+ * take the key and count as inside the chunk, so evicting the chunk would cost
+ * that history. Such a key is below the gap key on the `"before"` side (see
+ * `gapKey`), which no other fitting key at an offset past 0 is.
+ */
+export function endpointKeyFitsAt(pieceTable: KeyLayout, offset: number, key: number): boolean {
+  return (
+    keyFitsAt(pieceTable, offset, key) &&
+    (offset === 0 || key >= gapKey(pieceTable.root, offset, "before"))
+  );
+}
+
+/**
+ * The placement key of a position at resident `offset`: `stored` when it fits
+ * there (see `keyFitsAt`), else the key of the gap on `side` (see `gapKey`).
+ * Before any chunk loads, every key is NO_CHUNK. O(log n).
+ */
+export function placementKey(
+  pieceTable: KeyLayout,
+  offset: number,
+  stored: number | undefined,
+  side: GapSide,
+): FittedKey {
+  if (pieceTable.nextExpectedChunk === 0) return asFittedKey(NO_CHUNK);
+  if (stored !== undefined && keyFitsAt(pieceTable, offset, stored)) return asFittedKey(stored);
+  return asFittedKey(gapKey(pieceTable.root, offset, side));
+}
+
+// =============================================================================
+// Loaded-chunk lengths
+// =============================================================================
+
+/**
+ * Persistent AVL tree of the loaded chunks, keyed by chunk index, with the
+ * total length of each subtree. A load or eviction copies one search
+ * path, so streaming a file costs O(log L) per chunk instead of rebuilding a
+ * table over every loaded chunk. Live documents keep one per chunk map, and
+ * the v1 checkpoint migration builds one from wire data.
+ */
+export interface LoadedNode {
+  /** Chunk index. */
+  readonly key: number;
+  /** Original length of the chunk. */
+  readonly value: number;
+  readonly left: LoadedNode | null;
+  readonly right: LoadedNode | null;
+  readonly height: number;
+  readonly sum: number;
+  /** Number of chunks in the subtree. */
+  readonly count: number;
+}
+
+function loadedNode(
+  index: number,
+  length: number,
+  left: LoadedNode | null,
+  right: LoadedNode | null,
+): LoadedNode {
+  return {
+    key: index,
+    value: length,
+    left,
+    right,
+    height: avlHeight(left, right),
+    sum: length + (left?.sum ?? 0) + (right?.sum ?? 0),
+    count: 1 + (left?.count ?? 0) + (right?.count ?? 0),
+  };
+}
+
+function putLoaded(node: LoadedNode | null, index: number, length: number): LoadedNode {
+  return avlPut<number, number, LoadedNode>(loadedNode, node, index, length);
+}
+
+function removeLoaded(node: LoadedNode | null, index: number): LoadedNode | null {
+  return avlRemove<number, number, LoadedNode>(loadedNode, node, index);
+}
+
+/**
+ * Build the tree from (chunk index, length) pairs in any order. A repeated
+ * index keeps its last length.
+ */
+export function buildLoadedChunks(
+  chunks: Iterable<readonly [index: number, length: number]>,
+): LoadedNode | null {
+  let root: LoadedNode | null = null;
+  for (const [index, length] of chunks) root = putLoaded(root, index, length);
+  return root;
+}
+
+/**
+ * Total of `field` over the loaded chunks with index <= key: their length for
+ * `"sum"`, how many there are for `"count"`. O(log L).
+ */
+function totalAtOrBelow(root: LoadedNode | null, key: number, field: "sum" | "count"): number {
+  let total = 0;
+  let node = root;
+  while (node !== null) {
+    if (node.key <= key) {
+      total += (field === "sum" ? node.value : 1) + (node.left?.[field] ?? 0);
+      node = node.right;
+    } else {
+      node = node.left;
+    }
+  }
+  return total;
+}
+
+/** Total length of the loaded chunks with index <= key. O(log L). */
+export function loadedSumAtOrBelow(root: LoadedNode | null, key: number): number {
+  return totalAtOrBelow(root, key, "sum");
+}
+
+type ChunkMap = PieceTableState["chunkMap"];
+
+// chunkMap is replaced, never mutated, so a tree stays valid for its map.
+const loadedTrees = new WeakMap<ChunkMap, LoadedNode | null>();
+
+function loadedTree(chunkMap: ChunkMap): LoadedNode | null {
+  const cached = loadedTrees.get(chunkMap);
+  if (cached !== undefined) return cached;
+  const root = buildLoadedChunks(
+    Array.from(chunkMap, ([index, bytes]) => [index, bytes.length] as const),
+  );
+  loadedTrees.set(chunkMap, root);
+  return root;
+}
+
+/**
+ * Record that `next` is `previous` with chunks `loaded` added and chunks
+ * `evicted` removed, so `next` derives its tree from the one for `previous` in
+ * O(log L) per chunk. Chunk loading and eviction call this. A map without a
+ * recorded tree builds one from scratch on first use.
+ */
+export function deriveLoadedChunks(
+  previous: ChunkMap,
+  next: ChunkMap,
+  loaded: Iterable<readonly [index: number, length: number]>,
+  evicted: Iterable<number>,
+): void {
+  if (loadedTrees.has(next)) return;
+  let root = loadedTree(previous);
+  for (const index of evicted) root = removeLoaded(root, index);
+  for (const [index, length] of loaded) root = putLoaded(root, index, length);
+  loadedTrees.set(next, root);
+}
+
+/** Total original length of the loaded chunks with index <= key. O(log L). */
+export function loadedLengthAtOrBelow(pieceTable: PieceTableState, key: number): number {
+  if (key < 0 || pieceTable.chunkMap.size === 0) return 0;
+  return loadedSumAtOrBelow(loadedTree(pieceTable.chunkMap), key);
+}
+
+/**
+ * The loaded-chunk lengths of `pieceTable`, for `loadedSumAtOrBelow`. The
+ * tree holds only lengths, so keeping it does not keep chunk bytes alive.
+ */
+export function loadedChunkLengths(pieceTable: PieceTableState): LoadedNode | null {
+  return pieceTable.chunkMap.size === 0 ? null : loadedTree(pieceTable.chunkMap);
+}
+
+/**
+ * True when resident offset 0 is the start of the file, so a U+FEFF there is a
+ * byte order mark. The first resident byte's placement key K puts chunks
+ * 0..K before it. It starts the file when none of those chunks has bytes that
+ * are not resident: K is NO_CHUNK, or every chunk 0..K is loaded (their bytes
+ * were all deleted). While one of them is not loaded, a U+FEFF at resident
+ * offset 0 belongs to a later chunk and is file content.
+ *
+ * Chunk indices are distinct and non-negative, so chunks 0..K are all loaded
+ * exactly when K + 1 loaded chunks have an index <= K. O(log n + log L).
+ */
+export function residentStartIsFileStart(state: PieceTableState): boolean {
+  const first = pieceAt(state.root, 0)?.node;
+  if (first === undefined) return true;
+  const key = pieceKey(first);
+  if (key < 0) return true;
+  if (key >= state.chunkMap.size) return false;
+  return totalAtOrBelow(loadedTree(state.chunkMap), key, "count") === key + 1;
+}
+
+// =============================================================================
+// Anchored positions
+// =============================================================================
+
+/** Convert a resident offset with placement key `key` to its anchored value. */
+export function toAnchoredOffset(pieceTable: PieceTableState, key: number, offset: number): number {
+  return offset - loadedLengthAtOrBelow(pieceTable, key);
+}
+
+/** Convert an anchored value with placement key `key` back to a resident offset. */
+export function toResidentOffset(
+  pieceTable: PieceTableState,
+  key: number,
+  anchored: number,
+): number {
+  return anchored + loadedLengthAtOrBelow(pieceTable, key);
+}
+
+/** One run of resident bytes that share a placement key. */
+export interface KeyRun<Key extends number = number> {
+  readonly start: number;
+  readonly end: number;
+  readonly key: Key;
+}
+
+/**
+ * Split the resident range [start, end) into runs of bytes that share a
+ * placement key.
+ *
+ * Undo reinserts each run with its own key, so every byte gets back the key
+ * it had. Reinserting runs with different keys under one key would give the
+ * later bytes a smaller key, and an older change replayed among them would
+ * then leave keys decreasing in document order. Usually there is one run.
+ */
+export function placementRuns(
+  pieceTable: PieceTableState,
+  start: number,
+  end: number,
+): KeyRun<FittedKey>[] {
+  const runs: KeyRun<FittedKey>[] = [];
+  if (end <= start) return runs;
+  // Before any chunk has loaded, every key is NO_CHUNK and nothing can split.
+  if (pieceTable.nextExpectedChunk === 0) return [{ start, end, key: asFittedKey(NO_CHUNK) }];
+  // A run's key is the key of its own bytes, so it fits anywhere in the run.
+  const firstKey = asFittedKey(byteKey(pieceTable.root, start));
+  // Equal first and last keys imply one run because keys never decrease.
+  // Checking those two keys takes O(log n).
+  if (firstKey === byteKey(pieceTable.root, end - 1)) return [{ start, end, key: firstKey }];
+  let runStart = start;
+  let runKey = firstKey;
+  // In-order walk of the pieces that start inside (start, end). Subtrees that
+  // end before `start` or begin at or after `end` are skipped.
+  const visit = (node: PieceNode | null, base: number): void => {
+    if (node === null) return;
+    const nodeStart = base + (node.left?.subtreeLength ?? 0);
+    const nodeEnd = nodeStart + node.length;
+    if (start < nodeStart) visit(node.left, base);
+    if (nodeStart > start && nodeStart < end) {
+      const key = asFittedKey(pieceKey(node));
+      if (key !== runKey) {
+        runs.push({ start: runStart, end: nodeStart, key: runKey });
+        runStart = nodeStart;
+        runKey = key;
+      }
+    }
+    if (nodeEnd < end) visit(node.right, nodeEnd);
+  };
+  visit(pieceTable.root, 0);
+  runs.push({ start: runStart, end, key: runKey });
+  return runs;
+}

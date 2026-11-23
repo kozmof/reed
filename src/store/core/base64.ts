@@ -65,6 +65,18 @@ function decodeBase64Char(base64: string, index: number): number {
 }
 
 /**
+ * Byte length that `decodeBase64` produces for `base64`, without decoding it.
+ * Count complete groups of four characters and subtract padding from the
+ * last complete group. This calculation skips validation.
+ */
+export function base64DecodedLength(base64: string): number {
+  const end = base64.length - (base64.length % 4);
+  if (end === 0) return 0;
+  const padding = base64[end - 1] !== "=" ? 0 : base64[end - 2] === "=" ? 2 : 1;
+  return end * 0.75 - padding;
+}
+
+/**
  * Decode a standard, padded base64 string.
  *
  * @throws Error when the payload length or any character is not valid base64.
@@ -74,8 +86,7 @@ export function decodeBase64(base64: string): Uint8Array {
     throw new Error("Invalid base64 payload length");
   }
 
-  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
-  const output = new Uint8Array((base64.length / 4) * 3 - padding);
+  const output = new Uint8Array(base64DecodedLength(base64));
   let offset = 0;
 
   for (let i = 0; i < base64.length; i += 4) {

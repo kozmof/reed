@@ -32,6 +32,9 @@ Payload size grows with resident chunks. Browsing a file can increase checkpoint
 `minimumSupportedVersion()` derives the supported source window by walking
 backward through the registered migration steps. An empty registry supports only `CHECKPOINT_VERSION`. Adding steps extends the supported range.
 
+Version 2 adds chunk placement keys and anchored positions so history survives
+chunk loads and evictions. Use `isCheckpoint` to check for the current envelope version. Use `isRestorableCheckpoint` to check for any envelope version supported by restore.
+
 Migrations advance one version at a time (`v1 -> v2 -> v3`), never
 direct jumps. Each step is written once, against the format immediately
 preceding it, and is exercised by every later upgrade. A direct `v1 -> v3` step
@@ -40,6 +43,11 @@ would have to be rewritten each time the format moves again.
 Migrations operate on raw wire data, before validation. The validators
 describe the current format, so an older payload must be migrated first.
 Field-level resource limits apply when validation reads the migrated payload.
+Before running a migration, restore applies the same limits to the arrays,
+chunk data, and change text the migration reads. These checks count only what validation counts as well, so they never
+reject a payload that validation would accept. The searches the version 1 step
+makes run in linear time, and their total work is bounded by a multiple of the
+payload's size.
 
 Unknown fields are preserved. A checkpoint written by a newer patch release
 of the same version may carry fields this build does not read. Dropping them

@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { anchorSelection } from "./history-anchor.js";
 import { byteOffset } from "../../types/branded.js";
 import { pstackPush, type HistoryEntry, type LineIndexNode } from "../../types/state.js";
 import { createInitialState, withState } from "../core/state.js";
@@ -91,8 +92,8 @@ it("shares a large history prefix across coalescing while preserving snapshot ar
   });
   const entry: HistoryEntry = Object.freeze({
     changes,
-    selectionBefore: state.selection,
-    selectionAfter: state.selection,
+    selectionBefore: anchorSelection(state.pieceTable, state.selection),
+    selectionAfter: anchorSelection(state.pieceTable, state.selection),
     timestamp: 0,
   });
   state = withState(state, {
@@ -101,10 +102,23 @@ it("shares a large history prefix across coalescing while preserving snapshot ar
       undoStack: pstackPush(null, entry),
     }),
   });
-  state = historyPush(state, makeInsertChange(byteOffset(1), "y"), 1);
+  const selectionBefore = () => anchorSelection(state.pieceTable, state.selection);
+  state = historyPush(
+    state,
+    [makeInsertChange(byteOffset(1), "y")],
+    1,
+    selectionBefore,
+    selectionBefore,
+  );
   const snapshot = state;
   for (let i = 2; i <= 100; i++)
-    state = historyPush(state, makeInsertChange(byteOffset(i), "y"), i);
+    state = historyPush(
+      state,
+      [makeInsertChange(byteOffset(i), "y")],
+      i,
+      selectionBefore,
+      selectionBefore,
+    );
   expect(reads).toBeLessThan(10);
   const latest = state.history.undoStack!.top.changes;
   expect(latest.length).toBe(10000);

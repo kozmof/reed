@@ -9,6 +9,7 @@ import type { ByteOffset } from "../types/branded.js";
 import { $uncostedFn } from "../types/cost-doc.js";
 import {
   getText,
+  getPresentedText,
   getLength,
   isUtf8Boundary,
   findPieceAtPosition,
@@ -27,17 +28,41 @@ import {
 import { asEagerLineIndex } from "../store/core/state.js";
 import type { QueryApi } from "./interfaces.js";
 
-function getTextAtBoundaries(
+function assertTextBoundaries(
   state: Parameters<typeof getText>[0],
   start: Parameters<typeof getText>[1],
   end: Parameters<typeof getText>[2],
-) {
+): void {
   if (!isUtf8Boundary(state, start)) {
     throw new RangeError(`text start (${start}) must be a UTF-8 code-point boundary`);
   }
   if (!isUtf8Boundary(state, end)) {
     throw new RangeError(`text end (${end}) must be a UTF-8 code-point boundary`);
   }
+}
+
+/**
+ * Read text in [start, end) using the same rules as `getValue`. Omit a byte
+ * order mark at the start of the file. A U+FEFF anywhere else is content and is kept, such as
+ * at the start of a range past offset 0, or at resident offset 0 in chunk mode
+ * while a chunk before the first resident byte is not loaded.
+ */
+function getTextAtBoundaries(
+  state: Parameters<typeof getText>[0],
+  start: Parameters<typeof getText>[1],
+  end: Parameters<typeof getText>[2],
+) {
+  assertTextBoundaries(state, start, end);
+  return getPresentedText(state, start, end);
+}
+
+/** Text in [start, end) as the line index counts it, every U+FEFF kept. */
+function getContentTextAtBoundaries(
+  state: Parameters<typeof getText>[0],
+  start: Parameters<typeof getText>[1],
+  end: Parameters<typeof getText>[2],
+) {
+  assertTextBoundaries(state, start, end);
   return getText(state, start, end);
 }
 
@@ -141,6 +166,12 @@ function getSelectionHead(state: DocumentState): ByteOffset | undefined {
 export const query: QueryApi = {
   /** @complexity O(log n + m) — tree traversal to collect byte range */
   getText: $uncostedFn(getTextAtBoundaries),
+  /**
+   * Read text with the leading byte order mark intact. Char positions from
+   * `getCharStartOffset` and `findLineAtCharPosition` index into this text.
+   * @complexity O(log n + m) — tree traversal to collect byte range
+   */
+  getContentText: $uncostedFn(getContentTextAtBoundaries),
   /** @complexity O(1) — cached totalLength on piece table state */
   getLength: $uncostedFn(getLength),
   /** @complexity O(log n) — checks the byte at the requested document position */

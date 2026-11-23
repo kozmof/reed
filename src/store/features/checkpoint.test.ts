@@ -12,6 +12,7 @@ import {
   encodeCheckpoint,
   decodeCheckpoint,
   isCheckpoint,
+  isRestorableCheckpoint,
 } from "./checkpoint.js";
 import {
   createDocumentStore,
@@ -20,8 +21,12 @@ import {
 } from "./store.js";
 import { DocumentActions } from "./actions.js";
 import { documentReducer } from "./reducer.js";
-import { CheckpointError } from "../../types/checkpoint.js";
-import type { DocumentCheckpoint, CheckpointEnvelope } from "../../types/checkpoint.js";
+import { CheckpointError, CHECKPOINT_VERSION } from "../../types/checkpoint.js";
+import type {
+  DocumentCheckpoint,
+  CheckpointEnvelope,
+  RestorableCheckpointEnvelope,
+} from "../../types/checkpoint.js";
 import type { DocumentState } from "../../types/state.js";
 import { pstackSize } from "../../types/state.js";
 import { byteOffset } from "../../types/branded.js";
@@ -557,6 +562,29 @@ describe("isCheckpoint", () => {
     (checkpoint as { version: number }).version = 99;
     expect(isCheckpoint(checkpoint)).toBe(false);
   });
+
+  it("rejects a fractional version between supported versions", () => {
+    const checkpoint = clone(createCheckpoint(createDocumentStore().getEagerSnapshot()));
+    (checkpoint as { version: number }).version = 1.5;
+    expect(isCheckpoint(checkpoint)).toBe(false);
+    expect(isRestorableCheckpoint(checkpoint)).toBe(false);
+  });
+
+  it("rejects an older version that only isRestorableCheckpoint accepts", () => {
+    const checkpoint = clone(createCheckpoint(createDocumentStore().getEagerSnapshot()));
+    (checkpoint as { version: number }).version = CHECKPOINT_VERSION - 1;
+    expect(isCheckpoint(checkpoint)).toBe(false);
+    expect(isRestorableCheckpoint(checkpoint)).toBe(true);
+  });
+
+  it("isRestorableCheckpoint accepts the current version and rejects a newer one", () => {
+    const checkpoint = clone(createCheckpoint(createDocumentStore().getEagerSnapshot()));
+    expect(isRestorableCheckpoint(checkpoint)).toBe(true);
+    (checkpoint as { version: number }).version = CHECKPOINT_VERSION + 1;
+    expect(isRestorableCheckpoint(checkpoint)).toBe(false);
+    (checkpoint as { version: number }).version = 0;
+    expect(isRestorableCheckpoint(checkpoint)).toBe(false);
+  });
 });
 
 describe("restoring into a live store", () => {
@@ -873,6 +901,24 @@ describe("restore rejects untrustworthy payloads", () => {
       },
       "SELECTION_OUT_OF_RANGE",
     );
+  });
+
+  it("moves a live selection inside a character to a code-point boundary", () => {
+    // "é" is bytes [1, 3) and "🎉" bytes [3, 7).
+    const checkpoint = clone(
+      createCheckpoint(createDocumentStore({ content: "aé🎉b" }).getEagerSnapshot()),
+    );
+    checkpoint.selection.ranges = [[2, 5]];
+    const restored = createDocumentStoreFromCheckpoint(checkpoint);
+    const [range] = restored.getSnapshot().selection.ranges;
+    expect([range!.anchor, range!.head]).toEqual([3, 7]);
+    // The restored selection round-trips through SET_SELECTION and edits.
+    expect(() => restored.dispatch(setSelection([range!]))).not.toThrow();
+    expect(() =>
+      restored.dispatch(
+        insert(byteOffset(range!.head), "!", restored.getSnapshot().selection.ranges),
+      ),
+    ).not.toThrow();
   });
 
   it("rejects a primaryIndex with no matching range", () => {
@@ -1323,7 +1369,7 @@ describe("checkpoint envelope contract", () => {
   it("narrows only the envelope and leaves contents to restore", () => {
     const value: unknown = {
       format: "reed-checkpoint",
-      version: 1,
+      version: CHECKPOINT_VERSION,
       pieceTable: {},
       lineIndex: {},
       selection: {},
@@ -1336,6 +1382,30 @@ describe("checkpoint envelope contract", () => {
       expectTypeOf(value).toEqualTypeOf<CheckpointEnvelope>();
       expectTypeOf(value).not.toMatchTypeOf<DocumentCheckpoint>();
       expect(() => restoreCheckpoint(value)).toThrow(CheckpointError);
+    }
+  });
+
+  it("does not claim the current version for a value only isRestorableCheckpoint accepts", () => {
+    const value: unknown = {
+      format: "reed-checkpoint",
+      version: 1,
+      pieceTable: {},
+      lineIndex: {},
+      selection: {},
+      history: {},
+      metadata: {},
+      attention: {},
+    };
+    expect(isRestorableCheckpoint(value)).toBe(true);
+    expect(isCheckpoint(value)).toBe(false);
+    if (isRestorableCheckpoint(value)) {
+      expectTypeOf(value).toEqualTypeOf<RestorableCheckpointEnvelope>();
+      expectTypeOf(value.version).toEqualTypeOf<number>();
+      expectTypeOf(value).not.toMatchTypeOf<CheckpointEnvelope>();
+      expectTypeOf(value).not.toMatchTypeOf<DocumentCheckpoint>();
+    }
+    if (isCheckpoint(value)) {
+      expectTypeOf(value.version).toEqualTypeOf<typeof CHECKPOINT_VERSION>();
     }
   });
 });

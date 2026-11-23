@@ -17,8 +17,8 @@
 
 Fully implemented:
 
-- Action types and creators: `LOAD_CHUNK`, `EVICT_CHUNK`, `DECLARE_CHUNK_METADATA`
-- Reducer handles `LOAD_CHUNK` (byte decode, first-load vs re-load, piece-table insertion, line-index update) and `EVICT_CHUNK` (range finding, add-piece overlap detection, tree pruning, line-index cleanup)
+- Action types and creators: `LOAD_CHUNK`, `LOAD_CHUNKS`, `EVICT_CHUNK`, `EVICT_CHUNKS`, `DECLARE_CHUNK_METADATA`
+- Reducer handles `LOAD_CHUNK` (byte decode, first-load vs re-load, piece-table insertion, line-index update) and `EVICT_CHUNK` (range finding, add-piece overlap detection, tree pruning, line-index cleanup). `EVICT_CHUNKS` evicts among candidates until a loaded-chunk limit is met, choosing them by history cost in the same transition
 - `createChunkManager(store, loader, config)` runtime sits above the store and coordinates:
   - Async chunk loading via user-supplied `ChunkLoader`
   - In-flight deduplication (concurrent `ensureLoaded` calls for the same chunk share one fetch)
@@ -43,6 +43,7 @@ History is immutable and stored in `DocumentState.history`.
 - `redoStack`
 - `limit`
 - `coalesceTimeout`
+- `evictionPolicy` — `'pin'`, `'drop'` or `'pin-bounded'` (default), from the `historyEvictionPolicy` config
 
 `HistoryEntry` stores:
 
@@ -57,6 +58,72 @@ History is immutable and stored in `DocumentState.history`.
 - `delete`
 - `replace`
 
+### 2.1 Positions across chunk loads
+
+Loading or evicting a chunk shifts the resident offset of everything after it. History
+therefore stores each position as an anchor pair (`HistoryAnchor`).
+
+- `afterChunk` — chunks with an index at or below this value lie wholly before the position
+- `position` — the resident offset minus the original lengths of the loaded chunks at or below `afterChunk`
+
+Loads and evictions leave both values valid. Undo and redo convert them back to resident
+offsets. Without chunking, `afterChunk` is `-1` and `position` is the plain byte offset.
+History selections use the same pairs.
+
+A delete that spans text with different placement keys, such as text from two chunks, is
+recorded as several changes in one entry, one for each key. Undo then puts each part back with
+its own key, on the correct side of every chunk. For the same reason, consecutive edits merge
+into one change only when they have the same key.
+
+History stores deleted text as decoded strings. If encoding a string would produce
+different bytes, the change also stores the original bytes. This can happen when
+an unloaded chunk splits a UTF-8 character. Undo reinserts the original bytes and
+preserves positions in older entries. Changes that carry original bytes stay
+separate from neighboring edits.
+
+The live selection moves the same way on loads and evictions. A cursor inside an evicted chunk
+moves to where the chunk was, and it stays on that side of the chunk when the chunk loads
+again. If the evicted chunk cut a character in two, the cursor moves past the bytes of that
+character left in the next chunk, so it always sits on a UTF-8 code-point boundary. Undo and
+redo place a restored selection the same way.
+
+At an unloaded chunk, both sides of the gap share a byte offset. A selection range then stores the placement key of that endpoint
+(`SelectionRange.anchorAfterChunk` and `headAfterChunk`). The key is present only when the
+document cannot supply it, and it is kept by undo, redo, checkpoints, and a `SET_SELECTION`
+or edit selection with matching offsets. The range can appear anywhere in the list.
+Swapping its anchor and head also swaps the keys. Text inserted at that endpoint,
+by a local edit or `APPLY_REMOTE`, takes the key, so it stays where the cursor was in the
+file, even when every chunk has been evicted. A key is dropped when it no longer fits its
+offset after other edits, or when the document now supplies it. A key that would put a loaded
+chunk after an endpoint that lies past that chunk's last loaded byte does not fit.
+
+### 2.2 Eviction and history
+
+A position strictly inside an evicted chunk cannot be resolved after eviction. This happens
+when an edit inside a chunk is undone, or when inserted text is deleted again, which leaves the
+chunk unedited. `historyEvictionPolicy` decides what `EVICT_CHUNK` does then.
+
+The eviction check uses the document layout in which each history entry applies.
+An edit before a chunk can move its current span away from offsets recorded in an
+older entry.
+
+- `'pin'` — refuse the eviction. The chunk stays loaded until those entries leave history. Only the history limit bounds how many chunks this keeps loaded, whatever `maxLoadedChunks` a ChunkManager has.
+- `'drop'` — evict and discard those entries, along with every entry that can only be undone or redone after them. `EVICT_CHUNKS`, which ChunkManager sends, first evicts every candidate it can without discarding history, then the others in the order given (least recently used first).
+- `'pin-bounded'` (default) — as `'pin'`, except that `EVICT_CHUNK` with `overLimit: true` evicts as `'drop'` does. ChunkManager sends `EVICT_CHUNKS` with its unpinned chunks, least recently used first, and `maxLoadedChunks`. It sends them in one action per eviction pass. The reducer first evicts every candidate it can without discarding history. Only if it is still above the limit does it evict, one at a time, the candidate whose eviction discards the fewest undo and redo entries, the earlier candidate on a tie.
+
+Positions on a chunk boundary do not block eviction.
+
+### 2.3 Text next to chunks that are not loaded
+
+Text typed after a chunk stays next to that chunk as later chunks load. Text
+typed at the end of the resident document stays before chunks that stream in
+after it. At the start of the resident document, new text stays next to the
+visible content that follows it when an earlier chunk loads.
+
+A cursor follows the same rule as text typed there. A selection's start stays with the content that follows it. Its end stays with
+the content that precedes it. A chunk that loads at either edge stays outside
+the selection.
+
 ## 3. Undo/Redo and Grouping
 
 Implemented:
@@ -65,7 +132,8 @@ Implemented:
 - timeout-based coalescing for consecutive edits
 - selection restoration on undo and redo
 - the optional edit selection records the pre-edit caret restored by undo
-- redo derives its caret from the change kind, placing inserts and replacements after inserted text and deletes at the deletion point
+- an edit moves the selection it receives according to the [selection rules](../docs/breaking-changes/5.0.0.md#selection-after-edits)
+- redo restores the selection recorded after the edit
 
 Transaction behavior:
 
@@ -88,8 +156,14 @@ History boundaries:
 `store.createDocumentStoreWithEvents` emits:
 
 - `content-change` for local text edits and `APPLY_REMOTE`
-- `selection-change`
-- `history-change`
+- `selection-change` whenever an action moves the selection, including an edit, undo, redo, and a chunk load or eviction
+- `history-change` for undo and redo
+- `history-drop` reports discarded entries in `undoDropped` and `redoDropped`.
+  Eviction can discard entries under `'drop'` or under `'pin-bounded'` with
+  `overLimit` or `EVICT_CHUNKS`. If an undo or redo entry fails to resolve,
+  Reed drops it and the rest of its stack while preserving the document.
+  `APPLY_REMOTE` and `HISTORY_CLEAR` emit this event when they clear a
+  non-empty history.
 - `attention-change` when attention records are created, deleted, or migrated
 - `dirty-change`
 

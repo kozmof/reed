@@ -11,15 +11,20 @@ import type {
   DocumentStoreRuntimeConfig,
   PieceTableState,
   PieceNode,
+  OriginalPieceNode,
+  AddPieceNode,
+  ChunkPieceNode,
   EvaluationMode,
   LineIndexState,
   LineIndexNode,
   SelectionState,
   HistoryState,
+  HistoryEvictionPolicy,
   DocumentMetadata,
   ChunkMetadata,
   BufferType,
 } from "../../types/state.js";
+import { HISTORY_EVICTION_POLICIES } from "../../types/state.js";
 import type { ReadonlyUint8Array } from "../../types/branded.js";
 import { byteOffset, byteLength, pieceID } from "../../types/branded.js";
 import type { ByteOffset, ByteLength, PieceID } from "../../types/branded.js";
@@ -55,11 +60,20 @@ const DEFAULT_CONFIG: Required<Omit<DocumentStoreConfigBase, "logger">> & {
   encoding: "utf-8",
   lineEnding: "lf",
   undoGroupTimeout: 0,
+  historyEvictionPolicy: "pin-bounded",
   totalFileSize: 0,
   maxDirtyRanges: 32,
   reconcileMode: "idle",
   normalizeInsertedLineEndings: false,
 };
+
+export function assertValidHistoryEvictionPolicy(policy: unknown): void {
+  if (policy !== undefined && !(HISTORY_EVICTION_POLICIES as readonly unknown[]).includes(policy)) {
+    throw new Error(
+      `historyEvictionPolicy must be one of ${HISTORY_EVICTION_POLICIES.map((p) => `'${p}'`).join(", ")}: ${String(policy)}`,
+    );
+  }
+}
 
 export function assertValidDocumentStoreRuntimeConfig(config: DocumentStoreRuntimeConfig): void {
   if (config.scheduler !== undefined && config.reconcileMode !== undefined) {
@@ -125,6 +139,7 @@ function assertValidDocumentStoreConfig(config: DocumentStoreConfig): void {
   ) {
     throw new Error("undoGroupTimeout must be a non-negative number");
   }
+  assertValidHistoryEvictionPolicy(config.historyEvictionPolicy);
   if (
     config.maxDirtyRanges !== undefined &&
     (!Number.isInteger(config.maxDirtyRanges) || config.maxDirtyRanges < 1)
@@ -262,13 +277,33 @@ export function createPieceNode(
   left: PieceNode | null = null,
   right: PieceNode | null = null,
   id: PieceID = generatePieceID(),
+  afterChunk: number = -1,
 ): PieceNode {
   const leftLength = left?.subtreeLength ?? 0;
   const rightLength = right?.subtreeLength ?? 0;
-  const selfAddLength = bufferType === "add" ? length : 0;
   const leftAddLength = left?.subtreeAddLength ?? 0;
   const rightAddLength = right?.subtreeAddLength ?? 0;
+  const subtreeLength = length + leftLength + rightLength;
 
+  // Only add pieces carry a placement key, and only their own bytes count
+  // toward subtreeAddLength. Each buffer type gets its own literal rather than
+  // a conditional spread: a spread takes V8's slow object-construction path,
+  // and this function runs for every node an edit rebuilds.
+  if (bufferType === "add") {
+    return Object.freeze({
+      _nodeKind: "piece" as const,
+      id,
+      color,
+      left,
+      right,
+      bufferType,
+      afterChunk,
+      start,
+      length,
+      subtreeLength,
+      subtreeAddLength: length + leftAddLength + rightAddLength,
+    }) satisfies AddPieceNode;
+  }
   return Object.freeze({
     _nodeKind: "piece" as const,
     id,
@@ -278,9 +313,9 @@ export function createPieceNode(
     bufferType,
     start,
     length,
-    subtreeLength: length + leftLength + rightLength,
-    subtreeAddLength: selfAddLength + leftAddLength + rightAddLength,
-  });
+    subtreeLength,
+    subtreeAddLength: leftAddLength + rightAddLength,
+  }) satisfies OriginalPieceNode;
 }
 
 /**
@@ -333,6 +368,8 @@ export interface PieceDescriptor {
   readonly start: ByteOffset;
   readonly length: ByteLength;
   readonly chunkIndex?: number;
+  /** Placement key for `'add'` pieces (default `-1`). Ignored otherwise. */
+  readonly afterChunk?: number;
 }
 
 /**
@@ -377,7 +414,16 @@ export function buildPieceTree(
         right,
         piece.id,
       )
-    : createPieceNode(piece.bufferType, piece.start, piece.length, color, left, right, piece.id);
+    : createPieceNode(
+        piece.bufferType,
+        piece.start,
+        piece.length,
+        color,
+        left,
+        right,
+        piece.id,
+        piece.afterChunk,
+      );
 }
 
 /** Create a piece table from content loaded eagerly without chunking. */
@@ -626,12 +672,14 @@ export function createInitialSelectionState(): SelectionState {
 export function createInitialHistoryState(
   limit: number = 1000,
   coalesceTimeout: number = 0,
+  evictionPolicy: HistoryEvictionPolicy = "pin-bounded",
 ): HistoryState {
   return Object.freeze({
     undoStack: null,
     redoStack: null,
     limit,
     coalesceTimeout,
+    evictionPolicy,
   });
 }
 
@@ -681,7 +729,11 @@ export function createInitialState(config: DocumentStoreConfig = {}): DocumentSt
         : createEmptyPieceTableState(chunkSize, totalFileSize),
     lineIndex: createLineIndexFromBytes(content, bytes, mergedConfig.maxDirtyRanges),
     selection: createInitialSelectionState(),
-    history: createInitialHistoryState(mergedConfig.historyLimit, mergedConfig.undoGroupTimeout),
+    history: createInitialHistoryState(
+      mergedConfig.historyLimit,
+      mergedConfig.undoGroupTimeout,
+      mergedConfig.historyEvictionPolicy,
+    ),
     metadata: createInitialMetadata(config),
     attention: emptyAttentionLayerState,
   });
@@ -775,24 +827,68 @@ export type PieceNodeUpdates = Partial<
  * subtreeLength and subtreeAddLength when children or piece length change.
  */
 export function withPieceNode<T extends PieceNode>(node: T, changes: PieceNodeUpdates): T {
-  const base = { ...node, ...changes };
+  // Every edit rebuilds the nodes along its tree path here. Use object literals
+  // to avoid V8's slower object spread path. Match the corresponding
+  // create*PieceNode field order so nodes of each buffer type share a shape.
+  const color = changes.color ?? node.color;
+  const left = "left" in changes ? (changes.left ?? null) : node.left;
+  const right = "right" in changes ? (changes.right ?? null) : node.right;
+  const start = changes.start ?? node.start;
+  const length = changes.length ?? node.length;
 
+  let subtreeLength = node.subtreeLength;
+  let subtreeAddLength = node.subtreeAddLength;
   if ("left" in changes || "right" in changes || "length" in changes) {
-    const leftLength = base.left?.subtreeLength ?? 0;
-    const rightLength = base.right?.subtreeLength ?? 0;
-    const subtreeLength = base.length + leftLength + rightLength;
-    const selfAddLength = base.bufferType === "add" ? base.length : 0;
-    const leftAddLength = base.left?.subtreeAddLength ?? 0;
-    const rightAddLength = base.right?.subtreeAddLength ?? 0;
-    const subtreeAddLength = selfAddLength + leftAddLength + rightAddLength;
-    return Object.freeze({
-      ...base,
-      subtreeLength,
-      subtreeAddLength,
-    }) as unknown as T;
+    subtreeLength = length + (left?.subtreeLength ?? 0) + (right?.subtreeLength ?? 0);
+    subtreeAddLength =
+      (node.bufferType === "add" ? length : 0) +
+      (left?.subtreeAddLength ?? 0) +
+      (right?.subtreeAddLength ?? 0);
   }
 
-  return Object.freeze(base) as T;
+  switch (node.bufferType) {
+    case "add":
+      return Object.freeze({
+        _nodeKind: "piece" as const,
+        id: node.id,
+        color,
+        left,
+        right,
+        bufferType: "add" as const,
+        afterChunk: node.afterChunk,
+        start,
+        length,
+        subtreeLength,
+        subtreeAddLength,
+      }) satisfies AddPieceNode as T;
+    case "chunk":
+      return Object.freeze({
+        _nodeKind: "piece" as const,
+        id: node.id,
+        color,
+        left,
+        right,
+        bufferType: "chunk" as const,
+        chunkIndex: node.chunkIndex,
+        start,
+        length,
+        subtreeLength,
+        subtreeAddLength,
+      }) satisfies ChunkPieceNode as T;
+    default:
+      return Object.freeze({
+        _nodeKind: "piece" as const,
+        id: node.id,
+        color,
+        left,
+        right,
+        bufferType: "original" as const,
+        start,
+        length,
+        subtreeLength,
+        subtreeAddLength,
+      }) satisfies OriginalPieceNode as T;
+  }
 }
 
 /**

@@ -19,20 +19,24 @@ import type {
   HistoryInsertChange,
   HistoryDeleteChange,
   HistoryReplaceChange,
-  SelectionState,
+  HistorySelectionState,
+  PieceTableState,
   SelectionRange,
+  SelectionState,
   NonEmptyReadonlyArray,
 } from "../../types/state.js";
 import { pstackPush, pstackPeek, pstackPop, pstackTrimToSize } from "../../types/state.js";
-import type { ByteOffset } from "../../types/branded.js";
+import type { ByteOffset, ReadonlyUint8Array } from "../../types/branded.js";
 import type { DeleteBoundaryContext, ReadTextFn } from "../../types/operations.js";
 import { byteOffset, byteLength } from "../../types/branded.js";
 import { withState, withLineIndexState } from "../core/state.js";
 import {
   pieceTableInsert as ptInsert,
+  pieceTableInsertFitted as ptInsertFitted,
   pieceTableDelete as ptDelete,
   getText,
   getRawByte,
+  getBytes,
   isUtf8Boundary,
 } from "../core/piece-table.js";
 import type { SplitRecord } from "../core/piece-table.js";
@@ -45,7 +49,29 @@ import {
   rebuildLineIndex,
   repairLineIndexWindow,
 } from "../core/line-index.js";
-import { utf8ByteLength } from "../core/encoding.js";
+import { asReadonlyUint8Array, unwrapReadonlyUint8Array } from "../core/runtime-readonly.js";
+import { contentDecoder, decodeRun, isContinuationByte, utf8ByteLength } from "../core/encoding.js";
+import { NO_CHUNK, placementRuns } from "../core/chunk-anchor.js";
+import { codePointWindow, isSafeSplice, isSafeSplit } from "../core/utf8-seam.js";
+import type { FittedKey, KeyRun } from "../core/chunk-anchor.js";
+import {
+  anchorAt,
+  anchorSelection,
+  changeReplayFailure,
+  deferAnchorSelection,
+  insertionKey,
+  keepSameSelection,
+  moveSelectionPastEdit,
+  residentOffset,
+  selectionFromRanges,
+  selectionRangesWithKeys,
+} from "./history-anchor.js";
+import {
+  coalescedTails,
+  insertedLength,
+  lastHistoryChange,
+  removedLength,
+} from "./history-entry.js";
 
 // =============================================================================
 // Position Validation
@@ -93,19 +119,41 @@ export function validateRange(
 // =============================================================================
 
 /**
+ * Placement key for inserted text, tagged with where it came from.
+ *
+ * - `"fitted"`: derived from the document being edited by `insertionKey` or
+ *   `placementRuns`, which only return keys that fit at the insertion point.
+ *   It is not checked again (see `pieceTableInsertFitted`), which saves two
+ *   tree walks per keystroke.
+ * - `"checked"`: from outside the document, such as a recorded history change.
+ *   A key that does not fit at the insertion point (see `keyFitsAt`) throws a
+ *   RangeError.
+ */
+export type InsertKey =
+  | { readonly kind: "fitted"; readonly key: FittedKey }
+  | { readonly kind: "checked"; readonly key: number };
+
+/**
  * Insert text into piece table at position, migrating the attention layer.
  * Returns new document state, the inserted byte length, and the piece splits.
  *
  * Centralizing attention migration here means every content-edit path that
  * inserts (applyEdit, applyChange/undo-redo, APPLY_REMOTE) re-anchors points
  * automatically via the split records.
+ *
+ * The text takes the key `placement` gives (see `InsertKey`), else the gap's
+ * key.
  */
 export function pieceTableInsert(
   state: DocumentState,
   position: ByteOffset,
-  text: string,
+  text: string | Uint8Array,
+  placement?: InsertKey,
 ): { state: DocumentState; insertedByteLength: number; splits: readonly SplitRecord[] } {
-  const result = ptInsert(state.pieceTable, position, text);
+  const result =
+    placement?.kind === "fitted"
+      ? ptInsertFitted(state.pieceTable, position, text, placement.key)
+      : ptInsert(state.pieceTable, position, text, placement?.key);
   const attention = migrateSplits(state.attention, result.splits);
   const nextState = withState(state, { pieceTable: result.state, attention });
   carryLineOffsetIndexes(
@@ -141,14 +189,6 @@ export function pieceTableDelete(
   const nextState = withState(state, { pieceTable: newPieceTable, attention });
   carryLineOffsetIndexes(state.pieceTable, nextState.pieceTable, start, end, 0);
   return nextState;
-}
-
-/**
- * Get text in a range from the piece table.
- * Used for capturing deleted text for undo.
- */
-export function getTextRange(state: DocumentState, start: ByteOffset, end: ByteOffset): string {
-  return getText(state.pieceTable, start, end);
 }
 
 // =============================================================================
@@ -248,50 +288,6 @@ export function rebuildLineIndexFromPieceTableState(state: DocumentState): Docum
 // =============================================================================
 
 /**
- * Compute the cursor position to restore when redoing a change.
- */
-function computeSelectionAfterChange(state: DocumentState, change: HistoryChange): SelectionState {
-  let newPosition: number;
-
-  switch (change.type) {
-    case "insert":
-      // After insert, cursor should be at end of inserted text
-      newPosition = change.position + change.byteLength;
-      break;
-    case "delete":
-      // After delete, cursor should be at the deletion point
-      newPosition = change.position;
-      break;
-    case "replace":
-      // After replace, cursor should be at end of inserted text
-      newPosition = change.position + change.byteLength;
-      break;
-    default:
-      return state.selection;
-  }
-
-  return Object.freeze({
-    ranges: Object.freeze([
-      Object.freeze({ anchor: byteOffset(newPosition), head: byteOffset(newPosition) }),
-    ] as const),
-    primaryIndex: 0,
-  });
-}
-
-// Coalesced entries share their original changes until a consumer requests the array.
-const coalescedTails = new WeakMap<
-  HistoryEntry,
-  {
-    base: readonly HistoryChange[];
-    tail: HistoryChange;
-  }
->();
-
-function lastHistoryChange(entry: HistoryEntry): HistoryChange | undefined {
-  return coalescedTails.get(entry)?.tail ?? entry.changes[entry.changes.length - 1];
-}
-
-/**
  * Check if a new change can be coalesced with the last history entry.
  * Coalescing merges consecutive same-type changes within a timeout window
  * into a single undo entry (e.g., typing a word becomes one undo step).
@@ -299,6 +295,11 @@ function lastHistoryChange(entry: HistoryEntry): HistoryChange | undefined {
  * Coalescing targets the last change in the entry regardless of how many
  * changes it contains (e.g., the tail of a batched transaction). The earlier
  * changes are preserved in the merged entry by historyPush.
+ *
+ * Only changes with the same placement key merge, and two anchored positions
+ * with the same key differ by exactly what their resident offsets differ by,
+ * even when chunks loaded between the edits. So anchored positions compare
+ * directly.
  */
 function canCoalesce(
   lastEntry: HistoryEntry,
@@ -311,16 +312,24 @@ function canCoalesce(
   const last = lastHistoryChange(lastEntry);
   if (!last) return false;
   if (last.type !== newChange.type) return false;
+  // A change with raw bytes restores exactly the bytes one edit removed. Keep
+  // it separate rather than merge decoded text with a neighbour.
+  if (last.bytes !== undefined || newChange.bytes !== undefined) return false;
+  // A merged change reinserts all its text with one placement key, so only
+  // changes with the same key merge (see `placementRuns`).
+  if (last.afterChunk !== newChange.afterChunk) return false;
+  const lastPosition = last.position;
+  const newPosition = newChange.position;
 
   switch (newChange.type) {
     case "insert":
       // Coalesce typing when the new insert starts where the last insert ended.
-      return newChange.position === last.position + last.byteLength;
+      return newPosition === lastPosition + last.byteLength;
     case "delete": {
       // Coalesce backspaces when the new delete ends where the last delete starts.
-      if (newChange.position + newChange.byteLength === last.position) return true;
+      if (newPosition + newChange.byteLength === lastPosition) return true;
       // Coalesce forward deletes at the same position.
-      if (newChange.position === last.position) return true;
+      if (newPosition === lastPosition) return true;
       return false;
     }
     default:
@@ -339,16 +348,20 @@ function coalesceChanges(existing: HistoryChange, incoming: HistoryChange): Hist
       return Object.freeze({
         type: "insert" as const,
         position: existing.position,
+        afterChunk: existing.afterChunk,
         text: existing.text + incoming.text,
         byteLength: byteLength(existing.byteLength + incoming.byteLength),
       });
     }
     case "delete": {
+      // canCoalesce() checked that both changes share a placement key, so
+      // their anchored positions compare directly.
       if (incoming.position + incoming.byteLength === existing.position) {
         // Prepend backspaced text and use the earlier position.
         return Object.freeze({
           type: "delete" as const,
           position: incoming.position,
+          afterChunk: incoming.afterChunk,
           text: incoming.text + existing.text,
           byteLength: byteLength(existing.byteLength + incoming.byteLength),
         });
@@ -357,6 +370,7 @@ function coalesceChanges(existing: HistoryChange, incoming: HistoryChange): Hist
       return Object.freeze({
         type: "delete" as const,
         position: existing.position,
+        afterChunk: existing.afterChunk,
         text: existing.text + incoming.text,
         byteLength: byteLength(existing.byteLength + incoming.byteLength),
       });
@@ -370,6 +384,60 @@ function coalesceChanges(existing: HistoryChange, incoming: HistoryChange): Hist
   }
 }
 
+/** Deleted text of one placement run, with its bytes when the text is inexact. */
+interface DeletedRun {
+  readonly text: string;
+  readonly length: number;
+  readonly bytes?: ReadonlyUint8Array;
+}
+
+/**
+ * Read the deleted bytes once and decode each run. Keep a leading U+FEFF
+ * so the line index counts it and undo can restore it. Return the decoded
+ * text for the whole range and keep raw bytes for runs that cannot round-trip
+ * through UTF-8.
+ *
+ * Usually every run decodes exactly, so each holds whole characters and the
+ * range decodes to the runs' texts joined, which saves decoding it again.
+ *
+ * Otherwise a run edge may cut a character. Decoding resumes the same way
+ * after any byte that is not a UTF-8 continuation byte (10xxxxxx), so bytes
+ * split before such a byte decode, joined, as the whole does. Only runs a
+ * continuation byte joins are decoded again, together.
+ */
+function deletedRuns(
+  pieceTable: PieceTableState,
+  runs: readonly KeyRun[],
+): { readonly runs: DeletedRun[]; readonly text: string } {
+  if (runs.length === 0) return { runs: [], text: "" };
+  const base = runs[0]!.start;
+  const all = getBytes(pieceTable, byteOffset(base), byteOffset(runs[runs.length - 1]!.end));
+  let exactRuns = true;
+  const deleted = runs.map((run): DeletedRun => {
+    const raw = runs.length === 1 ? all : all.subarray(run.start - base, run.end - base);
+    const { text, exact } = decodeRun(raw);
+    const length = run.end - run.start;
+    if (exact) return { text, length };
+    exactRuns = false;
+    // A single run owns the byte copy. Subarrays share that copy.
+    return { text, length, bytes: asReadonlyUint8Array(runs.length === 1 ? raw : raw.slice()) };
+  });
+  if (deleted.length === 1) return { runs: deleted, text: deleted[0]!.text };
+  if (exactRuns) return { runs: deleted, text: deleted.map((run) => run.text).join("") };
+  const parts: string[] = [];
+  let first = 0;
+  for (let i = 1; i <= runs.length; i++) {
+    if (i < runs.length && isContinuationByte(all[runs[i]!.start - base] ?? 0)) continue;
+    parts.push(
+      i - first === 1
+        ? deleted[first]!.text
+        : contentDecoder.decode(all.subarray(runs[first]!.start - base, runs[i - 1]!.end - base)),
+    );
+    first = i;
+  }
+  return { runs: deleted, text: parts.join("") };
+}
+
 // =============================================================================
 // HistoryChange Factories
 // =============================================================================
@@ -377,33 +445,47 @@ function coalesceChanges(existing: HistoryChange, incoming: HistoryChange): Hist
 //   byteLength === textEncoder.encode(text).byteLength
 // Standalone factories derive lengths from text without allocating UTF-8 arrays.
 // applyEdit can instead reuse lengths measured by its structural edit.
+// `position` is an anchored position (see HistoryAnchor). It equals the byte
+// offset when `afterChunk` is -1 and no chunk is loaded.
 
-export function makeInsertChange(position: ByteOffset, text: string): HistoryInsertChange {
+export function makeInsertChange(
+  position: number,
+  text: string,
+  afterChunk: number = NO_CHUNK,
+): HistoryInsertChange {
   return Object.freeze({
     type: "insert" as const,
     position,
+    afterChunk,
     text,
     byteLength: byteLength(utf8ByteLength(text)),
   });
 }
 
-export function makeDeleteChange(position: ByteOffset, text: string): HistoryDeleteChange {
+export function makeDeleteChange(
+  position: number,
+  text: string,
+  afterChunk: number = NO_CHUNK,
+): HistoryDeleteChange {
   return Object.freeze({
     type: "delete" as const,
     position,
+    afterChunk,
     text,
     byteLength: byteLength(utf8ByteLength(text)),
   });
 }
 
 export function makeReplaceChange(
-  position: ByteOffset,
+  position: number,
   text: string,
   oldText: string,
+  afterChunk: number = NO_CHUNK,
 ): HistoryReplaceChange {
   return Object.freeze({
     type: "replace" as const,
     position,
+    afterChunk,
     text,
     byteLength: byteLength(utf8ByteLength(text)),
     oldText,
@@ -412,22 +494,59 @@ export function makeReplaceChange(
 }
 
 /**
- * Push a change to the history stack.
- * May coalesce with the previous entry if within the coalesce timeout.
+ * Push changes to the history stack as one entry.
+ * A single change may coalesce with the previous entry if within the coalesce
+ * timeout. `state` is the document after the changes. `selectionBefore` is
+ * only called when a new entry is created: a coalesced entry keeps the
+ * selection of the entry it extends. It must anchor the selection against the
+ * document before the changes, which `state` no longer holds.
+ * `selectionAfter` returns the selection the edit left, anchored against
+ * `state`, which redo restores. When edits can coalesce, the entry calls it
+ * on first read (see `deferAnchorSelection`), so it must not depend on
+ * anything that changes. Without a coalesce timeout no later edit replaces
+ * the entry, so it is called at once.
+ *
+ * That function can hold the piece tree of the edited document. The entry
+ * drops it once read, and a new entry reads the one below it, which the next
+ * keystroke can no longer replace, so only the newest entry holds one.
  */
 export function historyPush(
   state: DocumentState,
-  change: HistoryChange,
+  changes: NonEmptyReadonlyArray<HistoryChange>,
   now: number,
+  selectionBefore: () => HistorySelectionState,
+  selectionAfter: () => HistorySelectionState,
 ): DocumentState {
   const history = state.history;
-
-  // Compute expected selection after the change for proper redo
-  const selectionAfter = computeSelectionAfterChange(state, change);
+  if (history.coalesceTimeout <= 0) {
+    // Nothing coalesces, so the selection is needed and derived now.
+    const entry: HistoryEntry = Object.freeze({
+      changes: Object.freeze([...changes]),
+      selectionBefore: selectionBefore(),
+      selectionAfter: selectionAfter(),
+      timestamp: now,
+    });
+    return pushEntry(state, entry);
+  }
+  // Derived on first read: an entry the next keystroke replaces never needs it.
+  let deriveAfter: (() => HistorySelectionState) | undefined = selectionAfter;
+  let anchoredAfter: HistorySelectionState | undefined;
+  const readSelectionAfter = (): HistorySelectionState => {
+    if (deriveAfter !== undefined) {
+      anchoredAfter = deriveAfter();
+      deriveAfter = undefined;
+    }
+    return anchoredAfter!;
+  };
 
   // Try to coalesce with the last entry
+  const change = changes[0];
   const lastEntry = pstackPeek(history.undoStack);
-  if (lastEntry && canCoalesce(lastEntry, change, history.coalesceTimeout, now)) {
+  if (
+    changes.length === 1 &&
+    lastEntry &&
+    canCoalesce(lastEntry, change, history.coalesceTimeout, now)
+  ) {
     // canCoalesce returning true guarantees a non-empty changes list.
     const lastChange = lastHistoryChange(lastEntry)!;
     const merged = coalesceChanges(lastChange, change);
@@ -436,10 +555,18 @@ export function historyPush(
     // Preserve the array API while keeping repeated tail updates constant-space.
     const mergedEntry: HistoryEntry = Object.freeze({
       get changes() {
-        return (materialized ??= Object.freeze([...base.slice(0, -1), merged]));
+        if (materialized === undefined) {
+          // Copy by spread: slice() is slow on the frozen `base`.
+          const changes = [...base];
+          changes[changes.length - 1] = merged;
+          materialized = Object.freeze(changes);
+        }
+        return materialized;
       },
       selectionBefore: lastEntry.selectionBefore,
-      selectionAfter,
+      get selectionAfter() {
+        return readSelectionAfter();
+      },
       timestamp: now,
     });
     coalescedTails.set(mergedEntry, { base, tail: merged });
@@ -454,12 +581,22 @@ export function historyPush(
   }
 
   const entry: HistoryEntry = Object.freeze({
-    changes: Object.freeze([change]),
-    selectionBefore: state.selection,
-    selectionAfter,
+    changes: Object.freeze([...changes]),
+    selectionBefore: selectionBefore(),
+    get selectionAfter() {
+      return readSelectionAfter();
+    },
     timestamp: now,
   });
+  // Nothing coalesces into the entry below any more, so derive its selection
+  // now and let it drop the document it was derived from.
+  if (lastEntry !== undefined) void lastEntry.selectionAfter;
+  return pushEntry(state, entry);
+}
 
+/** Push `entry` as a new undo entry, trimming the stack and clearing redo. */
+function pushEntry(state: DocumentState, entry: HistoryEntry): DocumentState {
+  const history = state.history;
   // Trim undo stack if it exceeds limit.
   // The persistent AVL split keeps this O(log limit) after the stack saturates.
   const undoStack = pstackTrimToSize(pstackPush(history.undoStack, entry), history.limit);
@@ -478,73 +615,135 @@ export function historyPush(
 // =============================================================================
 
 /**
- * Invert a history change.
- * insert ↔ delete, replace swaps text/oldText.
- * This formalizes the duality between applyChange and applyInverseChange.
+ * Reverse a history change at the same anchor. Turn inserts into deletes and
+ * deletes into inserts. For replacements, swap the old and new content.
  */
 export function invertChange(change: HistoryChange): HistoryChange {
+  // Built field by field rather than with conditional spreads, which are slow
+  // on this per-step path. Optional byte fields are set only when present.
+  const { position, afterChunk } = change;
   switch (change.type) {
     case "insert":
-      return Object.freeze({
-        type: "delete" as const,
-        position: change.position,
+    case "delete": {
+      const inverted: {
+        -readonly [K in keyof HistoryDeleteChange]: K extends "type"
+          ? "insert" | "delete"
+          : HistoryDeleteChange[K];
+      } = {
+        type: change.type === "insert" ? "delete" : "insert",
+        position,
+        afterChunk,
         text: change.text,
         byteLength: change.byteLength,
-      });
-    case "delete":
-      return Object.freeze({
-        type: "insert" as const,
-        position: change.position,
-        text: change.text,
-        byteLength: change.byteLength,
-      });
-    case "replace":
-      return Object.freeze({
-        type: "replace" as const,
-        position: change.position,
+      };
+      if (change.bytes !== undefined) inverted.bytes = change.bytes;
+      return Object.freeze(inverted as HistoryChange);
+    }
+    case "replace": {
+      const inverted: { -readonly [K in keyof HistoryReplaceChange]: HistoryReplaceChange[K] } = {
+        type: "replace",
+        position,
+        afterChunk,
         text: change.oldText,
         byteLength: change.oldByteLength,
         oldText: change.text,
         oldByteLength: change.byteLength,
-      });
+      };
+      if (change.oldBytes !== undefined) inverted.bytes = change.oldBytes;
+      if (change.bytes !== undefined) inverted.oldBytes = change.bytes;
+      return Object.freeze(inverted);
+    }
   }
 }
 
-/** Replay history through the same lazy structural pipeline as local edits. */
+/**
+ * Thrown by applyChange when a history change resolves outside the document it
+ * is replayed against. historyUndo and historyRedo catch it and drop the entry.
+ */
+export class StaleHistoryChangeError extends RangeError {
+  override name = "StaleHistoryChangeError";
+}
+
+/**
+ * Replay history through the same lazy structural pipeline as local edits.
+ * The anchored position is resolved against the current chunk layout, and
+ * inserted text gets the recorded placement key. Recorded raw bytes are
+ * inserted as they are, so undo restores bytes that decoding altered.
+ */
 export function applyChange(state: DocumentState, change: HistoryChange): DocumentState {
+  const position = residentOffset(state.pieceTable, change);
+  // A position is recorded in the document the change applies to, so a valid
+  // history always resolves inside it. Insert would append an out-of-range
+  // position at the end and delete would remove other bytes, so refuse instead.
+  // The recorded key must also fit, the rule checkpoint restore applies (see
+  // `changeReplayFailure`). Inserted text is checked again when it goes in,
+  // which throws a plain RangeError, so checking here drops the entry like an
+  // out-of-range position does.
+  const removed = removedLength(change, 1);
+  const failure = changeReplayFailure(
+    state.pieceTable,
+    position,
+    removed,
+    insertedLength(change, 1),
+    change.afterChunk,
+  );
+  if (failure !== null) {
+    throw new StaleHistoryChangeError(
+      `history ${change.type} at anchored position ${change.position} with placement key ` +
+        `${change.afterChunk} resolves to [${position}, ${position + removed}), ` +
+        (failure === "range"
+          ? `outside the ${state.pieceTable.totalLength}-byte document`
+          : failure === "key"
+            ? "where the key no longer fits"
+            : "which holds bytes under another key"),
+    );
+  }
+  // Fields are listed outright, with undefined or false for absent bytes,
+  // rather than spread in: this runs for every change undo and redo replay.
+  const insertBytes =
+    change.bytes !== undefined ? unwrapReadonlyUint8Array(change.bytes) : undefined;
   switch (change.type) {
     case "insert":
       return applyUntrackedEdit(
         state,
         {
           kind: "insert",
-          position: change.position,
+          position,
           insertText: change.text,
+          insertBytes,
+          placement: { kind: "checked", key: change.afterChunk },
         },
         state.revision + 1,
+        true,
       );
     case "delete":
       return applyUntrackedEdit(
         state,
         {
           kind: "delete",
-          position: change.position,
-          deleteEnd: byteOffset(change.position + change.byteLength),
+          position,
+          deleteEnd: byteOffset(position + change.byteLength),
           deletedText: change.text,
+          deletedTextInexact: change.bytes !== undefined,
         },
         state.revision + 1,
+        true,
       );
     case "replace":
       return applyUntrackedEdit(
         state,
         {
           kind: "replace",
-          position: change.position,
-          deleteEnd: byteOffset(change.position + change.oldByteLength),
+          position,
+          deleteEnd: byteOffset(position + change.oldByteLength),
           deletedText: change.oldText,
+          deletedTextInexact: change.oldBytes !== undefined,
           insertText: change.text,
+          insertBytes,
+          placement: { kind: "checked", key: change.afterChunk },
         },
         state.revision + 1,
+        true,
       );
   }
 }
@@ -557,31 +756,56 @@ export function applyInverseChange(state: DocumentState, change: HistoryChange):
 // Unified Edit Pipeline
 // =============================================================================
 
+/** The insert phase of an insert or replace. */
+interface InsertFields {
+  readonly insertText: string;
+  /** Raw bytes to insert in place of `insertText` encoded as UTF-8. */
+  readonly insertBytes?: Uint8Array | undefined;
+  /** Placement key for the inserted text (see `InsertKey`). Defaults to the gap's key. */
+  readonly placement?: InsertKey | undefined;
+}
+
+/** The delete phase of a delete or replace. */
+interface DeleteFields {
+  readonly deleteEnd: ByteOffset;
+  readonly deletedText: string;
+  /** The deleted bytes do not encode `deletedText`, so lines are re-read. */
+  readonly deletedTextInexact?: boolean | undefined;
+}
+
 /**
  * An edit operation distinguished by `kind`. Each variant carries only the
  * fields needed for its delete and insert phases.
  */
 export type StructuralEditOperation =
-  | {
-      readonly kind: "insert";
+  | ({ readonly kind: "insert"; readonly position: ByteOffset } & InsertFields)
+  | ({ readonly kind: "delete"; readonly position: ByteOffset } & DeleteFields)
+  | ({
+      readonly kind: "replace";
       readonly position: ByteOffset;
-      readonly insertText: string;
-    }
+    } & DeleteFields &
+      InsertFields);
+
+/**
+ * An edit `applyEdit` records in history. It reads the deleted text itself,
+ * along with the bytes history may need (see `deletedRuns`). It inserts text
+ * only, never raw bytes, so the history change records exactly what was
+ * inserted, and it chooses the placement key itself.
+ */
+export type EditOperation = (
+  | { readonly kind: "insert"; readonly position: ByteOffset; readonly insertText: string }
   | {
       readonly kind: "delete";
       readonly position: ByteOffset;
       readonly deleteEnd: ByteOffset;
-      readonly deletedText: string;
     }
   | {
       readonly kind: "replace";
       readonly position: ByteOffset;
       readonly deleteEnd: ByteOffset;
-      readonly deletedText: string;
       readonly insertText: string;
-    };
-
-export type EditOperation = StructuralEditOperation & {
+    }
+) & {
   readonly timestamp?: number | undefined;
   readonly selection?: NonEmptyReadonlyArray<SelectionRange> | undefined;
 };
@@ -595,11 +819,28 @@ export type EditOperation = StructuralEditOperation & {
  * cannot drift into separate implementations. `revision` is the revision that
  * owns the resulting dirty ranges. The caller commits it after composing any
  * additional structural edits.
+ *
+ * `replay` is true when undo or redo applies a recorded change. Only then can
+ * an edge of the edit cut a character: the reducer checks that every live
+ * edge, local or remote, is a code-point boundary, but a change recorded
+ * before chunks loaded beside it can replay next to bytes that complete or
+ * continue a character cut at its edge. The edit then joins or splits
+ * characters across its edges, before or after it applies, and the fast line
+ * update, which counts the edit's text apart from the text around it, would
+ * miscount them. Without chunks, history replays into the document it was
+ * recorded in, so only a chunked replay checks its edges. When an edge is not
+ * a safe split (see `isSafeSplit`), before the edit or after it, the lines
+ * around the edit are re-read instead (see `codePointWindow`). The edges after
+ * the edit are read ahead of it (see `isSafeSplice`), so the fast update runs
+ * only when it is kept. The check costs a few byte reads and a scan of the
+ * inserted text's length, where re-reading costs the length of those lines,
+ * which in a minified file can be the whole chunk.
  */
 export function applyUntrackedEdit(
   state: DocumentState,
   op: StructuralEditOperation,
   revision: number,
+  replay = false,
 ): DocumentState {
   const strategy = lazyStrategy(revision);
   let newState = state;
@@ -608,8 +849,27 @@ export function applyUntrackedEdit(
     op.kind !== "insert"
       ? getDeleteBoundaryContext(newState, op.position, op.deleteEnd)
       : undefined;
+  // Line updates read the edit's text. When that text is not the bytes being
+  // deleted or inserted, re-read the affected lines from the piece table.
+  const insertBytes = op.kind !== "delete" ? op.insertBytes : undefined;
+  const deleteEnd = op.kind === "insert" ? op.position : op.deleteEnd;
+  const chunkedReplay = replay && state.pieceTable.nextExpectedChunk > 0;
   const needsRebuild =
-    op.kind !== "insert" && shouldRebuildLineIndexForDelete(op.deletedText, deleteContext);
+    insertBytes !== undefined ||
+    (op.kind !== "insert" &&
+      (op.deletedTextInexact === true ||
+        shouldRebuildLineIndexForDelete(op.deletedText, deleteContext))) ||
+    (chunkedReplay &&
+      !(
+        isSafeSplit(state.pieceTable, op.position) &&
+        isSafeSplit(state.pieceTable, deleteEnd) &&
+        isSafeSplice(
+          state.pieceTable,
+          op.position,
+          deleteEnd,
+          op.kind === "delete" ? "" : op.insertText,
+        )
+      ));
 
   if (op.kind !== "insert") {
     if (needsRebuild) {
@@ -627,8 +887,10 @@ export function applyUntrackedEdit(
     }
   }
 
-  if (op.kind !== "delete" && op.insertText.length > 0) {
-    const result = pieceTableInsert(newState, op.position, op.insertText);
+  const insertContent = insertBytes ?? (op.kind !== "delete" ? op.insertText : "");
+  if (op.kind !== "delete" && insertContent.length > 0) {
+    // Without a key from the caller, the text takes the gap's key.
+    const result = pieceTableInsert(newState, op.position, insertContent, op.placement);
     newState = result.state;
     if (!needsRebuild) {
       const readText = pieceTableReader(newState.pieceTable);
@@ -644,13 +906,14 @@ export function applyUntrackedEdit(
 
   if (needsRebuild) {
     const insertedLength =
-      newState.pieceTable.totalLength - state.pieceTable.totalLength + (op.deleteEnd - op.position);
+      newState.pieceTable.totalLength - state.pieceTable.totalLength + (deleteEnd - op.position);
+    const window = codePointWindow(newState.pieceTable, op.position, deleteEnd, insertedLength);
     return withState(newState, {
       lineIndex: repairLineIndexWindow(
         state.lineIndex,
-        op.position,
-        op.deleteEnd,
-        insertedLength,
+        window.start,
+        window.end,
+        window.insertedLength,
         pieceTableReader(newState.pieceTable),
         revision,
       ),
@@ -673,76 +936,159 @@ export function applyEdit(state: DocumentState, op: EditOperation): DocumentStat
   if (op.selection?.length === 0) {
     throw new TypeError("Edit selection ranges must be non-empty");
   }
-  if (op.selection) {
-    for (const [index, range] of op.selection.entries()) {
-      const anchor = validatePosition(range.anchor, state.pieceTable.totalLength);
-      const head = validatePosition(range.head, state.pieceTable.totalLength);
-      if (!isUtf8Boundary(state.pieceTable, anchor)) {
-        throw new RangeError(
-          `edit selection[${index}].anchor (${anchor}) must be a UTF-8 code-point boundary`,
-        );
-      }
-      if (!isUtf8Boundary(state.pieceTable, head)) {
-        throw new RangeError(
-          `edit selection[${index}].head (${head}) must be a UTF-8 code-point boundary`,
-        );
-      }
-    }
-  }
   const nextRevision = state.revision + 1;
-  let newState = applyUntrackedEdit(state, op, nextRevision);
+  const pieceTable = state.pieceTable;
+  // The selection the edit comes from: the inline selection when given, else
+  // the current one. Inline edit selections describe the pre-edit document,
+  // so clamp to the original length, and each endpoint must be a UTF-8
+  // code-point boundary there. A range that repeats the current one keeps its
+  // placement keys (see `selectionRangesWithKeys`).
+  const selectionBefore: SelectionState = op.selection
+    ? selectionFromRanges(
+        state.selection,
+        selectionRangesWithKeys(
+          pieceTable,
+          state.selection,
+          op.selection,
+          (offset, endpoint, index) => {
+            const position = validatePosition(offset, pieceTable.totalLength);
+            if (!isUtf8Boundary(pieceTable, position)) {
+              throw new RangeError(
+                `edit selection[${index}].${endpoint} (${position}) must be a UTF-8 code-point boundary`,
+              );
+            }
+            return position;
+          },
+        ),
+      )
+    : state.selection;
+  // Split deleted text into runs that share a placement key, so undo gives
+  // every byte back its key. Usually there is a single run.
+  const runs = op.kind === "insert" ? [] : placementRuns(pieceTable, op.position, op.deleteEnd);
+  // Inserted text takes the key of the text it replaces, or the key a cursor
+  // at the insertion point holds, or the gap's key.
+  const insertKey =
+    runs.length > 0 ? runs[0]!.key : insertionKey(pieceTable, selectionBefore, op.position);
+  // Deleted text as undo reinserts it. Decoding replaces malformed bytes with
+  // U+FFFD, so the text can encode to different bytes than were deleted. Bytes
+  // at the edge of an unloaded chunk are often an incomplete character. When
+  // the text does not encode back to the deleted bytes, history keeps the
+  // exact bytes, so undo restores the document byte for byte and every
+  // recorded position stays valid. Runs are empty for an insert. A single run
+  // is the whole deleted range.
+  const deleted = deletedRuns(pieceTable, runs);
+  const placement: InsertKey = { kind: "fitted", key: insertKey };
+  // Name each field the structural edit takes rather than spreading `op`, so
+  // a forged operation cannot pass raw bytes that history would not record.
+  const { position } = op;
+  let newState = applyUntrackedEdit(
+    state,
+    op.kind === "insert"
+      ? { kind: "insert", position, insertText: op.insertText, placement }
+      : op.kind === "delete"
+        ? { kind: "delete", position, deleteEnd: op.deleteEnd, deletedText: deleted.text }
+        : {
+            kind: "replace",
+            position,
+            deleteEnd: op.deleteEnd,
+            deletedText: deleted.text,
+            insertText: op.insertText,
+            placement,
+          },
+    nextRevision,
+  );
 
-  // Apply inline selection so historyPush records the correct selectionBefore.
-  // Inline edit selections describe the pre-edit document, so clamp to the original length.
-  if (op.selection) {
-    newState = withState(newState, {
-      selection: Object.freeze({
-        ranges: Object.freeze(
-          op.selection.map((r) =>
-            Object.freeze({
-              anchor: validatePosition(r.anchor, state.pieceTable.totalLength),
-              head: validatePosition(r.head, state.pieceTable.totalLength),
-            }),
-          ),
-        ) as NonEmptyReadonlyArray<SelectionRange>,
-        primaryIndex: 0,
-      }),
-    });
-  }
-
-  // Reuse measured insert lengths. Deleted text may have been normalized by
-  // decoding (malformed chunk bytes or a BOM), so measure it without encoding.
+  // Reuse the insert length measured by the structural edit.
   const deletedLength = op.kind === "insert" ? 0 : op.deleteEnd - op.position;
   const insertedLength =
     newState.pieceTable.totalLength - state.pieceTable.totalLength + deletedLength;
-  const historyDeletedLength = op.kind === "insert" ? 0 : utf8ByteLength(op.deletedText);
-  const historyChange: HistoryChange = Object.freeze(
-    op.kind === "replace"
-      ? {
-          type: "replace",
-          position: op.position,
-          text: op.insertText,
-          byteLength: byteLength(insertedLength),
-          oldText: op.deletedText,
-          oldByteLength: byteLength(historyDeletedLength),
-        }
-      : op.kind === "insert"
-        ? {
-            type: "insert",
-            position: op.position,
-            text: op.insertText,
-            byteLength: byteLength(insertedLength),
-          }
-        : {
-            type: "delete",
-            position: op.position,
-            text: op.deletedText,
-            byteLength: byteLength(historyDeletedLength),
-          },
+  // Move the selection the edit comes from past the edit, so the state holds a
+  // selection of the edited document. History records it as it was before.
+  // An inline selection is always a new object, so keep the current one when
+  // the result matches it: an edit that leaves the selection in place must
+  // not fire 'selection-change'.
+  const selectionAfter = keepSameSelection(
+    newState.selection,
+    moveSelectionPastEdit(
+      newState.pieceTable,
+      selectionBefore,
+      op.position,
+      op.position + deletedLength,
+      insertedLength,
+    ),
   );
+  if (selectionAfter !== newState.selection) {
+    newState = withState(newState, { selection: selectionAfter });
+  }
+  // History positions are anchored against the pre-edit document. Edits never
+  // load or evict chunks, so the post-edit chunk layout resolves them the same way.
+  const anchor = anchorAt(pieceTable, insertKey, op.position);
+  // Each run except the first becomes its own delete, ordered right to left so
+  // every position is valid when its change is applied. Undo applies them in
+  // reverse, reinserting each run with its own key.
+  const changes: HistoryChange[] = [];
+  for (let i = runs.length - 1; i >= 1; i--) {
+    const run = runs[i]!;
+    const { text, length, bytes } = deleted.runs[i]!;
+    changes.push(
+      Object.freeze({
+        type: "delete" as const,
+        ...anchorAt(pieceTable, run.key, run.start),
+        ...(bytes !== undefined && { bytes }),
+        text,
+        byteLength: byteLength(length),
+      }),
+    );
+  }
+  const first = deleted.runs[0] ?? { text: "", length: 0 };
+  const firstBytes = first.bytes;
+  // Built without object spread, as this runs on every edit. The exact bytes
+  // are set only when the text does not encode them.
+  const { position: anchoredPosition, afterChunk } = anchor;
+  let change: HistoryChange;
+  if (op.kind === "replace") {
+    const replace: { -readonly [K in keyof HistoryReplaceChange]: HistoryReplaceChange[K] } = {
+      type: "replace",
+      position: anchoredPosition,
+      afterChunk,
+      text: op.insertText,
+      byteLength: byteLength(insertedLength),
+      oldText: first.text,
+      oldByteLength: byteLength(first.length),
+    };
+    if (firstBytes !== undefined) replace.oldBytes = firstBytes;
+    change = replace;
+  } else if (op.kind === "insert") {
+    change = {
+      type: "insert",
+      position: anchoredPosition,
+      afterChunk,
+      text: op.insertText,
+      byteLength: byteLength(insertedLength),
+    };
+  } else {
+    const deletion: { -readonly [K in keyof HistoryDeleteChange]: HistoryDeleteChange[K] } = {
+      type: "delete",
+      position: anchoredPosition,
+      afterChunk,
+      text: first.text,
+      byteLength: byteLength(first.length),
+    };
+    if (firstBytes !== undefined) deletion.bytes = firstBytes;
+    change = deletion;
+  }
+  changes.push(Object.freeze(change));
   // Timestamp-less hand-written actions remain deterministic. Normal callers use
   // DocumentActions, which captures wall-clock time before reduction.
-  newState = historyPush(newState, historyChange, op.timestamp ?? state.revision);
+  newState = historyPush(
+    newState,
+    changes as unknown as NonEmptyReadonlyArray<HistoryChange>,
+    op.timestamp ?? state.revision,
+    () => anchorSelection(pieceTable, selectionBefore),
+    // Redo restores the selection the edit left in the state, anchored in the
+    // edited document like any other history selection.
+    deferAnchorSelection(newState.pieceTable, selectionAfter),
+  );
 
   // Mark as dirty and increment revision
   return withState(newState, {

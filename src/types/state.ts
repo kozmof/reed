@@ -127,6 +127,14 @@ export interface OriginalPieceNode extends PieceNodeBase {
 /** Piece node backed by the append-only add buffer. */
 export interface AddPieceNode extends PieceNodeBase {
   readonly bufferType: "add";
+  /**
+   * Chunk placement key for this piece. Chunks with an index at or below this
+   * key lie wholly before the piece. Chunks with a higher index lie after it. It records
+   * where the text sits relative to chunks that are not resident, so loading a
+   * chunk places it on the correct side of this text. `-1` means before every
+   * chunk, which is also the value in documents without chunking.
+   */
+  readonly afterChunk: number;
 }
 
 /** Piece node backed by a loaded chunk buffer. */
@@ -351,6 +359,24 @@ export interface SelectionRange {
   readonly anchor: ByteOffset;
   /** Ending position (cursor) of the selection (byte offset) */
   readonly head: ByteOffset;
+  /**
+   * Chunk placement key of `anchor` (see {@link HistoryAnchor}), present only
+   * when the document cannot supply it.
+   *
+   * Next to a chunk that is not loaded, a byte offset does not say which side
+   * of the chunk a position is on. Reed sets this key when a chunk load or
+   * eviction, UNDO, REDO, or a checkpoint restore places the endpoint there,
+   * so the chunk loads on the correct side of it and text typed there stays
+   * where the cursor was. Pass ranges from the state back unchanged to keep
+   * it. SET_SELECTION and edit selections also keep it for a range without
+   * keys whose offsets match a current range, wherever that range sits in the
+   * list, or match it with anchor and head swapped, in which case the keys
+   * swap too. A key that does not fit the offset, or that the document gives
+   * the endpoint anyway, is dropped.
+   */
+  readonly anchorAfterChunk?: number;
+  /** Chunk placement key of `head`. See `anchorAfterChunk`. */
+  readonly headAfterChunk?: number;
 }
 
 /**
@@ -378,45 +404,85 @@ export interface SelectionState {
 // =============================================================================
 
 /**
+ * A position recorded in history, stored so that chunk loading and eviction do
+ * not invalidate it.
+ *
+ * Loading or evicting a chunk shifts the resident offset of everything after
+ * it, so history does not store resident offsets. It stores a pair instead:
+ *
+ * - `afterChunk` (K): every chunk with index <= K lies wholly before the
+ *   position, and every higher chunk lies after it.
+ * - `position` (n): the resident offset minus the original byte lengths of the
+ *   currently loaded chunks with index <= K.
+ *
+ * Loading or evicting a chunk `c <= K` changes the resident offset and the
+ * subtracted sum by the same amount. A chunk `c > K` changes neither. The pair
+ * therefore stays valid, and undo/redo convert it back to a resident offset.
+ * Without chunking, `afterChunk` is `-1` and `position` is the plain offset.
+ */
+export interface HistoryAnchor {
+  /**
+   * Anchored position. Equal to the byte offset only in documents without
+   * chunking. Can be negative when a loaded chunk before it was shortened by edits.
+   */
+  readonly position: number;
+  /** Chunk placement key for `position` (`-1` without chunking). */
+  readonly afterChunk: number;
+}
+
+/**
  * A single insert change record for undo/redo.
  */
-export interface HistoryInsertChange {
+export interface HistoryInsertChange extends HistoryAnchor {
   readonly type: "insert";
-  /** Position where the change occurred (byte offset) */
-  readonly position: ByteOffset;
+  /**
+   * Exact bytes to insert, present only when `text` does not encode back to
+   * them: text decoded from malformed UTF-8 or a byte order mark. `byteLength`
+   * is then their length. Undo and redo insert these bytes, so the document
+   * comes back byte for byte.
+   */
+  readonly bytes?: ReadonlyUint8Array;
   /** Text that was inserted */
   readonly text: string;
-  /** Pre-computed UTF-8 byte length of `text` */
+  /** Byte length of the inserted text: of `bytes` when present, else of `text` in UTF-8 */
   readonly byteLength: ByteLength;
 }
 
 /**
  * A single delete change record for undo/redo.
  */
-export interface HistoryDeleteChange {
+export interface HistoryDeleteChange extends HistoryAnchor {
   readonly type: "delete";
-  /** Position where the change occurred (byte offset) */
-  readonly position: ByteOffset;
-  /** Text that was deleted */
+  /**
+   * Exact bytes deleted, present only when `text` does not encode back to
+   * them (see `HistoryInsertChange.bytes`). Undo reinserts these bytes.
+   */
+  readonly bytes?: ReadonlyUint8Array;
+  /** Text that was deleted, as decoded */
   readonly text: string;
-  /** Pre-computed UTF-8 byte length of `text` */
+  /** Byte length of the deleted range: of `bytes` when present, else of `text` in UTF-8 */
   readonly byteLength: ByteLength;
 }
 
 /**
  * A single replace change record for undo/redo.
  */
-export interface HistoryReplaceChange {
+export interface HistoryReplaceChange extends HistoryAnchor {
   readonly type: "replace";
-  /** Position where the change occurred (byte offset) */
-  readonly position: ByteOffset;
+  /** Exact bytes of `text`, when it does not encode back to them */
+  readonly bytes?: ReadonlyUint8Array;
   /** Text that was inserted */
   readonly text: string;
-  /** Pre-computed UTF-8 byte length of `text` */
+  /** Byte length of the inserted text: of `bytes` when present, else of `text` in UTF-8 */
   readonly byteLength: ByteLength;
-  /** The original text that was replaced */
+  /**
+   * Exact bytes replaced, present only when `oldText` does not encode back to
+   * them (see `HistoryInsertChange.bytes`). Undo reinserts these bytes.
+   */
+  readonly oldBytes?: ReadonlyUint8Array;
+  /** The original text that was replaced, as decoded */
   readonly oldText: string;
-  /** Pre-computed UTF-8 byte length of `oldText` */
+  /** Byte length of the replaced range: of `oldBytes` when present, else of `oldText` in UTF-8 */
   readonly oldByteLength: ByteLength;
 }
 
@@ -424,15 +490,58 @@ export interface HistoryReplaceChange {
 export type HistoryChange = HistoryInsertChange | HistoryDeleteChange | HistoryReplaceChange;
 
 /**
+ * A selection range stored in history. `anchor` and `head` are anchored
+ * positions (see {@link HistoryAnchor}), each with its own placement key.
+ */
+export interface HistorySelectionRange {
+  /** Anchored position where the selection started */
+  readonly anchor: number;
+  /** Anchored position of the cursor */
+  readonly head: number;
+  readonly anchorAfterChunk: number;
+  readonly headAfterChunk: number;
+}
+
+/** A selection stored in history, using anchored positions. */
+export interface HistorySelectionState {
+  readonly ranges: NonEmptyReadonlyArray<HistorySelectionRange>;
+  readonly primaryIndex: number;
+}
+
+/** Every `HistoryEvictionPolicy`, for validating values that arrive at runtime. */
+export const HISTORY_EVICTION_POLICIES = ["pin", "drop", "pin-bounded"] as const;
+
+/**
+ * What EVICT_CHUNK does when undo or redo history still points inside the chunk.
+ * Undo cannot replay a change inside a chunk that is not loaded, so the choice
+ * is between keeping the chunk and keeping the history.
+ *
+ * - `"pin"`: refuse the eviction. The chunk stays loaded until those entries
+ *   leave history (HISTORY_CLEAR, a new edit clearing redo, or the history limit).
+ *   Every entry can pin a chunk, so only the history limit bounds how many
+ *   chunks stay loaded, whatever a ChunkManager's `maxLoadedChunks` is.
+ * - `"drop"`: evict anyway and discard the entries that point inside the chunk,
+ *   together with every entry that can only be undone or redone after them.
+ *   EVICT_CHUNKS, which a ChunkManager sends, still evicts every candidate it
+ *   can without discarding history first, then the others in the order given.
+ * - `"pin-bounded"` (the default): as `"pin"`, except for an EVICT_CHUNK with
+ *   `overLimit`, which evicts as `"drop"` does, and for EVICT_CHUNKS once
+ *   evicting every candidate it can without discarding history is not enough:
+ *   it then evicts the one that discards the fewest entries each time. History
+ *   then keeps the chunks it points into while a ChunkManager's limit allows.
+ */
+export type HistoryEvictionPolicy = (typeof HISTORY_EVICTION_POLICIES)[number];
+
+/**
  * A group of changes that form a single undo unit.
  */
 export interface HistoryEntry {
   /** Changes in this entry (applied as a batch) */
   readonly changes: readonly HistoryChange[];
-  /** Selection state before this entry was applied */
-  readonly selectionBefore: SelectionState;
-  /** Selection state after this entry was applied */
-  readonly selectionAfter: SelectionState;
+  /** Selection before this entry was applied, as anchored positions */
+  readonly selectionBefore: HistorySelectionState;
+  /** Selection after this entry was applied, as anchored positions */
+  readonly selectionAfter: HistorySelectionState;
   /** Timestamp when this entry was created */
   readonly timestamp: number;
 }
@@ -627,6 +736,8 @@ export interface HistoryState {
   readonly limit: number;
   /** Timeout in ms for coalescing consecutive same-type changes (0 = disabled) */
   readonly coalesceTimeout: number;
+  /** What EVICT_CHUNK does when history points inside the chunk */
+  readonly evictionPolicy: HistoryEvictionPolicy;
 }
 
 // =============================================================================
@@ -662,20 +773,34 @@ export interface DocumentMetadata {
 export interface DocumentState<M extends EvaluationMode = EvaluationMode> {
   /**
    * State revision. Increments by 1 for content edits
-   * (INSERT/DELETE/REPLACE/APPLY_REMOTE), SET_SELECTION,
+   * (INSERT/DELETE/REPLACE/APPLY_REMOTE), SET_SELECTION, MARK_SAVED,
    * HISTORY_CLEAR, UNDO/REDO, and LOAD_CHUNK/EVICT_CHUNK when they change state.
+   * LOAD_CHUNKS and EVICT_CHUNKS increment it by 1 per chunk loaded or evicted.
+   * UNDO/REDO also increments it when it drops a stale entry instead.
    * Reconciliation, CREATE_ATTENTION/DELETE_ATTENTION, and DECLARE_CHUNK_METADATA
    * can return a new state reference without incrementing the revision. See the "Revision
    * semantics" section in docs/invariants.md for the full contract.
    */
   readonly revision: number;
   /**
-   * Counter incremented by each SET_SELECTION action.
+   * Counter incremented by each SET_SELECTION action that changes the
+   * selection, and by nothing else. A SET_SELECTION with the current ranges
+   * returns the same state and moves neither counter.
    *
    * `revision` also changes for content edits, so use `selectionRevision` to
    * detect SET_SELECTION actions. To skip content recomputation, compare
    * `state.pieceTable === prev.pieceTable`. Structural sharing makes this an
    * O(1) identity check, including across selection-only changes.
+   *
+   * Other actions move the selection without changing this counter: local
+   * edits (INSERT, DELETE, REPLACE) and remote ones (APPLY_REMOTE), which move
+   * it past the edited text; UNDO and REDO; and LOAD_CHUNK, LOAD_CHUNKS,
+   * EVICT_CHUNK, or EVICT_CHUNKS, which shift offsets after the loaded or
+   * evicted chunks. An eviction also collapses an endpoint inside an evicted
+   * chunk to where that chunk was. To redraw the caret on every selection
+   * change, compare `state.selection !== prev.selection` (or listen for
+   * 'selection-change'). An action that leaves the selection in place keeps
+   * the same selection object.
    */
   readonly selectionRevision: number;
   /** Piece table containing the document content */
@@ -715,11 +840,21 @@ export type ReconcileOptions = ReconcileModeConfig | CustomSchedulerConfig;
 /**
  * Runtime settings for diagnostics and reconciliation scheduling.
  *
- * `createDocumentStoreFromCheckpoint` accepts these settings and restores
- * state settings, such as content, history limit, line ending, and chunk size,
- * from the checkpoint.
+ * `createDocumentStoreFromCheckpoint` accepts these settings (see
+ * `DocumentStoreRestoreConfig`) and restores state settings, such as content,
+ * history limit, line ending, and chunk size, from the checkpoint.
  */
 export type DocumentStoreRuntimeConfig = { logger?: ReedLogger } & ReconcileOptions;
+
+/**
+ * Settings `createDocumentStoreFromCheckpoint` accepts: the runtime settings,
+ * plus `historyEvictionPolicy`, which replaces the policy stored in the
+ * checkpoint. The policy only decides what a later EVICT_CHUNK does, so it can
+ * change on restore. A version 1 checkpoint stores none and restores with
+ * `"pin-bounded"` unless this is set.
+ */
+export type DocumentStoreRestoreConfig = DocumentStoreRuntimeConfig &
+  Pick<DocumentStoreConfigBase, "historyEvictionPolicy">;
 
 export interface ReedLogger {
   warn?(message: string, ...args: readonly unknown[]): void;
@@ -730,10 +865,13 @@ export interface DocumentStoreConfigBase {
   /** Initial document content */
   content?: string;
   /**
-   * Optional diagnostics sink for caught callback failures.
+   * Optional diagnostics sink for caught callback failures, and for warnings
+   * such as undo history an EVICT_CHUNKS discarded.
    *
    * Without a logger, Reed uses `globalThis.reportError` when available and
-   * falls back to `console.error`.
+   * falls back to `console.error` for failures. It then warns of history an
+   * eviction discarded only through the `logger` of a ChunkManager managing
+   * the store, and gives no other warnings.
    */
   logger?: ReedLogger;
   /** Maximum history entries (default: 1000) */
@@ -757,6 +895,12 @@ export interface DocumentStoreConfigBase {
   normalizeInsertedLineEndings?: boolean;
   /** Timeout in ms for grouping consecutive undo entries (default: 0, disabled) */
   undoGroupTimeout?: number;
+  /**
+   * What EVICT_CHUNK does when undo or redo history still points inside the
+   * chunk (default: `"pin-bounded"`, refuse the eviction unless a ChunkManager
+   * cannot otherwise stay within `maxLoadedChunks`). See `HistoryEvictionPolicy`.
+   */
+  historyEvictionPolicy?: HistoryEvictionPolicy;
   /**
    * Total file size in bytes, declared before chunk loading begins.
    * Must be a non-negative safe integer. Use it with `chunkSize` to compute the

@@ -1,6 +1,7 @@
 /** Lazy traversal and UTF-8-safe streaming for piece-table content. */
 import type { PieceNode, PieceTableState } from "../../types/state.js";
 import { unwrapReadonlyUint8Array } from "./runtime-readonly.js";
+import { residentStartIsFileStart } from "./chunk-anchor.js";
 
 /**
  * Lazily yield pieces and their document offsets without allocating an
@@ -104,6 +105,11 @@ export interface DocumentChunk {
  * spans two output chunks. A chunk can have empty `content` while the decoder waits for the
  * remaining bytes of a multi-byte character.
  *
+ * U+FEFF is decoded as `getValue` and `query.getText` decode it: a byte order
+ * mark is stripped only when the stream starts at offset 0 and that offset is
+ * the start of the file (see `residentStartIsFileStart`). A U+FEFF anywhere
+ * else is content and is kept.
+ *
  * @example
  * ```typescript
  * for (const chunk of getValueStream(state, { chunkSize: 1024 })) {
@@ -162,7 +168,9 @@ function* streamChunks(
   // Preserve decoder state across yielded byte chunks because a boundary can fall
   // in the middle of a multi-byte UTF-8 sequence. A decoder local to this
   // generator also keeps concurrent streams independent.
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder("utf-8", {
+    ignoreBOM: !(start === 0 && residentStartIsFileStart(state)),
+  });
 
   // Process pieces up to `end`.
   while (currentEntry !== null && documentPosition < end) {

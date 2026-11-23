@@ -27,9 +27,18 @@ fresh history after the remote edit. Manage collaborative undo outside Reed if y
 - `start`
 - `length`
 
-## 3. Event Semantics (Current)
+## 3. Local Selection
+
+`APPLY_REMOTE` adjusts the local selection after each remote change.
+
+- An endpoint before the change keeps its offset. An endpoint after the change shifts by the net change in byte length.
+- A caret at the insertion point stays before the remote text.
+- Text inserted at either edge of a range stays outside the range.
+- An endpoint inside deleted text moves to the start of the deletion.
+
+## 4. Event Semantics (Current)
 
 With `store.createDocumentStoreWithEvents`:
 
-- `APPLY_REMOTE` emits `content-change`.
+- `APPLY_REMOTE` emits `content-change`, and `selection-change` when it moves the selection.
 - `dirty-change` is emitted when remote edits transition dirty state.

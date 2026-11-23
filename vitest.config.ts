@@ -4,6 +4,8 @@ export default defineConfig({
   test: {
     // Bound CPU contention so invariant-heavy tests stay within their timeout.
     maxWorkers: 4,
+    // Let tests of what stays reachable force a garbage collection.
+    execArgv: ["--expose-gc"],
     exclude: [...configDefaults.exclude, "**/perf.test.ts"],
     coverage: {
       provider: "v8",

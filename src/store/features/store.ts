@@ -15,6 +15,7 @@ import {
 import type {
   DocumentState,
   DocumentStoreConfig,
+  DocumentStoreRestoreConfig,
   DocumentStoreRuntimeConfig,
 } from "../../types/state.js";
 import type { CheckpointRestoreOptions } from "../../types/checkpoint.js";
@@ -28,15 +29,22 @@ import type {
 } from "../../types/store.js";
 import {
   assertValidDocumentStoreRuntimeConfig,
+  assertValidHistoryEvictionPolicy,
   createInitialState,
   withState,
 } from "../core/state.js";
 import { restoreCheckpoint } from "./checkpoint.js";
-import { documentReducer } from "./reducer.js";
+import { reduceDocument, type DocumentTransition } from "./reducer.js";
 import { reconcileFull, reconcileViewport } from "../core/line-index.js";
 import { getBufferStats, compactAddBuffer } from "../core/piece-table.js";
-import { createTransactionManager, makeBatch } from "./transaction.js";
-import { MAX_OBSERVER_REENTRANT_STEPS, reportCaughtError } from "./diagnostics.js";
+import { createTransactionManager, makeBatch, type CommitResult } from "./transaction.js";
+import {
+  evictionWarnSinkFor,
+  MAX_OBSERVER_REENTRANT_STEPS,
+  reportCaughtError,
+  warnSafely,
+  type WarnSink,
+} from "./diagnostics.js";
 import { withEvents } from "./event-store.js";
 import {
   createReconciliationScheduler,
@@ -56,7 +64,49 @@ const AUTO_COMPACT_MIN_BYTES = 16384; // 16 KB
  * @returns A new DocumentStore instance
  */
 export function createDocumentStore(config: DocumentStoreConfig = {}): ReconcilableDocumentStore {
-  return createStoreOverState(createInitialState(config), config);
+  return createStoreOverState(createInitialState(config), config).store;
+}
+
+/**
+ * A store together with its commit function. `commit` applies an action like
+ * `dispatch` but returns the reducer's transition for it: the state it
+ * produced, before any listener notified by it dispatches again, and whether
+ * it dropped stale history. The event layer describes that transition, so it
+ * does not depend on the order of the store's listeners.
+ */
+interface StoreCore {
+  readonly store: ReconcilableDocumentStore;
+  readonly commit: (action: DocumentAction) => DocumentTransition;
+}
+
+/**
+ * The warning for history an EVICT_CHUNKS discarded, or null.
+ *
+ * EVICT_CHUNKS chooses which chunks go, so its caller, such as ChunkManager
+ * keeping within maxLoadedChunks, does not choose the history lost. Undo then
+ * stops short with no other sign, so the store that commits it says so.
+ * EVICT_CHUNK names its chunk, so its caller chose the loss, and
+ * `history-drop` reports both.
+ */
+function evictionWarning(action: DocumentAction, transition: DocumentTransition): string | null {
+  const loss = transition.historyDropped;
+  if (action.type !== "EVICT_CHUNKS" || loss === null) return null;
+  return (
+    `[Reed] evicting chunks to stay within ${action.maxLoaded} loaded chunks ` +
+    `discarded ${loss.undo} undo and ${loss.redo} redo entries that pointed into them, ` +
+    `under the "${transition.state.history.evictionPolicy}" history eviction policy. ` +
+    `Raise the chunk limit (ChunkManager's maxLoadedChunks), or use "pin" to keep history at the cost of memory.`
+  );
+}
+
+/**
+ * A warning of history an eviction discarded, with the sink it goes to, and
+ * the transaction depth that holds it while it waits for the outermost commit.
+ */
+interface EvictionWarning {
+  depth: number;
+  readonly message: string;
+  readonly sink: WarnSink;
 }
 
 /**
@@ -70,7 +120,7 @@ export function createDocumentStore(config: DocumentStoreConfig = {}): Reconcila
 function createStoreOverState(
   initialState: DocumentState,
   config: DocumentStoreRuntimeConfig,
-): ReconcilableDocumentStore {
+): StoreCore {
   // Internal mutable state
   let state = initialState;
   const whenReconciledWaiters: Array<{
@@ -90,6 +140,11 @@ function createStoreOverState(
   // flag in a follow-up pass after its current listener snapshot completes.
   let notificationPending = false;
   const transaction = createTransactionManager();
+  // Warnings of history lost to evictions committed inside a transaction
+  // (see `evictionWarning`), each with the depth that holds it. The outermost
+  // commit logs them, and a rollback discards those its level held, since it
+  // restores the history.
+  let deferredWarnings: EvictionWarning[] = [];
 
   /**
    * Replace internal state reference only when it changes.
@@ -341,18 +396,57 @@ function createStoreOverState(
    * During a transaction, defer notification until the outermost commit or rollback.
    */
   function dispatch(action: DocumentAction): DocumentState {
-    if (disposed) return state;
-    const newState = documentReducer(state, action);
-    if (newState !== state) {
-      setState(newState);
-      if (!transaction.isActive) {
-        notifyListeners();
-        if (state.lineIndex.rebuildPending || needsCompaction()) {
-          scheduleReconciliation();
-        }
+    commit(action);
+    return state;
+  }
+
+  /**
+   * Apply an action and return the reducer's transition for it. A listener
+   * the action notifies can dispatch again, so `state` can already be later.
+   */
+  function commit(action: DocumentAction): DocumentTransition {
+    if (disposed) return { state, historyDropped: null };
+    const from = state.pieceTable;
+    const transition = reduceDocument(state, action);
+    const changed = transition.state !== state;
+    if (changed) setState(transition.state);
+    // Warn before listeners hear of the change, so warnings follow the order
+    // their evictions committed, even when a listener evicts again.
+    const message = evictionWarning(action, transition);
+    if (message !== null) {
+      // A store with a logger of its own warns only through it, and stays
+      // silent when it has no `warn`. Without one, choose the logger of the
+      // ChunkManager that dispatched this eviction now: it is set for the
+      // piece table the eviction was reduced from, only while that dispatch
+      // runs.
+      const sink = logger ?? evictionWarnSinkFor(from);
+      if (sink?.warn !== undefined) {
+        const warning = { depth: transaction.depth, message, sink };
+        if (transaction.isActive) deferredWarnings.push(warning);
+        else logWarnings([warning]);
       }
     }
-    return state;
+    if (changed && !transaction.isActive) afterCommit();
+    return transition;
+  }
+
+  /**
+   * Notify listeners of a committed change and schedule reconciliation.
+   *
+   * The change has already committed, so neither step may throw: a listener's
+   * error is reported by `notifyListeners`, and a scheduler's error here. A
+   * caller can then rely on a throw from `dispatch` or `commitTransaction`
+   * meaning the change did not take effect.
+   */
+  function afterCommit(): void {
+    notifyListeners();
+    try {
+      if (state.lineIndex.rebuildPending || needsCompaction()) {
+        scheduleReconciliation();
+      }
+    } catch (error) {
+      reportCaughtError(logger, "Reconciliation scheduler threw after a commit", error);
+    }
   }
 
   /**
@@ -372,22 +466,48 @@ function createStoreOverState(
   /**
    * Commit the current transaction level.
    * Notifies listeners and schedules reconciliation when the outermost transaction completes.
-   * On throw (invariant violation) the store calls emergencyReset before rethrowing.
+   * On throw (invariant violation) the store calls emergencyReset before rethrowing,
+   * so a throw means the transaction did not commit. Errors after the commit
+   * are reported instead (see `afterCommit`).
    * Do not attempt rollback if `commitTransaction` throws.
    */
   function commitTransaction(): void {
     if (disposed) return;
+    let result: CommitResult;
     try {
-      const result = transaction.commit();
-      if (result.isOutermost) {
-        notifyListeners();
-        if (state.lineIndex.rebuildPending || needsCompaction()) {
-          scheduleReconciliation();
-        }
-      }
+      result = transaction.commit();
     } catch (e) {
       emergencyReset();
       throw e;
+    }
+    if (result.isOutermost) {
+      // Warn before notifying, in commit order: a listener may evict again
+      // and warn of its own loss, dispose the store, which clears the queue,
+      // or open a transaction of its own, whose losses have not committed yet.
+      const warnings = deferredWarnings;
+      deferredWarnings = [];
+      logWarnings(warnings);
+      afterCommit();
+    } else {
+      // The enclosing level now holds what this one committed.
+      for (const entry of deferredWarnings) {
+        if (entry.depth > transaction.depth) entry.depth = transaction.depth;
+      }
+    }
+  }
+
+  /**
+   * Log warnings of history lost to evictions that have committed, each
+   * through the sink chosen when it committed: the store's logger, or without
+   * one the logger of the ChunkManager that dispatched the eviction (see
+   * `withEvictionWarnSink`). The change has committed, so a logger's throw is
+   * reported through that sink's `error`, not thrown. Only a store without a
+   * logger uses a manager's sink, so when that sink has no `error` there is
+   * no store logger to report through, and the throw is reported globally.
+   */
+  function logWarnings(warnings: readonly EvictionWarning[]): void {
+    for (const { message, sink } of warnings) {
+      warnSafely(sink, message, "The logger threw after an eviction committed");
     }
   }
 
@@ -399,12 +519,20 @@ function createStoreOverState(
   function rollbackTransaction(): void {
     if (disposed) return;
     const result = transaction.rollback();
+    if (deferredWarnings.length > 0) {
+      deferredWarnings = deferredWarnings.filter((entry) => entry.depth <= transaction.depth);
+    }
     if (result.snapshot) {
       setState(result.snapshot);
     }
     if (result.isOutermost) {
       notifyListeners();
     }
+  }
+
+  /** Whether a transaction is open. A disposed store has none. */
+  function isInTransaction(): boolean {
+    return !disposed && transaction.isActive;
   }
 
   /**
@@ -428,6 +556,7 @@ function createStoreOverState(
   function emergencyReset(): DocumentState | null {
     if (disposed) return null;
     const earliest = transaction.emergencyReset();
+    deferredWarnings = [];
     if (earliest) {
       setState(earliest);
     }
@@ -449,6 +578,7 @@ function createStoreOverState(
     lineCache = new WeakMap();
     compactWorkspace = null;
     listeners = [];
+    deferredWarnings = [];
     rejectWhenReconciledWaiters(
       new Error("DocumentStore was disposed before reconciliation completed"),
     );
@@ -551,7 +681,7 @@ function createStoreOverState(
   }
 
   // Return the store interface
-  return {
+  const store: ReconcilableDocumentStore = {
     subscribe,
     getSnapshot,
     getServerSnapshot,
@@ -561,6 +691,7 @@ function createStoreOverState(
     beginTransaction,
     commitTransaction,
     rollbackTransaction,
+    isInTransaction,
     getEagerSnapshot,
     scheduleReconciliation,
     reconcileNow,
@@ -570,6 +701,7 @@ function createStoreOverState(
     whenReconciled,
     dispose,
   };
+  return { store, commit };
 }
 
 /**
@@ -578,8 +710,13 @@ function createStoreOverState(
  *
  * Events are emitted after state changes:
  * - 'content-change': On INSERT, DELETE, REPLACE, APPLY_REMOTE
- * - 'selection-change': On SET_SELECTION
- * - 'history-change': On UNDO, REDO
+ * - 'selection-change': On SET_SELECTION, and when INSERT, DELETE, REPLACE, APPLY_REMOTE, UNDO,
+ *   REDO, or a chunk load or eviction moves the selection. An edit moves it past the edit, so
+ *   typing at the cursor fires it, and so does a remote edit before the cursor
+ * - 'history-change': On UNDO and REDO that apply an entry
+ * - 'history-drop': When an action discards undo or redo entries without undoing or redoing
+ *   them: EVICT_CHUNK or EVICT_CHUNKS that drops entries, UNDO or REDO that drops an entry no
+ *   longer resolving inside the document, and APPLY_REMOTE or HISTORY_CLEAR that clears history
  * - 'attention-change': When the attention layer changes
  * - 'save': On MARK_SAVED
  * - 'dirty-change': When isDirty state changes
@@ -607,7 +744,8 @@ function createStoreOverState(
 export function createDocumentStoreWithEvents(
   config: DocumentStoreConfig = {},
 ): DocumentStoreWithEvents {
-  return withEvents(createDocumentStore(config), config.logger);
+  const { store, commit } = createStoreOverState(createInitialState(config), config);
+  return withEvents(store, commit, config.logger);
 }
 
 /**
@@ -627,13 +765,13 @@ const STATE_BEARING_CONFIG_KEYS = [
   "maxDirtyRanges",
 ] as const;
 
-function assertRuntimeOnlyConfig(config: DocumentStoreRuntimeConfig): void {
+function assertRuntimeOnlyConfig(config: DocumentStoreRestoreConfig): void {
   const offending = STATE_BEARING_CONFIG_KEYS.filter(
     (key) => (config as Record<string, unknown>)[key] !== undefined,
   );
   if (offending.length > 0) {
     throw new Error(
-      `createDocumentStoreFromCheckpoint: ${offending.join(", ")} describe${offending.length === 1 ? "s" : ""} state and come${offending.length === 1 ? "s" : ""} from the checkpoint; only logger and reconcileMode/scheduler may be configured`,
+      `createDocumentStoreFromCheckpoint: ${offending.join(", ")} describe${offending.length === 1 ? "s" : ""} state and come${offending.length === 1 ? "s" : ""} from the checkpoint; only logger, reconcileMode/scheduler, and historyEvictionPolicy may be configured`,
     );
   }
 }
@@ -646,7 +784,8 @@ function assertRuntimeOnlyConfig(config: DocumentStoreRuntimeConfig): void {
  *
  * Only runtime configuration is accepted. Content, history limit, line ending,
  * chunk size, and the rest of the state-bearing options come from the
- * checkpoint. The new store starts with empty listener and transaction state
+ * checkpoint. `historyEvictionPolicy` is the exception: when given, it replaces
+ * the checkpoint's policy (see `DocumentStoreRestoreConfig`). The new store starts with empty listener and transaction state
  * and a fresh reconciliation scheduler. A caller restoring a
  * chunked document rebuilds its `ChunkManager` as well.
  *
@@ -665,12 +804,29 @@ function assertRuntimeOnlyConfig(config: DocumentStoreRuntimeConfig): void {
  */
 export function createDocumentStoreFromCheckpoint(
   checkpoint: unknown,
-  config: DocumentStoreRuntimeConfig = {},
+  config: DocumentStoreRestoreConfig = {},
   restoreOptions: CheckpointRestoreOptions = {},
 ): ReconcilableDocumentStore {
+  return restoreStoreCore(checkpoint, config, restoreOptions).store;
+}
+
+function restoreStoreCore(
+  checkpoint: unknown,
+  config: DocumentStoreRestoreConfig,
+  restoreOptions: CheckpointRestoreOptions,
+): StoreCore {
   assertValidDocumentStoreRuntimeConfig(config);
+  assertValidHistoryEvictionPolicy(config.historyEvictionPolicy);
   assertRuntimeOnlyConfig(config);
-  return createStoreOverState(restoreCheckpoint(checkpoint, restoreOptions), config);
+  const restored = restoreCheckpoint(checkpoint, restoreOptions);
+  const policy = config.historyEvictionPolicy;
+  const state =
+    policy === undefined || policy === restored.history.evictionPolicy
+      ? restored
+      : withState(restored, {
+          history: Object.freeze({ ...restored.history, evictionPolicy: policy }),
+        });
+  return createStoreOverState(state, config);
 }
 
 /**
@@ -687,13 +843,11 @@ export function createDocumentStoreFromCheckpoint(
  */
 export function createDocumentStoreWithEventsFromCheckpoint(
   checkpoint: unknown,
-  config: DocumentStoreRuntimeConfig = {},
+  config: DocumentStoreRestoreConfig = {},
   restoreOptions: CheckpointRestoreOptions = {},
 ): DocumentStoreWithEvents {
-  return withEvents(
-    createDocumentStoreFromCheckpoint(checkpoint, config, restoreOptions),
-    config.logger,
-  );
+  const { store, commit } = restoreStoreCore(checkpoint, config, restoreOptions);
+  return withEvents(store, commit, config.logger);
 }
 
 /**

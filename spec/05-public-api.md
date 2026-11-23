@@ -44,6 +44,7 @@ Returns `ReconcilableDocumentStore` with:
 - `beginTransaction()`
 - `commitTransaction()`
 - `rollbackTransaction()`
+- `isInTransaction()` — whether a transaction is open
 - `scheduleReconciliation()`
 - `reconcileNow()` — reconcile and return `DocumentState<'eager'>`
 - `reconcileIfCurrent(snapshot)` — reconcile only if `snapshot` is still current, returning `DocumentState<'eager'> | null`
@@ -56,12 +57,13 @@ Returns `ReconcilableDocumentStore` with:
 Supported config fields (`DocumentStoreConfig`):
 
 - `content`
-- `logger` — optional diagnostics sink. Omit it to keep the library silent
+- `logger` — optional diagnostics sink. Without a store logger, callback failures are reported through `console.error`. The store warns through it when `EVICT_CHUNKS`, which ChunkManager sends, discards undo or redo history, after the eviction commits. Outside a transaction it warns immediately. Inside a transaction it waits for the outermost commit. Rollback discards the warning. Without it, the store gives the warning for an eviction a ChunkManager dispatched to that manager's `logger`, if it has one
 - `historyLimit`
 - `chunkSize`
 - `encoding` — currently only `'utf-8'` is supported
 - `lineEnding`
 - `undoGroupTimeout`
+- `historyEvictionPolicy` — `'pin'` refuses to evict a chunk that history points inside, `'drop'` evicts it and discards those entries, and `'pin-bounded'` (default) refuses unless `EVICT_CHUNK` has `overLimit: true`, or `EVICT_CHUNKS` (which ChunkManager sends) finds nothing else brings it within its limit
 - `normalizeInsertedLineEndings` — coerce line endings on `INSERT`/`REPLACE` to match `lineEnding`
 - `totalFileSize` — pre-declared file size used for chunk sizing, and must be a non-negative safe integer
 - `maxDirtyRanges` — dirty-range count threshold before a full line-index rebuild is triggered
@@ -85,9 +87,10 @@ Returns a `ReconcilableDocumentStore` whose state comes from a checkpoint. Throw
 `store.createDocumentStoreWithEventsFromCheckpoint(checkpoint, config?, restoreOptions?)` is the event-store
 counterpart. Restoring emits no events.
 
-Config is `DocumentStoreRuntimeConfig`, which accepts only `logger` and either
-`reconcileMode` or `scheduler`. State-bearing options come from the checkpoint, and passing
-one throws.
+Config is `DocumentStoreRestoreConfig`, which accepts `logger`, either `reconcileMode` or
+`scheduler`, and `historyEvictionPolicy`. Set `historyEvictionPolicy` to override the checkpoint's policy. Version 1 checkpoints
+default to `'pin-bounded'`. Restore reads other state settings from the checkpoint
+and throws if you pass them in the config.
 
 ### 2.4 Flat `createChunkManager(store, loader, config?)`
 
@@ -103,7 +106,13 @@ Requires a user-supplied `ChunkLoader` with
 `loadChunk(chunkIndex, signal?): Promise<Uint8Array>`. The optional abort signal is canceled when
 the manager drops a pending load or is disposed.
 
-Config (`ChunkManagerConfig`): `maxLoadedChunks`, `fetchStrategy`, `logger`.
+The manager can evict chunks it loads and any resident chunks it adopts at
+creation. It adopts chunks with no live owner, including chunks from a
+checkpoint restore, an earlier manager, or the app. If the app dispatches
+`LOAD_CHUNK` after creating the manager, the app retains control of that chunk's
+eviction. Use `setActiveChunks` to keep a chunk loaded during a manager eviction pass.
+
+`ChunkManagerConfig` accepts `maxLoadedChunks`, `fetchStrategy`, and `logger`. The manager’s `logger` warns when the resident chunk count stays above `maxLoadedChunks`. The store reports history discarded by eviction through its `logger` and the `history-drop` event. If the store has no logger, the manager supplies its own for evictions it dispatches, including through wrappers that forward `dispatch` synchronously. If the manager’s `warn` throws, its `error` receives the failure when available.
 
 ### 2.5 Flat `createStreamingDocumentLoader(store, loader, metadata, config?)`
 
@@ -143,6 +152,7 @@ Supported event types:
 - `content-change`
 - `selection-change`
 - `history-change`
+- `history-drop`
 - `attention-change`
 - `save`
 - `dirty-change`
@@ -150,8 +160,14 @@ Supported event types:
 Auto-emitted by `store.createDocumentStoreWithEvents`:
 
 - `content-change` (`INSERT/DELETE/REPLACE/APPLY_REMOTE`)
-- `selection-change` (`SET_SELECTION`)
+- `selection-change` fires when an action replaces the selection. This includes
+  explicit selection changes and changes caused by edits, undo or redo, chunk
+  loads, and chunk evictions.
 - `history-change` (`UNDO/REDO`)
+- `history-drop` reports discarded entries in `undoDropped` and `redoDropped`.
+  - Eviction emits it when the history policy discards entries.
+  - `UNDO` and `REDO` emit it when the next entry fails to resolve. They discard that entry and the rest of its stack.
+  - `APPLY_REMOTE` and `HISTORY_CLEAR` emit it when they clear a non-empty history.
 - `attention-change` (create, delete, or content edits that rewrite stored points)
 - `save` (`MARK_SAVED`)
 - `dirty-change` (when dirty flag changes)
@@ -197,7 +213,8 @@ no transition that could emit them, and `isDirty` was only ever set to `true`.
 
 Primary selector namespace for O(1)/O(log n)/bounded operations:
 
-- `getText`, which rejects ranges that split UTF-8 code points
+- `getText`, which rejects ranges that split UTF-8 code points and reads the document as `getValue` does: a byte order mark at the start of the file is stripped, so `getText(state, 0, length)` equals `getValue(state)`, and a U+FEFF anywhere else is kept. In chunk mode, a U+FEFF that starts the resident text is stripped only when it starts the file: when every chunk up to and including the one holding it is loaded and every byte before it was deleted. While any chunk before it is not loaded, it belongs to a later chunk and is kept
+- `getContentText`, which accepts the same ranges as `getText` and keeps a leading byte order mark as a character. Use it when mapping char positions from `getCharStartOffset`, `findLineAtCharPosition` or `rendering` onto text, since line 0 columns include the byte order mark
 - `getLength`, `isUtf8Boundary`, `getBufferStats`
 - `findPieceAtPosition`
 - `isReconciledState`
@@ -213,7 +230,7 @@ Primary selector namespace for O(1)/O(log n)/bounded operations:
 
 Traversal namespace for O(n) operations:
 
-- `getValue`, `getValueStream`
+- `getValue`, `getValueStream`. Both decode U+FEFF as `query.getText` does: a byte order mark is stripped only when the text starts at offset 0 and that offset is the start of the file. A stream that starts past offset 0 keeps a U+FEFF at its start, so its joined content equals `getText` over the same range
 - `collectPieces`, `collectLines`
 - `rebuildLineIndex`
 
@@ -246,7 +263,8 @@ Capture a `DocumentState<'eager'>` as JSON-safe data and load it back:
 - `checkpoint.create(state, options?)`: state to `DocumentCheckpoint`
 - `checkpoint.restore(checkpoint, restoreOptions?)`: `DocumentCheckpoint` to `DocumentState<'eager'>`
 - `checkpoint.encode(state, options?)` / `checkpoint.decode(json, restoreOptions?)`: the same round trip through a string
-- `checkpoint.isCheckpoint(value)`: envelope guard, not full validation
+- `checkpoint.isCheckpoint(value)`: envelope guard for the current version, not full validation
+- `checkpoint.isRestorableCheckpoint(value)`: the same guard, also accepting older versions `restore` migrates
 
 Options (`CheckpointOptions`): `mode` (`'exact'` default, `'normalized'`), `compact` (default true).
 
@@ -265,3 +283,7 @@ Choose the helper for the state you own.
 - `store.setValue(doc, newContent, options?)` updates a live store with notifications, events, and transaction rollback.
 - `diff.setValue(state, newContent, options?)` returns a detached state.
 - Both helpers default to one changed range. Pass `{ strategy: "diff" }` for finer edit ranges.
+
+## 6. Breaking Changes in 5.0.0
+
+See the [5.0.0 upgrade guide](../docs/breaking-changes/5.0.0.md).

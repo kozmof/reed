@@ -28,6 +28,7 @@ import {
 } from "./line-index.js";
 import { createLineIndexState, createEmptyLineIndexState, withLineIndexState } from "./state.js";
 import { byteOffset } from "../../types/branded.js";
+import type { ReadTextFn } from "../../types/operations.js";
 
 function assertRBLineIndex(root: LineIndexNode | null): number {
   if (root === null) return 1;
@@ -1468,5 +1469,38 @@ describe("offset repair preserves subtree aggregates", () => {
       visit(node.right);
     };
     visit(reconciled.root);
+  });
+});
+
+describe("window repair with a reader that has countChars but no scanLines", () => {
+  // Such a reader decodes each range on its own, so a default TextDecoder
+  // drops a U+FEFF that starts the range. The line index counts it.
+  function bomStrippingReader(text: string) {
+    const bytes = new TextEncoder().encode(text);
+    const read = ((start: number, end: number) =>
+      new TextDecoder().decode(bytes.subarray(start, end))) as ReadTextFn;
+    read.countChars = (start, end) =>
+      new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes.subarray(start, end)).length;
+    return read;
+  }
+
+  it.each([
+    [
+      "eager",
+      (state: LineIndexState, read: ReadTextFn) =>
+        lineIndexInsert(state, byteOffset(1), "﻿x\r", read),
+    ],
+    [
+      "lazy",
+      (state: LineIndexState, read: ReadTextFn) =>
+        reconcileFull(lineIndexInsertLazy(state, byteOffset(1), "﻿x\r", 1, read), 1),
+    ],
+  ] as const)("counts a U+FEFF that starts inserted text joining a CRLF (%s)", (_mode, insert) => {
+    const after = "a﻿x\r\nb";
+    // The inserted "\r" joins the "\n" after it, so the lines are re-read.
+    const next = insert(rebuildLineIndex("a\nb"), bomStrippingReader(after));
+    const lines = (root: LineIndexNode | null) =>
+      collectLines(root).map((line) => `${line.lineLength}:${line.charLength}`);
+    expect(lines(next.root)).toEqual(lines(rebuildLineIndex(after).root));
   });
 });

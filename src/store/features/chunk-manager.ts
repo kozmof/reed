@@ -11,10 +11,13 @@
  * Apply all state transitions through store.dispatch(DocumentActions.*).
  */
 
-import type { ReedLogger } from "../../types/state.js";
-import type { DocumentStore } from "../../types/store.js";
+import type { ReadonlyUint8Array } from "../../types/branded.js";
+import type { DocumentState, ReedLogger } from "../../types/state.js";
+import type { DocumentStore, ReconcilableDocumentStore, Unsubscribe } from "../../types/store.js";
 import { isChunkByteLengthValid } from "../core/piece-table.js";
 import { DocumentActions } from "./actions.js";
+import { chunkHoldReason, hasAttentionAnchoredToChunk } from "./chunk-actions.js";
+import { reportCaughtError, warnSafely, withEvictionWarnSink } from "./diagnostics.js";
 
 // =============================================================================
 // Public interfaces
@@ -60,21 +63,45 @@ export interface ChunkManagerConfig {
    * Fetch strategy for concurrent ensureLoaded calls on different chunks.
    * - 'parallel'  — fire all fetches concurrently (default, lower latency)
    * - 'queue'     — serialise fetches one at a time (lower peak I/O)
+   *
+   * Under 'queue', a canceled fetch settles at once, but the next loader call
+   * waits until the canceled one's loader call has settled, so loader calls
+   * never overlap. A loader that ignores its signal and never settles stalls
+   * the fetches queued behind it; canceling them settles them.
    */
   fetchStrategy?: "parallel" | "queue";
-  /** Optional diagnostics sink. Omit to keep the manager silent. */
-  logger?: Pick<ReedLogger, "warn">;
+  /**
+   * Optional diagnostics sink. Omit to keep the manager silent.
+   *
+   * The manager warns when chunks stay resident over `maxLoadedChunks`. When
+   * an eviction the manager dispatches discards undo history, the store that
+   * commits it warns through the store's own `logger`, or through this one
+   * when the store has none, also through a wrapper that forwards the action
+   * to `dispatch` synchronously, rebuilt or not, as long as it changes nothing
+   * before it. A store with events also fires `history-drop`. A store logger
+   * without `warn` keeps the warning silent. When `warn` throws here, the
+   * error goes to `error` if this logger has one.
+   */
+  logger?: Pick<ReedLogger, "warn" | "error">;
 }
 
 /**
  * Manages async chunk loading, LRU eviction, and fetch deduplication for a
  * DocumentStore operating in chunked mode.
+ *
+ * The manager owns the chunks it loads and those already loaded when it is
+ * created, such as by an earlier manager or a checkpoint, and evicts them
+ * least recently used first. It leaves alone a chunk another live manager
+ * owns, and takes over those a disposed manager owned. It never evicts a
+ * chunk the app loaded outside a manager after it was created.
  */
 export interface ChunkManager {
   /**
    * Ensure chunk `chunkIndex` is loaded into the store.
    * Resolves when LOAD_CHUNK has been dispatched and the chunk is in memory.
-   * If the chunk is already loaded, resolves immediately without fetching.
+   * If the chunk is already loaded, resolves immediately without fetching or
+   * evicting. When the load finds a transaction open, left open by the caller
+   * across the await, its eviction pass runs once that transaction closes.
    * Concurrent calls for the same index share a single in-flight fetch.
    * Rejects if the store is not configured for chunked mode.
    */
@@ -82,8 +109,20 @@ export interface ChunkManager {
 
   /**
    * Ensure several chunks are loaded with bounded concurrency. Completions in
-   * the same turn share a transition; slow fetches do not hold up others.
-   * Successful chunks remain loaded if another fetch in the batch fails.
+   * the same turn share a transition; slow fetches do not hold up others, and
+   * a chunk the store does not keep fails on its own, without failing the
+   * others in that transition.
+   * Until it settles, no eviction pass of this manager evicts one of
+   * `chunkIndices`, including those already loaded. It settles once every
+   * fetch it waits on has settled or been canceled, so its holds last exactly
+   * as long as it is pending: it resolves when every fetch succeeded, and
+   * otherwise rejects with the first failure; successful chunks remain
+   * loaded. A canceled fetch settles at once, even when the loader ignores
+   * its signal, so `cancelPendingOutside` or `dispose` ends a call waiting on
+   * a loader that never settles. An eviction pass then runs in a later task,
+   * once no transaction is open, so when it asked for more than
+   * maxLoadedChunks, the chunks stay loaded as the call resolves, and the
+   * cache returns toward the limit after.
    */
   ensureLoadedMany(chunkIndices: readonly number[]): Promise<void>;
 
@@ -97,7 +136,11 @@ export interface ChunkManager {
    * Pin chunks that are currently in active use.
    * Pinned chunks are excluded from LRU eviction until the next call to
    * setActiveChunks removes them from the active set.
-   * Pass an empty array to unpin everything.
+   * Pass an empty array to unpin everything. The eviction pass it runs waits,
+   * like a load's, for a transaction the store has open to close. The new
+   * active set applies even when that pass throws, such as from a store
+   * wrapper's dispatch of EVICT_CHUNKS, so the error goes to the logger's
+   * `error` instead of to the caller.
    */
   setActiveChunks(chunkIndices: readonly number[]): void;
 
@@ -111,7 +154,7 @@ export interface ChunkManager {
 
   /**
    * Dispose this manager.
-   * After disposal, ensureLoaded / prefetch are no-ops and in-flight fetches
+   * After disposal, ensureLoaded, prefetch and setActiveChunks are no-ops, and in-flight fetches
    * receive an abort signal. Fetches that have not yet dispatched LOAD_CHUNK
    * will not dispatch, even when their loader ignores cancellation.
    * The underlying DocumentStore remains usable.
@@ -120,11 +163,291 @@ export interface ChunkManager {
 }
 
 // =============================================================================
+// Refused candidates
+// =============================================================================
+
+/**
+ * Why a chunk stays resident while the cache is over the limit after an
+ * eviction pass:
+ * - `"pinned"`: in the active set (`setActiveChunks`).
+ * - `"requested"`: asked for by the fetch that ran the pass, or by an
+ *   `ensureLoadedMany` call that has not settled.
+ * - `"anchored"`: offered for eviction and refused, since an attention is
+ *   anchored inside it.
+ * - `"held"`: offered for eviction and refused, since user edits or undo
+ *   history point into it.
+ * - `"untracked"`: loaded without this manager after it was created, or
+ *   owned by another live manager, so it never offers it.
+ *
+ * Each chunk counts under one cause. The warning also says how many
+ * `"anchored"` chunks edits or history would keep without the attention.
+ */
+type PressureCause = "pinned" | "requested" | "anchored" | "held" | "untracked";
+
+/** Each cause's text, in the order the pressure warning lists them. */
+const PRESSURE_CAUSE_TEXT: Readonly<Record<PressureCause, string>> = {
+  pinned: "pinned as active",
+  requested: "requested by a pending call",
+  anchored: "hold an attention anchor",
+  held: "hold user edits or undo history",
+  untracked: "loaded outside this ChunkManager after it was created, or owned by another",
+};
+
+/** Every `PressureCause`, in the order the pressure warning lists them. */
+const PRESSURE_CAUSES = Object.keys(PRESSURE_CAUSE_TEXT) as readonly PressureCause[];
+
+// =============================================================================
+// Ownership
+// =============================================================================
+
+/** A manager, as an owner of chunks. */
+interface ChunkOwner {
+  disposed: boolean;
+  /**
+   * Whether chunks a disposed manager owned may be resident in this
+   * manager's store, so its next pass with no transaction open scans for
+   * them (see `reconcileOwnership`).
+   */
+  scanForOrphans: boolean;
+  /**
+   * The store this manager wraps. Only the manager holds its owner strongly
+   * (`chunkOwners` and `liveOwners` hold it weakly), so this keeps the store
+   * alive no longer than the manager does.
+   */
+  readonly store: DocumentStore;
+}
+
+/**
+ * What `chunkOwners` records for a chunk's bytes: undefined when no manager
+ * owns them, `"gone"` when the manager that owned them was dropped without
+ * being disposed and has been collected, and otherwise the owning manager.
+ */
+type RecordedOwner = ChunkOwner | "gone" | undefined;
+
+/**
+ * The manager that owns each chunk, keyed by the bytes the store holds for
+ * it, across every manager. A manager owns a chunk exactly while it is
+ * resident with bytes recorded here for that manager. Keying by bytes, not by
+ * store, lets managers on different wrappers of one store see each other's
+ * chunks.
+ *
+ * This relies on the store keeping a resident chunk's bytes object across
+ * every transition that leaves the chunk resident, a rollback included, and
+ * on every load bringing bytes of its own (`DocumentActions.loadChunk` copies
+ * them). chunk-manager.test.ts pins both ("bytes identity of resident chunks").
+ */
+const chunkOwners = new WeakMap<ReadonlyUint8Array, WeakRef<ChunkOwner>>();
+
+/** The manager recorded as owning `bytes` (see `RecordedOwner`). */
+function ownerOf(bytes: ReadonlyUint8Array): RecordedOwner {
+  const ref = chunkOwners.get(bytes);
+  if (ref === undefined) return undefined;
+  return ref.deref() ?? "gone";
+}
+
+/** A store's chunk map, as ownership checks read it. */
+type ChunkMap = ReadonlyMap<number, ReadonlyUint8Array>;
+
+/**
+ * Every manager not yet disposed, held weakly so a manager the app drops
+ * without disposing it is not kept alive, with its store, held weakly too.
+ * A manager leaving this map, by being disposed or collected, marks those
+ * that may hold chunks it owned to scan for them (see `markOrphanHolders`).
+ */
+const liveOwners = new Map<WeakRef<ChunkOwner>, WeakRef<DocumentStore>>();
+
+/**
+ * Whether `store` has a transaction open. Returns `"unknown"` for a store
+ * with transaction controls but no `isInTransaction`, such as a wrapper
+ * written before it.
+ */
+function transactionStateOf(store: DocumentStore): "open" | "closed" | "unknown" {
+  const { isInTransaction, beginTransaction } = store as Partial<ReconcilableDocumentStore>;
+  if (typeof isInTransaction === "function") {
+    return isInTransaction.call(store) ? "open" : "closed";
+  }
+  return typeof beginTransaction === "function" ? "unknown" : "closed";
+}
+
+/**
+ * Mark to scan, on their next pass, the live managers that may now find
+ * chunks a manager on `store` owned and no live manager does: those on
+ * `store` itself, those whose chunk map `holds` says holds such a chunk, and,
+ * when `rollbacks` is set, those whose store has a transaction open, or one
+ * it cannot rule out, since a rollback there could restore such a chunk.
+ * Every live manager is marked when `holds` is null.
+ *
+ * Managers on one store, or on wrappers of it, share its chunk map, so each
+ * map is asked once; store identity alone would miss wrappers. A store whose
+ * `getSnapshot` throws, such as a wrapper that throws once disposed, is taken
+ * as holding such chunks, so this never throws.
+ */
+function markOrphanHolders(
+  store: DocumentStore | undefined,
+  holds: ((chunkMap: ChunkMap) => boolean) | null,
+  rollbacks: boolean,
+): void {
+  const answers = new Map<ChunkMap, boolean>();
+  for (const ref of liveOwners.keys()) {
+    const owner = ref.deref();
+    if (owner === undefined || owner.scanForOrphans) continue;
+    if (holds === null || owner.store === store) {
+      owner.scanForOrphans = true;
+      continue;
+    }
+    let theirs: ChunkMap;
+    try {
+      if (rollbacks && transactionStateOf(owner.store) !== "closed") {
+        owner.scanForOrphans = true;
+        continue;
+      }
+      theirs = owner.store.getSnapshot().pieceTable.chunkMap;
+    } catch {
+      owner.scanForOrphans = true;
+      continue;
+    }
+    let answer = answers.get(theirs);
+    if (answer === undefined) {
+      answer = holds(theirs);
+      answers.set(theirs, answer);
+    }
+    if (answer) owner.scanForOrphans = true;
+  }
+}
+
+/** A test of whether a chunk map is `ours` or holds one of `orphans`. */
+function holdsAnyOf(
+  ours: ChunkMap,
+  orphans: ReadonlyArray<readonly [number, ReadonlyUint8Array]>,
+): (theirs: ChunkMap) => boolean {
+  return (theirs) =>
+    theirs === ours || orphans.some(([chunkIndex, bytes]) => theirs.get(chunkIndex) === bytes);
+}
+
+/**
+ * Forget `ref`, a manager the app dropped without disposing it, once it has
+ * been collected. Its chunks are then orphans, recorded as `"gone"`, so the
+ * live managers that may hold them scan for them. If its store is still
+ * alive, they are found from its chunk map, as for a dispose (see
+ * `markOrphanScans`). If the store was collected too, a manager on a store it
+ * wrapped may still hold them, so each live chunk map is searched once for
+ * bytes recorded for `ref`. Forgetting a manager already forgotten does
+ * nothing.
+ */
+function forgetOwner(ref: WeakRef<ChunkOwner>): void {
+  const storeRef = liveOwners.get(ref);
+  if (storeRef === undefined) return;
+  liveOwners.delete(ref);
+  const store = storeRef.deref();
+  if (store === undefined) {
+    const recordedForRef = (chunkMap: ChunkMap) => {
+      for (const bytes of chunkMap.values()) {
+        if (chunkOwners.get(bytes) === ref) return true;
+      }
+      return false;
+    };
+    markOrphanHolders(undefined, recordedForRef, true);
+    return;
+  }
+  let ours: ChunkMap | null = null;
+  try {
+    if (transactionStateOf(store) === "closed") ours = store.getSnapshot().pieceTable.chunkMap;
+  } catch {
+    // A store that cannot answer is treated as having a transaction open.
+  }
+  if (ours === null) {
+    markOrphanHolders(store, null, false);
+    return;
+  }
+  const orphans: Array<readonly [number, ReadonlyUint8Array]> = [];
+  for (const [chunkIndex, bytes] of ours) {
+    if (chunkOwners.get(bytes) === ref) orphans.push([chunkIndex, bytes]);
+  }
+  if (orphans.length === 0) return;
+  markOrphanHolders(store, holdsAnyOf(ours, orphans), false);
+}
+
+/**
+ * Forget the managers that have been collected but whose finalizer has not
+ * run. A finalizer may run long after its manager is collected, or never, so
+ * eviction passes call this rather than rely on `droppedOwners`. It costs a
+ * deref per live manager.
+ */
+function forgetCollectedOwners(): void {
+  for (const ref of liveOwners.keys()) {
+    if (ref.deref() === undefined) forgetOwner(ref);
+  }
+}
+
+/** Forgets a manager the app dropped without disposing it, once it is collected. */
+const droppedOwners = new FinalizationRegistry<WeakRef<ChunkOwner>>(forgetOwner);
+
+/**
+ * Subscribe `listener` to `store` without the store keeping it alive, so a
+ * listener that holds a manager does not keep a manager the app dropped
+ * alive. The caller must hold `listener` for as long as it should run. Once
+ * it has been collected, the next notification unsubscribes it.
+ */
+function subscribeWeakly(store: DocumentStore, listener: () => void): Unsubscribe {
+  const ref = new WeakRef(listener);
+  let unsubscribe: Unsubscribe | null = null;
+  unsubscribe = store.subscribe(() => {
+    const live = ref.deref();
+    if (live !== undefined) live();
+    else unsubscribe?.();
+  });
+  return unsubscribe;
+}
+
+/** A chunk's fetched bytes, ready to load. */
+interface FetchedChunk {
+  readonly chunkIndex: number;
+  readonly data: Uint8Array;
+}
+
+/** No failures, for commits whose every chunk the store kept. */
+const NO_FAILURES: ReadonlyMap<number, unknown> = new Map();
+
+/** Whether a manager that has not been disposed owns `bytes`. */
+function hasLiveOwner(bytes: ReadonlyUint8Array): boolean {
+  const owner = ownerOf(bytes);
+  return owner !== undefined && owner !== "gone" && !owner.disposed;
+}
+
+/** No chunks, for passes that protect none beyond the usual. */
+const NONE: ReadonlySet<number> = new Set();
+
+/** What EVICT_CHUNKS measures a candidate in. */
+type EvictionInputs = Pick<DocumentState, "pieceTable" | "history" | "attention">;
+
+/**
+ * A test of whether a state shares `state`'s pieces, history, and attention,
+ * so the reducer would refuse the same evictions in it. `state`'s are held
+ * weakly, so they keep no evicted chunk or dropped history in memory; once
+ * one is collected, no state matches.
+ */
+function sameEvictionInputsAs(state: EvictionInputs): (other: EvictionInputs) => boolean {
+  const pieceTable = new WeakRef(state.pieceTable);
+  const history = new WeakRef(state.history);
+  const attention = new WeakRef(state.attention);
+  return (other) =>
+    pieceTable.deref() === other.pieceTable &&
+    history.deref() === other.history &&
+    attention.deref() === other.attention;
+}
+
+// =============================================================================
 // Factory
 // =============================================================================
 
 /**
  * Create a ChunkManager that wraps `store` and uses `loader` to fetch chunks.
+ *
+ * The manager evicts the chunks it owns: those it loads, and those already
+ * resident when it is created that no live manager owns, whoever loaded them,
+ * such as a checkpoint restore, an earlier manager or the app. A chunk the app
+ * loads with LOAD_CHUNK after the manager exists is never evicted by it. To
+ * keep a chunk resident either way, pin it with `setActiveChunks`.
  *
  * @example
  * ```typescript
@@ -178,17 +501,101 @@ export function createChunkManager(
   // Cooperative cancellation for loaders that honor AbortSignal.
   const abortControllers = new Map<number, AbortController>();
 
-  // Set iteration runs from least to most recently used.
-  const lruOrder = new Set<number>();
+  // This manager in `chunkOwners`. It owns the chunks it loaded, those
+  // resident when it was created that no live manager owned, and those a
+  // disposed manager left. A resident chunk is the manager's to evict exactly
+  // when its bytes are recorded for it. Each LOAD_CHUNK action carries a
+  // fresh copy of the bytes, so a load outside the manager brings bytes of
+  // its own, while a rollback restores the very bytes a chunk held, however
+  // the chunk left memory.
+  // It starts out scanning, since a dispose inside a transaction open when it
+  // was created leaves chunks a rollback can restore.
+  const self: ChunkOwner = { disposed: false, scanForOrphans: true, store };
+  const selfRef = new WeakRef(self);
+  liveOwners.set(selfRef, new WeakRef(store));
+  droppedOwners.register(self, selfRef, selfRef);
+
+  // Recency of the chunks this manager owns, least recently used first.
+  // Eviction passes drop entries for chunks no longer resident with bytes the
+  // manager owns, and so does a sweep once the set grows past `lruSweepAt`,
+  // so it stays within twice the chunks it must track.
+  //
+  // A pass never runs while the store says a transaction is open (see
+  // `evictWhenNoTransaction`), so no rollback can bring back a chunk whose
+  // entry a pass dropped. A chunk that leaves memory inside a transaction
+  // keeps its entry until the next pass, so if a rollback restores it, it is
+  // offered as recently used as it was when it went.
+  const lru = new Set<number>();
+  let lruSweepAt = Math.max(16, 2 * maxLoadedChunks);
 
   // Pinned chunks: never evicted.
   let activeChunks = new Set<number>();
+
+  // How many unsettled ensureLoadedMany calls asked for each chunk. No
+  // eviction pass evicts one of them.
+  const requested = new Map<number, number>();
+
+  // While more chunks are loaded than maxLoadedChunks allows, as of the last
+  // eviction attempt, the reasons chunks have stayed resident since the cache
+  // went over (see `PressureCause`); null while within the limit. The pressure
+  // warning is logged when a reason is new, so once per cause rather than on
+  // every load while the cache stays over.
+  let pressureCauses: Set<PressureCause> | null = null;
+  // Whether, since the cache went over, an anchored chunk was found that edits
+  // or history would keep too. Reset with `pressureCauses`.
+  let anchoredHeldSeen = false;
+
+  // What the pressure warning's piece-tree visits found for each chunk, while
+  // the store holds the state they were made in: whether an attention is
+  // anchored in it, and what else holds it. Under "pin", being over the limit
+  // is a steady state and setActiveChunks runs a pass on every call; this
+  // keeps those passes from visiting the tree again until the document changes.
+  let pressureMemo: {
+    readonly measuredIn: (state: EvictionInputs) => boolean;
+    readonly anchored: Map<number, boolean>;
+    readonly holdReason: Map<number, ReturnType<typeof chunkHoldReason>>;
+  } | null = null;
+
+  // The chunks eviction passes offered and the reducer refused, while the
+  // store holds the state the last pass left (see `evictIfOverLimit`). The
+  // reducer would refuse them again in that state, so a pass skips them.
+  // Under "pin", history keeping chunks resident is a steady state, and
+  // setActiveChunks runs a pass on every call; this keeps those passes from
+  // measuring the same chunks again until the document changes. Any load,
+  // eviction, edit, or attention change drops it.
+  let refused: {
+    readonly measuredIn: (state: EvictionInputs) => boolean;
+    readonly chunks: Set<number>;
+  } | null = null;
+
+  // The timer of an eviction pass scheduled for a later task, and while that
+  // pass waits for a transaction to close, its store subscription and the
+  // listener it runs (see `scheduleEvictionPass`). At most one of the timer
+  // and the subscription is set. The store holds the listener only weakly,
+  // so this keeps it alive exactly as long as the manager.
+  let passTimer: ReturnType<typeof setTimeout> | null = null;
+  let passAwaitingCommit: Unsubscribe | null = null;
+  let commitListener: (() => void) | null = null;
+  // Chunks whose loads put off their eviction pass because a transaction was
+  // open. The deferred pass protects them, as each load's own pass would
+  // have, and then releases them. Other passes do not, just as they would
+  // not protect a chunk loaded with no transaction open.
+  let deferredProtected = new Set<number>();
 
   // When fetchStrategy is 'queue', serialise fetches through this promise chain.
   let fetchQueue: Promise<void> = Promise.resolve();
 
   // Disposed flag: prevents dispatches after dispose().
   let disposed = false;
+
+  // Chunks already resident, such as those an earlier manager or a checkpoint
+  // left, are this manager's, so it can evict them toward its limit. No other
+  // manager evicts them any more, so without this they would stay for good.
+  // A chunk another live manager owns stays that manager's: it may have it
+  // pinned or requested, which this one cannot see.
+  for (const [chunkIndex, bytes] of store.getSnapshot().pieceTable.chunkMap) {
+    if (!hasLiveOwner(bytes)) adopt(chunkIndex, bytes);
+  }
 
   function getChunkedModeError(): string | null {
     return store.getSnapshot().pieceTable.chunkSize > 0
@@ -224,122 +631,556 @@ export function createChunkManager(
 
   // ── LRU helpers ───────────────────────────────────────────────────────────
 
-  function lruTouch(chunkIndex: number): void {
-    lruOrder.delete(chunkIndex);
-    lruOrder.add(chunkIndex);
+  /** Whether `chunkIndex` is resident in `chunkMap` with bytes this manager loaded. */
+  function isOwnedIn(
+    chunkMap: ReadonlyMap<number, ReadonlyUint8Array>,
+    chunkIndex: number,
+  ): boolean {
+    const bytes = chunkMap.get(chunkIndex);
+    return bytes !== undefined && ownerOf(bytes) === self;
   }
 
-  function lruRemove(chunkIndex: number): void {
-    lruOrder.delete(chunkIndex);
+  /** Take ownership of `chunkIndex`, resident with `bytes`, as the most recently used. */
+  function adopt(chunkIndex: number, bytes: ReadonlyUint8Array): void {
+    chunkOwners.set(bytes, selfRef);
+    lru.delete(chunkIndex);
+    lru.add(chunkIndex);
+  }
+
+  /**
+   * Put in `lru`, as the least recently used, the resident chunks a disposed
+   * manager owned. They were loaded by a manager, not by the app, and no
+   * other manager evicts them any more, such as after a remount that created
+   * this manager before disposing the one it replaced.
+   *
+   * Such chunks appear only when a manager is disposed, so the scan runs only
+   * when, since the last scan, a manager has been disposed that owned chunks
+   * this store holds, or was disposed inside a transaction (see
+   * `markOrphanScans`). A rollback can restore a disposed manager's bytes
+   * too, but no pass runs while a transaction is open, so a dispose inside
+   * one is still unseen once it closes.
+   *
+   * On a store that cannot say whether a transaction is open, passes run
+   * inside transactions, so a rollback can restore chunks this manager owns
+   * after a pass dropped their entries. Passes on such a store scan every
+   * time and also put those chunks back, as the least recently used.
+   */
+  function reconcileOwnership(chunkMap: ReadonlyMap<number, ReadonlyUint8Array>): void {
+    forgetCollectedOwners();
+    const state = transactionState();
+    if (state === "closed" && !self.scanForOrphans) return;
+    let found: Array<readonly [number, ReadonlyUint8Array]> | null = null;
+    for (const [chunkIndex, bytes] of chunkMap) {
+      const owner = ownerOf(bytes);
+      if (owner === undefined) continue;
+      if (owner === self ? !lru.has(chunkIndex) : owner === "gone" || owner.disposed) {
+        (found ??= []).push([chunkIndex, bytes]);
+      }
+    }
+    if (state === "closed") self.scanForOrphans = false;
+    if (found === null) return;
+    const rest = [...lru];
+    lru.clear();
+    for (const [chunkIndex, bytes] of found) {
+      chunkOwners.set(bytes, selfRef);
+      lru.add(chunkIndex);
+    }
+    for (const chunkIndex of rest) lru.add(chunkIndex);
+  }
+
+  /** Mark a chunk this manager owns the most recently used. */
+  function lruTouch(chunkIndex: number): void {
+    if (!lru.delete(chunkIndex)) return;
+    lru.add(chunkIndex);
+  }
+
+  /**
+   * Take ownership of `chunkIndex` after a load this manager dispatched, when
+   * that load brought it into memory: it was not resident in `before`, the
+   * chunkMap the load was dispatched against. One already resident then was
+   * loaded outside the manager, so the load changed nothing, and it stays
+   * untracked. The reducer stores a fresh copy of every load's bytes, so no
+   * other load can bring back the bytes recorded here.
+   */
+  function adoptLoaded(chunkIndex: number, before: ReadonlyMap<number, ReadonlyUint8Array>): void {
+    if (before.has(chunkIndex)) return;
+    const bytes = store.getSnapshot().pieceTable.chunkMap.get(chunkIndex);
+    if (bytes !== undefined) adopt(chunkIndex, bytes);
+  }
+
+  /**
+   * Whether the store has a transaction open. If one is, an eviction pass
+   * waits until it closes, and a rollback could still restore chunks that
+   * have left memory. Returns `"unknown"` for a store with transaction
+   * controls but no `isInTransaction`, such as a wrapper written before it.
+   *
+   * Every check treats `"unknown"` as no transaction open, because waiting
+   * for one to close could put eviction off for as long as the store stays
+   * idle. A rollback on such a store can still restore chunks, so passes on
+   * it look for them every time (see `reconcileOwnership`).
+   */
+  function transactionState(): "open" | "closed" | "unknown" {
+    return transactionStateOf(store);
+  }
+
+  /**
+   * Run an eviction pass that protects `protectedChunks`. It runs at once,
+   * or, if the store has a transaction open (such as one the caller left
+   * open across a load's await), once that transaction closes (see
+   * `scheduleEvictionPass`). The pass then never evicts, or discards
+   * history, as part of the caller's transaction. A deferred pass protects
+   * the same chunks.
+   */
+  function evictWhenNoTransaction(protectedChunks: ReadonlySet<number> = NONE): void {
+    if (disposed) return;
+    if (transactionState() !== "open") {
+      evictIfOverLimit(protectedChunks);
+      return;
+    }
+    for (const chunkIndex of protectedChunks) deferredProtected.add(chunkIndex);
+    scheduleEvictionPass();
+  }
+
+  /**
+   * Run `evictWhenNoTransaction` after a change that has already taken
+   * effect: a load the manager has adopted, or a new active set. An error the
+   * pass throws, such as from a store wrapper's dispatch of EVICT_CHUNKS,
+   * goes to the logger's `error` under `context`, as for a deferred pass, and
+   * does not fail the call.
+   */
+  function evictSafely(protectedChunks: ReadonlySet<number>, context: string): void {
+    try {
+      evictWhenNoTransaction(protectedChunks);
+    } catch (error) {
+      reportCaughtError(logger, context, error);
+    }
+  }
+
+  const AFTER_LOAD = "The ChunkManager eviction pass after a load failed";
+
+  /**
+   * Drop `lru` entries for chunks no longer resident with bytes this manager
+   * owns. O(L), amortized O(1) per load.
+   */
+  function sweepLru(chunkMap: ReadonlyMap<number, ReadonlyUint8Array>): void {
+    for (const chunkIndex of lru) {
+      if (!isOwnedIn(chunkMap, chunkIndex)) lru.delete(chunkIndex);
+    }
+    lruSweepAt = Math.max(16, 2 * maxLoadedChunks, 2 * lru.size);
+  }
+
+  /** Mark `chunkIndex` most recently used when it is resident and owned. */
+  function touchIfOwned(
+    chunkMap: ReadonlyMap<number, ReadonlyUint8Array>,
+    chunkIndex: number,
+  ): void {
+    if (isOwnedIn(chunkMap, chunkIndex)) lruTouch(chunkIndex);
+  }
+
+  /**
+   * Hold `chunkIndices` against eviction until the returned function is
+   * called. That function returns whether it released the last hold on any
+   * of them, so an eviction pass may now evict it.
+   */
+  function holdRequested(chunkIndices: readonly number[]): () => boolean {
+    for (const chunkIndex of chunkIndices) {
+      requested.set(chunkIndex, (requested.get(chunkIndex) ?? 0) + 1);
+    }
+    let released = false;
+    return () => {
+      if (released) return false;
+      released = true;
+      let freed = false;
+      for (const chunkIndex of chunkIndices) {
+        const holds = requested.get(chunkIndex) ?? 0;
+        if (holds <= 1) {
+          requested.delete(chunkIndex);
+          freed = true;
+        } else requested.set(chunkIndex, holds - 1);
+      }
+      return freed;
+    };
   }
 
   // ── Eviction ──────────────────────────────────────────────────────────────
 
-  function evictIfOverLimit(protectedChunkIndices?: number | ReadonlySet<number>): void {
+  /**
+   * Evict least recently used chunks until at most maxLoadedChunks remain, or
+   * none that may go is left, then warn when the cache stays over the limit.
+   * Chunks the last pass saw refused are skipped while the document is as it
+   * was (see `refused`). Chunks in `protectedChunks` and chunks still
+   * requested stay.
+   */
+  function evictIfOverLimit(protectedChunks: ReadonlySet<number> = NONE): void {
     if (disposed) return;
-    const snapshot = store.getSnapshot();
-    let loadedCount = snapshot.pieceTable.chunkMap.size;
-
-    for (const candidate of lruOrder) {
-      if (loadedCount <= maxLoadedChunks) break;
-      // Skip pinned chunks.
-      if (activeChunks.has(candidate)) continue;
-      // Keep the just-loaded chunk resident for the ensureLoaded()/prefetch caller.
-      if (
-        typeof protectedChunkIndices === "number"
-          ? candidate === protectedChunkIndices
-          : protectedChunkIndices?.has(candidate)
-      ) {
-        continue;
+    const isProtected = (chunkIndex: number) =>
+      protectedChunks.has(chunkIndex) || requested.has(chunkIndex);
+    // Usually one pass, and at most two: see the retry below.
+    for (let state = store.getSnapshot(), retried = false; ; ) {
+      if (refused !== null && !refused.measuredIn(state)) refused = null;
+      const resident = state.pieceTable.chunkMap;
+      if (resident.size <= maxLoadedChunks) break;
+      reconcileOwnership(resident);
+      // Least recently used first: chunks the manager may evict that are still
+      // in memory. Pinned and requested chunks stay. The reducer chooses
+      // among them in one transition (see EVICT_CHUNKS): every chunk whose
+      // eviction costs no history first, then as the policy allows. It stops
+      // once the limit is met, so when the least recently used chunks cost no
+      // history it measures only as many as must go.
+      const mayGo = (chunkIndex: number) =>
+        !activeChunks.has(chunkIndex) &&
+        !isProtected(chunkIndex) &&
+        refused?.chunks.has(chunkIndex) !== true;
+      const candidates: number[] = [];
+      // Chunks a rollback restored are still in `lru`, in the place they had
+      // when they went. Forget chunks that left memory, or came back with
+      // bytes loaded outside the manager: with no transaction open, no
+      // rollback can restore them (see `lru`).
+      for (const chunkIndex of lru) {
+        if (isOwnedIn(resident, chunkIndex)) {
+          if (mayGo(chunkIndex)) candidates.push(chunkIndex);
+        } else lru.delete(chunkIndex);
       }
-      // Skip chunks no longer in memory (evicted by another path).
-      if (!snapshot.pieceTable.chunkMap.has(candidate)) {
-        lruRemove(candidate);
-        continue;
+      if (candidates.length === 0) break;
+      // The eviction may discard history, as the policy allows. The store
+      // that commits it warns of that through its logger, or without one
+      // through this manager's (see `withEvictionWarnSink`), and a store
+      // with events fires `history-drop`.
+      withEvictionWarnSink(logger, state.pieceTable, () =>
+        store.dispatch(DocumentActions.evictChunks(candidates, maxLoadedChunks)),
+      );
+      // A listener the eviction notified may have disposed the manager.
+      if (disposed) return;
+      const after = store.getSnapshot();
+      const left = after.pieceTable.chunkMap;
+      if (left.size <= maxLoadedChunks) break;
+      if (after.history === state.history && after.attention === state.attention) {
+        // Still over the limit, the reducer measured every candidate, and
+        // with history unchanged it evicted only those that cost none: the
+        // rest were refused. Evicting chunks adds no edits, attention, or
+        // history, so it frees none of them, and the reducer would refuse
+        // them again while the store holds `after`. A chunk loaded since
+        // could part one from the text that kept it, so record them only
+        // when none was.
+        let loaded = false;
+        if (left !== resident) {
+          for (const chunkIndex of left.keys()) {
+            if (!resident.has(chunkIndex)) {
+              loaded = true;
+              break;
+            }
+          }
+        }
+        if (!loaded) {
+          const chunks = new Set<number>();
+          for (const chunkIndex of refused?.chunks ?? []) {
+            if (left.has(chunkIndex)) chunks.add(chunkIndex);
+          }
+          for (const chunkIndex of candidates) if (left.has(chunkIndex)) chunks.add(chunkIndex);
+          refused = { measuredIn: sameEvictionInputsAs(after), chunks };
+        }
+        break;
       }
-
-      store.dispatch(DocumentActions.evictChunk(candidate));
-
-      if (!store.getSnapshot().pieceTable.chunkMap.has(candidate)) {
-        // Eviction succeeded.
-        lruRemove(candidate);
-        loadedCount--;
-      }
-      // If eviction was refused (user edits overlap the chunk's byte range),
-      // leave the chunk and continue to the next LRU candidate.
+      // The eviction discarded history, or a listener it notified changed
+      // history or attention, which may have freed the chunks it refused.
+      // Offer them once more, against the state now.
+      if (retried) break;
+      retried = true;
+      state = after;
     }
 
-    if (loadedCount > maxLoadedChunks) {
-      logger?.warn?.(
-        `[ChunkManager] eviction pressure: ${loadedCount} chunks loaded but all non-pinned ` +
-          `candidates have overlapping user edits. Memory limit (${maxLoadedChunks}) exceeded.`,
+    const current = store.getSnapshot();
+    const { chunkMap } = current.pieceTable;
+    // Forget chunks gone for good, which passes that stop early never visit.
+    if (lru.size > lruSweepAt) sweepLru(chunkMap);
+
+    const loadedCount = chunkMap.size;
+    if (loadedCount <= maxLoadedChunks) {
+      pressureCauses = null;
+      anchoredHeldSeen = false;
+      refused = null;
+      pressureMemo = null;
+      return;
+    }
+    // Warn when the cache goes over the limit, and when a reason not seen
+    // since then keeps chunks resident, not on every load while it stays
+    // over: under "pin", history keeping chunks resident is a steady state.
+    const counts = new Map<PressureCause, number>();
+    const count = (cause: PressureCause) => counts.set(cause, (counts.get(cause) ?? 0) + 1);
+    // Chunks this manager could have offered: whether an attention or the
+    // document holds them takes piece-tree visits, so they are told apart
+    // only when that could add a reason or the warning needs their counts.
+    const offerable: number[] = [];
+    for (const chunkIndex of chunkMap.keys()) {
+      if (activeChunks.has(chunkIndex)) count("pinned");
+      else if (isProtected(chunkIndex)) count("requested");
+      else if (!isOwnedIn(chunkMap, chunkIndex)) count("untracked");
+      else offerable.push(chunkIndex);
+    }
+    const seen = pressureCauses ?? new Set<PressureCause>();
+    pressureCauses = seen;
+    const isNew = (cause: PressureCause) => counts.has(cause) && !seen.has(cause);
+    if (
+      !PRESSURE_CAUSES.some(isNew) &&
+      (offerable.length === 0 || (seen.has("anchored") && seen.has("held") && anchoredHeldSeen))
+    ) {
+      for (const cause of counts.keys()) seen.add(cause);
+      return;
+    }
+    if (pressureMemo === null || !pressureMemo.measuredIn(current)) {
+      pressureMemo = {
+        measuredIn: sameEvictionInputsAs(current),
+        anchored: new Map(),
+        holdReason: new Map(),
+      };
+    }
+    const memo = pressureMemo;
+    const anchoredChunks: number[] = [];
+    for (const chunkIndex of offerable) {
+      let anchored = memo.anchored.get(chunkIndex);
+      if (anchored === undefined) {
+        anchored = hasAttentionAnchoredToChunk(current, chunkIndex);
+        memo.anchored.set(chunkIndex, anchored);
+      }
+      if (anchored) {
+        count("anchored");
+        anchoredChunks.push(chunkIndex);
+      } else count("held");
+    }
+    let newCause = PRESSURE_CAUSES.some(isNew);
+    // An anchored chunk can be held by edits or history too, which matters
+    // once the attention is gone. It is counted apart from "held", so the
+    // counts still add up to the chunks loaded. Find out only when it could
+    // add a reason or the warning needs the count.
+    let anchoredHeld = 0;
+    let anchoredHeldByHistory = false;
+    if (anchoredChunks.length > 0 && (newCause || !anchoredHeldSeen)) {
+      for (const chunkIndex of anchoredChunks) {
+        let reason = memo.holdReason.get(chunkIndex);
+        if (reason === undefined) {
+          reason = chunkHoldReason(current, chunkIndex);
+          memo.holdReason.set(chunkIndex, reason);
+        }
+        if (reason === null) continue;
+        anchoredHeld++;
+        if (reason === "history") anchoredHeldByHistory = true;
+      }
+      if (anchoredHeld > 0) {
+        newCause ||= !anchoredHeldSeen;
+        anchoredHeldSeen = true;
+      }
+    }
+    for (const cause of counts.keys()) seen.add(cause);
+    if (newCause) {
+      const reasons = PRESSURE_CAUSES.filter((cause) => counts.has(cause)).map(
+        (cause) =>
+          `${counts.get(cause)} ${PRESSURE_CAUSE_TEXT[cause]}` +
+          (cause === "anchored" && anchoredHeld > 0
+            ? `, ${anchoredHeld} of which also ${PRESSURE_CAUSE_TEXT.held}`
+            : ""),
+      );
+      // The hint names history, so it needs a chunk history may be keeping:
+      // one refused eviction, or an anchored one history would keep.
+      // The chunk that brought the cache over the limit has loaded, so a
+      // throwing logger is reported, not thrown to the caller.
+      warnSafely(
+        logger,
+        `[ChunkManager] eviction pressure: ${loadedCount} chunks loaded, over the memory ` +
+          `limit (${maxLoadedChunks}), and none can be evicted: ${reasons.join("; ")}.` +
+          ((counts.has("held") || anchoredHeldByHistory) && current.history.evictionPolicy === "pin"
+            ? ` The "pin" history eviction policy keeps chunks undo history points into; ` +
+              `"pin-bounded" or "drop" lets eviction discard that history.`
+            : ""),
+        "The ChunkManager logger threw while warning of eviction pressure",
       );
     }
   }
 
   // ── Core fetch ────────────────────────────────────────────────────────────
 
+  /**
+   * Call the loader for `chunkIndex`, settling as soon as `signal` aborts,
+   * even when the loader ignores it, so a canceled fetch never keeps a call
+   * or its holds pending. `idle` is called once the loader call itself has
+   * settled, or at once when `signal` has already aborted and it makes none.
+   */
+  function loadAbortable(
+    chunkIndex: number,
+    signal: AbortSignal,
+    idle: () => void,
+  ): Promise<Uint8Array> {
+    return new Promise<Uint8Array>((resolve, reject) => {
+      if (signal.aborted) {
+        idle();
+        reject(signal.reason);
+        return;
+      }
+      const onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+      new Promise<Uint8Array>((load) => load(loader.loadChunk(chunkIndex, signal)))
+        .then(resolve, reject)
+        .finally(() => {
+          signal.removeEventListener("abort", onAbort);
+          idle();
+        });
+    });
+  }
+
+  /**
+   * Start `fetch` as the fetch strategy allows. Under 'queue', it starts once
+   * the fetch queued before it is idle: its loader call has settled, which
+   * can be after that fetch settled on cancellation, so loader calls never
+   * overlap. `fetch` calls `idle` once its loader call has settled, or once
+   * it knows it makes none. A fetch canceled while it waits settles at once
+   * with `canceled`, and keeps its place until the one before it is idle.
+   */
+  function scheduleFetch<T>(
+    signal: AbortSignal,
+    canceled: T,
+    fetch: (idle: () => void) => Promise<T>,
+  ): Promise<T> {
+    if (fetchStrategy === "parallel") return fetch(() => {});
+    const previous = fetchQueue;
+    let idle!: () => void;
+    fetchQueue = new Promise<void>((resolve) => {
+      idle = resolve;
+    });
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = () => resolve(canceled);
+      // An abort listener never fires for a signal already aborted, such as
+      // when ensureLoadedMany's worker reaches a chunk canceled while queued.
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+      void previous.then(() => {
+        signal.removeEventListener("abort", onAbort);
+        fetch(idle).then(resolve, reject);
+      });
+    });
+  }
+
+  /**
+   * Throw when the bytes the loader returned for `chunkIndex` are empty or
+   * contradict the declared file geometry. Otherwise the reducer drops the
+   * load and the retention check after dispatch reports a misleading error.
+   */
+  function checkLoadedBytes(chunkIndex: number, data: Uint8Array): void {
+    if (data.length === 0) {
+      throw new Error(`ChunkLoader returned empty data for chunk ${chunkIndex}`);
+    }
+    const { pieceTable } = store.getSnapshot();
+    if (isChunkByteLengthValid(pieceTable, chunkIndex, data.length)) return;
+    const declared = pieceTable.chunkMetadata.get(chunkIndex);
+    throw new Error(
+      `ChunkLoader returned ${data.length} bytes for chunk ${chunkIndex}, which ` +
+        `violates the declared file geometry (chunkSize=${pieceTable.chunkSize}` +
+        (declared !== undefined ? `, declared byteLength=${declared.byteLength}` : "") +
+        (pieceTable.totalFileSize > 0 ? `, totalFileSize=${pieceTable.totalFileSize}` : "") +
+        ")",
+    );
+  }
+
+  /**
+   * Load `chunks` in one transition, take ownership of those it brought into
+   * memory, and run an eviction pass protecting `protectedChunks`. Returns
+   * the chunks that failed, each with its error.
+   *
+   * Each chunk's bytes are checked against the document as it is now, since
+   * it may have changed since the fetch, such as with DECLARE_CHUNK_METADATA,
+   * and LOAD_CHUNKS loads every chunk or none: a chunk that fails the check
+   * fails alone. A chunk not resident after dispatch fails too, whether the
+   * store refused the load or a listener the load notified evicted it, so a
+   * load that succeeds always leaves its chunk in memory, as `ensureLoaded`
+   * promises. A state change alone does not show the load took effect: a
+   * store wrapper can change state before forwarding a load the reducer then
+   * refuses. The error says a listener may have evicted the chunk, which a
+   * retry would not help while that listener keeps evicting it, only when
+   * both signs of one are there: the chunk map changed, and the store
+   * notified more than once during the dispatch, as it does when a listener
+   * changes the state again. Either alone misleads: a wrapper may hand back
+   * a new map on every read, a batch's other chunks change the map, and a
+   * wrapper may dispatch other actions before forwarding the load. `batch` chooses LOAD_CHUNKS over
+   * LOAD_CHUNK.
+   */
+  function commitLoads(
+    chunks: readonly FetchedChunk[],
+    batch: boolean,
+    protectedChunks: ReadonlySet<number>,
+  ): ReadonlyMap<number, unknown> {
+    let failures: Map<number, unknown> | null = null;
+    const fail = (chunkIndex: number, error: unknown) => {
+      (failures ??= new Map()).set(chunkIndex, error);
+    };
+    const valid = chunks.filter((chunk) => {
+      try {
+        checkLoadedBytes(chunk.chunkIndex, chunk.data);
+        return true;
+      } catch (error) {
+        fail(chunk.chunkIndex, error);
+        return false;
+      }
+    });
+    if (valid.length === 0) return failures ?? NO_FAILURES;
+    const action = batch
+      ? DocumentActions.loadChunks(valid)
+      : DocumentActions.loadChunk(valid[0]!.chunkIndex, valid[0]!.data);
+    const before = store.getSnapshot().pieceTable.chunkMap;
+    let notifications = 0;
+    const unsubscribe = store.subscribe(() => {
+      notifications++;
+    });
+    try {
+      store.dispatch(action);
+    } finally {
+      unsubscribe();
+    }
+    const after = store.getSnapshot().pieceTable.chunkMap;
+    for (const { chunkIndex } of valid) {
+      if (after.has(chunkIndex)) {
+        adoptLoaded(chunkIndex, before);
+        continue;
+      }
+      fail(
+        chunkIndex,
+        new Error(
+          after === before || notifications < 2
+            ? `Chunk ${chunkIndex} was fetched but the store did not load it on ${action.type} dispatch`
+            : `Chunk ${chunkIndex} was fetched and dispatched with ${action.type}, but was not in memory afterwards: the store refused it, or a store listener evicted it`,
+        ),
+      );
+    }
+    evictSafely(protectedChunks, AFTER_LOAD);
+    return failures ?? NO_FAILURES;
+  }
+
   function doFetch(chunkIndex: number): Promise<void> {
     const abortController = new AbortController();
     abortControllers.set(chunkIndex, abortController);
 
-    const fetch = async (): Promise<void> =>
-      disposed || abortController.signal.aborted
-        ? Promise.resolve()
-        : loader
-            .loadChunk(chunkIndex, abortController.signal)
-            .then((data) => {
-              if (disposed || abortController.signal.aborted) return;
-              if (data.length === 0)
-                throw new Error(`ChunkLoader returned empty data for chunk ${chunkIndex}`);
-              // Reject lengths that contradict the declared file geometry before dispatch.
-              // Otherwise the reducer drops the load and the retention check
-              // below reports a misleading error.
-              const { pieceTable } = store.getSnapshot();
-              if (!isChunkByteLengthValid(pieceTable, chunkIndex, data.length)) {
-                const declared = pieceTable.chunkMetadata.get(chunkIndex);
-                throw new Error(
-                  `ChunkLoader returned ${data.length} bytes for chunk ${chunkIndex}, which ` +
-                    `violates the declared file geometry (chunkSize=${pieceTable.chunkSize}` +
-                    (declared !== undefined ? `, declared byteLength=${declared.byteLength}` : "") +
-                    (pieceTable.totalFileSize > 0
-                      ? `, totalFileSize=${pieceTable.totalFileSize}`
-                      : "") +
-                    ")",
-                );
-              }
-              store.dispatch(DocumentActions.loadChunk(chunkIndex, data));
-              if (!store.getSnapshot().pieceTable.chunkMap.has(chunkIndex)) {
-                throw new Error(
-                  `Chunk ${chunkIndex} was fetched but the store did not retain it after LOAD_CHUNK dispatch`,
-                );
-              }
-              lruTouch(chunkIndex);
-              evictIfOverLimit(chunkIndex);
-            })
-            .catch((error: unknown) => {
-              // Manager-owned cancellation settles pending calls without loading.
-              if (abortController.signal.aborted) return;
-              throw error;
-            });
+    const fetch = async (idle: () => void): Promise<void> => {
+      if (disposed || abortController.signal.aborted) {
+        idle();
+        return;
+      }
+      return loadAbortable(chunkIndex, abortController.signal, idle)
+        .then((data) => {
+          if (disposed || abortController.signal.aborted) return;
+          const failures = commitLoads([{ chunkIndex, data }], false, new Set([chunkIndex]));
+          if (failures.has(chunkIndex)) throw failures.get(chunkIndex);
+        })
+        .catch((error: unknown) => {
+          // Manager-owned cancellation settles pending calls without loading.
+          if (abortController.signal.aborted) return;
+          throw error;
+        });
+    };
 
     // Clean up even when cancellation prevents a queued fetch from starting.
-    const promise = (fetchStrategy === "queue" ? fetchQueue.then(fetch, fetch) : fetch()).finally(
-      () => {
-        if (inFlight.get(chunkIndex) === promise) inFlight.delete(chunkIndex);
-        if (abortControllers.get(chunkIndex) === abortController) {
-          abortControllers.delete(chunkIndex);
-        }
-      },
-    );
-    if (fetchStrategy === "queue") {
-      fetchQueue = promise.then(
-        () => {},
-        () => {},
-      );
-      return promise;
-    }
-
+    const promise = scheduleFetch(abortController.signal, undefined, fetch).finally(() => {
+      if (inFlight.get(chunkIndex) === promise) inFlight.delete(chunkIndex);
+      if (abortControllers.get(chunkIndex) === abortController) {
+        abortControllers.delete(chunkIndex);
+      }
+    });
     return promise;
   }
 
@@ -358,9 +1199,14 @@ export function createChunkManager(
       return Promise.reject(new RangeError(chunkIndexError));
     }
 
-    // Already in memory.
-    if (store.getSnapshot().pieceTable.chunkMap.has(chunkIndex)) {
-      lruTouch(chunkIndex);
+    // Already in memory. No eviction pass runs here: one could evict inside a
+    // transaction the caller has open, and the call stays O(1). A chunk loaded
+    // outside the manager after it was created stays untracked, so the manager
+    // never evicts it. One already resident when it was created, with no live
+    // manager owning it, is this manager's (see `createChunkManager`).
+    const { chunkMap } = store.getSnapshot().pieceTable;
+    if (chunkMap.has(chunkIndex)) {
+      touchIfOwned(chunkMap, chunkIndex);
       return Promise.resolve();
     }
 
@@ -387,17 +1233,48 @@ export function createChunkManager(
 
     const pending: Promise<void>[] = [];
     const fresh: number[] = [];
-    const snapshot = store.getSnapshot();
+    const { chunkMap } = store.getSnapshot().pieceTable;
     for (const chunkIndex of unique) {
-      if (snapshot.pieceTable.chunkMap.has(chunkIndex)) {
-        lruTouch(chunkIndex);
+      if (chunkMap.has(chunkIndex)) {
+        touchIfOwned(chunkMap, chunkIndex);
         continue;
       }
       const existing = inFlight.get(chunkIndex);
       if (existing !== undefined) pending.push(existing);
       else fresh.push(chunkIndex);
     }
-    if (fresh.length === 0) return Promise.all(pending).then(() => {});
+    if (fresh.length === 0 && pending.length === 0) return Promise.resolve();
+    // Until the call settles, no eviction pass evicts a chunk it asked for,
+    // the ones already in memory too.
+    const release = holdRequested(unique);
+    // Hold every chunk until each fetch the call waits on has settled, so a
+    // failure does not release chunks a fetch still loading would then
+    // evict, and settle only then, with the first failure if any, so the
+    // call is pending exactly while it holds chunks. A canceled fetch settles
+    // at once (see `loadAbortable`), so a hung loader keeps the call pending
+    // only until its chunk is canceled or the manager disposed. Once
+    // released, the chunks are offered for eviction again: the passes their
+    // loads ran could not evict them, and may have left the cache over the
+    // limit. That pass runs in a later task, so the caller can read what it
+    // asked for when the call resolves.
+    const settle = (promises: readonly Promise<void>[]): Promise<void> =>
+      new Promise<void>((resolve, reject) => {
+        let unsettled = promises.length;
+        let failure: { readonly error: unknown } | null = null;
+        const settled = () => {
+          if (--unsettled > 0) return;
+          if (release()) scheduleEvictionPass();
+          if (failure === null) resolve();
+          else reject(failure.error);
+        };
+        for (const promise of promises) {
+          promise.then(settled, (error: unknown) => {
+            failure ??= { error };
+            settled();
+          });
+        }
+      });
+    if (fresh.length === 0) return settle(pending);
 
     const controllers = new Map<number, AbortController>();
     for (const chunkIndex of fresh) {
@@ -410,27 +1287,15 @@ export function createChunkManager(
       chunkIndex: number,
       controller: AbortController,
     ): Promise<Uint8Array | null> => {
-      const fetch = async (): Promise<Uint8Array | null> => {
-        if (disposed || controller.signal.aborted) return null;
+      const fetch = async (idle: () => void): Promise<Uint8Array | null> => {
+        if (disposed || controller.signal.aborted) {
+          idle();
+          return null;
+        }
+        // The commit checks the bytes, against the document as it is then.
         try {
-          const data = await loader.loadChunk(chunkIndex, controller.signal);
+          const data = await loadAbortable(chunkIndex, controller.signal, idle);
           if (disposed || controller.signal.aborted) return null;
-          if (data.length === 0) {
-            throw new Error(`ChunkLoader returned empty data for chunk ${chunkIndex}`);
-          }
-          const { pieceTable } = store.getSnapshot();
-          if (!isChunkByteLengthValid(pieceTable, chunkIndex, data.length)) {
-            const declared = pieceTable.chunkMetadata.get(chunkIndex);
-            throw new Error(
-              `ChunkLoader returned ${data.length} bytes for chunk ${chunkIndex}, which ` +
-                `violates the declared file geometry (chunkSize=${pieceTable.chunkSize}` +
-                (declared !== undefined ? `, declared byteLength=${declared.byteLength}` : "") +
-                (pieceTable.totalFileSize > 0
-                  ? `, totalFileSize=${pieceTable.totalFileSize}`
-                  : "") +
-                ")",
-            );
-          }
           return data;
         } catch (error) {
           if (controller.signal.aborted) return null;
@@ -438,77 +1303,134 @@ export function createChunkManager(
         }
       };
 
-      if (fetchStrategy === "parallel") return fetch();
-      const promise = fetchQueue.then(fetch, fetch);
-      fetchQueue = promise.then(
-        () => {},
-        () => {},
-      );
-      return promise;
+      return scheduleFetch(controller.signal, null, fetch);
     };
 
-    let batchPromise!: Promise<void>;
-    batchPromise = (async () => {
-      // Coalesce completions without waiting for a slow sibling. Workers bound
-      // outstanding I/O and completed buffers waiting for dispatch.
-      let ready: Array<{ chunkIndex: number; data: Uint8Array }> = [];
-      let commit: Promise<void> | undefined;
-      const protectedChunks = new Set(fresh);
-      function enqueue(chunkIndex: number, data: Uint8Array): Promise<void> {
-        ready.push({ chunkIndex, data });
-        return (commit ??= Promise.resolve().then(() => {
-          const chunks = ready.filter(
-            (chunk) => !controllers.get(chunk.chunkIndex)!.signal.aborted,
-          );
-          ready = [];
-          commit = undefined;
-          if (disposed || chunks.length === 0) return;
-          store.dispatch(DocumentActions.loadChunks(chunks));
-          const after = store.getSnapshot();
-          for (const chunk of chunks) {
-            if (!after.pieceTable.chunkMap.has(chunk.chunkIndex)) {
-              throw new Error(
-                `Chunk ${chunk.chunkIndex} was fetched but the store did not retain it after LOAD_CHUNKS dispatch`,
-              );
-            }
-            lruTouch(chunk.chunkIndex);
-          }
-          evictIfOverLimit(protectedChunks);
-        }));
-      }
-      let cursor = 0;
-      const results = await Promise.allSettled(
-        Array.from({ length: Math.min(maxConcurrentFetches, fresh.length) }, async () => {
-          let failed = false;
-          let failure: unknown;
-          while (cursor < fresh.length) {
-            const chunkIndex = fresh[cursor++]!;
-            try {
-              const data = await fetchOne(chunkIndex, controllers.get(chunkIndex)!);
-              if (data !== null) await enqueue(chunkIndex, data);
-            } catch (error) {
-              if (!failed) failure = error;
-              failed = true;
-            }
-          }
-          if (failed) throw failure;
-        }),
-      );
-      const failure = results.find((result) => result.status === "rejected");
-      if (failure?.status === "rejected") throw failure.reason;
-    })().finally(() => {
-      for (const chunkIndex of fresh) {
-        if (inFlight.get(chunkIndex) === batchPromise) inFlight.delete(chunkIndex);
-        const controller = controllers.get(chunkIndex)!;
-        if (abortControllers.get(chunkIndex) === controller) {
-          abortControllers.delete(chunkIndex);
-        }
-      }
-    });
+    // Coalesce completions without waiting for a slow sibling. Workers bound
+    // outstanding I/O and completed buffers waiting for dispatch. A commit
+    // resolves to the chunks that failed, each with its error. Each of those
+    // fails on its own; the rest of the transition is adopted and its
+    // waiters resolve.
+    let ready: FetchedChunk[] = [];
+    let commit: Promise<ReadonlyMap<number, unknown>> | undefined;
+    function enqueue(chunkIndex: number, data: Uint8Array): Promise<void> {
+      ready.push({ chunkIndex, data });
+      commit ??= Promise.resolve().then((): ReadonlyMap<number, unknown> => {
+        const chunks = ready.filter((chunk) => !controllers.get(chunk.chunkIndex)!.signal.aborted);
+        ready = [];
+        commit = undefined;
+        if (disposed || chunks.length === 0) return NO_FAILURES;
+        return commitLoads(chunks, true, NONE);
+      });
+      return commit.then((failures) => {
+        if (failures.has(chunkIndex)) throw failures.get(chunkIndex);
+      });
+    }
 
-    for (const chunkIndex of fresh) inFlight.set(chunkIndex, batchPromise);
-    pending.push(batchPromise);
-    return Promise.all(pending).then(() => {});
+    // Each chunk settles on its own, so a caller waiting on one, and the
+    // first failure, never wait on a slow sibling.
+    const loads = new Map<
+      number,
+      { promise: Promise<void>; resolve: () => void; reject: (error: unknown) => void }
+    >();
+    for (const chunkIndex of fresh) {
+      let resolve!: () => void;
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<void>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      loads.set(chunkIndex, { promise, resolve, reject });
+      inFlight.set(chunkIndex, promise);
+      pending.push(promise);
+      // A canceled chunk settles at once, as a canceled fetch does, even
+      // before a worker reaches it: workers can be held up by a loader that
+      // ignores its signal, and callers deduped onto this chunk wait on it.
+      // The worker that reaches it later makes no loader call.
+      controllers.get(chunkIndex)!.signal.addEventListener("abort", () => resolve(), {
+        once: true,
+      });
+    }
+
+    let cursor = 0;
+    for (let worker = 0; worker < Math.min(maxConcurrentFetches, fresh.length); worker++) {
+      void (async () => {
+        while (cursor < fresh.length) {
+          const chunkIndex = fresh[cursor++]!;
+          const load = loads.get(chunkIndex)!;
+          const controller = controllers.get(chunkIndex)!;
+          try {
+            const data = await fetchOne(chunkIndex, controller);
+            if (data !== null) await enqueue(chunkIndex, data);
+            load.resolve();
+          } catch (error) {
+            load.reject(error);
+          } finally {
+            if (inFlight.get(chunkIndex) === load.promise) inFlight.delete(chunkIndex);
+            if (abortControllers.get(chunkIndex) === controller) {
+              abortControllers.delete(chunkIndex);
+            }
+          }
+        }
+      })();
+    }
+
+    return settle(pending);
+  }
+
+  /**
+   * Run an eviction pass in a later task, unless one is already scheduled,
+   * and never inside a transaction a caller left open across an await. When
+   * that task finds the store has a transaction open, the pass runs at the
+   * first store notification after it has closed; a store notifies only once
+   * its outermost transaction has closed. A store that cannot say whether one
+   * is open is taken to have none (see `transactionState`). The pass protects
+   * the chunks deferred loads asked it to protect (`deferredProtected`), then
+   * releases them. Nothing waits on the pass, so an error it throws goes to
+   * the logger's `error`.
+   */
+  function scheduleEvictionPass(): void {
+    if (disposed || passTimer !== null || passAwaitingCommit !== null) return;
+    const run = (pass: () => void) => {
+      try {
+        pass();
+      } catch (error) {
+        reportCaughtError(logger, "The ChunkManager deferred eviction pass failed", error);
+      }
+    };
+    const evictDeferred = () => {
+      const kept = deferredProtected;
+      deferredProtected = new Set();
+      evictIfOverLimit(kept);
+    };
+    passTimer = setTimeout(() => {
+      passTimer = null;
+      run(() => {
+        if (disposed) return;
+        if (transactionState() !== "open") {
+          evictDeferred();
+          return;
+        }
+        // Subscribed weakly, so a manager the app drops while the
+        // transaction stays open can still be collected and its chunks taken
+        // over (see `forgetOwner`).
+        commitListener = () => {
+          run(() => {
+            if (transactionState() === "open") return;
+            stopAwaitingCommit();
+            evictDeferred();
+          });
+        };
+        passAwaitingCommit = subscribeWeakly(store, commitListener);
+      });
+    }, 0);
+  }
+
+  /** Stop the deferred eviction pass's wait for a transaction to close. */
+  function stopAwaitingCommit(): void {
+    passAwaitingCommit?.();
+    passAwaitingCommit = null;
+    commitListener = null;
   }
 
   function prefetch(chunkIndex: number): void {
@@ -522,8 +1444,9 @@ export function createChunkManager(
   }
 
   function setActiveChunks(chunkIndices: readonly number[]): void {
+    if (disposed) return;
     activeChunks = new Set(chunkIndices);
-    evictIfOverLimit();
+    evictSafely(NONE, "The ChunkManager eviction pass after setActiveChunks failed");
   }
 
   function cancelPendingOutside(chunkIndices: readonly number[]): void {
@@ -542,16 +1465,60 @@ export function createChunkManager(
     for (const controller of canceled) controller.abort();
   }
 
+  /**
+   * Mark the live managers that may now find chunks this one owned to scan
+   * for them on their next pass: those whose stores hold a chunk it owns.
+   * With a transaction open, or one the store cannot rule out, a rollback
+   * could still restore chunks it owned that have left memory, so every live
+   * manager scans. Call before `lru` is cleared.
+   *
+   * Never throws, so a dispose always finishes: a store, this one or
+   * another manager's, whose `getSnapshot` throws, such as a wrapper that
+   * throws once disposed, is taken as possibly holding the orphans.
+   */
+  function markOrphanScans(): void {
+    let ours: ChunkMap | null = null;
+    try {
+      if (transactionState() === "closed") ours = store.getSnapshot().pieceTable.chunkMap;
+    } catch {
+      // A store that cannot answer is treated as having a transaction open.
+    }
+    if (ours === null) {
+      markOrphanHolders(store, null, false);
+      return;
+    }
+    const orphans: Array<readonly [number, ReadonlyUint8Array]> = [];
+    for (const chunkIndex of lru) {
+      const bytes = ours.get(chunkIndex);
+      if (bytes !== undefined && ownerOf(bytes) === self) orphans.push([chunkIndex, bytes]);
+    }
+    if (orphans.length === 0) return;
+    markOrphanHolders(store, holdsAnyOf(ours, orphans), false);
+  }
+
   function dispose(): void {
     if (disposed) return;
     disposed = true;
+    // Another manager on the store may take over the chunks this one owned.
+    self.disposed = true;
+    liveOwners.delete(selfRef);
+    droppedOwners.unregister(selfRef);
+    markOrphanScans();
     for (const controller of abortControllers.values()) {
       controller.abort();
     }
     abortControllers.clear();
     inFlight.clear();
-    lruOrder.clear();
+    lru.clear();
+    if (passTimer !== null) clearTimeout(passTimer);
+    passTimer = null;
+    stopAwaitingCommit();
     activeChunks.clear();
+    requested.clear();
+    deferredProtected.clear();
+    refused = null;
+    pressureCauses = null;
+    pressureMemo = null;
   }
 
   return {
