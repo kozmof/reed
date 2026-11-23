@@ -870,7 +870,7 @@ describe("checkpoint restore validates history anchors", () => {
   });
 });
 
-describe("review regressions", () => {
+describe("Byte preservation when undoing deletes", () => {
   it("undoes a split delete whose runs decode to a different length", () => {
     // Chunk 0 ends with the lead byte of "é" and chunk 1 starts with its
     // continuation byte. With chunk 1 evicted, 0xC3 is an incomplete character
@@ -935,7 +935,9 @@ describe("review regressions", () => {
       original,
     );
   });
+});
 
+describe("Selection placement across chunk loads and evictions", () => {
   it("keeps a selection at a chunk's start there across evict and reload", () => {
     const s = makeStore(3);
     load(s, 0);
@@ -984,7 +986,7 @@ describe("review regressions", () => {
   });
 });
 
-describe("fourth review regressions", () => {
+describe("Deleted bytes, cursor placement, and checkpoint restore", () => {
   it("keeps deleted bytes whose decoding has the same length but different bytes", () => {
     // Chunk 0 ends with the first three bytes of a four-byte emoji. With chunk
     // 1 not loaded they decode to one U+FFFD, which is also three bytes.
@@ -1089,7 +1091,7 @@ describe("fourth review regressions", () => {
   });
 });
 
-describe("fifth review regressions", () => {
+describe("Placement keys and UTF-8 boundaries beside unloaded chunks", () => {
   const key = (s: Store) => {
     const { anchorAfterChunk, headAfterChunk } = s.getSnapshot().selection.ranges[0]!;
     return { anchorAfterChunk, headAfterChunk };
@@ -1249,7 +1251,7 @@ describe("fifth review regressions", () => {
   });
 });
 
-describe("fifth review regressions: checkpoints", () => {
+describe("Checkpoint migration and selection anchors", () => {
   type Wire = Record<string, any>;
   /** A version 1 payload for the store's document, with `history` as given. */
   const v1Of = (s: Store, history: { undo: unknown[]; redo: unknown[] }): Wire => {
@@ -1364,7 +1366,7 @@ describe("fifth review regressions: checkpoints", () => {
   });
 });
 
-describe("sixth review regressions", () => {
+describe("History replay across placement keys and UTF-8 seams", () => {
   /** Placement keys of the pieces, in document order. */
   const keys = (s: Store) => collectPieces(s.getSnapshot().pieceTable.root).map(pieceKey);
   /** Capture and restore the store's document, which validates it in full. */
@@ -1573,7 +1575,7 @@ describe("sixth review regressions", () => {
   });
 });
 
-describe("seventh review regressions", () => {
+describe("Selection updates, byte order marks, and eviction guards", () => {
   /** Capture and restore a store's document, which validates it in full. */
   const roundTrip = (s: Store) =>
     restoreCheckpoint(JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow()))));
@@ -1974,7 +1976,7 @@ describe("seventh review regressions", () => {
   });
 });
 
-describe("eighth review regressions", () => {
+describe("Checkpoint validation and selection identity during replay", () => {
   type Wire = Record<string, any>;
   const wire = (state: DocumentState<"eager">, mode: "exact" | "normalized" = "exact"): Wire =>
     JSON.parse(JSON.stringify(createCheckpoint(state, { mode })));
@@ -2031,7 +2033,7 @@ describe("eighth review regressions", () => {
   });
 });
 
-describe("ninth review regressions", () => {
+describe("Caret boundaries on insert and load, and selection restoration on redo", () => {
   // "abcdefg世hijklmn" in 8-byte chunks: chunk 0 ends with the lead byte of
   // 世 and chunk 1 starts with its two continuation bytes.
   const SPLIT = enc("abcdefg世hijklmn");
@@ -2101,7 +2103,7 @@ describe("ninth review regressions", () => {
   });
 });
 
-describe("tenth review regressions", () => {
+describe("Legacy checkpoint validation and edit selection boundaries", () => {
   type Wire = Record<string, any>;
   const wireOf = (s: Store): Wire => JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow())));
   /** A version 1 payload for the store's document, with `history` as given. */
@@ -2233,7 +2235,7 @@ describe("tenth review regressions", () => {
   });
 });
 
-describe("twelfth review regressions", () => {
+describe("Placement keys in migrated version 1 history", () => {
   type Wire = Record<string, any>;
   const wireOf = (state: DocumentState): Wire =>
     JSON.parse(JSON.stringify(createCheckpoint(state)));
@@ -2529,7 +2531,7 @@ describe("twelfth review regressions", () => {
   });
 });
 
-describe("twelfth review regressions: remote edits move the selection", () => {
+describe("Selection movement during remote edits", () => {
   const remote = (...changes: Parameters<typeof DocumentActions.applyRemote>[0]) =>
     DocumentActions.applyRemote(changes);
   const range = (anchor: number, head: number) =>
@@ -2609,7 +2611,7 @@ describe("deferred anchoring of the selection an edit leaves", () => {
   });
 });
 
-describe("fifteenth review regressions", () => {
+describe("U+FEFF in line text and rebuilt line indexes", () => {
   it("keeps a U+FEFF that starts a range, as line columns count it", () => {
     const s = makeStore(1);
     // Line 1 is bytes 2..8: a 3-byte U+FEFF, then "abc".
@@ -2635,7 +2637,7 @@ describe("fifteenth review regressions", () => {
   });
 });
 
-describe("sixteenth review regressions", () => {
+describe("Checkpoint validation of placement keys in both replay directions", () => {
   type Wire = Record<string, any>;
   const wireOf = (s: Store): Wire => JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow())));
   const restoreError = (checkpoint: Wire): CheckpointError => {
@@ -2695,7 +2697,7 @@ describe("sixteenth review regressions", () => {
   });
 });
 
-describe("seventeenth review regressions", () => {
+describe("UTF-8 boundaries and deferred anchoring for history selections", () => {
   it("moves a restored history selection inside a character to a boundary without chunks", () => {
     // "é" is bytes 1..3.
     const s = createDocumentStore({ content: "aé", reconcileMode: "none" });
@@ -2878,7 +2880,7 @@ describe("EVICT_CHUNKS", () => {
   });
 });
 
-describe("nineteenth review regressions", () => {
+describe("Byte order marks in text reads, UTF-8 splices, and batch eviction actions", () => {
   // A U+FEFF that starts chunk 1: file content, not a byte order mark.
   const BOM_CHUNK1 = "﻿BBBB\n";
 
@@ -3001,7 +3003,7 @@ describe("nineteenth review regressions", () => {
   });
 });
 
-describe("twentieth review regressions", () => {
+describe("Stale history entries and caret keys after remote inserts", () => {
   /** An entry holding one change, with cursors that resolve anywhere. */
   const entryOf = (change: HistoryChange): HistoryEntry =>
     Object.freeze({
@@ -3161,7 +3163,7 @@ describe("twentieth review regressions", () => {
   });
 });
 
-describe("twenty-first review regressions", () => {
+describe("Replay placement validation, history events, and eviction defaults", () => {
   /** An entry holding one change, with cursors that resolve anywhere. */
   const entryOf = (change: HistoryChange): HistoryEntry =>
     Object.freeze({
@@ -3335,7 +3337,7 @@ describe("twenty-first review regressions", () => {
   });
 });
 
-describe("twenty-fourth review regressions", () => {
+describe("Primary range when setting selection ranges", () => {
   /** A 6-byte document with two carets, the second primary. */
   const twoCarets = (): DocumentState => {
     const state = createInitialState({ content: "abcdef" });
@@ -3382,7 +3384,7 @@ describe("twenty-fourth review regressions", () => {
   });
 });
 
-describe("twenty-sixth review regressions", () => {
+describe("History-drop event snapshots during listener dispatch", () => {
   it("describes the eviction in history-drop, not a listener's dispatch during it", () => {
     const s = createDocumentStoreWithEvents({
       chunkSize: CHUNK_SIZE,
@@ -3420,7 +3422,7 @@ describe("twenty-sixth review regressions", () => {
   });
 });
 
-describe("twenty-ninth review regressions", () => {
+describe("Byte order marks in streamed text", () => {
   const streamed = (s: Store, start = 0, chunkSize = 2) =>
     [...getValueStream(s.getSnapshot().pieceTable, { start, chunkSize })]
       .map((chunk) => chunk.content)
@@ -3466,7 +3468,7 @@ describe("twenty-ninth review regressions", () => {
   });
 });
 
-describe("thirty-fourth review regressions", () => {
+describe("Selection key normalization at chunk boundaries", () => {
   const keys = (state: DocumentState) => {
     const { anchorAfterChunk, headAfterChunk } = state.selection.ranges[0]!;
     return { anchorAfterChunk, headAfterChunk };
@@ -3605,7 +3607,7 @@ describe("thirty-fourth review regressions", () => {
   });
 });
 
-describe("forty-fourth review regressions", () => {
+describe("Checkpoint replay of deletes across placement keys", () => {
   type Wire = Record<string, any>;
   const wireOf = (s: Store): Wire => JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow())));
 
