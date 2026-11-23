@@ -368,7 +368,7 @@ UTF-8 length of its string.
 ### 6.5 History Anchors Are Checked, and Stacks Replay
 
 Every anchored history position is checked against its placement key (`readAnchor`). The key
-must name a chunk that has been loaded. A change position must resolve to a non-negative offset
+must be `-1` or name a chunk that has loaded at least once. A change position must resolve to a non-negative offset
 in the restored chunk layout. A selection position is clamped into the document when it is
 restored, so it only needs the bound that holds in any layout, `-(key + 1) * chunkSize`.
 History offsets can exceed the current document length because an undo entry

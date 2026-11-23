@@ -392,13 +392,10 @@ interface DeletedRun {
 }
 
 /**
- * Text and, where needed, raw bytes of each run of a delete, and the text of
- * the whole range, which the line index counts. A U+FEFF at the start of the
- * range is kept, as `getText` keeps it: the line index counts it as a
- * character, so deleted text without it would leave the line one character
- * too long, and undo could not restore it from the text. The range's bytes
- * are read once, and each run decoded from them, the way `getText` decodes a
- * range.
+ * Read the deleted bytes once and decode each run. Keep a leading U+FEFF
+ * so the line index counts it and undo can restore it. Return the decoded
+ * text for the whole range and keep raw bytes for runs that cannot round-trip
+ * through UTF-8.
  *
  * Usually every run decodes exactly, so each holds whole characters and the
  * range decodes to the runs' texts joined, which saves decoding it again.
@@ -618,10 +615,8 @@ function pushEntry(state: DocumentState, entry: HistoryEntry): DocumentState {
 // =============================================================================
 
 /**
- * Invert a history change.
- * insert ↔ delete, replace swaps text/oldText. The anchor is kept: it is the
- * position of the first affected byte in both directions.
- * This formalizes the duality between applyChange and applyInverseChange.
+ * Reverse a history change at the same anchor. Turn inserts into deletes and
+ * deletes into inserts. For replacements, swap the old and new content.
  */
 export function invertChange(change: HistoryChange): HistoryChange {
   // Built field by field rather than with conditional spreads, which are slow

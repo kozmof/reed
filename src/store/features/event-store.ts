@@ -86,8 +86,8 @@ export function withEvents(
   // queue runs level by level, so every slot of depth 0 or 1 is delivered
   // before the first slot of depth 2. Both counts take only slots delivered:
   // an empty slot, left by an action that changed nothing, starts no handler,
-  // and a slot past the depth limit is skipped. Slots past either limit still
-  // committed; only their events are dropped.
+  // and a slot past the depth limit is skipped. Actions past either limit
+  // still commit even when delivery drops their events.
   interface DeliverySlot {
     readonly depth: number;
     readonly events: Array<() => void>;

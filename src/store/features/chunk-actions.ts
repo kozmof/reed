@@ -495,7 +495,7 @@ export function evictChunks(state: DocumentState, action: EvictChunksAction): Do
   const overLimit = () => next.pieceTable.chunkMap.size > maxLoaded;
   // History never decides under "pin", so only the other policies collect
   // the candidates whose eviction discards some. A chunk listed twice is
-  // collected once; once evicted, it is no longer a candidate.
+  // collected once. Remove each chunk from consideration after eviction.
   const policy = state.history.evictionPolicy;
   const lossy: { readonly chunk: number; readonly loss: EvictionHistoryLoss }[] = [];
   const collected = policy === "pin" ? null : new Set<number>();

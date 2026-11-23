@@ -108,7 +108,7 @@ describe("history offsets across chunk load/evict", () => {
   it("UNDO after loading an earlier chunk removes the edit, not bytes of the new chunk", () => {
     const s = makeStore();
     s.dispatch(DocumentActions.loadChunk(1, enc(CHUNK1)));
-    // Resident text: "BBBBBBB\n" — insert "X" at resident offset 2.
+    // Insert "X" at offset 2 of the resident text "BBBBBBB\n".
     s.dispatch(DocumentActions.insert(byteOffset(2), "X"));
     expect(text(s)).toBe("BBXBBBBB\n");
 
@@ -523,7 +523,7 @@ describe("checkpoints carry placement keys and anchors", () => {
     load(s, 1);
     s.dispatch(DocumentActions.insert(byteOffset(2), "X"));
     const v2 = JSON.parse(JSON.stringify(createCheckpoint(s.reconcileNow())));
-    // Version 1 had no placement keys; strip them to get the v1 payload. With
+    // Strip placement keys to recreate the version 1 payload. With
     // chunk 0 never loaded, anchors equal resident offsets in this layout.
     const v1 = {
       ...v2,

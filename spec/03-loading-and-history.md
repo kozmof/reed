@@ -75,11 +75,11 @@ recorded as several changes in one entry, one for each key. Undo then puts each 
 its own key, on the correct side of every chunk. For the same reason, consecutive edits merge
 into one change only when they have the same key.
 
-History records deleted text as decoded strings. When decoding changed the bytes, so the text
-no longer encodes back to them (malformed UTF-8 such as half of a character cut off by an
-unloaded chunk, or a byte order mark), the change also keeps the exact bytes. Undo re-inserts
-those bytes, so the document comes back byte for byte and every position recorded in older
-entries stays valid. Such changes are never merged with neighbouring edits.
+History stores deleted text as decoded strings. If encoding a string would produce
+different bytes, the change also stores the original bytes. This can happen when
+an unloaded chunk splits a UTF-8 character. Undo reinserts the original bytes and
+preserves positions in older entries. Changes that carry original bytes stay
+separate from neighboring edits.
 
 The live selection moves the same way on loads and evictions. A cursor inside an evicted chunk
 moves to where the chunk was, and it stays on that side of the chunk when the chunk loads
@@ -91,7 +91,8 @@ Next to a chunk that is not loaded, a byte offset cannot say which side of the c
 position is on. A selection range then stores the placement key of that endpoint
 (`SelectionRange.anchorAfterChunk` and `headAfterChunk`). The key is present only when the
 document cannot supply it, and it is kept by undo, redo, checkpoints, and a `SET_SELECTION`
-or edit selection that repeats the range at the same index. Text inserted at that endpoint,
+or edit selection with matching offsets. The range can appear anywhere in the list.
+Swapping its anchor and head also swaps the keys. Text inserted at that endpoint,
 by a local edit or `APPLY_REMOTE`, takes the key, so it stays where the cursor was in the
 file, even when every chunk has been evicted. A key is dropped when it no longer fits its
 offset after other edits, or when the document now supplies it. A key that would put a loaded
@@ -132,7 +133,7 @@ Implemented:
 - timeout-based coalescing for consecutive edits
 - selection restoration on undo and redo
 - the optional edit selection records the pre-edit caret restored by undo
-- an edit moves the selection it comes from past the edit: offsets before it stay, an endpoint at or inside the edited range moves after the inserted text, and later offsets shift by the change in length
+- an edit moves the selection it receives according to the [selection rules](05-public-api.md#6-breaking-changes-in-500)
 - redo derives its caret from the change kind, placing inserts and replacements after inserted text and deletes at the deletion point
 
 Transaction behavior:

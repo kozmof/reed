@@ -57,7 +57,7 @@ Returns `ReconcilableDocumentStore` with:
 Supported config fields (`DocumentStoreConfig`):
 
 - `content`
-- `logger` — optional diagnostics sink. Omit it to keep the library silent. The store warns through it when `EVICT_CHUNKS`, which ChunkManager sends, discards undo or redo history, once the eviction is final: at once outside a transaction, at the outermost commit inside one, and not at all after a rollback. Without it, the store gives the warning for an eviction a ChunkManager dispatched to that manager's `logger`, if it has one
+- `logger` — optional diagnostics sink. Without a store logger, callback failures are reported through `console.error`. The store warns through it when `EVICT_CHUNKS`, which ChunkManager sends, discards undo or redo history, after the eviction commits. Outside a transaction it warns immediately. Inside a transaction it waits for the outermost commit. Rollback discards the warning. Without it, the store gives the warning for an eviction a ChunkManager dispatched to that manager's `logger`, if it has one
 - `historyLimit`
 - `chunkSize`
 - `encoding` — currently only `'utf-8'` is supported

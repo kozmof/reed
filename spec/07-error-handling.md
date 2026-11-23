@@ -22,7 +22,7 @@ Reed validates actions and isolates failures at store boundaries. This document 
   - Store listeners get at most 100 synchronous notification passes.
   - The emitter delivers at most 100 events that handlers queue while it emits.
   - Event handler dispatches nest at most 100 levels deep, and one synchronous
-    delivery delivers the events of at most 10,000 actions dispatched in
+    delivery processes events for up to 10,000 actions dispatched in
     reaction to actions a handler dispatched, plus 100 for each action a
     handler or store listener dispatches directly, and never more than
     100,000. Those direct actions are

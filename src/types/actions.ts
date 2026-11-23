@@ -25,12 +25,9 @@ export interface InsertAction {
   /** Optional timestamp for deterministic history coalescing (defaults to Date.now()) */
   readonly timestamp?: number;
   /**
-   * The selection the edit comes from, in the document before the edit. When
-   * omitted, the current selection is used. Undo restores it, and after the edit
-   * state.selection holds it moved past the edit (an endpoint at or inside the
-   * edited range moves after the inserted text). Use this to pass the logical
-   * cursor position inline, eliminating the need for a separate setSelection
-   * dispatch before every edit.
+   * Selection before the edit. Defaults to the current selection. The edit
+   * moves the selection with the text, and undo restores its original position.
+   * Pass it here to set the pre-edit selection in the same dispatch.
    */
   readonly selection?: NonEmptyReadonlyArray<SelectionRange>;
 }
@@ -47,12 +44,9 @@ export interface DeleteAction {
   /** Optional timestamp for deterministic history coalescing (defaults to Date.now()) */
   readonly timestamp?: number;
   /**
-   * The selection the edit comes from, in the document before the edit. When
-   * omitted, the current selection is used. Undo restores it, and after the edit
-   * state.selection holds it moved past the edit (an endpoint at or inside the
-   * edited range moves after the inserted text). Use this to pass the logical
-   * cursor position inline, eliminating the need for a separate setSelection
-   * dispatch before every edit.
+   * Selection before the edit. Defaults to the current selection. The edit
+   * moves the selection with the text, and undo restores its original position.
+   * Pass it here to set the pre-edit selection in the same dispatch.
    */
   readonly selection?: NonEmptyReadonlyArray<SelectionRange>;
 }
@@ -71,12 +65,9 @@ export interface ReplaceAction {
   /** Optional timestamp for deterministic history coalescing (defaults to Date.now()) */
   readonly timestamp?: number;
   /**
-   * The selection the edit comes from, in the document before the edit. When
-   * omitted, the current selection is used. Undo restores it, and after the edit
-   * state.selection holds it moved past the edit (an endpoint at or inside the
-   * edited range moves after the inserted text). Use this to pass the logical
-   * cursor position inline, eliminating the need for a separate setSelection
-   * dispatch before every edit.
+   * Selection before the edit. Defaults to the current selection. The edit
+   * moves the selection with the text, and undo restores its original position.
+   * Pass it here to set the pre-edit selection in the same dispatch.
    */
   readonly selection?: NonEmptyReadonlyArray<SelectionRange>;
 }

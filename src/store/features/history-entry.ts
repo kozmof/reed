@@ -80,7 +80,7 @@ export function someHistoryChangeBackward(
 
 /**
  * Bytes `change` removes when replayed in `direction`: when redone (1), what
- * it deleted; when undone (-1), what it inserted.
+ * it deleted. An undo (-1) removes the bytes the change inserted.
  */
 export function removedLength(change: HistoryChange, direction: 1 | -1): number {
   switch (change.type) {
