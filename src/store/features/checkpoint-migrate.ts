@@ -703,7 +703,7 @@ function trimV1Tuples(data: CheckpointWireData): CheckpointWireData {
   return result;
 }
 
-/** Key every version 1 offset to the chunk it lies in; see `migrateV1ToV2`. */
+/** Assign chunk placement keys to version 1 offsets. See `migrateV1ToV2`. */
 function anchorV1Positions(data: CheckpointWireData): CheckpointWireData {
   const pieceTable = data.pieceTable;
   if (typeof pieceTable !== "object" || pieceTable === null) return data;

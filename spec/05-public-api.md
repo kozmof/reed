@@ -112,7 +112,7 @@ checkpoint restore, an earlier manager, or the app. If the app dispatches
 `LOAD_CHUNK` after creating the manager, the app retains control of that chunk's
 eviction. Use `setActiveChunks` to keep a chunk loaded during a manager eviction pass.
 
-Config (`ChunkManagerConfig`): `maxLoadedChunks`, `fetchStrategy`, `logger`. The manager’s `logger` warns when the resident chunk count stays above `maxLoadedChunks`. The store reports history discarded by eviction through its `logger` and the `history-drop` event. If the store has no logger, the manager supplies its own for evictions it dispatches, including through wrappers that forward `dispatch` synchronously. If the manager’s `warn` throws, its `error` receives the failure when available.
+`ChunkManagerConfig` accepts `maxLoadedChunks`, `fetchStrategy`, and `logger`. The manager’s `logger` warns when the resident chunk count stays above `maxLoadedChunks`. The store reports history discarded by eviction through its `logger` and the `history-drop` event. If the store has no logger, the manager supplies its own for evictions it dispatches, including through wrappers that forward `dispatch` synchronously. If the manager’s `warn` throws, its `error` receives the failure when available.
 
 ### 2.5 Flat `createStreamingDocumentLoader(store, loader, metadata, config?)`
 
@@ -214,7 +214,7 @@ no transition that could emit them, and `isDirty` was only ever set to `true`.
 Primary selector namespace for O(1)/O(log n)/bounded operations:
 
 - `getText`, which rejects ranges that split UTF-8 code points and reads the document as `getValue` does: a byte order mark at the start of the file is stripped, so `getText(state, 0, length)` equals `getValue(state)`, and a U+FEFF anywhere else is kept. In chunk mode, a U+FEFF that starts the resident text is stripped only when it starts the file: when every chunk up to and including the one holding it is loaded and every byte before it was deleted. While any chunk before it is not loaded, it belongs to a later chunk and is kept
-- `getContentText`, which takes the same ranges as `getText` but reads the text as the line index counts it: a leading byte order mark is kept as a character. Use it when mapping char positions from `getCharStartOffset`, `findLineAtCharPosition` or `rendering` onto text, since line 0 columns include the byte order mark
+- `getContentText`, which accepts the same ranges as `getText` and keeps a leading byte order mark as a character. Use it when mapping char positions from `getCharStartOffset`, `findLineAtCharPosition` or `rendering` onto text, since line 0 columns include the byte order mark
 - `getLength`, `isUtf8Boundary`, `getBufferStats`
 - `findPieceAtPosition`
 - `isReconciledState`

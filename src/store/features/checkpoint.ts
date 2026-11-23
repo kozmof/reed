@@ -806,8 +806,7 @@ function restoreSelectionShape<R>(
   for (let i = 0; i < rawRanges.length; i++) {
     const rangeWhat = `${what}.ranges[${i}]`;
     const tuple = readArray(rawRanges[i], rangeWhat, budget);
-    // Keys come as a pair or not at all: a lone anchor key would leave the
-    // head unanchored.
+    // When a range stores placement keys, require one for each endpoint.
     if (tuple.length !== 2 && tuple.length !== 4) {
       fail(
         "MALFORMED",
@@ -941,7 +940,7 @@ function restoreHistoryChange(
     pieceTable,
     "change",
   );
-  // Raw bytes follow the key: `bytes`, then a replace's `oldBytes`.
+  // After the key, read `bytes` and then `oldBytes` for a replacement.
   const maxLength = kind === "r" ? keyIndex + 3 : keyIndex + 2;
   if (tuple.length > maxLength) {
     fail("MALFORMED", `${what} has ${tuple.length} elements: expected at most ${maxLength}`);
@@ -987,7 +986,7 @@ function restoreHistoryChange(
   });
 }
 
-/** Restore a history selection: anchored positions with optional placement keys. */
+/** Restore a history selection from anchored positions and optional placement keys. */
 function restoreHistorySelection(
   raw: unknown,
   what: string,

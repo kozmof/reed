@@ -572,7 +572,7 @@ function rng(seed: number) {
 }
 
 /**
- * The full document text: what the state shows once every chunk is loaded.
+ * Read the document text after loading every chunk.
  * Loading is pure, so this does not disturb the state under test.
  */
 function fullText(state: DocumentState): string {

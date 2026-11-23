@@ -32,7 +32,8 @@ Payload size grows with resident chunks. Browsing a file can increase checkpoint
 `minimumSupportedVersion()` derives the supported source window by walking
 backward through the registered migration steps. An empty registry supports only `CHECKPOINT_VERSION`. Adding steps extends the supported range.
 
-The first migration adds chunk placement keys and anchored history positions in version 2. These let history survive chunk loads and evictions. Use `isCheckpoint` to check for the current envelope version. Use `isRestorableCheckpoint` to check for any envelope version supported by restore.
+Version 2 adds chunk placement keys and anchored positions so history survives
+chunk loads and evictions. Use `isCheckpoint` to check for the current envelope version. Use `isRestorableCheckpoint` to check for any envelope version supported by restore.
 
 Migrations advance one version at a time (`v1 -> v2 -> v3`), never
 direct jumps. Each step is written once, against the format immediately

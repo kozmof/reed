@@ -128,8 +128,8 @@ export interface OriginalPieceNode extends PieceNodeBase {
 export interface AddPieceNode extends PieceNodeBase {
   readonly bufferType: "add";
   /**
-   * Chunk placement key: every chunk with an index at or below this value lies
-   * wholly before this piece, and every higher chunk lies after it. It records
+   * Chunk placement key for this piece. Chunks with an index at or below this
+   * key lie wholly before the piece. Chunks with a higher index lie after it. It records
    * where the text sits relative to chunks that are not resident, so loading a
    * chunk places it on the correct side of this text. `-1` means before every
    * chunk, which is also the value in documents without chunking.

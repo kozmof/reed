@@ -69,7 +69,7 @@ nodes with structural sharing and never mutate existing nodes.
 
 ### 1.4 Chunk Piece Ordering
 
-Chunk pieces are ordered by `chunkIndex` in in-order traversal.
+An in-order traversal visits chunk pieces in `chunkIndex` order.
 
 Every piece has a placement key. Chunks with an index at or below the key lie
 wholly before the piece, and higher chunks lie after it.

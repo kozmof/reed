@@ -87,8 +87,7 @@ again. If the evicted chunk cut a character in two, the cursor moves past the by
 character left in the next chunk, so it always sits on a UTF-8 code-point boundary. Undo and
 redo place a restored selection the same way.
 
-Next to a chunk that is not loaded, a byte offset cannot say which side of the chunk a
-position is on. A selection range then stores the placement key of that endpoint
+At an unloaded chunk, both sides of the gap share a byte offset. A selection range then stores the placement key of that endpoint
 (`SelectionRange.anchorAfterChunk` and `headAfterChunk`). The key is present only when the
 document cannot supply it, and it is kept by undo, redo, checkpoints, and a `SET_SELECTION`
 or edit selection with matching offsets. The range can appear anywhere in the list.
@@ -121,9 +120,9 @@ typed at the end of the resident document stays before chunks that stream in
 after it. At the start of the resident document, new text stays next to the
 visible content that follows it when an earlier chunk loads.
 
-A cursor follows the same rule as text typed there. A selection's start stays with the content
-after it and its end with the content before it, so a chunk that loads at either edge of a
-selection lands outside it rather than being selected.
+A cursor follows the same rule as text typed there. A selection's start stays with the content that follows it. Its end stays with
+the content that precedes it. A chunk that loads at either edge stays outside
+the selection.
 
 ## 3. Undo/Redo and Grouping
 

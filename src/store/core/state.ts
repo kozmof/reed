@@ -827,10 +827,9 @@ export type PieceNodeUpdates = Partial<
  * subtreeLength and subtreeAddLength when children or piece length change.
  */
 export function withPieceNode<T extends PieceNode>(node: T, changes: PieceNodeUpdates): T {
-  // Rebuilt field by field instead of spreading `node` and `changes`: object
-  // spread is V8's slow construction path, and every edit rebuilds the nodes
-  // along its tree path through here. Each literal mirrors the field order of
-  // the matching create*PieceNode so all nodes of one buffer type share a shape.
+  // Every edit rebuilds the nodes along its tree path here. Use object literals
+  // to avoid V8's slower object spread path. Match the corresponding
+  // create*PieceNode field order so nodes of each buffer type share a shape.
   const color = changes.color ?? node.color;
   const left = "left" in changes ? (changes.left ?? null) : node.left;
   const right = "right" in changes ? (changes.right ?? null) : node.right;

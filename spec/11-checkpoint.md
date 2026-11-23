@@ -64,7 +64,7 @@ Version 2 stores chunk placement keys and anchors for history positions.
 - A live selection range is `[anchor, head]` byte offsets, or `[anchor, head, anchorAfterChunk, headAfterChunk]` when it stores a placement key (see `SelectionRange.anchorAfterChunk`). `null` stands for a key the range does not store. Every action that changes the document moves the selection with it, so a captured key fits its offset. Restore ignores a key that does not fit, as the live selection does.
 - `history.evictionPolicy` is `'pin'`, `'drop'` or `'pin-bounded'`. Restore treats a missing value as `'pin-bounded'`, the default.
 
-Migration from version 1 to 2 derives each key in the layout where its history entry applies. It follows the captured document back through the undo stack and forward through the redo stack, so an offset that later edits moved into another chunk keeps the chunk it was recorded in. Documents without chunks need no change.
+The version 1 migration derives each key in the document layout where its history entry applies. It replays undo backward and redo forward from the captured document to recover the original chunk placement. Documents without chunks need no change.
 
 Byte buffers are base64. Both trees are stored as flat in-order lists. The following example illustrates the wire shape. Its placeholder buffers and abbreviated lists are not a restorable payload.
 
@@ -198,7 +198,7 @@ string code units. Omitted limits remain unrestricted for backward compatibility
 | `LINE_INDEX_MISMATCH`    | Line lengths do not cover the document                                                                                                                                                         |
 | `ID_COLLISION`           | A duplicate id, or an allocator cursor that would reissue one                                                                                                                                  |
 | `SELECTION_OUT_OF_RANGE` | A selection offset past the document, or no ranges at all                                                                                                                                      |
-| `HISTORY_INVALID`        | Bad limit, bad coalesce timeout, a stack deeper than its limit, a history placement key naming a chunk that has not been loaded, or a history change that replays past the end of its document |
+| `HISTORY_INVALID`        | Bad limit, bad coalesce timeout, a stack deeper than its limit, a history placement key naming a chunk that has not been loaded, or a history change that cannot replay in its document layout |
 | `ATTENTION_DANGLING`     | An attention names an unknown piece or an out-of-range boundary                                                                                                                                |
 | `CHUNKED_NORMALIZE`      | `normalized` capture requested for a chunked document                                                                                                                                          |
 | `RESOURCE_LIMIT`         | A configured restore resource limit was exceeded                                                                                                                                               |
