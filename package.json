@@ -50,8 +50,9 @@
     "check": "pnpm fmt:check && pnpm lint && pnpm coverage && pnpm test:perf && pnpm build",
     "pack:home": "pnpm pack --pack-destination ~",
     "pack:check": "pnpm pack:home && pnpm pack:check-compare",
-    "preflight": "pnpm publish --dry-run",
-    "release:auto": "pnpm check && pnpm preflight && pnpm publish",
+    "preflight": "pnpm run release:publish --dry-run",
+    "release:auto": "pnpm check && pnpm preflight && pnpm run release:publish",
+    "release:publish": "npm publish --access public --ignore-scripts --registry=https://registry.npmjs.org/ --cache=.npm-cache",
     "pack:check-name": "v=$(echo $npm_package_version) && name='kozmof-reed-'$v && echo $name",
     "pack:check-compare": "name=$(pnpm run --silent pack:check-name) && bash scripts/check-package-contents.sh ~/$name.tgz"
   },
