@@ -132,8 +132,8 @@ Implemented:
 - timeout-based coalescing for consecutive edits
 - selection restoration on undo and redo
 - the optional edit selection records the pre-edit caret restored by undo
-- an edit moves the selection it receives according to the [selection rules](05-public-api.md#6-breaking-changes-in-500)
-- redo derives its caret from the change kind, placing inserts and replacements after inserted text and deletes at the deletion point
+- an edit moves the selection it receives according to the [selection rules](../docs/breaking-changes/5.0.0.md#selection-after-edits)
+- redo restores the selection recorded after the edit
 
 Transaction behavior:
 

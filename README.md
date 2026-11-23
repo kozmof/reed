@@ -365,6 +365,7 @@ pnpm fmt          # oxfmt
 
 ## Documentation
 
+- [Upgrade to 5.0.0](docs/breaking-changes/5.0.0.md)
 - [SPEC.md](SPEC.md): current implemented surface and verification status
 - [spec/](spec/): per-domain specifications (architecture, rendering, loading, API, testing, internals)
 - [docs/invariants.md](docs/invariants.md): invariants the engine maintains

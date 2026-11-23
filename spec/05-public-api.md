@@ -286,21 +286,4 @@ Choose the helper for the state you own.
 
 ## 6. Breaking Changes in 5.0.0
 
-Anchored positions let undo and redo survive chunk loads and evictions. These exported types now describe positions relative to chunks.
-
-- `HistoryChange.position` is an anchored position (`HistoryAnchor`), not a `ByteOffset`. In a chunked document it is the resident offset minus the lengths of loaded chunks at or below `afterChunk`, and it can be negative. Resolve it against the current document rather than using it as an offset.
-- `HistoryEntry.selectionBefore` and `selectionAfter` are `HistorySelectionState` (anchored positions with placement keys), not `SelectionState`.
-- `HistoryChange` gains `afterChunk`, and may carry `bytes` (and `oldBytes` on a replace) when its decoded text does not encode back to the bytes it stands for.
-- `AddPieceNode` gains `afterChunk`.
-- `SelectionRange` gains optional `anchorAfterChunk` and `headAfterChunk`, present on a range next to a chunk that is not loaded. A test that compares a selection range with `toEqual({ anchor, head })` sees them there.
-- `HistoryState` gains `evictionPolicy`.
-- `EVICT_CHUNK` can be refused because of history. Under the default `historyEvictionPolicy` (`"pin-bounded"`), it leaves a chunk loaded while undo or redo history points inside it, including after the edit there has been undone. In 4.x it evicted such a chunk regardless of history. Code that evicts chunks itself, without a ChunkManager, should check `store.didEvict` and either pass `overLimit: true` (`DocumentActions.evictChunk(index, true)`) to evict anyway and discard that history, or set `historyEvictionPolicy: "drop"`. Code that evicts to stay within a limit of loaded chunks can send `EVICT_CHUNKS` (`DocumentActions.evictChunks(candidates, maxLoaded)`), which ChunkManager uses: it evicts candidates that cost no history first and applies the policy to the rest.
-- `INSERT`, `DELETE`, and `REPLACE` move `state.selection` past the edit. An endpoint before the edit stays, and one after the removed range shifts by the change in length. A caret, or the start of a range, at the edit's start or inside the removed range goes after the inserted text. The end of a non-empty range at the edit's start or inside the removed range stays at the start, before the inserted text, so a range never grows to take in text inserted at its edge: with `{ anchor: 2, head: 5 }`, inserting 2 bytes at 5 leaves the head at 5. A range wholly inside the removed range collapses to a caret after the inserted text. The inline `selection` of an edit is the selection the edit comes from, not the one stored: it is moved the same way. In 4.x an edit stored the inline selection as given and otherwise left `state.selection` alone, so a caret at 20 now becomes 23 after inserting 3 bytes at 10. Callers that set the selection after each edit can keep doing so. Callers that relied on it staying put must save and restore it themselves.
-- `APPLY_REMOTE` moves `state.selection` past each remote change the same way, except that a caret where a change inserts text stays before that text. In 4.x it left `state.selection` alone.
-- `REDO` restores the selection the edit left, not a caret at the end of the redone change. `UNDO` still restores the selection the edit came from.
-- `selection-change` fires whenever an action replaces the selection, including `INSERT`, `DELETE`, `REPLACE`, `APPLY_REMOTE`, `UNDO`, and `REDO`.
-- `rendering` (`getLineContent`, `getVisibleLines`, `getVisibleLine`) keeps a byte order mark at the start of the file as a U+FEFF at line 0, column 0, so line content agrees with the columns the line index counts. `getTextForAttention` keeps it too, for an attention that starts at offset 0. In 4.x both stripped it. Code that copies rendered line text or attention text, or measures its width, and does not want the mark should drop a leading U+FEFF itself.
-- `UNDO` and `REDO` never apply an entry that no longer resolves inside the document. They drop it, together with the entries behind it on the same stack, leave the document unchanged, and emit `history-drop` instead of `history-change`. In 4.x such an entry was clamped to the document and applied.
-- Reed writes version 2 checkpoints and restores versions 1 and 2. Use
-  `isCheckpoint` to check for the current envelope version or
-  `isRestorableCheckpoint` to check for any supported envelope version.
+See the [5.0.0 upgrade guide](../docs/breaking-changes/5.0.0.md).
