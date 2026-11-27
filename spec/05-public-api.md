@@ -77,7 +77,7 @@ Wraps the base store and adds:
 
 - `addEventListener(type, handler)`
 - `removeEventListener(type, handler)`
-- `events` emitter handle
+- `events` emitter handle, a `StoreEventEmitter` (see [3.2](#32-event-origin))
 
 ### 2.3 `store.createDocumentStoreFromCheckpoint(checkpoint, config?, restoreOptions?)`
 
@@ -284,14 +284,16 @@ Semantics:
   holds the caller's chunk bytes, and the document stores its own copy. An
   event from `APPLY_REMOTE` holds the change set. When you keep events for a
   long time, copy out what you need, such as `origin.action.type`.
-- `DocumentStoreWithEvents.addEventListener` types each event as `StoreEvent`,
-  so `origin` is required there. On `DocumentEvent` and on the `events`
-  emitter it stays optional. Handlers registered with `addEventListener` also
-  receive events passed to `events.emit`, so an event emitted without an
-  `origin` reaches them without one. Pass an origin when you emit events
-  yourself.
+- A `DocumentStoreWithEvents` types each event as `StoreEvent`, so `origin`
+  is required. That covers `addEventListener` and the store's `events`
+  emitter, a `StoreEventEmitter` whose `emit` takes only events with an
+  `origin`. `origin` stays optional on `DocumentEvent` and on emitters from
+  `events.createEventEmitter`. A store wrapper or test double that implements
+  `DocumentStoreWithEvents` itself can create its `events` with
+  `events.createStoreEventEmitter`.
 - Events created by a factory such as `events.createSelectionChangeEvent` have
-  no `origin` unless you pass one as the last argument.
+  no `origin` unless you pass one as the last argument. A factory given an
+  origin returns a `StoreEvent`, which the store's `events.emit` accepts.
 
 ## 4. Read APIs
 
@@ -370,6 +372,7 @@ Choose the helper for the state you own.
 - `diff.setValue(state, newContent, options?)` returns a detached state.
 - Both helpers default to one changed range. Pass `{ strategy: "diff" }` for finer edit ranges.
 
-## 6. Breaking Changes in 5.0.0
+## 6. Breaking Changes
 
-See the [5.0.0 upgrade guide](../docs/breaking-changes/5.0.0.md).
+- 6.0.0: see the [6.0.0 upgrade guide](../docs/breaking-changes/6.0.0.md).
+- 5.0.0: see the [5.0.0 upgrade guide](../docs/breaking-changes/5.0.0.md).

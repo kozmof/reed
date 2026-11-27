@@ -12,8 +12,10 @@ import {
   createAttentionChangeEvent,
   createSaveEvent,
   createDirtyChangeEvent,
+  createStoreEventEmitter,
   type AnyDocumentEvent,
   type DocumentEventMap,
+  type SaveEvent,
   type EventOrigin,
   type StoreEvent,
 } from "./events.js";
@@ -383,10 +385,11 @@ describe("EventOrigin on store events", () => {
     expect(save.origin.transactionId).not.toBeNull();
   });
 
-  it("passes events given to events.emit to store handlers as they are", () => {
+  it("requires an origin on events passed to events.emit", () => {
     const store = createDocumentStoreWithEvents({ content: "abc" });
-    const seen: (EventOrigin | undefined)[] = [];
+    const seen: EventOrigin[] = [];
     store.addEventListener("selection-change", (e) => seen.push(e.origin));
+    store.events.addEventListener("selection-change", (e) => seen.push(e.origin));
     const state = store.getSnapshot();
     const origin: EventOrigin = {
       id: 0,
@@ -396,10 +399,54 @@ describe("EventOrigin on store events", () => {
     };
 
     store.events.emit("selection-change", createSelectionChangeEvent(state, state, origin));
-    // Without an origin the handler gets none, though its type says otherwise.
-    store.events.emit("selection-change", createSelectionChangeEvent(state, state));
+    expect(seen).toEqual([origin, origin]);
 
-    expect(seen).toEqual([origin, undefined]);
+    // Type check only: an event without an origin does not compile.
+    const emitWithoutOrigin = () =>
+      // @ts-expect-error - `events.emit` requires a StoreEvent
+      store.events.emit("selection-change", createSelectionChangeEvent(state, state));
+    expect(typeof emitWithoutOrigin).toBe("function");
+  });
+
+  it("creates a store-typed emitter for store wrappers and test doubles", () => {
+    const emitter: DocumentStoreWithEvents["events"] = createStoreEventEmitter();
+    const state = createInitialState();
+    const origin: EventOrigin = {
+      id: 0,
+      action: DocumentActions.setSelection(caret(0)),
+      types: ["selection-change"],
+      transactionId: null,
+    };
+    const seen: EventOrigin[] = [];
+    emitter.addEventListener("selection-change", (e) => seen.push(e.origin));
+
+    emitter.emit("selection-change", createSelectionChangeEvent(state, state, origin));
+    expect(seen).toEqual([origin]);
+
+    // Type check only: an event without an origin does not compile.
+    const emitWithoutOrigin = () =>
+      // @ts-expect-error - `emit` requires a StoreEvent
+      emitter.emit("selection-change", createSelectionChangeEvent(state, state));
+    expect(typeof emitWithoutOrigin).toBe("function");
+  });
+
+  it("types a factory's event as a StoreEvent only when given an origin", () => {
+    const state = createInitialState();
+    const origin: EventOrigin = {
+      id: 0,
+      action: DocumentActions.markSaved(0),
+      types: ["save"],
+      transactionId: null,
+    };
+    const withOrigin: StoreEvent<SaveEvent> = createSaveEvent(state, origin);
+    // @ts-expect-error - without an origin the factory returns a plain event
+    const withoutOrigin: StoreEvent<SaveEvent> = createSaveEvent(state);
+    const maybe: EventOrigin | undefined = Math.random() > 2 ? origin : undefined;
+    const plain: SaveEvent = createSaveEvent(state, maybe);
+
+    expect(withOrigin.origin).toBe(origin);
+    expect("origin" in withoutOrigin).toBe(false);
+    expect("origin" in plain).toBe(false);
   });
 });
 

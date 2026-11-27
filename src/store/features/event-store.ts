@@ -23,6 +23,7 @@ import {
   type EventOrigin,
   type DocumentEventMap,
   type StoreEventMap,
+  type StoreEventEmitter,
 } from "./events.js";
 import {
   MAX_OBSERVER_DELIVERED_ACTIONS,
@@ -50,7 +51,12 @@ export function withEvents(
   commit: (action: DocumentAction) => DocumentTransition,
   logger: DocumentStoreRuntimeConfig["logger"],
 ): DocumentStoreWithEvents {
-  const { emitter, hasListeners } = createProbedEventEmitter(logger);
+  // Handlers reach this emitter only through `StoreEventEmitter`, and events
+  // only through `prepare` and the `emit` it types, so every event it delivers
+  // carries an origin.
+  const probed = createProbedEventEmitter(logger);
+  const emitter = probed.emitter as StoreEventEmitter;
+  const { hasListeners } = probed;
   let disposed = false;
 
   // Depth-indexed event buffer. Each entry corresponds to one open transaction level.
@@ -195,7 +201,7 @@ export function withEvents(
     const origin: EventOrigin = Object.freeze({ id: originId, action, types, transactionId });
 
     const events: Array<() => void> = [];
-    function prepare<K extends keyof DocumentEventMap>(type: K, event: DocumentEventMap[K]): void {
+    function prepare<K extends keyof StoreEventMap>(type: K, event: StoreEventMap[K]): void {
       types.push(type);
       events.push(() => {
         if (!disposed) emitter.emit(type, event);
@@ -435,22 +441,19 @@ export function withEvents(
     baseStore.dispose();
   }
 
-  function addEventListener<K extends keyof DocumentEventMap>(
+  function addEventListener<K extends keyof StoreEventMap>(
     type: K,
     handler: EventHandler<StoreEventMap[K]>,
   ): Unsubscribe {
     if (disposed) return () => {};
-    // Every event this store emits carries an origin (see prepareEventsForAction).
-    // An event a caller passes to `events.emit` without one does not; the
-    // `addEventListener` and `events` docs warn of that.
-    return emitter.addEventListener(type, handler as EventHandler<DocumentEventMap[K]>);
+    return emitter.addEventListener(type, handler);
   }
 
-  function removeEventListener<K extends keyof DocumentEventMap>(
+  function removeEventListener<K extends keyof StoreEventMap>(
     type: K,
     handler: EventHandler<StoreEventMap[K]>,
   ): void {
-    emitter.removeEventListener(type, handler as EventHandler<DocumentEventMap[K]>);
+    emitter.removeEventListener(type, handler);
   }
 
   /**

@@ -377,6 +377,7 @@ pnpm fmt          # oxfmt
 
 ## Documentation
 
+- [Upgrade to 6.0.0](docs/breaking-changes/6.0.0.md)
 - [Upgrade to 5.0.0](docs/breaking-changes/5.0.0.md)
 - [SPEC.md](SPEC.md): current implemented surface and verification status
 - [spec/](spec/): per-domain specifications (architecture, rendering, loading, API, testing, internals)

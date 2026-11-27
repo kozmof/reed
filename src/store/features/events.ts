@@ -82,10 +82,10 @@ export interface DocumentEvent {
   readonly timestamp: number;
   /**
    * The action that produced this event, and the other events it produced.
-   * Event stores set it on every event they emit, and
-   * `DocumentStoreWithEvents.addEventListener` types it as required (see
-   * `StoreEvent`). It is absent on events created without one, such as by an
-   * event factory called without `origin`.
+   * Event stores set it on every event they emit, and a
+   * `DocumentStoreWithEvents` types it as required on its listeners and its
+   * `events` emitter (see `StoreEvent`). It is absent on events created
+   * without one, such as by an event factory called without `origin`.
    */
   readonly origin?: EventOrigin;
 }
@@ -308,10 +308,64 @@ export interface DocumentEventEmitter {
 }
 
 /**
+ * The event emitter of a `DocumentStoreWithEvents`, at `store.events`. It is
+ * the emitter `addEventListener` registers handlers on, so every event it
+ * carries has an `origin`: handlers receive a `StoreEvent`, and `emit`
+ * requires one. To emit an event yourself, pass an origin to its factory.
+ *
+ * @example
+ * ```ts
+ * const state = doc.getSnapshot();
+ * const origin = { id: 0, action, types: ["selection-change"], transactionId: null } as const;
+ * doc.events.emit("selection-change", createSelectionChangeEvent(state, state, origin));
+ * ```
+ */
+export interface StoreEventEmitter {
+  /**
+   * Add an event listener for a specific event type.
+   * @returns Unsubscribe function
+   */
+  addEventListener<K extends keyof StoreEventMap>(
+    type: K,
+    handler: EventHandler<StoreEventMap[K]>,
+  ): Unsubscribe;
+
+  /**
+   * Remove an event listener.
+   */
+  removeEventListener<K extends keyof StoreEventMap>(
+    type: K,
+    handler: EventHandler<StoreEventMap[K]>,
+  ): void;
+
+  /**
+   * Emit an event to all registered handlers. The event must carry an
+   * `origin`, as every event the store emits does.
+   */
+  emit<K extends keyof StoreEventMap>(type: K, event: StoreEventMap[K]): void;
+
+  /**
+   * Remove all event listeners.
+   */
+  removeAllListeners(): void;
+}
+
+/**
  * Create a new document event emitter.
  */
 export function createEventEmitter(logger?: Pick<ReedLogger, "error">): DocumentEventEmitter {
   return createProbedEventEmitter(logger).emitter;
+}
+
+/**
+ * Create an event emitter typed as a store's `events`, for a store wrapper or
+ * test double that implements `DocumentStoreWithEvents` itself. It behaves as
+ * `createEventEmitter` does, and its types require an `origin` on every event.
+ */
+export function createStoreEventEmitter(logger?: Pick<ReedLogger, "error">): StoreEventEmitter {
+  // The emitter is untyped at runtime. This interface lets in only events
+  // with an origin, so its handlers receive only those.
+  return createEventEmitter(logger) as StoreEventEmitter;
 }
 
 /**
@@ -432,12 +486,28 @@ export function createProbedEventEmitter(logger?: Pick<ReedLogger, "error">): Pr
 //
 // Each factory takes an optional `origin` as its last argument. The event
 // store always passes one. An event created without it has no `origin` property.
+// Called with an origin, a factory returns a `StoreEvent`, the type a store's
+// `events.emit` requires.
 // Each factory writes `origin` into the event literal instead of adding it to
 // the event afterward, so every event the store emits keeps one object shape.
 
 /**
  * Create a content change event.
  */
+export function createContentChangeEvent(
+  action: ContentChangeAction,
+  prevState: DocumentState,
+  nextState: DocumentState,
+  affectedRanges: readonly (readonly [ByteOffset, ByteOffset])[],
+  origin: EventOrigin,
+): StoreEvent<ContentChangeEvent>;
+export function createContentChangeEvent(
+  action: ContentChangeAction,
+  prevState: DocumentState,
+  nextState: DocumentState,
+  affectedRanges: readonly (readonly [ByteOffset, ByteOffset])[],
+  origin?: EventOrigin,
+): ContentChangeEvent;
 export function createContentChangeEvent(
   action: ContentChangeAction,
   prevState: DocumentState,
@@ -459,6 +529,16 @@ export function createContentChangeEvent(
 export function createSelectionChangeEvent(
   prevState: DocumentState,
   nextState: DocumentState,
+  origin: EventOrigin,
+): StoreEvent<SelectionChangeEvent>;
+export function createSelectionChangeEvent(
+  prevState: DocumentState,
+  nextState: DocumentState,
+  origin?: EventOrigin,
+): SelectionChangeEvent;
+export function createSelectionChangeEvent(
+  prevState: DocumentState,
+  nextState: DocumentState,
   origin?: EventOrigin,
 ): SelectionChangeEvent {
   const timestamp = Date.now();
@@ -472,6 +552,18 @@ export function createSelectionChangeEvent(
 /**
  * Create a history change event.
  */
+export function createHistoryChangeEvent(
+  direction: HistoryChangeEvent["direction"],
+  prevState: DocumentState,
+  nextState: DocumentState,
+  origin: EventOrigin,
+): StoreEvent<HistoryChangeEvent>;
+export function createHistoryChangeEvent(
+  direction: HistoryChangeEvent["direction"],
+  prevState: DocumentState,
+  nextState: DocumentState,
+  origin?: EventOrigin,
+): HistoryChangeEvent;
 export function createHistoryChangeEvent(
   direction: HistoryChangeEvent["direction"],
   prevState: DocumentState,
@@ -491,6 +583,18 @@ export function createHistoryChangeEvent(
  * action discarded without undoing or redoing them, as the reducer counted
  * them, so the event and the store's eviction warning report the same loss.
  */
+export function createHistoryDropEvent(
+  prevState: DocumentState,
+  nextState: DocumentState,
+  dropped: { readonly undo: number; readonly redo: number },
+  origin: EventOrigin,
+): StoreEvent<HistoryDropEvent>;
+export function createHistoryDropEvent(
+  prevState: DocumentState,
+  nextState: DocumentState,
+  dropped: { readonly undo: number; readonly redo: number },
+  origin?: EventOrigin,
+): HistoryDropEvent;
 export function createHistoryDropEvent(
   prevState: DocumentState,
   nextState: DocumentState,
@@ -543,6 +647,18 @@ export function createAttentionChangeEvent(
   prevState: DocumentState,
   nextState: DocumentState,
   changedIds: readonly AttentionID[],
+  origin: EventOrigin,
+): StoreEvent<AttentionChangeEvent>;
+export function createAttentionChangeEvent(
+  prevState: DocumentState,
+  nextState: DocumentState,
+  changedIds: readonly AttentionID[],
+  origin?: EventOrigin,
+): AttentionChangeEvent;
+export function createAttentionChangeEvent(
+  prevState: DocumentState,
+  nextState: DocumentState,
+  changedIds: readonly AttentionID[],
   origin?: EventOrigin,
 ): AttentionChangeEvent {
   const timestamp = Date.now();
@@ -556,6 +672,8 @@ export function createAttentionChangeEvent(
 /**
  * Create a save event.
  */
+export function createSaveEvent(state: DocumentState, origin: EventOrigin): StoreEvent<SaveEvent>;
+export function createSaveEvent(state: DocumentState, origin?: EventOrigin): SaveEvent;
 export function createSaveEvent(state: DocumentState, origin?: EventOrigin): SaveEvent {
   const timestamp = Date.now();
   return Object.freeze(
@@ -568,6 +686,16 @@ export function createSaveEvent(state: DocumentState, origin?: EventOrigin): Sav
 /**
  * Create a dirty change event.
  */
+export function createDirtyChangeEvent(
+  isDirty: boolean,
+  state: DocumentState,
+  origin: EventOrigin,
+): StoreEvent<DirtyChangeEvent>;
+export function createDirtyChangeEvent(
+  isDirty: boolean,
+  state: DocumentState,
+  origin?: EventOrigin,
+): DirtyChangeEvent;
 export function createDirtyChangeEvent(
   isDirty: boolean,
   state: DocumentState,

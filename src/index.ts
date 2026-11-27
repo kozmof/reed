@@ -165,6 +165,7 @@ export type {
   EventOrigin,
   StoreEvent,
   StoreEventMap,
+  StoreEventEmitter,
   ContentChangeEvent,
   SelectionChangeEvent,
   HistoryChangeEvent,

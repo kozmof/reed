@@ -116,6 +116,7 @@ export type { DiffEdit, DiffResult, SetValueOptions } from "./features/diff.js";
 // Event system
 export {
   createEventEmitter,
+  createStoreEventEmitter,
   createContentChangeEvent,
   createSelectionChangeEvent,
   createHistoryChangeEvent,
@@ -131,6 +132,7 @@ export type {
   EventOrigin,
   StoreEvent,
   StoreEventMap,
+  StoreEventEmitter,
   ContentChangeEvent,
   SelectionChangeEvent,
   HistoryChangeEvent,
