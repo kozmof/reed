@@ -77,7 +77,7 @@ Wraps the base store and adds:
 
 - `addEventListener(type, handler)`
 - `removeEventListener(type, handler)`
-- `events` emitter handle
+- `events` emitter handle, a `StoreEventEmitter` (see [3.2](#32-event-origin))
 
 ### 2.3 `store.createDocumentStoreFromCheckpoint(checkpoint, config?, restoreOptions?)`
 
@@ -162,7 +162,8 @@ Auto-emitted by `store.createDocumentStoreWithEvents`:
 - `content-change` (`INSERT/DELETE/REPLACE/APPLY_REMOTE`)
 - `selection-change` fires when an action replaces the selection. This includes
   explicit selection changes and changes caused by edits, undo or redo, chunk
-  loads, and chunk evictions.
+  loads, and chunk evictions. The event's `origin` names the action (see
+  [3.2](#32-event-origin)).
 - `history-change` (`UNDO/REDO`)
 - `history-drop` reports discarded entries in `undoDropped` and `redoDropped`.
   - Eviction emits it when the history policy discards entries.
@@ -206,6 +207,100 @@ Semantics:
 
 Before v3.2.0 the `save` event type and `createSaveEvent` factory existed with
 no transition that could emit them, and `isDirty` was only ever set to `true`.
+
+### 3.2 Event origin
+
+Every event an event store emits carries `origin`, an `EventOrigin`. All events
+from one action share the same frozen origin object.
+
+- `id` — identifies the action within its store. An action delivered later has
+  a larger id. An action that emits no events still uses one, so ids skip
+  values. Use them to correlate events, not to count actions.
+- `action` — the action whose commit produced the event, payload included.
+- `types` — every event type the action emits, in delivery order.
+- `transactionId` — the id of the outermost transaction open when the action
+  was dispatched, or `null` when none was open. Nested transactions share the
+  outermost id. A later transaction has a larger id.
+
+An action delivers its events in this order. Each fires only when the action
+causes it.
+
+1. `content-change`
+2. `selection-change`
+3. `history-change` or `history-drop`
+4. `attention-change`
+5. `save`
+6. `dirty-change`
+
+The store fixes `types` before it delivers the first event. A handler can
+therefore check for events that arrive after its own, such as the
+`history-change` that follows a `selection-change` on undo.
+
+Check `origin.action` to find out why the selection moved.
+
+```ts
+doc.addEventListener("selection-change", (e) => {
+  switch (e.origin.action.type) {
+    case "SET_SELECTION":
+      return showExplicitSelection(e);
+    case "UNDO":
+    case "REDO":
+      return showRestoredSelection(e);
+    case "INSERT":
+    case "DELETE":
+    case "REPLACE":
+    case "APPLY_REMOTE":
+      return followEdit(e);
+    default:
+      // LOAD_CHUNK, LOAD_CHUNKS, EVICT_CHUNK, or EVICT_CHUNKS shifted it.
+      return shiftSelection(e);
+  }
+});
+```
+
+Check `origin.types` for what else the action did. Only `INSERT`, `DELETE`,
+`REPLACE`, and `APPLY_REMOTE` list `content-change`. An `UNDO` or `REDO` that
+applies an entry changes the text but lists `history-change` instead. One whose
+entry no longer replays lists `history-drop`.
+
+Semantics:
+
+- Each action in a `batch` or transaction gets its own origin. They all share
+  one `transactionId`.
+- Rolling back the outermost transaction discards all of its events, so its
+  `transactionId` never appears. Rolling back a nested transaction discards
+  only that transaction's events. The outer transaction's events still carry
+  the id when it commits.
+- An action that an event handler or store listener dispatches gets a later
+  `id`. Its `transactionId` is that of any transaction open at that moment.
+  That includes a transaction another handler began and has not yet
+  committed. The action then joins that transaction, and its events wait for
+  that transaction's commit.
+  When a store listener dispatches during an outermost commit, the committing
+  transaction is already closed, so the action gets `null`.
+- `types` lists the events the store prepared. A handler that disposes the
+  store stops the rest of the action's events, so those never arrive.
+- An event keeps its action alive. An event from `LOAD_CHUNK` or `LOAD_CHUNKS`
+  holds the caller's chunk bytes, and the document stores its own copy. An
+  event from `APPLY_REMOTE` holds the change set. When you keep events for a
+  long time, copy out what you need, such as `origin.action.type`.
+- `origin.action` is the object passed to `dispatch`, not a copy. Actions from
+  `DocumentActions` are frozen. Do not change an action you built yourself
+  after dispatching it, or events that hold it report the change.
+- A `DocumentStoreWithEvents` types each event as `StoreEvent`, so `origin`
+  is required. This applies to `addEventListener` and to the store's `events`
+  emitter. That emitter is a `StoreEventEmitter`, and its `emit` takes only
+  events with an `origin`.
+- Code that widens `events` to a `DocumentEventEmitter` can still pass an
+  event without an origin. `emit` reports it through the store's logger and
+  drops it, so no handler receives it.
+- `origin` stays optional on `DocumentEvent` and on emitters from
+  `events.createEventEmitter`. A store wrapper or test double that implements
+  `DocumentStoreWithEvents` itself can create its `events` with
+  `events.createStoreEventEmitter`.
+- Events created by a factory such as `events.createSelectionChangeEvent` have
+  no `origin` unless you pass one as the last argument. A factory given an
+  origin returns a `StoreEvent`, which the store's `events.emit` accepts.
 
 ## 4. Read APIs
 
@@ -284,6 +379,7 @@ Choose the helper for the state you own.
 - `diff.setValue(state, newContent, options?)` returns a detached state.
 - Both helpers default to one changed range. Pass `{ strategy: "diff" }` for finer edit ranges.
 
-## 6. Breaking Changes in 5.0.0
+## 6. Breaking Changes
 
-See the [5.0.0 upgrade guide](../docs/breaking-changes/5.0.0.md).
+- 6.0.0: see the [6.0.0 upgrade guide](../docs/breaking-changes/6.0.0.md).
+- 5.0.0: see the [5.0.0 upgrade guide](../docs/breaking-changes/5.0.0.md).

@@ -2,6 +2,7 @@
 
 import {
   createEventEmitter,
+  createStoreEventEmitter,
   createContentChangeEvent,
   createSelectionChangeEvent,
   createHistoryChangeEvent,
@@ -15,6 +16,7 @@ import {
 
 export const events = {
   createEventEmitter,
+  createStoreEventEmitter,
   createContentChangeEvent,
   createSelectionChangeEvent,
   createHistoryChangeEvent,

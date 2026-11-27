@@ -220,6 +220,18 @@ doc.addEventListener("dirty-change", (e) => console.log("dirty flag:", e));
 doc.dispatch(store.DocumentActions.insert(position.byteOffset(0), "hi"));
 ```
 
+Edits, undo, and chunk loads and evictions also move the selection. Each event's `origin` names the action that produced it and lists every event type that action emits. Use it to tell an explicit `SET_SELECTION` apart from an edit or undo that moved the cursor. Your own code dispatches `SET_SELECTION`, for example from a click handler, select-all, or a restored cursor. The action type alone does not tell you whether the user caused it.
+
+```ts
+doc.addEventListener("selection-change", (e) => {
+  if (e.origin.action.type === "SET_SELECTION") console.log("the selection was set explicitly");
+  else if (e.origin.types.includes("content-change")) console.log("an edit moved the cursor");
+  else if (e.origin.types.includes("history-change")) console.log("undo or redo moved the cursor");
+});
+```
+
+Undo and redo report text changes through `history-change`, not `content-change`. See [event origin](spec/05-public-api.md#32-event-origin) for event order and transaction ids.
+
 ## Tracking references with attention
 
 The `attention` namespace anchors references to piece boundaries instead of document offsets, so a reference keeps pointing at the same text across edits elsewhere in the document. Store actions migrate `DocumentState.attention` automatically. For direct piece-table operations, keep a separate immutable `AttentionLayerState` and pass the returned state into the next operation.
@@ -365,6 +377,7 @@ pnpm fmt          # oxfmt
 
 ## Documentation
 
+- [Upgrade to 6.0.0](docs/breaking-changes/6.0.0.md)
 - [Upgrade to 5.0.0](docs/breaking-changes/5.0.0.md)
 - [SPEC.md](SPEC.md): current implemented surface and verification status
 - [spec/](spec/): per-domain specifications (architecture, rendering, loading, API, testing, internals)

@@ -16,11 +16,81 @@ import { MAX_OBSERVER_REENTRANT_STEPS, reportCaughtError } from "./diagnostics.j
 // =============================================================================
 
 /**
+ * Describes the action that produced an event and the other events that
+ * action produced. Every event from one action shares one frozen origin
+ * object, so `a.origin === b.origin` tells whether two events came from the
+ * same action.
+ *
+ * `types` is fixed before the first of the action's events is delivered. A
+ * handler can use it to check for events that arrive after its own, such as
+ * the `history-change` that follows a `selection-change` on undo.
+ *
+ * @example
+ * ```ts
+ * doc.addEventListener("selection-change", (e) => {
+ *   if (e.origin.action.type === "SET_SELECTION") return; // explicit move
+ *   if (e.origin.types.includes("content-change")) {
+ *     // the selection followed an edit
+ *   }
+ * });
+ * ```
+ */
+export interface EventOrigin {
+  /**
+   * Identifies the action within its store. Every event from one action has
+   * the same id. An action delivered later has a larger id, including one a
+   * store listener or event handler dispatched in reaction. An action that
+   * emits no events still uses an id, so ids skip values. Use them to
+   * correlate events, not to count actions.
+   */
+  readonly id: number;
+  /**
+   * The action whose commit produced the event. It is the object passed to
+   * `dispatch`, not a copy, and the origin's freeze does not reach it.
+   * `DocumentActions` creates frozen actions. If you build actions yourself,
+   * do not change one after dispatching it, or events that hold it report the
+   * change. An event keeps the whole action alive, payload included. An
+   * event from `LOAD_CHUNK` or `LOAD_CHUNKS` holds the caller's chunk bytes,
+   * and the document stores its own copy. An event from `APPLY_REMOTE` holds the change set. When you keep
+   * events for a long time, copy out only what you need, such as
+   * `origin.action.type`.
+   */
+  readonly action: DocumentAction;
+  /**
+   * Every event type the action emits, in delivery order, including the event
+   * that carries this origin. It lists the events the store prepared. A
+   * handler that disposes the store stops the rest of the action's events, so
+   * those never arrive.
+   */
+  readonly types: readonly (keyof DocumentEventMap)[];
+  /**
+   * Identifies the outermost transaction open when the action was dispatched,
+   * or null when none was open. Every action in one `batch` has the same id.
+   * So does every action between an outermost `beginTransaction` and its
+   * `commitTransaction`, nested transactions included. A later transaction
+   * has a larger id. Rolling back the outermost transaction discards all of
+   * its events, so its id never appears. Rolling back a nested transaction
+   * discards only that transaction's events. The outer transaction's events
+   * still carry the id when it commits. These ids are counted separately from
+   * `id`.
+   */
+  readonly transactionId: number | null;
+}
+
+/**
  * Base event interface.
  */
 export interface DocumentEvent {
   readonly type: keyof DocumentEventMap;
   readonly timestamp: number;
+  /**
+   * The action that produced this event, and the other events it produced.
+   * Event stores set it on every event they emit, and a
+   * `DocumentStoreWithEvents` types it as required on its listeners and its
+   * `events` emitter (see `StoreEvent`). It is absent on events created
+   * without one, such as by an event factory called without `origin`.
+   */
+  readonly origin?: EventOrigin;
 }
 
 /**
@@ -51,6 +121,10 @@ export interface ContentChangeEvent extends DocumentEvent {
  * the selection in place fires nothing, including a SET_SELECTION with the
  * ranges the selection already has. An editor that sets the caret an edit
  * already moved to therefore gets one event per edit.
+ *
+ * `origin.action` names the action that moved the selection.
+ * `origin.types` lists the other events that action fires, such as
+ * `content-change` for an edit or `history-change` for undo and redo.
  */
 export interface SelectionChangeEvent extends DocumentEvent {
   readonly type: "selection-change";
@@ -172,6 +246,19 @@ export interface DocumentEventMap {
   "dirty-change": DirtyChangeEvent;
 }
 
+/**
+ * An event as a `DocumentStoreWithEvents` listener receives it. The store sets
+ * `origin` on every event it emits, so `origin` is required here.
+ */
+export type StoreEvent<E extends AnyDocumentEvent> = E & { readonly origin: EventOrigin };
+
+/**
+ * Event type to the event a `DocumentStoreWithEvents` listener receives.
+ */
+export type StoreEventMap = {
+  readonly [K in keyof DocumentEventMap]: StoreEvent<DocumentEventMap[K]>;
+};
+
 // =============================================================================
 // Event Handler Types
 // =============================================================================
@@ -224,10 +311,101 @@ export interface DocumentEventEmitter {
 }
 
 /**
+ * The event emitter of a `DocumentStoreWithEvents`, at `store.events`. It is
+ * the emitter `addEventListener` registers handlers on, so every event it
+ * carries has an `origin`. Handlers receive a `StoreEvent`, and `emit`
+ * requires one. To emit an event yourself, pass an origin to its factory.
+ *
+ * @example
+ * ```ts
+ * const state = doc.getSnapshot();
+ * const origin = { id: 0, action, types: ["selection-change"], transactionId: null } as const;
+ * doc.events.emit("selection-change", createSelectionChangeEvent(state, state, origin));
+ * ```
+ */
+export interface StoreEventEmitter {
+  /**
+   * Add an event listener for a specific event type.
+   * @returns Unsubscribe function
+   */
+  addEventListener<K extends keyof StoreEventMap>(
+    type: K,
+    handler: EventHandler<StoreEventMap[K]>,
+  ): Unsubscribe;
+
+  /**
+   * Remove an event listener.
+   */
+  removeEventListener<K extends keyof StoreEventMap>(
+    type: K,
+    handler: EventHandler<StoreEventMap[K]>,
+  ): void;
+
+  /**
+   * Emit an event to all registered handlers. The event must carry an
+   * `origin`, as every event the store emits does. An event without one,
+   * passed through a wider type such as `DocumentEventEmitter`, is reported
+   * through the store's logger and dropped.
+   */
+  emit<K extends keyof StoreEventMap>(type: K, event: StoreEventMap[K]): void;
+
+  /**
+   * Remove all event listeners.
+   */
+  removeAllListeners(): void;
+}
+
+/**
  * Create a new document event emitter.
  */
 export function createEventEmitter(logger?: Pick<ReedLogger, "error">): DocumentEventEmitter {
   return createProbedEventEmitter(logger).emitter;
+}
+
+/**
+ * Create an event emitter typed as a store's `events`, for a store wrapper or
+ * test double that implements `DocumentStoreWithEvents` itself. It behaves as
+ * `createEventEmitter` does, except that its types require an `origin` on
+ * every event, and `emit` reports and drops an event without one.
+ */
+export function createStoreEventEmitter(logger?: Pick<ReedLogger, "error">): StoreEventEmitter {
+  return guardStoreEventEmitter(createEventEmitter(logger), logger);
+}
+
+/**
+ * Wrap `emitter` so that its `emit` delivers only events with an `origin`.
+ * Code that widens the result to a `DocumentEventEmitter` can still pass an
+ * event without one. `emit` reports such an event through `logger` and drops
+ * it, so no handler receives an event without an origin.
+ *
+ * The handlers registered through the wrapper reach `emitter` unchanged.
+ * Nothing else may emit on `emitter`, or its handlers could receive an event
+ * without an origin.
+ */
+export function guardStoreEventEmitter(
+  emitter: DocumentEventEmitter,
+  logger: Pick<ReedLogger, "error"> | undefined,
+): StoreEventEmitter {
+  // Every event reaching `emitter` passes the check in `emit`, so a handler
+  // typed for a StoreEvent receives one.
+  type Handler = EventHandler<AnyDocumentEvent>;
+  return {
+    addEventListener: (type, handler) => emitter.addEventListener(type, handler as Handler),
+    removeEventListener: (type, handler) => emitter.removeEventListener(type, handler as Handler),
+    emit(type, event) {
+      const origin: unknown = (event as DocumentEvent).origin;
+      if (typeof origin !== "object" || origin === null) {
+        reportCaughtError(
+          logger,
+          `Dropped a '${type}' event without an origin`,
+          new TypeError("A store's events.emit requires an event with an origin"),
+        );
+        return;
+      }
+      emitter.emit(type, event);
+    },
+    removeAllListeners: () => emitter.removeAllListeners(),
+  };
 }
 
 /**
@@ -345,6 +523,13 @@ export function createProbedEventEmitter(logger?: Pick<ReedLogger, "error">): Pr
 // =============================================================================
 // Event Helpers
 // =============================================================================
+//
+// Each factory takes an optional `origin` as its last argument. The event
+// store always passes one. An event created without it has no `origin` property.
+// Called with an origin, a factory returns a `StoreEvent`, the type a store's
+// `events.emit` requires.
+// Each factory writes `origin` into the event literal instead of adding it to
+// the event afterward, so every event the store emits keeps one object shape.
 
 /**
  * Create a content change event.
@@ -354,15 +539,28 @@ export function createContentChangeEvent(
   prevState: DocumentState,
   nextState: DocumentState,
   affectedRanges: readonly (readonly [ByteOffset, ByteOffset])[],
+  origin: EventOrigin,
+): StoreEvent<ContentChangeEvent>;
+export function createContentChangeEvent(
+  action: ContentChangeAction,
+  prevState: DocumentState,
+  nextState: DocumentState,
+  affectedRanges: readonly (readonly [ByteOffset, ByteOffset])[],
+  origin?: EventOrigin,
+): ContentChangeEvent;
+export function createContentChangeEvent(
+  action: ContentChangeAction,
+  prevState: DocumentState,
+  nextState: DocumentState,
+  affectedRanges: readonly (readonly [ByteOffset, ByteOffset])[],
+  origin?: EventOrigin,
 ): ContentChangeEvent {
-  return Object.freeze({
-    type: "content-change" as const,
-    timestamp: Date.now(),
-    action,
-    prevState,
-    nextState,
-    affectedRanges,
-  });
+  const timestamp = Date.now();
+  return Object.freeze(
+    origin === undefined
+      ? { type: "content-change", timestamp, action, prevState, nextState, affectedRanges }
+      : { type: "content-change", timestamp, action, prevState, nextState, affectedRanges, origin },
+  );
 }
 
 /**
@@ -371,13 +569,24 @@ export function createContentChangeEvent(
 export function createSelectionChangeEvent(
   prevState: DocumentState,
   nextState: DocumentState,
+  origin: EventOrigin,
+): StoreEvent<SelectionChangeEvent>;
+export function createSelectionChangeEvent(
+  prevState: DocumentState,
+  nextState: DocumentState,
+  origin?: EventOrigin,
+): SelectionChangeEvent;
+export function createSelectionChangeEvent(
+  prevState: DocumentState,
+  nextState: DocumentState,
+  origin?: EventOrigin,
 ): SelectionChangeEvent {
-  return Object.freeze({
-    type: "selection-change" as const,
-    timestamp: Date.now(),
-    prevState,
-    nextState,
-  });
+  const timestamp = Date.now();
+  return Object.freeze(
+    origin === undefined
+      ? { type: "selection-change", timestamp, prevState, nextState }
+      : { type: "selection-change", timestamp, prevState, nextState, origin },
+  );
 }
 
 /**
@@ -387,14 +596,26 @@ export function createHistoryChangeEvent(
   direction: HistoryChangeEvent["direction"],
   prevState: DocumentState,
   nextState: DocumentState,
+  origin: EventOrigin,
+): StoreEvent<HistoryChangeEvent>;
+export function createHistoryChangeEvent(
+  direction: HistoryChangeEvent["direction"],
+  prevState: DocumentState,
+  nextState: DocumentState,
+  origin?: EventOrigin,
+): HistoryChangeEvent;
+export function createHistoryChangeEvent(
+  direction: HistoryChangeEvent["direction"],
+  prevState: DocumentState,
+  nextState: DocumentState,
+  origin?: EventOrigin,
 ): HistoryChangeEvent {
-  return Object.freeze({
-    type: "history-change" as const,
-    timestamp: Date.now(),
-    direction,
-    prevState,
-    nextState,
-  });
+  const timestamp = Date.now();
+  return Object.freeze(
+    origin === undefined
+      ? { type: "history-change", timestamp, direction, prevState, nextState }
+      : { type: "history-change", timestamp, direction, prevState, nextState, origin },
+  );
 }
 
 /**
@@ -406,15 +627,28 @@ export function createHistoryDropEvent(
   prevState: DocumentState,
   nextState: DocumentState,
   dropped: { readonly undo: number; readonly redo: number },
+  origin: EventOrigin,
+): StoreEvent<HistoryDropEvent>;
+export function createHistoryDropEvent(
+  prevState: DocumentState,
+  nextState: DocumentState,
+  dropped: { readonly undo: number; readonly redo: number },
+  origin?: EventOrigin,
+): HistoryDropEvent;
+export function createHistoryDropEvent(
+  prevState: DocumentState,
+  nextState: DocumentState,
+  dropped: { readonly undo: number; readonly redo: number },
+  origin?: EventOrigin,
 ): HistoryDropEvent {
-  return Object.freeze({
-    type: "history-drop" as const,
-    timestamp: Date.now(),
-    prevState,
-    nextState,
-    undoDropped: dropped.undo,
-    redoDropped: dropped.redo,
-  });
+  const timestamp = Date.now();
+  const undoDropped = dropped.undo;
+  const redoDropped = dropped.redo;
+  return Object.freeze(
+    origin === undefined
+      ? { type: "history-drop", timestamp, prevState, nextState, undoDropped, redoDropped }
+      : { type: "history-drop", timestamp, prevState, nextState, undoDropped, redoDropped, origin },
+  );
 }
 
 /**
@@ -453,37 +687,66 @@ export function createAttentionChangeEvent(
   prevState: DocumentState,
   nextState: DocumentState,
   changedIds: readonly AttentionID[],
+  origin: EventOrigin,
+): StoreEvent<AttentionChangeEvent>;
+export function createAttentionChangeEvent(
+  prevState: DocumentState,
+  nextState: DocumentState,
+  changedIds: readonly AttentionID[],
+  origin?: EventOrigin,
+): AttentionChangeEvent;
+export function createAttentionChangeEvent(
+  prevState: DocumentState,
+  nextState: DocumentState,
+  changedIds: readonly AttentionID[],
+  origin?: EventOrigin,
 ): AttentionChangeEvent {
-  return Object.freeze({
-    type: "attention-change" as const,
-    timestamp: Date.now(),
-    prevState,
-    nextState,
-    changedIds,
-  });
+  const timestamp = Date.now();
+  return Object.freeze(
+    origin === undefined
+      ? { type: "attention-change", timestamp, prevState, nextState, changedIds }
+      : { type: "attention-change", timestamp, prevState, nextState, changedIds, origin },
+  );
 }
 
 /**
  * Create a save event.
  */
-export function createSaveEvent(state: DocumentState): SaveEvent {
-  return Object.freeze({
-    type: "save" as const,
-    timestamp: Date.now(),
-    state,
-  });
+export function createSaveEvent(state: DocumentState, origin: EventOrigin): StoreEvent<SaveEvent>;
+export function createSaveEvent(state: DocumentState, origin?: EventOrigin): SaveEvent;
+export function createSaveEvent(state: DocumentState, origin?: EventOrigin): SaveEvent {
+  const timestamp = Date.now();
+  return Object.freeze(
+    origin === undefined
+      ? { type: "save", timestamp, state }
+      : { type: "save", timestamp, state, origin },
+  );
 }
 
 /**
  * Create a dirty change event.
  */
-export function createDirtyChangeEvent(isDirty: boolean, state: DocumentState): DirtyChangeEvent {
-  return Object.freeze({
-    type: "dirty-change" as const,
-    timestamp: Date.now(),
-    isDirty,
-    state,
-  });
+export function createDirtyChangeEvent(
+  isDirty: boolean,
+  state: DocumentState,
+  origin: EventOrigin,
+): StoreEvent<DirtyChangeEvent>;
+export function createDirtyChangeEvent(
+  isDirty: boolean,
+  state: DocumentState,
+  origin?: EventOrigin,
+): DirtyChangeEvent;
+export function createDirtyChangeEvent(
+  isDirty: boolean,
+  state: DocumentState,
+  origin?: EventOrigin,
+): DirtyChangeEvent {
+  const timestamp = Date.now();
+  return Object.freeze(
+    origin === undefined
+      ? { type: "dirty-change", timestamp, isDirty, state }
+      : { type: "dirty-change", timestamp, isDirty, state, origin },
+  );
 }
 
 function clampPosition(position: number, totalLength: number): ByteOffset {

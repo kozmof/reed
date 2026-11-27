@@ -10,6 +10,7 @@ import type {
 import { makeBatch } from "./transaction.js";
 import {
   createProbedEventEmitter,
+  guardStoreEventEmitter,
   createContentChangeEvent,
   createSelectionChangeEvent,
   createHistoryChangeEvent,
@@ -20,7 +21,10 @@ import {
   diffChangedAttentionIds,
   getAffectedRanges,
   type EventHandler,
+  type EventOrigin,
   type DocumentEventMap,
+  type StoreEventMap,
+  type StoreEventEmitter,
 } from "./events.js";
 import {
   MAX_OBSERVER_DELIVERED_ACTIONS,
@@ -48,12 +52,27 @@ export function withEvents(
   commit: (action: DocumentAction) => DocumentTransition,
   logger: DocumentStoreRuntimeConfig["logger"],
 ): DocumentStoreWithEvents {
-  const { emitter, hasListeners } = createProbedEventEmitter(logger);
+  // The guard drops any event without an origin, including one a caller
+  // passes to `events.emit` through a wider type, so every event a handler
+  // receives carries one.
+  const probed = createProbedEventEmitter(logger);
+  const emitter: StoreEventEmitter = guardStoreEventEmitter(probed.emitter, logger);
+  const { hasListeners } = probed;
   let disposed = false;
 
   // Depth-indexed event buffer. Each entry corresponds to one open transaction level.
-  // Index 0 = outermost open transaction, last = innermost.
-  const pendingEventLevels: Array<Array<() => void>> = [];
+  // Index 0 = outermost open transaction, last = innermost. Every level of one
+  // outermost transaction carries that transaction's id, the `transactionId`
+  // of the events its actions emit.
+  interface EventLevel {
+    readonly transactionId: number;
+    readonly events: Array<() => void>;
+  }
+  const pendingEventLevels: EventLevel[] = [];
+
+  // The last `EventOrigin.id` and `EventOrigin.transactionId` handed out.
+  let lastOriginId = 0;
+  let lastTransactionId = 0;
 
   // Events reach handlers in the order their actions committed. A store
   // listener or an event handler can dispatch while events are delivered.
@@ -170,17 +189,27 @@ export function withEvents(
     action: DocumentAction,
     prevState: DocumentState,
     { state: nextState, historyDropped }: DocumentTransition,
+    originId: number,
+    transactionId: number | null,
   ): Array<() => void> {
     if (disposed) return [];
-    const events: Array<() => void> = [];
 
-    function prepare<K extends keyof DocumentEventMap>(type: K, event: DocumentEventMap[K]): void {
+    // Every event shares one origin. `prepare` records each event's type in
+    // `types` as it builds the event, so the list cannot disagree with the
+    // events. The origin is frozen shallowly here and `types` once every event
+    // is prepared, before any of them is delivered.
+    const types: Array<keyof DocumentEventMap> = [];
+    const origin: EventOrigin = Object.freeze({ id: originId, action, types, transactionId });
+
+    const events: Array<() => void> = [];
+    function prepare<K extends keyof StoreEventMap>(type: K, event: StoreEventMap[K]): void {
+      types.push(type);
       events.push(() => {
         if (!disposed) emitter.emit(type, event);
       });
     }
 
-    // Content change events for local text edits and remote content updates
+    // Content change events for local text edits and remote content updates.
     if (isTextEditAction(action) || action.type === "APPLY_REMOTE") {
       prepare(
         "content-change",
@@ -189,6 +218,7 @@ export function withEvents(
           prevState,
           nextState,
           getAffectedRanges(action, prevState, nextState),
+          origin,
         ),
       );
     }
@@ -200,7 +230,7 @@ export function withEvents(
     // place keeps the same object (SET_SELECTION with the current ranges
     // included), so the reference check is O(1).
     if (prevState.selection !== nextState.selection) {
-      prepare("selection-change", createSelectionChangeEvent(prevState, nextState));
+      prepare("selection-change", createSelectionChangeEvent(prevState, nextState, origin));
     }
 
     // History events. UNDO and REDO that apply an entry change history; an
@@ -210,11 +240,16 @@ export function withEvents(
     // table cannot tell a dropped entry apart from replaying one that changes
     // no bytes, so the reducer's transition says which it was.
     if (historyDropped !== null) {
-      prepare("history-drop", createHistoryDropEvent(prevState, nextState, historyDropped));
+      prepare("history-drop", createHistoryDropEvent(prevState, nextState, historyDropped, origin));
     } else if (action.type === "UNDO" || action.type === "REDO") {
       prepare(
         "history-change",
-        createHistoryChangeEvent(action.type === "UNDO" ? "undo" : "redo", prevState, nextState),
+        createHistoryChangeEvent(
+          action.type === "UNDO" ? "undo" : "redo",
+          prevState,
+          nextState,
+          origin,
+        ),
       );
     }
 
@@ -228,6 +263,7 @@ export function withEvents(
           prevState,
           nextState,
           diffChangedAttentionIds(prevState, nextState),
+          origin,
         ),
       );
     }
@@ -235,15 +271,19 @@ export function withEvents(
     // Emit save only for MARK_SAVED. The event records the caller reporting a
     // successful save. Reed does not write the document itself.
     if (action.type === "MARK_SAVED") {
-      prepare("save", createSaveEvent(nextState));
+      prepare("save", createSaveEvent(nextState, origin));
     }
 
     // Dirty state change events. Ordered after 'save' so a listener reacting to
     // 'dirty-change' already sees the save that caused it.
     if (prevState.metadata.isDirty !== nextState.metadata.isDirty) {
-      prepare("dirty-change", createDirtyChangeEvent(nextState.metadata.isDirty, nextState));
+      prepare(
+        "dirty-change",
+        createDirtyChangeEvent(nextState.metadata.isDirty, nextState, origin),
+      );
     }
 
+    Object.freeze(types);
     return events;
   }
 
@@ -260,7 +300,13 @@ export function withEvents(
     // one the commit notifies no one, so the level stays open until it returns.
     const level = pendingEventLevels[pendingEventLevels.length - 1];
     const slot = level === undefined ? reserveSlot() : undefined;
-    const target = level ?? slot!.events;
+    const target = level?.events ?? slot!.events;
+    const transactionId = level?.transactionId ?? null;
+    // Take the origin id before committing, where the slot is reserved. The
+    // commit notifies store listeners, and an action one dispatches is
+    // delivered after this one, so it must get a larger id. An action that
+    // turns out to emit nothing leaves its id unused.
+    const originId = ++lastOriginId;
     try {
       committing++;
       let transition: DocumentTransition;
@@ -279,7 +325,9 @@ export function withEvents(
         slot !== undefined && !delivering && deliveryQueue[0] === slot && !hasListeners();
       if (transition.state !== prevState && !unheard) {
         try {
-          target.push(...prepareEventsForAction(action, prevState, transition));
+          target.push(
+            ...prepareEventsForAction(action, prevState, transition, originId, transactionId),
+          );
         } catch (error) {
           // The state transition has already committed. Event metadata is
           // observational and must not make callers believe the edit failed.
@@ -311,12 +359,14 @@ export function withEvents(
   }
 
   /**
-   * Begin a transaction, pushing a new event buffer level.
+   * Begin a transaction, pushing a new event buffer level. A nested level
+   * keeps the outermost transaction's id. An outermost one takes the next id.
    */
   function beginTransaction(): void {
     if (disposed) return;
     withLevelsDetached(() => baseStore.beginTransaction());
-    pendingEventLevels.push([]);
+    const transactionId = pendingEventLevels[0]?.transactionId ?? ++lastTransactionId;
+    pendingEventLevels.push({ transactionId, events: [] });
   }
 
   /**
@@ -338,10 +388,10 @@ export function withEvents(
       return;
     }
 
-    const events = pendingEventLevels.pop()!;
+    const { events } = pendingEventLevels.pop()!;
     if (pendingEventLevels.length > 0) {
       withLevelsDetached(() => baseStore.commitTransaction());
-      pendingEventLevels[pendingEventLevels.length - 1]!.push(...events);
+      pendingEventLevels[pendingEventLevels.length - 1]!.events.push(...events);
       return;
     }
 
@@ -392,17 +442,17 @@ export function withEvents(
     baseStore.dispose();
   }
 
-  function addEventListener<K extends keyof DocumentEventMap>(
+  function addEventListener<K extends keyof StoreEventMap>(
     type: K,
-    handler: EventHandler<DocumentEventMap[K]>,
+    handler: EventHandler<StoreEventMap[K]>,
   ): Unsubscribe {
     if (disposed) return () => {};
     return emitter.addEventListener(type, handler);
   }
 
-  function removeEventListener<K extends keyof DocumentEventMap>(
+  function removeEventListener<K extends keyof StoreEventMap>(
     type: K,
-    handler: EventHandler<DocumentEventMap[K]>,
+    handler: EventHandler<StoreEventMap[K]>,
   ): void {
     emitter.removeEventListener(type, handler);
   }

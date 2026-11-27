@@ -162,6 +162,10 @@ export type { DiffEdit, DiffResult, SetValueOptions } from "./store/index.js";
 // Event types
 export type {
   DocumentEvent,
+  EventOrigin,
+  StoreEvent,
+  StoreEventMap,
+  StoreEventEmitter,
   ContentChangeEvent,
   SelectionChangeEvent,
   HistoryChangeEvent,

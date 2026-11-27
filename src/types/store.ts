@@ -5,9 +5,9 @@
 import type { DocumentState } from "./state.js";
 import type { DocumentAction } from "./actions.js";
 import type {
-  DocumentEventEmitter,
-  DocumentEventMap,
   EventHandler,
+  StoreEventEmitter,
+  StoreEventMap,
   Unsubscribe,
 } from "../store/features/events.js";
 
@@ -227,13 +227,17 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
    * });
    * ```
    *
+   * Every event a handler receives has an `origin`, so handlers can read
+   * `event.origin` without checking for undefined. The store sets it on
+   * every event it emits, and `events.emit` requires one.
+   *
    * @param type - Event type to listen for
    * @param handler - Handler function called with the event
    * @returns Unsubscribe function
    */
-  addEventListener<K extends keyof DocumentEventMap>(
+  addEventListener<K extends keyof StoreEventMap>(
     type: K,
-    handler: EventHandler<DocumentEventMap[K]>,
+    handler: EventHandler<StoreEventMap[K]>,
   ): Unsubscribe;
 
   /**
@@ -242,16 +246,20 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
    * @param type - Event type
    * @param handler - The same handler function passed to addEventListener
    */
-  removeEventListener<K extends keyof DocumentEventMap>(
+  removeEventListener<K extends keyof StoreEventMap>(
     type: K,
-    handler: EventHandler<DocumentEventMap[K]>,
+    handler: EventHandler<StoreEventMap[K]>,
   ): void;
 
   /**
    * Access the underlying event emitter for advanced use cases.
-   * Prefer addEventListener/removeEventListener for typical usage.
+   * Prefer addEventListener/removeEventListener for typical usage. It holds
+   * the same handlers, and `emit` requires an event with an `origin`, so
+   * pass one to the event factory when you emit events yourself. An event
+   * without one, passed through a wider type, is reported through the
+   * store's logger and dropped.
    */
-  readonly events: DocumentEventEmitter;
+  readonly events: StoreEventEmitter;
 }
 
 // ReadTextFn and DeleteBoundaryContext are defined in types/operations.ts.
