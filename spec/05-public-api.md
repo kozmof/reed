@@ -257,16 +257,19 @@ doc.addEventListener("selection-change", (e) => {
 });
 ```
 
-Check `origin.types` for what else the action did. An `UNDO` or `REDO` that
-applies an entry lists `history-change`. One whose entry no longer replays lists
-`history-drop` instead.
+Check `origin.types` for what else the action did. Only `INSERT`, `DELETE`,
+`REPLACE`, and `APPLY_REMOTE` list `content-change`. An `UNDO` or `REDO` that
+applies an entry changes the text but lists `history-change` instead. One whose
+entry no longer replays lists `history-drop`.
 
 Semantics:
 
 - Each action in a `batch` or transaction gets its own origin. They all share
   one `transactionId`.
-- A rollback discards the transaction's events, so its `transactionId` never
-  appears.
+- Rolling back the outermost transaction discards all of its events, so its
+  `transactionId` never appears. Rolling back a nested transaction discards
+  only that transaction's events. The outer transaction's events still carry
+  the id when it commits.
 - An action that an event handler or store listener dispatches gets a later
   `id`. Its `transactionId` is `null` unless it opens a transaction of its own.
 - `types` lists the events the store prepared, which can include events that

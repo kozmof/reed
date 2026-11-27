@@ -310,6 +310,22 @@ describe("EventOrigin.transactionId", () => {
     expect(second! - first!).toBe(2);
   });
 
+  it("stays on the outer transaction's events after a nested rollback", () => {
+    const store = createDocumentStoreWithEvents({ content: "hello" });
+    const events = record(store);
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(5), "a"));
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(6), "b"));
+    store.rollbackTransaction();
+    store.commitTransaction();
+
+    const content = events.filter((e) => e.type === "content-change");
+    expect(content).toHaveLength(1);
+    expect(content[0]!.origin!.action).toMatchObject({ text: "a" });
+    expect(content[0]!.origin!.transactionId).not.toBeNull();
+  });
+
   it("is null for an action a store listener dispatches while the transaction commits", () => {
     const store = createDocumentStoreWithEvents({ content: "hello" });
     const events = record(store);

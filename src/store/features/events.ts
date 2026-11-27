@@ -59,9 +59,11 @@ export interface EventOrigin {
    * null when it was dispatched outside a transaction. Every action in one
    * `batch`, or between an outermost `beginTransaction` and its
    * `commitTransaction` with nested transactions included, has the same id,
-   * and a later transaction has a larger one. A rolled-back transaction
-   * delivers no events, so its id never appears. These ids are counted
-   * separately from `id`.
+   * and a later transaction has a larger one. Rolling back the outermost
+   * transaction discards all of its events, so its id never appears. Rolling
+   * back a nested transaction discards only the events of that transaction's
+   * actions. The outer transaction's events still carry the id when it
+   * commits. These ids are counted separately from `id`.
    */
   readonly transactionId: number | null;
 }
@@ -410,12 +412,17 @@ export function createProbedEventEmitter(logger?: Pick<ReedLogger, "error">): Pr
 // Each factory takes an optional `origin` as its last argument. The event
 // store passes one; an event created without it has no `origin` property.
 
-/** Freeze an event, adding `origin` only when one is given. */
+/**
+ * Freeze an event, adding `origin` only when one is given. The factories pass
+ * a fresh literal, so setting `origin` on it before freezing saves a copy on
+ * the dispatch path.
+ */
 function freezeEvent<E extends AnyDocumentEvent>(
   event: Omit<E, "origin">,
   origin: EventOrigin | undefined,
 ): E {
-  return Object.freeze(origin === undefined ? event : { ...event, origin }) as E;
+  if (origin !== undefined) (event as { origin?: EventOrigin }).origin = origin;
+  return Object.freeze(event) as E;
 }
 
 /**

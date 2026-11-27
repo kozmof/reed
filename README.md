@@ -226,8 +226,11 @@ Edits, undo, and chunk loads also move the selection. Each event's `origin` name
 doc.addEventListener("selection-change", (e) => {
   if (e.origin?.action.type === "SET_SELECTION") console.log("user moved the cursor");
   else if (e.origin?.types.includes("content-change")) console.log("an edit moved the cursor");
+  else if (e.origin?.types.includes("history-change")) console.log("undo or redo moved the cursor");
 });
 ```
+
+Undo and redo change the text without emitting `content-change`. They report the change through `history-change`.
 
 ## Tracking references with attention
 
