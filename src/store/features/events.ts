@@ -38,18 +38,20 @@ import { MAX_OBSERVER_REENTRANT_STEPS, reportCaughtError } from "./diagnostics.j
 export interface EventOrigin {
   /**
    * Identifies the action within its store. Every event from one action has
-   * the same id, and a later action has a larger one. An action that emits
-   * nothing, or emits while no handler is registered, uses no id, so ids skip
-   * values. Use them to correlate events, not to count actions.
+   * the same id. An action delivered later has a larger id, including one a
+   * store listener or event handler dispatched in reaction. An action that
+   * emits no events still uses an id, so ids skip values. Use them to
+   * correlate events, not to count actions.
    */
   readonly id: number;
   /** The action whose commit produced the event. */
   readonly action: DocumentAction;
   /**
    * Every event type the action emits, in delivery order, including the event
-   * that carries this origin. It lists the events the store prepared. A
-   * handler that emits through `events.emit` past the emitter's re-entrancy
-   * limit can stop later ones from being delivered.
+   * that carries this origin. It lists the events the store prepared, which
+   * can include events that are never delivered. Two things stop the rest of
+   * an action's events. A handler can dispose the store, or it can emit
+   * through `events.emit` past the emitter's re-entrancy limit.
    */
   readonly types: readonly (keyof DocumentEventMap)[];
   /**

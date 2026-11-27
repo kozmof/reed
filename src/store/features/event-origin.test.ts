@@ -187,15 +187,47 @@ describe("EventOrigin on store events", () => {
     expect(ids[3]).toBeLessThan(ids[4]!);
   });
 
-  it("uses no id for an action that emits nothing or that no handler hears", () => {
+  it("skips the id of an action that emits nothing or that no handler hears", () => {
     const store = createDocumentStoreWithEvents({ content: "abc" });
-    store.dispatch(DocumentActions.setSelection(caret(1)));
+    store.dispatch(DocumentActions.setSelection(caret(1))); // unheard
     const events = record(store);
     store.dispatch(DocumentActions.setSelection(caret(1))); // unchanged: no events
     store.dispatch(DocumentActions.setSelection(caret(2)));
 
     expect(events).toHaveLength(1);
-    expect(events[0]!.origin!.id).toBe(1);
+    expect(events[0]!.origin!.id).toBe(3);
+  });
+
+  it("gives an action a store listener dispatches a later id", () => {
+    const store = createDocumentStoreWithEvents({ content: "abc" });
+    const events = record(store);
+    let reacted = false;
+    store.subscribe(() => {
+      if (reacted) return;
+      reacted = true;
+      store.dispatch(DocumentActions.setSelection(caret(1)));
+    });
+    // The caret starts at 0, so an insert at 3 leaves it in place.
+    store.dispatch(DocumentActions.insert(byteOffset(3), "d"));
+
+    expect(events.map((e) => [e.type, e.origin!.action.type])).toEqual([
+      ["content-change", "INSERT"],
+      ["dirty-change", "INSERT"],
+      ["selection-change", "SET_SELECTION"],
+    ]);
+    const ids = events.map((e) => e.origin!.id);
+    expect(ids[0]).toBe(ids[1]);
+    expect(ids[2]).toBeGreaterThan(ids[1]!);
+  });
+
+  it("lists events that a handler disposing the store stops", () => {
+    const store = createDocumentStoreWithEvents({ content: "abc" });
+    const events = record(store);
+    store.addEventListener("content-change", () => store.dispose());
+    store.dispatch(DocumentActions.insert(byteOffset(3), "d"));
+
+    expect(events.map((e) => e.type)).toEqual(["content-change"]);
+    expect(events[0]!.origin!.types).toEqual(["content-change", "dirty-change"]);
   });
 
   it("gives an action a handler dispatches a later id and no transaction", () => {

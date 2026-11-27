@@ -181,6 +181,7 @@ export function withEvents(
     action: DocumentAction,
     prevState: DocumentState,
     { state: nextState, historyDropped }: DocumentTransition,
+    originId: number,
     transactionId: number | null,
   ): Array<() => void> {
     if (disposed) return [];
@@ -237,7 +238,7 @@ export function withEvents(
     if (types.length === 0) return [];
 
     const origin: EventOrigin = Object.freeze({
-      id: ++lastOriginId,
+      id: originId,
       action,
       types: Object.freeze(types),
       transactionId,
@@ -310,6 +311,11 @@ export function withEvents(
     const slot = level === undefined ? reserveSlot() : undefined;
     const target = level?.events ?? slot!.events;
     const transactionId = level?.transactionId ?? null;
+    // Take the origin id before committing, as the slot is reserved. The
+    // commit notifies store listeners, and an action one dispatches is
+    // delivered after this one, so it must get a larger id. An action that
+    // turns out to emit nothing leaves its id unused.
+    const originId = ++lastOriginId;
     try {
       committing++;
       let transition: DocumentTransition;
@@ -328,7 +334,9 @@ export function withEvents(
         slot !== undefined && !delivering && deliveryQueue[0] === slot && !hasListeners();
       if (transition.state !== prevState && !unheard) {
         try {
-          target.push(...prepareEventsForAction(action, prevState, transition, transactionId));
+          target.push(
+            ...prepareEventsForAction(action, prevState, transition, originId, transactionId),
+          );
         } catch (error) {
           // The state transition has already committed. Event metadata is
           // observational and must not make callers believe the edit failed.

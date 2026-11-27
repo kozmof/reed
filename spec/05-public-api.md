@@ -212,8 +212,9 @@ no transition that could emit them, and `isDirty` was only ever set to `true`.
 Every event an event store emits carries `origin`, an `EventOrigin`. All events
 from one action share the same frozen origin object.
 
-- `id` — identifies the action within its store. A later action has a larger
-  id. Ids skip values, so they correlate events but do not count actions.
+- `id` — identifies the action within its store. An action delivered later has
+  a larger id. An action that emits no events still uses one, so ids skip
+  values. Use them to correlate events, not to count actions.
 - `action` — the action whose commit produced the event.
 - `types` — every event type the action emits, in delivery order.
 - `transactionId` — the id of the outermost transaction the action ran in, or
@@ -234,15 +235,31 @@ The store fixes `types` before it delivers the first event. A handler therefore
 sees events that arrive after its own, such as the `history-change` that follows
 a `selection-change` on undo.
 
-Check `origin` to find out why the selection moved.
+Check `origin.action` to find out why the selection moved.
 
 ```ts
 doc.addEventListener("selection-change", (e) => {
-  if (e.origin?.action.type === "SET_SELECTION") return showUserSelection(e);
-  if (e.origin?.types.includes("history-change")) return showRestoredSelection(e);
-  followEdit(e);
+  switch (e.origin?.action.type) {
+    case "SET_SELECTION":
+      return showUserSelection(e);
+    case "UNDO":
+    case "REDO":
+      return showRestoredSelection(e);
+    case "INSERT":
+    case "DELETE":
+    case "REPLACE":
+    case "APPLY_REMOTE":
+      return followEdit(e);
+    default:
+      // LOAD_CHUNK, LOAD_CHUNKS, EVICT_CHUNK, or EVICT_CHUNKS shifted it.
+      return shiftSelection(e);
+  }
 });
 ```
+
+Check `origin.types` for what else the action did. An `UNDO` or `REDO` that
+applies an entry lists `history-change`. One whose entry no longer replays lists
+`history-drop` instead.
 
 Semantics:
 
@@ -252,9 +269,10 @@ Semantics:
   appears.
 - An action that an event handler or store listener dispatches gets a later
   `id`. Its `transactionId` is `null` unless it opens a transaction of its own.
-- `types` lists the events the store prepared. A handler that emits through
-  `events.emit` beyond the emitter's re-entrancy limit can stop later events
-  from reaching handlers.
+- `types` lists the events the store prepared, which can include events that
+  are never delivered. A handler that disposes the store stops the rest of the
+  action's events. So does a handler that emits through `events.emit` beyond
+  the emitter's re-entrancy limit.
 - Events created by a factory such as `events.createSelectionChangeEvent` have
   no `origin` unless you pass one as the last argument.
 
