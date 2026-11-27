@@ -273,6 +273,9 @@ Semantics:
   the id when it commits.
 - An action that an event handler or store listener dispatches gets a later
   `id`. Its `transactionId` is that of any transaction open at that moment.
+  That includes a transaction another handler began and has not yet
+  committed. The action then joins that transaction, and its events wait for
+  that transaction's commit.
   When a store listener dispatches during an outermost commit, the committing
   transaction is already closed, so the action gets `null`.
 - `types` lists the events the store prepared. A handler that disposes the
@@ -283,7 +286,10 @@ Semantics:
   long time, copy out what you need, such as `origin.action.type`.
 - `DocumentStoreWithEvents.addEventListener` types each event as `StoreEvent`,
   so `origin` is required there. On `DocumentEvent` and on the `events`
-  emitter it stays optional.
+  emitter it stays optional. Handlers registered with `addEventListener` also
+  receive events passed to `events.emit`, so an event emitted without an
+  `origin` reaches them without one. Pass an origin when you emit events
+  yourself.
 - Events created by a factory such as `events.createSelectionChangeEvent` have
   no `origin` unless you pass one as the last argument.
 

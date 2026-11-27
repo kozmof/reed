@@ -1,6 +1,6 @@
 /** Typed event-emitting wrapper for a document store. */
 import type { DocumentState, DocumentStoreRuntimeConfig } from "../../types/state.js";
-import type { ContentChangeAction, DocumentAction } from "../../types/actions.js";
+import type { DocumentAction } from "../../types/actions.js";
 import { isTextEditAction } from "../../types/actions.js";
 import type {
   ReconcilableDocumentStore,
@@ -187,12 +187,34 @@ export function withEvents(
   ): Array<() => void> {
     if (disposed) return [];
 
-    // First decide which events the action emits, in delivery order, so every
-    // event can carry the full list in its origin. The checks are O(1).
+    // Every event shares one origin. `prepare` records each event's type in
+    // `types` as it builds the event, so the list cannot disagree with the
+    // events. The origin is frozen shallowly here and `types` once every event
+    // is prepared, before any of them is delivered.
+    const types: Array<keyof DocumentEventMap> = [];
+    const origin: EventOrigin = Object.freeze({ id: originId, action, types, transactionId });
+
+    const events: Array<() => void> = [];
+    function prepare<K extends keyof DocumentEventMap>(type: K, event: DocumentEventMap[K]): void {
+      types.push(type);
+      events.push(() => {
+        if (!disposed) emitter.emit(type, event);
+      });
+    }
 
     // Content change events for local text edits and remote content updates.
-    const contentAction: ContentChangeAction | null =
-      isTextEditAction(action) || action.type === "APPLY_REMOTE" ? action : null;
+    if (isTextEditAction(action) || action.type === "APPLY_REMOTE") {
+      prepare(
+        "content-change",
+        createContentChangeEvent(
+          action,
+          prevState,
+          nextState,
+          getAffectedRanges(action, prevState, nextState),
+          origin,
+        ),
+      );
+    }
 
     // Selection change events: every action that moves the selection, such as
     // SET_SELECTION, an edit moving it past the edited text, undo and redo
@@ -200,7 +222,9 @@ export function withEvents(
     // Selections are immutable and an action that leaves the selection in
     // place keeps the same object (SET_SELECTION with the current ranges
     // included), so the reference check is O(1).
-    const selectionMoved = prevState.selection !== nextState.selection;
+    if (prevState.selection !== nextState.selection) {
+      prepare("selection-change", createSelectionChangeEvent(prevState, nextState, origin));
+    }
 
     // History events. UNDO and REDO that apply an entry change history; an
     // action that discards entries without undoing or redoing them drops it
@@ -208,74 +232,24 @@ export function withEvents(
     // entry that no longer replays, APPLY_REMOTE, and HISTORY_CLEAR. The piece
     // table cannot tell a dropped entry apart from replaying one that changes
     // no bytes, so the reducer's transition says which it was.
-    const historyDirection =
-      historyDropped === null && (action.type === "UNDO" || action.type === "REDO")
-        ? action.type === "UNDO"
-          ? "undo"
-          : "redo"
-        : null;
-
-    // attention-change fires when CREATE_ATTENTION, DELETE_ATTENTION, or a
-    // content edit changes the attention layer. Structural sharing makes the
-    // reference check O(1).
-    const attentionChanged = prevState.attention !== nextState.attention;
-
-    // save fires only for MARK_SAVED. The event records the caller reporting a
-    // successful save. Reed does not write the document itself.
-    const saved = action.type === "MARK_SAVED";
-
-    // dirty-change comes after 'save' so a listener reacting to it already
-    // sees the save that caused it.
-    const dirtyChanged = prevState.metadata.isDirty !== nextState.metadata.isDirty;
-
-    const types: Array<keyof DocumentEventMap> = [];
-    if (contentAction !== null) types.push("content-change");
-    if (selectionMoved) types.push("selection-change");
-    if (historyDropped !== null) types.push("history-drop");
-    else if (historyDirection !== null) types.push("history-change");
-    if (attentionChanged) types.push("attention-change");
-    if (saved) types.push("save");
-    if (dirtyChanged) types.push("dirty-change");
-    if (types.length === 0) return [];
-
-    const origin: EventOrigin = Object.freeze({
-      id: originId,
-      action,
-      types: Object.freeze(types),
-      transactionId,
-    });
-
-    const events: Array<() => void> = [];
-    function prepare<K extends keyof DocumentEventMap>(type: K, event: DocumentEventMap[K]): void {
-      events.push(() => {
-        if (!disposed) emitter.emit(type, event);
-      });
-    }
-
-    if (contentAction !== null) {
+    if (historyDropped !== null) {
+      prepare("history-drop", createHistoryDropEvent(prevState, nextState, historyDropped, origin));
+    } else if (action.type === "UNDO" || action.type === "REDO") {
       prepare(
-        "content-change",
-        createContentChangeEvent(
-          contentAction,
+        "history-change",
+        createHistoryChangeEvent(
+          action.type === "UNDO" ? "undo" : "redo",
           prevState,
           nextState,
-          getAffectedRanges(contentAction, prevState, nextState),
           origin,
         ),
       );
     }
-    if (selectionMoved) {
-      prepare("selection-change", createSelectionChangeEvent(prevState, nextState, origin));
-    }
-    if (historyDropped !== null) {
-      prepare("history-drop", createHistoryDropEvent(prevState, nextState, historyDropped, origin));
-    } else if (historyDirection !== null) {
-      prepare(
-        "history-change",
-        createHistoryChangeEvent(historyDirection, prevState, nextState, origin),
-      );
-    }
-    if (attentionChanged) {
+
+    // Emit attention-change when CREATE_ATTENTION, DELETE_ATTENTION, or a
+    // content edit changes the attention layer. Structural sharing makes the
+    // reference check O(1).
+    if (prevState.attention !== nextState.attention) {
       prepare(
         "attention-change",
         createAttentionChangeEvent(
@@ -286,14 +260,23 @@ export function withEvents(
         ),
       );
     }
-    if (saved) prepare("save", createSaveEvent(nextState, origin));
-    if (dirtyChanged) {
+
+    // Emit save only for MARK_SAVED. The event records the caller reporting a
+    // successful save. Reed does not write the document itself.
+    if (action.type === "MARK_SAVED") {
+      prepare("save", createSaveEvent(nextState, origin));
+    }
+
+    // Dirty state change events. Ordered after 'save' so a listener reacting to
+    // 'dirty-change' already sees the save that caused it.
+    if (prevState.metadata.isDirty !== nextState.metadata.isDirty) {
       prepare(
         "dirty-change",
         createDirtyChangeEvent(nextState.metadata.isDirty, nextState, origin),
       );
     }
 
+    Object.freeze(types);
     return events;
   }
 
@@ -458,6 +441,8 @@ export function withEvents(
   ): Unsubscribe {
     if (disposed) return () => {};
     // Every event this store emits carries an origin (see prepareEventsForAction).
+    // An event a caller passes to `events.emit` without one does not; the
+    // `addEventListener` and `events` docs warn of that.
     return emitter.addEventListener(type, handler as EventHandler<DocumentEventMap[K]>);
   }
 

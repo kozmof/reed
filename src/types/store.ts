@@ -228,10 +228,13 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
    * });
    * ```
    *
-   * @param type - Event type to listen for
    * The store sets `origin` on every event it emits, so handlers can read
-   * `event.origin` without checking for undefined.
+   * `event.origin` without checking for undefined. Handlers registered here
+   * also receive events passed to `events.emit`. An event emitted there
+   * without an `origin` reaches them without one, so pass an origin to the
+   * event factory when you emit events yourself.
    *
+   * @param type - Event type to listen for
    * @param handler - Handler function called with the event
    * @returns Unsubscribe function
    */
@@ -256,6 +259,8 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
    * Prefer addEventListener/removeEventListener for typical usage. Its
    * handlers are typed for any event passed to `emit`, so `origin` stays
    * optional there, even though the store sets it on every event it emits.
+   * `emit` also reaches handlers registered with `addEventListener`, whose
+   * type marks `origin` as required, so pass an origin when you emit.
    */
   readonly events: DocumentEventEmitter;
 }

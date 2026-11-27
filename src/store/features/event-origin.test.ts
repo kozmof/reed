@@ -22,7 +22,7 @@ import { DocumentActions } from "./actions.js";
 import { createDocumentStoreWithEvents } from "./store.js";
 import type { DocumentAction } from "../../types/actions.js";
 import type { DocumentStoreWithEvents } from "../../types/store.js";
-import { byteOffset } from "../../types/branded.js";
+import { byteOffset, type AttentionID } from "../../types/branded.js";
 
 const EVENT_TYPES: readonly (keyof DocumentEventMap)[] = [
   "content-change",
@@ -42,6 +42,8 @@ function record(store: DocumentStoreWithEvents): StoreEvent<AnyDocumentEvent>[] 
   }
   return events;
 }
+
+const enc = (text: string) => new TextEncoder().encode(text);
 
 const caret = (offset: number) =>
   [{ anchor: byteOffset(offset), head: byteOffset(offset) }] as const;
@@ -148,6 +150,41 @@ describe("EventOrigin on store events", () => {
       () => DocumentActions.createAttention(byteOffset(0), byteOffset(2)),
       ["attention-change"],
     ],
+    [
+      "DELETE before the caret",
+      (store) => {
+        store.dispatch(DocumentActions.setSelection(caret(11)));
+        return DocumentActions.delete(byteOffset(0), byteOffset(2));
+      },
+      ["content-change", "selection-change", "dirty-change"],
+    ],
+    [
+      "REPLACE",
+      () => DocumentActions.replace(byteOffset(0), byteOffset(2), "XYZ"),
+      ["content-change", "selection-change", "dirty-change"],
+    ],
+    [
+      "REDO",
+      (store) => {
+        store.dispatch(DocumentActions.replace(byteOffset(0), byteOffset(2), "XYZ"));
+        store.dispatch(DocumentActions.undo());
+        return DocumentActions.redo();
+      },
+      ["selection-change", "history-change"],
+    ],
+    [
+      "DELETE_ATTENTION",
+      (store) => {
+        let id: AttentionID | undefined;
+        const unsubscribe = store.addEventListener("attention-change", (e) => {
+          id = e.changedIds[0];
+        });
+        store.dispatch(DocumentActions.createAttention(byteOffset(0), byteOffset(2)));
+        unsubscribe();
+        return DocumentActions.deleteAttention(id!);
+      },
+      ["attention-change"],
+    ],
   ])("reports the events of %s", (_label, setup, expected) => {
     const store = createDocumentStoreWithEvents({ content: "hello world" });
     const action = setup(store);
@@ -160,7 +197,6 @@ describe("EventOrigin on store events", () => {
   });
 
   it("names the chunk load that moved the selection", () => {
-    const enc = (s: string) => new TextEncoder().encode(s);
     const store = createDocumentStoreWithEvents({
       chunkSize: 8,
       totalFileSize: 16,
@@ -174,6 +210,44 @@ describe("EventOrigin on store events", () => {
 
     expect(origin.types).toEqual(["selection-change"]);
     expect(origin.action.type).toBe("LOAD_CHUNK");
+  });
+
+  it.each<[string, (store: DocumentStoreWithEvents) => DocumentAction, string[]]>([
+    [
+      "LOAD_CHUNKS that shifts the selection",
+      (store) => {
+        store.dispatch(DocumentActions.loadChunk(1, enc("bbbbbbbb")));
+        store.dispatch(DocumentActions.setSelection(caret(3)));
+        return DocumentActions.loadChunks([{ chunkIndex: 0, data: enc("aaaaaaaa") }]);
+      },
+      ["selection-change"],
+    ],
+    [
+      "EVICT_CHUNKS that discards history",
+      (store) => {
+        store.dispatch(DocumentActions.loadChunk(0, enc("aaaaaaaa")));
+        store.dispatch(DocumentActions.loadChunk(1, enc("bbbbbbbb")));
+        store.dispatch(DocumentActions.insert(byteOffset(2), "X"));
+        store.dispatch(DocumentActions.undo());
+        store.dispatch(DocumentActions.setSelection(caret(3)));
+        return DocumentActions.evictChunks([0], 1);
+      },
+      ["selection-change", "history-drop"],
+    ],
+  ])("reports the events of %s", (_label, setup, expected) => {
+    const store = createDocumentStoreWithEvents({
+      chunkSize: 8,
+      totalFileSize: 16,
+      historyEvictionPolicy: "pin-bounded",
+      reconcileMode: "none",
+    });
+    const action = setup(store);
+    const events = eventsOf(store, action);
+    const origin = sharedOrigin(events);
+
+    expect(events.map((e) => e.type)).toEqual(expected);
+    expect(origin.types).toEqual(expected);
+    expect(origin.action).toBe(action);
   });
 
   it("gives each action a larger id", () => {
@@ -253,6 +327,79 @@ describe("EventOrigin on store events", () => {
     expect(selection.origin.id).toBeGreaterThan(content.origin.id);
     expect(content.origin.transactionId).not.toBeNull();
     expect(selection.origin.transactionId).toBeNull();
+  });
+
+  it("orders ids by delivery when a handler runs a transaction during delivery", () => {
+    const store = createDocumentStoreWithEvents({ content: "abc" });
+    const events = record(store);
+    let reacted = false;
+    store.addEventListener("content-change", () => {
+      if (reacted) return;
+      reacted = true;
+      store.dispatch(DocumentActions.setSelection(caret(1)));
+      store.beginTransaction();
+      store.dispatch(DocumentActions.insert(byteOffset(0), "z"));
+      store.commitTransaction();
+      store.dispatch(DocumentActions.setSelection(caret(3)));
+    });
+    store.dispatch(DocumentActions.insert(byteOffset(3), "d"));
+
+    expect(events.map((e) => e.origin.action.type)).toEqual([
+      "INSERT",
+      "INSERT",
+      "SET_SELECTION",
+      "INSERT",
+      "INSERT",
+      "SET_SELECTION",
+    ]);
+    const ids = events.map((e) => e.origin.id);
+    expect(ids).toEqual([...ids].sort((a, b) => a - b));
+    expect(new Set(ids).size).toBe(4);
+    expect(events[3]!.origin.transactionId).not.toBeNull();
+  });
+
+  it("gives an action a handler dispatches into another handler's open transaction that transaction's id", () => {
+    const store = createDocumentStoreWithEvents({ content: "abc" });
+    const events = record(store);
+    let opened = false;
+    store.addEventListener("content-change", () => {
+      if (opened) return;
+      opened = true;
+      store.beginTransaction(); // left open when the handler returns
+    });
+    let saved = false;
+    store.addEventListener("dirty-change", () => {
+      if (saved) return;
+      saved = true;
+      store.dispatch(DocumentActions.markSaved());
+    });
+    store.dispatch(DocumentActions.insert(byteOffset(3), "d"));
+
+    // The MARK_SAVED joined the open transaction, so its events wait for the commit.
+    expect(events.some((e) => e.type === "save")).toBe(false);
+    store.commitTransaction();
+    const save = events.find((e) => e.type === "save")!;
+    expect(save.origin.action.type).toBe("MARK_SAVED");
+    expect(save.origin.transactionId).not.toBeNull();
+  });
+
+  it("passes events given to events.emit to store handlers as they are", () => {
+    const store = createDocumentStoreWithEvents({ content: "abc" });
+    const seen: (EventOrigin | undefined)[] = [];
+    store.addEventListener("selection-change", (e) => seen.push(e.origin));
+    const state = store.getSnapshot();
+    const origin: EventOrigin = {
+      id: 0,
+      action: DocumentActions.setSelection(caret(0)),
+      types: ["selection-change"],
+      transactionId: null,
+    };
+
+    store.events.emit("selection-change", createSelectionChangeEvent(state, state, origin));
+    // Without an origin the handler gets none, though its type says otherwise.
+    store.events.emit("selection-change", createSelectionChangeEvent(state, state));
+
+    expect(seen).toEqual([origin, undefined]);
   });
 });
 
