@@ -16,14 +16,14 @@ import { MAX_OBSERVER_REENTRANT_STEPS, reportCaughtError } from "./diagnostics.j
 // =============================================================================
 
 /**
- * The action an event store committed to produce an event, and the other
- * events that action produced. Every event from one action shares one frozen
- * origin object, so `a.origin === b.origin` tells whether two events came from
- * the same action.
+ * Describes the action that produced an event and the other events that
+ * action produced. Every event from one action shares one frozen origin
+ * object, so `a.origin === b.origin` tells whether two events came from the
+ * same action.
  *
  * `types` is fixed before the first of the action's events is delivered. A
- * handler can use it to see events that arrive after its own, such as the
- * `history-change` that follows a `selection-change` on undo.
+ * handler can use it to check for events that arrive after its own, such as
+ * the `history-change` that follows a `selection-change` on undo.
  *
  * @example
  * ```ts
@@ -46,11 +46,11 @@ export interface EventOrigin {
   readonly id: number;
   /**
    * The action whose commit produced the event. An event keeps the whole
-   * action alive, payload included. A kept `LOAD_CHUNK` or `LOAD_CHUNKS`
-   * event holds the caller's chunk bytes, which the document stores as a
-   * separate copy. A kept `APPLY_REMOTE` event holds its change set. Copy
-   * what you need from the event, such as `origin.action.type`, when you
-   * keep events for a long time.
+   * action alive, payload included. An event from `LOAD_CHUNK` or
+   * `LOAD_CHUNKS` holds the caller's chunk bytes, and the document stores its
+   * own copy. An event from `APPLY_REMOTE` holds the change set. When you keep
+   * events for a long time, copy out only what you need, such as
+   * `origin.action.type`.
    */
   readonly action: DocumentAction;
   /**
@@ -62,14 +62,14 @@ export interface EventOrigin {
   readonly types: readonly (keyof DocumentEventMap)[];
   /**
    * Identifies the outermost transaction open when the action was dispatched,
-   * or null when none was open. Every action in one `batch`, or between an
-   * outermost `beginTransaction` and its `commitTransaction` with nested
-   * transactions included, has the same id, and a later transaction has a
-   * larger one. Rolling back the outermost
-   * transaction discards all of its events, so its id never appears. Rolling
-   * back a nested transaction discards only the events of that transaction's
-   * actions. The outer transaction's events still carry the id when it
-   * commits. These ids are counted separately from `id`.
+   * or null when none was open. Every action in one `batch` has the same id.
+   * So does every action between an outermost `beginTransaction` and its
+   * `commitTransaction`, nested transactions included. A later transaction
+   * has a larger id. Rolling back the outermost transaction discards all of
+   * its events, so its id never appears. Rolling back a nested transaction
+   * discards only that transaction's events. The outer transaction's events
+   * still carry the id when it commits. These ids are counted separately from
+   * `id`.
    */
   readonly transactionId: number | null;
 }
@@ -416,7 +416,7 @@ export function createProbedEventEmitter(logger?: Pick<ReedLogger, "error">): Pr
 // =============================================================================
 //
 // Each factory takes an optional `origin` as its last argument. The event
-// store passes one; an event created without it has no `origin` property.
+// store always passes one. An event created without it has no `origin` property.
 
 /**
  * Freeze an event, adding `origin` only when one is given. The factories pass

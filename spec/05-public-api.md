@@ -162,7 +162,8 @@ Auto-emitted by `store.createDocumentStoreWithEvents`:
 - `content-change` (`INSERT/DELETE/REPLACE/APPLY_REMOTE`)
 - `selection-change` fires when an action replaces the selection. This includes
   explicit selection changes and changes caused by edits, undo or redo, chunk
-  loads, and chunk evictions.
+  loads, and chunk evictions. The event's `origin` names the action (see
+  [3.2](#32-event-origin)).
 - `history-change` (`UNDO/REDO`)
 - `history-drop` reports discarded entries in `undoDropped` and `redoDropped`.
   - Eviction emits it when the history policy discards entries.
@@ -231,9 +232,9 @@ causes it.
 5. `save`
 6. `dirty-change`
 
-The store fixes `types` before it delivers the first event. A handler therefore
-sees events that arrive after its own, such as the `history-change` that follows
-a `selection-change` on undo.
+The store fixes `types` before it delivers the first event. A handler can
+therefore check for events that arrive after its own, such as the
+`history-change` that follows a `selection-change` on undo.
 
 Check `origin.action` to find out why the selection moved.
 

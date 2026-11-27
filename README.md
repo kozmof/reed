@@ -220,7 +220,7 @@ doc.addEventListener("dirty-change", (e) => console.log("dirty flag:", e));
 doc.dispatch(store.DocumentActions.insert(position.byteOffset(0), "hi"));
 ```
 
-Edits, undo, and chunk loads also move the selection. Each event's `origin` names the action that produced it and lists every event type that action emits. Use it to tell a cursor the user moved from one an edit moved.
+Edits, undo, and chunk loads also move the selection. Each event's `origin` names the action that produced it and lists every event type that action emits. Use it to tell whether the user or an edit moved the cursor.
 
 ```ts
 doc.addEventListener("selection-change", (e) => {
@@ -230,7 +230,7 @@ doc.addEventListener("selection-change", (e) => {
 });
 ```
 
-Undo and redo change the text without emitting `content-change`. They report the change through `history-change`.
+Undo and redo report text changes through `history-change`, not `content-change`. See [event origin](spec/05-public-api.md#32-event-origin) for event order and transaction ids.
 
 ## Tracking references with attention
 

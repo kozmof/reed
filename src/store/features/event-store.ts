@@ -311,7 +311,7 @@ export function withEvents(
     const slot = level === undefined ? reserveSlot() : undefined;
     const target = level?.events ?? slot!.events;
     const transactionId = level?.transactionId ?? null;
-    // Take the origin id before committing, as the slot is reserved. The
+    // Take the origin id before committing, where the slot is reserved. The
     // commit notifies store listeners, and an action one dispatches is
     // delivered after this one, so it must get a larger id. An action that
     // turns out to emit nothing leaves its id unused.
@@ -369,7 +369,7 @@ export function withEvents(
 
   /**
    * Begin a transaction, pushing a new event buffer level. A nested level
-   * keeps the outermost transaction's id; an outermost one takes the next id.
+   * keeps the outermost transaction's id. An outermost one takes the next id.
    */
   function beginTransaction(): void {
     if (disposed) return;
