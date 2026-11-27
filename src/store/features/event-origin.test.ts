@@ -3,7 +3,7 @@
  * that action emits, and which transaction it was dispatched in.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   createContentChangeEvent,
   createSelectionChangeEvent,
@@ -15,6 +15,7 @@ import {
   createStoreEventEmitter,
   type AnyDocumentEvent,
   type DocumentEventMap,
+  type DocumentEventEmitter,
   type SaveEvent,
   type EventOrigin,
   type StoreEvent,
@@ -428,6 +429,38 @@ describe("EventOrigin on store events", () => {
       // @ts-expect-error - `emit` requires a StoreEvent
       emitter.emit("selection-change", createSelectionChangeEvent(state, state));
     expect(typeof emitWithoutOrigin).toBe("function");
+  });
+
+  it("reports and drops an event without an origin emitted through a wider type", () => {
+    const error = vi.fn();
+    const store = createDocumentStoreWithEvents({ content: "abc", logger: { error } });
+    const seen: EventOrigin[] = [];
+    store.addEventListener("selection-change", (e) => seen.push(e.origin));
+    const state = store.getSnapshot();
+    const bus: DocumentEventEmitter = store.events;
+
+    bus.emit("selection-change", createSelectionChangeEvent(state, state));
+
+    expect(seen).toEqual([]);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]![0]).toContain("without an origin");
+
+    // Events the store emits itself still arrive.
+    store.dispatch(DocumentActions.setSelection(caret(2)));
+    expect(seen).toHaveLength(1);
+  });
+
+  it("drops an event without an origin on a store-typed emitter", () => {
+    const error = vi.fn();
+    const emitter = createStoreEventEmitter({ error });
+    const handler = vi.fn();
+    emitter.addEventListener("save", handler);
+    const bus: DocumentEventEmitter = emitter;
+
+    bus.emit("save", createSaveEvent(createInitialState()));
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledTimes(1);
   });
 
   it("types a factory's event as a StoreEvent only when given an origin", () => {

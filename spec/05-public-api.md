@@ -284,10 +284,16 @@ Semantics:
   holds the caller's chunk bytes, and the document stores its own copy. An
   event from `APPLY_REMOTE` holds the change set. When you keep events for a
   long time, copy out what you need, such as `origin.action.type`.
+- `origin.action` is the object passed to `dispatch`, not a copy. Actions from
+  `DocumentActions` are frozen. Do not change an action you built yourself
+  after dispatching it, or events that hold it report the change.
 - A `DocumentStoreWithEvents` types each event as `StoreEvent`, so `origin`
   is required. That covers `addEventListener` and the store's `events`
   emitter, a `StoreEventEmitter` whose `emit` takes only events with an
-  `origin`. `origin` stays optional on `DocumentEvent` and on emitters from
+  `origin`. Code that widens `events` to a `DocumentEventEmitter` can still
+  pass an event without one. `emit` reports it through the store's logger and
+  drops it, so no handler receives it. `origin` stays optional on
+  `DocumentEvent` and on emitters from
   `events.createEventEmitter`. A store wrapper or test double that implements
   `DocumentStoreWithEvents` itself can create its `events` with
   `events.createStoreEventEmitter`.

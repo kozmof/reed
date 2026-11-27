@@ -45,8 +45,11 @@ export interface EventOrigin {
    */
   readonly id: number;
   /**
-   * The action whose commit produced the event. An event keeps the whole
-   * action alive, payload included. An event from `LOAD_CHUNK` or
+   * The action whose commit produced the event. It is the object passed to
+   * `dispatch`, not a copy, and the origin's freeze does not reach it.
+   * `DocumentActions` creates frozen actions. If you build actions yourself,
+   * do not change one after dispatching it, or events that hold it report the
+   * change. An event keeps the whole action alive, payload included. An event from `LOAD_CHUNK` or
    * `LOAD_CHUNKS` holds the caller's chunk bytes, and the document stores its
    * own copy. An event from `APPLY_REMOTE` holds the change set. When you keep
    * events for a long time, copy out only what you need, such as
@@ -340,7 +343,9 @@ export interface StoreEventEmitter {
 
   /**
    * Emit an event to all registered handlers. The event must carry an
-   * `origin`, as every event the store emits does.
+   * `origin`, as every event the store emits does. An event without one,
+   * passed through a wider type such as `DocumentEventEmitter`, is reported
+   * through the store's logger and dropped.
    */
   emit<K extends keyof StoreEventMap>(type: K, event: StoreEventMap[K]): void;
 
@@ -360,12 +365,47 @@ export function createEventEmitter(logger?: Pick<ReedLogger, "error">): Document
 /**
  * Create an event emitter typed as a store's `events`, for a store wrapper or
  * test double that implements `DocumentStoreWithEvents` itself. It behaves as
- * `createEventEmitter` does, and its types require an `origin` on every event.
+ * `createEventEmitter` does, except that its types require an `origin` on
+ * every event, and `emit` reports and drops an event without one.
  */
 export function createStoreEventEmitter(logger?: Pick<ReedLogger, "error">): StoreEventEmitter {
-  // The emitter is untyped at runtime. This interface lets in only events
-  // with an origin, so its handlers receive only those.
-  return createEventEmitter(logger) as StoreEventEmitter;
+  return guardStoreEventEmitter(createEventEmitter(logger), logger);
+}
+
+/**
+ * Wrap `emitter` so that its `emit` delivers only events with an `origin`.
+ * Code that widens the result to a `DocumentEventEmitter` can still pass an
+ * event without one. `emit` reports such an event through `logger` and drops
+ * it, so no handler receives an event without an origin.
+ *
+ * The handlers registered through the wrapper reach `emitter` unchanged.
+ * Nothing else may emit on `emitter`, or its handlers could receive an event
+ * without an origin.
+ */
+export function guardStoreEventEmitter(
+  emitter: DocumentEventEmitter,
+  logger: Pick<ReedLogger, "error"> | undefined,
+): StoreEventEmitter {
+  // Every event reaching `emitter` passes the check in `emit`, so a handler
+  // typed for a StoreEvent receives one.
+  type Handler = EventHandler<AnyDocumentEvent>;
+  return {
+    addEventListener: (type, handler) => emitter.addEventListener(type, handler as Handler),
+    removeEventListener: (type, handler) => emitter.removeEventListener(type, handler as Handler),
+    emit(type, event) {
+      const origin: unknown = (event as DocumentEvent).origin;
+      if (typeof origin !== "object" || origin === null) {
+        reportCaughtError(
+          logger,
+          `Dropped a '${type}' event without an origin`,
+          new TypeError("A store's events.emit requires an event with an origin"),
+        );
+        return;
+      }
+      emitter.emit(type, event);
+    },
+    removeAllListeners: () => emitter.removeAllListeners(),
+  };
 }
 
 /**

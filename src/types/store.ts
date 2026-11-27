@@ -255,7 +255,9 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
    * Access the underlying event emitter for advanced use cases.
    * Prefer addEventListener/removeEventListener for typical usage. It holds
    * the same handlers, and `emit` requires an event with an `origin`, so
-   * pass one to the event factory when you emit events yourself.
+   * pass one to the event factory when you emit events yourself. An event
+   * without one, passed through a wider type, is reported through the
+   * store's logger and dropped.
    */
   readonly events: StoreEventEmitter;
 }

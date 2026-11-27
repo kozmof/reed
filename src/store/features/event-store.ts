@@ -10,6 +10,7 @@ import type {
 import { makeBatch } from "./transaction.js";
 import {
   createProbedEventEmitter,
+  guardStoreEventEmitter,
   createContentChangeEvent,
   createSelectionChangeEvent,
   createHistoryChangeEvent,
@@ -51,11 +52,11 @@ export function withEvents(
   commit: (action: DocumentAction) => DocumentTransition,
   logger: DocumentStoreRuntimeConfig["logger"],
 ): DocumentStoreWithEvents {
-  // Handlers reach this emitter only through `StoreEventEmitter`, and events
-  // only through `prepare` and the `emit` it types, so every event it delivers
-  // carries an origin.
+  // The guard drops any event without an origin, including one a caller
+  // passes to `events.emit` through a wider type, so every event a handler
+  // receives carries one.
   const probed = createProbedEventEmitter(logger);
-  const emitter = probed.emitter as StoreEventEmitter;
+  const emitter: StoreEventEmitter = guardStoreEventEmitter(probed.emitter, logger);
   const { hasListeners } = probed;
   let disposed = false;
 
