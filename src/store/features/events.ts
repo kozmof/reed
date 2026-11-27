@@ -49,9 +49,9 @@ export interface EventOrigin {
    * `dispatch`, not a copy, and the origin's freeze does not reach it.
    * `DocumentActions` creates frozen actions. If you build actions yourself,
    * do not change one after dispatching it, or events that hold it report the
-   * change. An event keeps the whole action alive, payload included. An event from `LOAD_CHUNK` or
-   * `LOAD_CHUNKS` holds the caller's chunk bytes, and the document stores its
-   * own copy. An event from `APPLY_REMOTE` holds the change set. When you keep
+   * change. An event keeps the whole action alive, payload included. An
+   * event from `LOAD_CHUNK` or `LOAD_CHUNKS` holds the caller's chunk bytes,
+   * and the document stores its own copy. An event from `APPLY_REMOTE` holds the change set. When you keep
    * events for a long time, copy out only what you need, such as
    * `origin.action.type`.
    */
@@ -313,7 +313,7 @@ export interface DocumentEventEmitter {
 /**
  * The event emitter of a `DocumentStoreWithEvents`, at `store.events`. It is
  * the emitter `addEventListener` registers handlers on, so every event it
- * carries has an `origin`: handlers receive a `StoreEvent`, and `emit`
+ * carries has an `origin`. Handlers receive a `StoreEvent`, and `emit`
  * requires one. To emit an event yourself, pass an origin to its factory.
  *
  * @example

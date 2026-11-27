@@ -288,12 +288,13 @@ Semantics:
   `DocumentActions` are frozen. Do not change an action you built yourself
   after dispatching it, or events that hold it report the change.
 - A `DocumentStoreWithEvents` types each event as `StoreEvent`, so `origin`
-  is required. That covers `addEventListener` and the store's `events`
-  emitter, a `StoreEventEmitter` whose `emit` takes only events with an
-  `origin`. Code that widens `events` to a `DocumentEventEmitter` can still
-  pass an event without one. `emit` reports it through the store's logger and
-  drops it, so no handler receives it. `origin` stays optional on
-  `DocumentEvent` and on emitters from
+  is required. This applies to `addEventListener` and to the store's `events`
+  emitter. That emitter is a `StoreEventEmitter`, and its `emit` takes only
+  events with an `origin`.
+- Code that widens `events` to a `DocumentEventEmitter` can still pass an
+  event without an origin. `emit` reports it through the store's logger and
+  drops it, so no handler receives it.
+- `origin` stays optional on `DocumentEvent` and on emitters from
   `events.createEventEmitter`. A store wrapper or test double that implements
   `DocumentStoreWithEvents` itself can create its `events` with
   `events.createStoreEventEmitter`.
