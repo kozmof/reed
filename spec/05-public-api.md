@@ -215,11 +215,11 @@ from one action share the same frozen origin object.
 - `id` — identifies the action within its store. An action delivered later has
   a larger id. An action that emits no events still uses one, so ids skip
   values. Use them to correlate events, not to count actions.
-- `action` — the action whose commit produced the event.
+- `action` — the action whose commit produced the event, payload included.
 - `types` — every event type the action emits, in delivery order.
-- `transactionId` — the id of the outermost transaction the action ran in, or
-  `null` outside a transaction. Nested transactions share the outermost id. A
-  later transaction has a larger id.
+- `transactionId` — the id of the outermost transaction open when the action
+  was dispatched, or `null` when none was open. Nested transactions share the
+  outermost id. A later transaction has a larger id.
 
 An action delivers its events in this order. Each fires only when the action
 causes it.
@@ -271,11 +271,15 @@ Semantics:
   only that transaction's events. The outer transaction's events still carry
   the id when it commits.
 - An action that an event handler or store listener dispatches gets a later
-  `id`. Its `transactionId` is `null` unless it opens a transaction of its own.
-- `types` lists the events the store prepared, which can include events that
-  are never delivered. A handler that disposes the store stops the rest of the
-  action's events. So does a handler that emits through `events.emit` beyond
-  the emitter's re-entrancy limit.
+  `id`. Its `transactionId` is that of any transaction open at that moment.
+  When a store listener dispatches during an outermost commit, the committing
+  transaction is already closed, so the action gets `null`.
+- `types` lists the events the store prepared. A handler that disposes the
+  store stops the rest of the action's events, so those never arrive.
+- An event keeps its action alive. An event from `LOAD_CHUNK` or `LOAD_CHUNKS`
+  holds the caller's chunk bytes, and the document stores its own copy. An
+  event from `APPLY_REMOTE` holds the change set. When you keep events for a
+  long time, copy out what you need, such as `origin.action.type`.
 - Events created by a factory such as `events.createSelectionChangeEvent` have
   no `origin` unless you pass one as the last argument.
 

@@ -44,22 +44,28 @@ export interface EventOrigin {
    * correlate events, not to count actions.
    */
   readonly id: number;
-  /** The action whose commit produced the event. */
+  /**
+   * The action whose commit produced the event. An event keeps the whole
+   * action alive, payload included. A kept `LOAD_CHUNK` or `LOAD_CHUNKS`
+   * event holds the caller's chunk bytes, which the document stores as a
+   * separate copy. A kept `APPLY_REMOTE` event holds its change set. Copy
+   * what you need from the event, such as `origin.action.type`, when you
+   * keep events for a long time.
+   */
   readonly action: DocumentAction;
   /**
    * Every event type the action emits, in delivery order, including the event
-   * that carries this origin. It lists the events the store prepared, which
-   * can include events that are never delivered. Two things stop the rest of
-   * an action's events. A handler can dispose the store, or it can emit
-   * through `events.emit` past the emitter's re-entrancy limit.
+   * that carries this origin. It lists the events the store prepared. A
+   * handler that disposes the store stops the rest of the action's events, so
+   * those never arrive.
    */
   readonly types: readonly (keyof DocumentEventMap)[];
   /**
-   * Identifies the outermost transaction the action was dispatched in, or
-   * null when it was dispatched outside a transaction. Every action in one
-   * `batch`, or between an outermost `beginTransaction` and its
-   * `commitTransaction` with nested transactions included, has the same id,
-   * and a later transaction has a larger one. Rolling back the outermost
+   * Identifies the outermost transaction open when the action was dispatched,
+   * or null when none was open. Every action in one `batch`, or between an
+   * outermost `beginTransaction` and its `commitTransaction` with nested
+   * transactions included, has the same id, and a later transaction has a
+   * larger one. Rolling back the outermost
    * transaction discards all of its events, so its id never appears. Rolling
    * back a nested transaction discards only the events of that transaction's
    * actions. The outer transaction's events still carry the id when it
