@@ -220,13 +220,13 @@ doc.addEventListener("dirty-change", (e) => console.log("dirty flag:", e));
 doc.dispatch(store.DocumentActions.insert(position.byteOffset(0), "hi"));
 ```
 
-Edits, undo, and chunk loads also move the selection. Each event's `origin` names the action that produced it and lists every event type that action emits. Use it to tell whether the user or an edit moved the cursor.
+Edits, undo, and chunk loads also move the selection. Each event's `origin` names the action that produced it and lists every event type that action emits. Use it to tell an explicit `SET_SELECTION` apart from an edit or undo that moved the cursor. `SET_SELECTION` comes from your own code, such as a click handler, select-all, or restoring a saved cursor, so the action type alone does not say the user caused it.
 
 ```ts
 doc.addEventListener("selection-change", (e) => {
-  if (e.origin?.action.type === "SET_SELECTION") console.log("user moved the cursor");
-  else if (e.origin?.types.includes("content-change")) console.log("an edit moved the cursor");
-  else if (e.origin?.types.includes("history-change")) console.log("undo or redo moved the cursor");
+  if (e.origin.action.type === "SET_SELECTION") console.log("the selection was set explicitly");
+  else if (e.origin.types.includes("content-change")) console.log("an edit moved the cursor");
+  else if (e.origin.types.includes("history-change")) console.log("undo or redo moved the cursor");
 });
 ```
 

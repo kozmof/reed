@@ -15,6 +15,7 @@ import {
   type AnyDocumentEvent,
   type DocumentEventMap,
   type EventOrigin,
+  type StoreEvent,
 } from "./events.js";
 import { createInitialState } from "../core/state.js";
 import { DocumentActions } from "./actions.js";
@@ -34,8 +35,8 @@ const EVENT_TYPES: readonly (keyof DocumentEventMap)[] = [
 ];
 
 /** Record every event the store emits. */
-function record(store: DocumentStoreWithEvents): AnyDocumentEvent[] {
-  const events: AnyDocumentEvent[] = [];
+function record(store: DocumentStoreWithEvents): StoreEvent<AnyDocumentEvent>[] {
+  const events: StoreEvent<AnyDocumentEvent>[] = [];
   for (const type of EVENT_TYPES) {
     store.addEventListener(type, (event) => events.push(event));
   }
@@ -46,14 +47,17 @@ const caret = (offset: number) =>
   [{ anchor: byteOffset(offset), head: byteOffset(offset) }] as const;
 
 /** Dispatch `action` and return the events it emitted. */
-function eventsOf(store: DocumentStoreWithEvents, action: DocumentAction): AnyDocumentEvent[] {
+function eventsOf(
+  store: DocumentStoreWithEvents,
+  action: DocumentAction,
+): StoreEvent<AnyDocumentEvent>[] {
   const events = record(store);
   store.dispatch(action);
   return events;
 }
 
 /** The single origin shared by `events`, failing if they do not share one. */
-function sharedOrigin(events: readonly AnyDocumentEvent[]): EventOrigin {
+function sharedOrigin(events: readonly StoreEvent<AnyDocumentEvent>[]): EventOrigin {
   const origin = events[0]?.origin;
   expect(origin).toBeDefined();
   for (const event of events) expect(event.origin).toBe(origin);
@@ -88,7 +92,7 @@ describe("EventOrigin on store events", () => {
 
     let seen: readonly string[] | undefined;
     store.addEventListener("selection-change", (e) => {
-      seen = e.origin?.types;
+      seen = e.origin.types;
     });
     store.dispatch(DocumentActions.undo());
 
@@ -179,7 +183,7 @@ describe("EventOrigin on store events", () => {
     store.dispatch(DocumentActions.insert(byteOffset(1), "x"));
     store.dispatch(DocumentActions.setSelection(caret(0)));
 
-    const ids = events.map((e) => e.origin!.id);
+    const ids = events.map((e) => e.origin.id);
     // The insert emits three events with one id.
     expect(ids[1]).toBe(ids[2]);
     expect(ids[2]).toBe(ids[3]);
@@ -195,7 +199,7 @@ describe("EventOrigin on store events", () => {
     store.dispatch(DocumentActions.setSelection(caret(2)));
 
     expect(events).toHaveLength(1);
-    expect(events[0]!.origin!.id).toBe(3);
+    expect(events[0]!.origin.id).toBe(3);
   });
 
   it("gives an action a store listener dispatches a later id", () => {
@@ -210,12 +214,12 @@ describe("EventOrigin on store events", () => {
     // The caret starts at 0, so an insert at 3 leaves it in place.
     store.dispatch(DocumentActions.insert(byteOffset(3), "d"));
 
-    expect(events.map((e) => [e.type, e.origin!.action.type])).toEqual([
+    expect(events.map((e) => [e.type, e.origin.action.type])).toEqual([
       ["content-change", "INSERT"],
       ["dirty-change", "INSERT"],
       ["selection-change", "SET_SELECTION"],
     ]);
-    const ids = events.map((e) => e.origin!.id);
+    const ids = events.map((e) => e.origin.id);
     expect(ids[0]).toBe(ids[1]);
     expect(ids[2]).toBeGreaterThan(ids[1]!);
   });
@@ -227,7 +231,7 @@ describe("EventOrigin on store events", () => {
     store.dispatch(DocumentActions.insert(byteOffset(3), "d"));
 
     expect(events.map((e) => e.type)).toEqual(["content-change"]);
-    expect(events[0]!.origin!.types).toEqual(["content-change", "dirty-change"]);
+    expect(events[0]!.origin.types).toEqual(["content-change", "dirty-change"]);
   });
 
   it("gives an action a handler dispatches a later id and no transaction", () => {
@@ -244,11 +248,11 @@ describe("EventOrigin on store events", () => {
 
     const content = events.find((e) => e.type === "content-change")!;
     const selection = events.find((e) => e.type === "selection-change")!;
-    expect(content.origin!.types).toEqual(["content-change", "dirty-change"]);
-    expect(selection.origin!.action.type).toBe("SET_SELECTION");
-    expect(selection.origin!.id).toBeGreaterThan(content.origin!.id);
-    expect(content.origin!.transactionId).not.toBeNull();
-    expect(selection.origin!.transactionId).toBeNull();
+    expect(content.origin.types).toEqual(["content-change", "dirty-change"]);
+    expect(selection.origin.action.type).toBe("SET_SELECTION");
+    expect(selection.origin.id).toBeGreaterThan(content.origin.id);
+    expect(content.origin.transactionId).not.toBeNull();
+    expect(selection.origin.transactionId).toBeNull();
   });
 });
 
@@ -268,7 +272,7 @@ describe("EventOrigin.transactionId", () => {
       "dirty-change",
       "selection-change",
     ]);
-    const [insert, , , select] = events.map((e) => e.origin!);
+    const [insert, , , select] = events.map((e) => e.origin);
     expect(insert!.types).toEqual(["content-change", "selection-change", "dirty-change"]);
     expect(select!.types).toEqual(["selection-change"]);
     expect(insert!.action.type).toBe("INSERT");
@@ -288,7 +292,7 @@ describe("EventOrigin.transactionId", () => {
     store.commitTransaction();
     store.commitTransaction();
 
-    const ids = new Set(events.map((e) => e.origin!.transactionId));
+    const ids = new Set(events.map((e) => e.origin.transactionId));
     expect(ids.size).toBe(1);
     expect([...ids][0]).not.toBeNull();
   });
@@ -305,7 +309,7 @@ describe("EventOrigin.transactionId", () => {
 
     const [first, second] = events
       .filter((e) => e.type === "content-change")
-      .map((e) => e.origin!.transactionId!);
+      .map((e) => e.origin.transactionId!);
     expect(events.filter((e) => e.type === "content-change")).toHaveLength(2);
     expect(second! - first!).toBe(2);
   });
@@ -322,8 +326,8 @@ describe("EventOrigin.transactionId", () => {
 
     const content = events.filter((e) => e.type === "content-change");
     expect(content).toHaveLength(1);
-    expect(content[0]!.origin!.action).toMatchObject({ text: "a" });
-    expect(content[0]!.origin!.transactionId).not.toBeNull();
+    expect(content[0]!.origin.action).toMatchObject({ text: "a" });
+    expect(content[0]!.origin.transactionId).not.toBeNull();
   });
 
   it("is null for an action a store listener dispatches while the transaction commits", () => {
@@ -339,9 +343,9 @@ describe("EventOrigin.transactionId", () => {
 
     const selection = events.find((e) => e.type === "selection-change")!;
     const content = events.find((e) => e.type === "content-change")!;
-    expect(content.origin!.transactionId).not.toBeNull();
-    expect(selection.origin!.action.type).toBe("SET_SELECTION");
-    expect(selection.origin!.transactionId).toBeNull();
+    expect(content.origin.transactionId).not.toBeNull();
+    expect(selection.origin.action.type).toBe("SET_SELECTION");
+    expect(selection.origin.transactionId).toBeNull();
   });
 });
 

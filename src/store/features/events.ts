@@ -28,8 +28,8 @@ import { MAX_OBSERVER_REENTRANT_STEPS, reportCaughtError } from "./diagnostics.j
  * @example
  * ```ts
  * doc.addEventListener("selection-change", (e) => {
- *   if (e.origin?.action.type === "SET_SELECTION") return; // explicit move
- *   if (e.origin?.types.includes("content-change")) {
+ *   if (e.origin.action.type === "SET_SELECTION") return; // explicit move
+ *   if (e.origin.types.includes("content-change")) {
  *     // the selection followed an edit
  *   }
  * });
@@ -82,8 +82,10 @@ export interface DocumentEvent {
   readonly timestamp: number;
   /**
    * The action that produced this event, and the other events it produced.
-   * Event stores set it on every event they emit. It is absent on events
-   * created without one, such as by an event factory called without `origin`.
+   * Event stores set it on every event they emit, and
+   * `DocumentStoreWithEvents.addEventListener` types it as required (see
+   * `StoreEvent`). It is absent on events created without one, such as by an
+   * event factory called without `origin`.
    */
   readonly origin?: EventOrigin;
 }
@@ -240,6 +242,19 @@ export interface DocumentEventMap {
   save: SaveEvent;
   "dirty-change": DirtyChangeEvent;
 }
+
+/**
+ * An event as a `DocumentStoreWithEvents` listener receives it. The store sets
+ * `origin` on every event it emits, so `origin` is required here.
+ */
+export type StoreEvent<E extends AnyDocumentEvent> = E & { readonly origin: EventOrigin };
+
+/**
+ * Event type to the event a `DocumentStoreWithEvents` listener receives.
+ */
+export type StoreEventMap = {
+  readonly [K in keyof DocumentEventMap]: StoreEvent<DocumentEventMap[K]>;
+};
 
 // =============================================================================
 // Event Handler Types
@@ -417,19 +432,8 @@ export function createProbedEventEmitter(logger?: Pick<ReedLogger, "error">): Pr
 //
 // Each factory takes an optional `origin` as its last argument. The event
 // store always passes one. An event created without it has no `origin` property.
-
-/**
- * Freeze an event, adding `origin` only when one is given. The factories pass
- * a fresh literal, so setting `origin` on it before freezing saves a copy on
- * the dispatch path.
- */
-function freezeEvent<E extends AnyDocumentEvent>(
-  event: Omit<E, "origin">,
-  origin: EventOrigin | undefined,
-): E {
-  if (origin !== undefined) (event as { origin?: EventOrigin }).origin = origin;
-  return Object.freeze(event) as E;
-}
+// Each factory writes `origin` into the event literal instead of adding it to
+// the event afterward, so every event the store emits keeps one object shape.
 
 /**
  * Create a content change event.
@@ -441,16 +445,11 @@ export function createContentChangeEvent(
   affectedRanges: readonly (readonly [ByteOffset, ByteOffset])[],
   origin?: EventOrigin,
 ): ContentChangeEvent {
-  return freezeEvent<ContentChangeEvent>(
-    {
-      type: "content-change",
-      timestamp: Date.now(),
-      action,
-      prevState,
-      nextState,
-      affectedRanges,
-    },
-    origin,
+  const timestamp = Date.now();
+  return Object.freeze(
+    origin === undefined
+      ? { type: "content-change", timestamp, action, prevState, nextState, affectedRanges }
+      : { type: "content-change", timestamp, action, prevState, nextState, affectedRanges, origin },
   );
 }
 
@@ -462,9 +461,11 @@ export function createSelectionChangeEvent(
   nextState: DocumentState,
   origin?: EventOrigin,
 ): SelectionChangeEvent {
-  return freezeEvent<SelectionChangeEvent>(
-    { type: "selection-change", timestamp: Date.now(), prevState, nextState },
-    origin,
+  const timestamp = Date.now();
+  return Object.freeze(
+    origin === undefined
+      ? { type: "selection-change", timestamp, prevState, nextState }
+      : { type: "selection-change", timestamp, prevState, nextState, origin },
   );
 }
 
@@ -477,9 +478,11 @@ export function createHistoryChangeEvent(
   nextState: DocumentState,
   origin?: EventOrigin,
 ): HistoryChangeEvent {
-  return freezeEvent<HistoryChangeEvent>(
-    { type: "history-change", timestamp: Date.now(), direction, prevState, nextState },
-    origin,
+  const timestamp = Date.now();
+  return Object.freeze(
+    origin === undefined
+      ? { type: "history-change", timestamp, direction, prevState, nextState }
+      : { type: "history-change", timestamp, direction, prevState, nextState, origin },
   );
 }
 
@@ -494,16 +497,13 @@ export function createHistoryDropEvent(
   dropped: { readonly undo: number; readonly redo: number },
   origin?: EventOrigin,
 ): HistoryDropEvent {
-  return freezeEvent<HistoryDropEvent>(
-    {
-      type: "history-drop",
-      timestamp: Date.now(),
-      prevState,
-      nextState,
-      undoDropped: dropped.undo,
-      redoDropped: dropped.redo,
-    },
-    origin,
+  const timestamp = Date.now();
+  const undoDropped = dropped.undo;
+  const redoDropped = dropped.redo;
+  return Object.freeze(
+    origin === undefined
+      ? { type: "history-drop", timestamp, prevState, nextState, undoDropped, redoDropped }
+      : { type: "history-drop", timestamp, prevState, nextState, undoDropped, redoDropped, origin },
   );
 }
 
@@ -545,9 +545,11 @@ export function createAttentionChangeEvent(
   changedIds: readonly AttentionID[],
   origin?: EventOrigin,
 ): AttentionChangeEvent {
-  return freezeEvent<AttentionChangeEvent>(
-    { type: "attention-change", timestamp: Date.now(), prevState, nextState, changedIds },
-    origin,
+  const timestamp = Date.now();
+  return Object.freeze(
+    origin === undefined
+      ? { type: "attention-change", timestamp, prevState, nextState, changedIds }
+      : { type: "attention-change", timestamp, prevState, nextState, changedIds, origin },
   );
 }
 
@@ -555,7 +557,12 @@ export function createAttentionChangeEvent(
  * Create a save event.
  */
 export function createSaveEvent(state: DocumentState, origin?: EventOrigin): SaveEvent {
-  return freezeEvent<SaveEvent>({ type: "save", timestamp: Date.now(), state }, origin);
+  const timestamp = Date.now();
+  return Object.freeze(
+    origin === undefined
+      ? { type: "save", timestamp, state }
+      : { type: "save", timestamp, state, origin },
+  );
 }
 
 /**
@@ -566,9 +573,11 @@ export function createDirtyChangeEvent(
   state: DocumentState,
   origin?: EventOrigin,
 ): DirtyChangeEvent {
-  return freezeEvent<DirtyChangeEvent>(
-    { type: "dirty-change", timestamp: Date.now(), isDirty, state },
-    origin,
+  const timestamp = Date.now();
+  return Object.freeze(
+    origin === undefined
+      ? { type: "dirty-change", timestamp, isDirty, state }
+      : { type: "dirty-change", timestamp, isDirty, state, origin },
   );
 }
 

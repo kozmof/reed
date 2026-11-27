@@ -240,9 +240,9 @@ Check `origin.action` to find out why the selection moved.
 
 ```ts
 doc.addEventListener("selection-change", (e) => {
-  switch (e.origin?.action.type) {
+  switch (e.origin.action.type) {
     case "SET_SELECTION":
-      return showUserSelection(e);
+      return showExplicitSelection(e);
     case "UNDO":
     case "REDO":
       return showRestoredSelection(e);
@@ -281,6 +281,9 @@ Semantics:
   holds the caller's chunk bytes, and the document stores its own copy. An
   event from `APPLY_REMOTE` holds the change set. When you keep events for a
   long time, copy out what you need, such as `origin.action.type`.
+- `DocumentStoreWithEvents.addEventListener` types each event as `StoreEvent`,
+  so `origin` is required there. On `DocumentEvent` and on the `events`
+  emitter it stays optional.
 - Events created by a factory such as `events.createSelectionChangeEvent` have
   no `origin` unless you pass one as the last argument.
 

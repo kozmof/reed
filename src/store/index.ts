@@ -129,6 +129,8 @@ export {
 export type {
   DocumentEvent,
   EventOrigin,
+  StoreEvent,
+  StoreEventMap,
   ContentChangeEvent,
   SelectionChangeEvent,
   HistoryChangeEvent,

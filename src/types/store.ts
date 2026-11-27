@@ -8,6 +8,7 @@ import type {
   DocumentEventEmitter,
   DocumentEventMap,
   EventHandler,
+  StoreEventMap,
   Unsubscribe,
 } from "../store/features/events.js";
 
@@ -228,12 +229,15 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
    * ```
    *
    * @param type - Event type to listen for
+   * The store sets `origin` on every event it emits, so handlers can read
+   * `event.origin` without checking for undefined.
+   *
    * @param handler - Handler function called with the event
    * @returns Unsubscribe function
    */
   addEventListener<K extends keyof DocumentEventMap>(
     type: K,
-    handler: EventHandler<DocumentEventMap[K]>,
+    handler: EventHandler<StoreEventMap[K]>,
   ): Unsubscribe;
 
   /**
@@ -244,12 +248,14 @@ export interface DocumentStoreWithEvents extends ReconcilableDocumentStore {
    */
   removeEventListener<K extends keyof DocumentEventMap>(
     type: K,
-    handler: EventHandler<DocumentEventMap[K]>,
+    handler: EventHandler<StoreEventMap[K]>,
   ): void;
 
   /**
    * Access the underlying event emitter for advanced use cases.
-   * Prefer addEventListener/removeEventListener for typical usage.
+   * Prefer addEventListener/removeEventListener for typical usage. Its
+   * handlers are typed for any event passed to `emit`, so `origin` stays
+   * optional there, even though the store sets it on every event it emits.
    */
   readonly events: DocumentEventEmitter;
 }

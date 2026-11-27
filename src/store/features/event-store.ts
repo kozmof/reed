@@ -22,6 +22,7 @@ import {
   type EventHandler,
   type EventOrigin,
   type DocumentEventMap,
+  type StoreEventMap,
 } from "./events.js";
 import {
   MAX_OBSERVER_DELIVERED_ACTIONS,
@@ -453,17 +454,18 @@ export function withEvents(
 
   function addEventListener<K extends keyof DocumentEventMap>(
     type: K,
-    handler: EventHandler<DocumentEventMap[K]>,
+    handler: EventHandler<StoreEventMap[K]>,
   ): Unsubscribe {
     if (disposed) return () => {};
-    return emitter.addEventListener(type, handler);
+    // Every event this store emits carries an origin (see prepareEventsForAction).
+    return emitter.addEventListener(type, handler as EventHandler<DocumentEventMap[K]>);
   }
 
   function removeEventListener<K extends keyof DocumentEventMap>(
     type: K,
-    handler: EventHandler<DocumentEventMap[K]>,
+    handler: EventHandler<StoreEventMap[K]>,
   ): void {
-    emitter.removeEventListener(type, handler);
+    emitter.removeEventListener(type, handler as EventHandler<DocumentEventMap[K]>);
   }
 
   /**
