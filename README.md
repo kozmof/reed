@@ -220,6 +220,15 @@ doc.addEventListener("dirty-change", (e) => console.log("dirty flag:", e));
 doc.dispatch(store.DocumentActions.insert(position.byteOffset(0), "hi"));
 ```
 
+Edits, undo, and chunk loads also move the selection. Each event's `origin` names the action that produced it and lists every event type that action emits. Use it to tell a cursor the user moved from one an edit moved.
+
+```ts
+doc.addEventListener("selection-change", (e) => {
+  if (e.origin?.action.type === "SET_SELECTION") console.log("user moved the cursor");
+  else if (e.origin?.types.includes("content-change")) console.log("an edit moved the cursor");
+});
+```
+
 ## Tracking references with attention
 
 The `attention` namespace anchors references to piece boundaries instead of document offsets, so a reference keeps pointing at the same text across edits elsewhere in the document. Store actions migrate `DocumentState.attention` automatically. For direct piece-table operations, keep a separate immutable `AttentionLayerState` and pass the returned state into the next operation.

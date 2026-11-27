@@ -1,0 +1,331 @@
+/**
+ * Tests for `EventOrigin`: which action produced an event, which other events
+ * that action emits, and which transaction it was dispatched in.
+ */
+
+import { describe, it, expect } from "vitest";
+import {
+  createContentChangeEvent,
+  createSelectionChangeEvent,
+  createHistoryChangeEvent,
+  createHistoryDropEvent,
+  createAttentionChangeEvent,
+  createSaveEvent,
+  createDirtyChangeEvent,
+  type AnyDocumentEvent,
+  type DocumentEventMap,
+  type EventOrigin,
+} from "./events.js";
+import { createInitialState } from "../core/state.js";
+import { DocumentActions } from "./actions.js";
+import { createDocumentStoreWithEvents } from "./store.js";
+import type { DocumentAction } from "../../types/actions.js";
+import type { DocumentStoreWithEvents } from "../../types/store.js";
+import { byteOffset } from "../../types/branded.js";
+
+const EVENT_TYPES: readonly (keyof DocumentEventMap)[] = [
+  "content-change",
+  "selection-change",
+  "history-change",
+  "history-drop",
+  "attention-change",
+  "save",
+  "dirty-change",
+];
+
+/** Record every event the store emits. */
+function record(store: DocumentStoreWithEvents): AnyDocumentEvent[] {
+  const events: AnyDocumentEvent[] = [];
+  for (const type of EVENT_TYPES) {
+    store.addEventListener(type, (event) => events.push(event));
+  }
+  return events;
+}
+
+const caret = (offset: number) =>
+  [{ anchor: byteOffset(offset), head: byteOffset(offset) }] as const;
+
+/** Dispatch `action` and return the events it emitted. */
+function eventsOf(store: DocumentStoreWithEvents, action: DocumentAction): AnyDocumentEvent[] {
+  const events = record(store);
+  store.dispatch(action);
+  return events;
+}
+
+/** The single origin shared by `events`, failing if they do not share one. */
+function sharedOrigin(events: readonly AnyDocumentEvent[]): EventOrigin {
+  const origin = events[0]?.origin;
+  expect(origin).toBeDefined();
+  for (const event of events) expect(event.origin).toBe(origin);
+  return origin!;
+}
+
+describe("EventOrigin on store events", () => {
+  it("lists every event type the action emits, in delivery order", () => {
+    const store = createDocumentStoreWithEvents({ content: "hello world" });
+    store.dispatch(DocumentActions.setSelection(caret(5)));
+    const action = DocumentActions.insert(byteOffset(5), "!!");
+
+    const events = eventsOf(store, action);
+    const origin = sharedOrigin(events);
+
+    expect(events.map((e) => e.type)).toEqual([
+      "content-change",
+      "selection-change",
+      "dirty-change",
+    ]);
+    expect(origin.types).toEqual(events.map((e) => e.type));
+    expect(origin.action).toBe(action);
+    expect(origin.transactionId).toBeNull();
+    expect(Object.isFrozen(origin)).toBe(true);
+    expect(Object.isFrozen(origin.types)).toBe(true);
+  });
+
+  it("lets a selection-change handler see events delivered after it", () => {
+    const store = createDocumentStoreWithEvents({ content: "hello world" });
+    store.dispatch(DocumentActions.setSelection(caret(5)));
+    store.dispatch(DocumentActions.insert(byteOffset(5), "!!"));
+
+    let seen: readonly string[] | undefined;
+    store.addEventListener("selection-change", (e) => {
+      seen = e.origin?.types;
+    });
+    store.dispatch(DocumentActions.undo());
+
+    // history-change is delivered after selection-change.
+    expect(seen).toEqual(["selection-change", "history-change"]);
+  });
+
+  it.each<[string, (store: DocumentStoreWithEvents) => DocumentAction, string[]]>([
+    ["SET_SELECTION", () => DocumentActions.setSelection(caret(3)), ["selection-change"]],
+    [
+      "INSERT after the caret",
+      (store) => {
+        store.dispatch(DocumentActions.insert(byteOffset(0), "x"));
+        return DocumentActions.insert(byteOffset(12), "y");
+      },
+      ["content-change"],
+    ],
+    [
+      "UNDO that leaves the selection in place",
+      (store) => {
+        store.dispatch(DocumentActions.insert(byteOffset(11), "y"));
+        return DocumentActions.undo();
+      },
+      ["history-change"],
+    ],
+    [
+      "MARK_SAVED",
+      (store) => {
+        store.dispatch(DocumentActions.insert(byteOffset(11), "y"));
+        return DocumentActions.markSaved();
+      },
+      ["save", "dirty-change"],
+    ],
+    [
+      "APPLY_REMOTE before the caret",
+      (store) => {
+        store.dispatch(DocumentActions.setSelection(caret(5)));
+        store.dispatch(DocumentActions.insert(byteOffset(11), "y"));
+        return DocumentActions.applyRemote([{ type: "insert", start: byteOffset(0), text: "zz" }]);
+      },
+      ["content-change", "selection-change", "history-drop"],
+    ],
+    [
+      "HISTORY_CLEAR",
+      (store) => {
+        store.dispatch(DocumentActions.insert(byteOffset(11), "y"));
+        return DocumentActions.historyClear();
+      },
+      ["history-drop"],
+    ],
+    [
+      "CREATE_ATTENTION",
+      () => DocumentActions.createAttention(byteOffset(0), byteOffset(2)),
+      ["attention-change"],
+    ],
+  ])("reports the events of %s", (_label, setup, expected) => {
+    const store = createDocumentStoreWithEvents({ content: "hello world" });
+    const action = setup(store);
+    const events = eventsOf(store, action);
+    const origin = sharedOrigin(events);
+
+    expect(events.map((e) => e.type)).toEqual(expected);
+    expect(origin.types).toEqual(expected);
+    expect(origin.action).toBe(action);
+  });
+
+  it("names the chunk load that moved the selection", () => {
+    const enc = (s: string) => new TextEncoder().encode(s);
+    const store = createDocumentStoreWithEvents({
+      chunkSize: 8,
+      totalFileSize: 16,
+      reconcileMode: "none",
+    });
+    store.dispatch(DocumentActions.loadChunk(1, enc("BBBBBBB\n")));
+    store.dispatch(DocumentActions.setSelection(caret(2)));
+
+    const events = eventsOf(store, DocumentActions.loadChunk(0, enc("AAAAAAA\n")));
+    const origin = sharedOrigin(events);
+
+    expect(origin.types).toEqual(["selection-change"]);
+    expect(origin.action.type).toBe("LOAD_CHUNK");
+  });
+
+  it("gives each action a larger id", () => {
+    const store = createDocumentStoreWithEvents({ content: "abc" });
+    const events = record(store);
+    store.dispatch(DocumentActions.setSelection(caret(1)));
+    store.dispatch(DocumentActions.insert(byteOffset(1), "x"));
+    store.dispatch(DocumentActions.setSelection(caret(0)));
+
+    const ids = events.map((e) => e.origin!.id);
+    // The insert emits three events with one id.
+    expect(ids[1]).toBe(ids[2]);
+    expect(ids[2]).toBe(ids[3]);
+    expect(ids[0]).toBeLessThan(ids[1]!);
+    expect(ids[3]).toBeLessThan(ids[4]!);
+  });
+
+  it("uses no id for an action that emits nothing or that no handler hears", () => {
+    const store = createDocumentStoreWithEvents({ content: "abc" });
+    store.dispatch(DocumentActions.setSelection(caret(1)));
+    const events = record(store);
+    store.dispatch(DocumentActions.setSelection(caret(1))); // unchanged: no events
+    store.dispatch(DocumentActions.setSelection(caret(2)));
+
+    expect(events).toHaveLength(1);
+    expect(events[0]!.origin!.id).toBe(1);
+  });
+
+  it("gives an action a handler dispatches a later id and no transaction", () => {
+    const store = createDocumentStoreWithEvents({ content: "abc" });
+    const events = record(store);
+    let reacted = false;
+    store.addEventListener("content-change", () => {
+      if (reacted) return;
+      reacted = true;
+      store.dispatch(DocumentActions.setSelection(caret(1)));
+    });
+    // The caret starts at 0, so an insert at 3 leaves it in place.
+    store.batch([DocumentActions.insert(byteOffset(3), "d")]);
+
+    const content = events.find((e) => e.type === "content-change")!;
+    const selection = events.find((e) => e.type === "selection-change")!;
+    expect(content.origin!.types).toEqual(["content-change", "dirty-change"]);
+    expect(selection.origin!.action.type).toBe("SET_SELECTION");
+    expect(selection.origin!.id).toBeGreaterThan(content.origin!.id);
+    expect(content.origin!.transactionId).not.toBeNull();
+    expect(selection.origin!.transactionId).toBeNull();
+  });
+});
+
+describe("EventOrigin.transactionId", () => {
+  it("is shared by every action in one batch, with a separate origin per action", () => {
+    const store = createDocumentStoreWithEvents({ content: "hello" });
+    const events = record(store);
+    // The insert moves the caret from 0 to 1, and SET_SELECTION moves it back.
+    store.batch([
+      DocumentActions.insert(byteOffset(0), "a"),
+      DocumentActions.setSelection(caret(0)),
+    ]);
+
+    expect(events.map((e) => e.type)).toEqual([
+      "content-change",
+      "selection-change",
+      "dirty-change",
+      "selection-change",
+    ]);
+    const [insert, , , select] = events.map((e) => e.origin!);
+    expect(insert!.types).toEqual(["content-change", "selection-change", "dirty-change"]);
+    expect(select!.types).toEqual(["selection-change"]);
+    expect(insert!.action.type).toBe("INSERT");
+    expect(select!.action.type).toBe("SET_SELECTION");
+    expect(insert).not.toBe(select);
+    expect(insert!.transactionId).not.toBeNull();
+    expect(select!.transactionId).toBe(insert!.transactionId);
+  });
+
+  it("is the outermost transaction's id inside nested transactions", () => {
+    const store = createDocumentStoreWithEvents({ content: "hello" });
+    const events = record(store);
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(0), "a"));
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(0), "b"));
+    store.commitTransaction();
+    store.commitTransaction();
+
+    const ids = new Set(events.map((e) => e.origin!.transactionId));
+    expect(ids.size).toBe(1);
+    expect([...ids][0]).not.toBeNull();
+  });
+
+  it("increases across transactions and skips a rolled-back one", () => {
+    const store = createDocumentStoreWithEvents({ content: "hello" });
+    const events = record(store);
+
+    store.batch([DocumentActions.insert(byteOffset(0), "a")]);
+    store.beginTransaction();
+    store.dispatch(DocumentActions.insert(byteOffset(0), "b"));
+    store.rollbackTransaction();
+    store.batch([DocumentActions.insert(byteOffset(0), "c")]);
+
+    const [first, second] = events
+      .filter((e) => e.type === "content-change")
+      .map((e) => e.origin!.transactionId!);
+    expect(events.filter((e) => e.type === "content-change")).toHaveLength(2);
+    expect(second! - first!).toBe(2);
+  });
+
+  it("is null for an action a store listener dispatches while the transaction commits", () => {
+    const store = createDocumentStoreWithEvents({ content: "hello" });
+    const events = record(store);
+    let reacted = false;
+    store.subscribe(() => {
+      if (reacted) return;
+      reacted = true;
+      store.dispatch(DocumentActions.setSelection(caret(2)));
+    });
+    store.batch([DocumentActions.insert(byteOffset(5), "!")]);
+
+    const selection = events.find((e) => e.type === "selection-change")!;
+    const content = events.find((e) => e.type === "content-change")!;
+    expect(content.origin!.transactionId).not.toBeNull();
+    expect(selection.origin!.action.type).toBe("SET_SELECTION");
+    expect(selection.origin!.transactionId).toBeNull();
+  });
+});
+
+describe("event factories without an origin", () => {
+  it("create events with no origin property", () => {
+    const prev = createInitialState();
+    const next = createInitialState();
+    const action = DocumentActions.insert(byteOffset(0), "a");
+    const created: AnyDocumentEvent[] = [
+      createContentChangeEvent(action, prev, next, [[byteOffset(0), byteOffset(1)]]),
+      createSelectionChangeEvent(prev, next),
+      createHistoryChangeEvent("undo", prev, next),
+      createHistoryDropEvent(prev, next, { undo: 1, redo: 0 }),
+      createAttentionChangeEvent(prev, next, []),
+      createSaveEvent(next),
+      createDirtyChangeEvent(true, next),
+    ];
+    for (const event of created) {
+      expect("origin" in event).toBe(false);
+      expect(Object.isFrozen(event)).toBe(true);
+    }
+  });
+
+  it("attach a given origin", () => {
+    const state = createInitialState();
+    const origin: EventOrigin = {
+      id: 7,
+      action: DocumentActions.setSelection(caret(0)),
+      types: ["selection-change"],
+      transactionId: null,
+    };
+    expect(createSelectionChangeEvent(state, state, origin).origin).toBe(origin);
+    expect(createSaveEvent(state, origin).origin).toBe(origin);
+  });
+});

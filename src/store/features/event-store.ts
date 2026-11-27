@@ -1,6 +1,6 @@
 /** Typed event-emitting wrapper for a document store. */
 import type { DocumentState, DocumentStoreRuntimeConfig } from "../../types/state.js";
-import type { DocumentAction } from "../../types/actions.js";
+import type { ContentChangeAction, DocumentAction } from "../../types/actions.js";
 import { isTextEditAction } from "../../types/actions.js";
 import type {
   ReconcilableDocumentStore,
@@ -20,6 +20,7 @@ import {
   diffChangedAttentionIds,
   getAffectedRanges,
   type EventHandler,
+  type EventOrigin,
   type DocumentEventMap,
 } from "./events.js";
 import {
@@ -52,8 +53,18 @@ export function withEvents(
   let disposed = false;
 
   // Depth-indexed event buffer. Each entry corresponds to one open transaction level.
-  // Index 0 = outermost open transaction, last = innermost.
-  const pendingEventLevels: Array<Array<() => void>> = [];
+  // Index 0 = outermost open transaction, last = innermost. Every level of one
+  // outermost transaction carries that transaction's id, the `transactionId`
+  // of the events its actions emit.
+  interface EventLevel {
+    readonly transactionId: number;
+    readonly events: Array<() => void>;
+  }
+  const pendingEventLevels: EventLevel[] = [];
+
+  // The last `EventOrigin.id` and `EventOrigin.transactionId` handed out.
+  let lastOriginId = 0;
+  let lastTransactionId = 0;
 
   // Events reach handlers in the order their actions committed. A store
   // listener or an event handler can dispatch while events are delivered.
@@ -170,28 +181,16 @@ export function withEvents(
     action: DocumentAction,
     prevState: DocumentState,
     { state: nextState, historyDropped }: DocumentTransition,
+    transactionId: number | null,
   ): Array<() => void> {
     if (disposed) return [];
-    const events: Array<() => void> = [];
 
-    function prepare<K extends keyof DocumentEventMap>(type: K, event: DocumentEventMap[K]): void {
-      events.push(() => {
-        if (!disposed) emitter.emit(type, event);
-      });
-    }
+    // First decide which events the action emits, in delivery order, so every
+    // event can carry the full list in its origin. The checks are O(1).
 
-    // Content change events for local text edits and remote content updates
-    if (isTextEditAction(action) || action.type === "APPLY_REMOTE") {
-      prepare(
-        "content-change",
-        createContentChangeEvent(
-          action,
-          prevState,
-          nextState,
-          getAffectedRanges(action, prevState, nextState),
-        ),
-      );
-    }
+    // Content change events for local text edits and remote content updates.
+    const contentAction: ContentChangeAction | null =
+      isTextEditAction(action) || action.type === "APPLY_REMOTE" ? action : null;
 
     // Selection change events: every action that moves the selection, such as
     // SET_SELECTION, an edit moving it past the edited text, undo and redo
@@ -199,9 +198,7 @@ export function withEvents(
     // Selections are immutable and an action that leaves the selection in
     // place keeps the same object (SET_SELECTION with the current ranges
     // included), so the reference check is O(1).
-    if (prevState.selection !== nextState.selection) {
-      prepare("selection-change", createSelectionChangeEvent(prevState, nextState));
-    }
+    const selectionMoved = prevState.selection !== nextState.selection;
 
     // History events. UNDO and REDO that apply an entry change history; an
     // action that discards entries without undoing or redoing them drops it
@@ -209,39 +206,90 @@ export function withEvents(
     // entry that no longer replays, APPLY_REMOTE, and HISTORY_CLEAR. The piece
     // table cannot tell a dropped entry apart from replaying one that changes
     // no bytes, so the reducer's transition says which it was.
-    if (historyDropped !== null) {
-      prepare("history-drop", createHistoryDropEvent(prevState, nextState, historyDropped));
-    } else if (action.type === "UNDO" || action.type === "REDO") {
-      prepare(
-        "history-change",
-        createHistoryChangeEvent(action.type === "UNDO" ? "undo" : "redo", prevState, nextState),
-      );
-    }
+    const historyDirection =
+      historyDropped === null && (action.type === "UNDO" || action.type === "REDO")
+        ? action.type === "UNDO"
+          ? "undo"
+          : "redo"
+        : null;
 
-    // Emit attention-change when CREATE_ATTENTION, DELETE_ATTENTION, or a
+    // attention-change fires when CREATE_ATTENTION, DELETE_ATTENTION, or a
     // content edit changes the attention layer. Structural sharing makes the
     // reference check O(1).
-    if (prevState.attention !== nextState.attention) {
+    const attentionChanged = prevState.attention !== nextState.attention;
+
+    // save fires only for MARK_SAVED. The event records the caller reporting a
+    // successful save. Reed does not write the document itself.
+    const saved = action.type === "MARK_SAVED";
+
+    // dirty-change comes after 'save' so a listener reacting to it already
+    // sees the save that caused it.
+    const dirtyChanged = prevState.metadata.isDirty !== nextState.metadata.isDirty;
+
+    const types: Array<keyof DocumentEventMap> = [];
+    if (contentAction !== null) types.push("content-change");
+    if (selectionMoved) types.push("selection-change");
+    if (historyDropped !== null) types.push("history-drop");
+    else if (historyDirection !== null) types.push("history-change");
+    if (attentionChanged) types.push("attention-change");
+    if (saved) types.push("save");
+    if (dirtyChanged) types.push("dirty-change");
+    if (types.length === 0) return [];
+
+    const origin: EventOrigin = Object.freeze({
+      id: ++lastOriginId,
+      action,
+      types: Object.freeze(types),
+      transactionId,
+    });
+
+    const events: Array<() => void> = [];
+    function prepare<K extends keyof DocumentEventMap>(type: K, event: DocumentEventMap[K]): void {
+      events.push(() => {
+        if (!disposed) emitter.emit(type, event);
+      });
+    }
+
+    if (contentAction !== null) {
+      prepare(
+        "content-change",
+        createContentChangeEvent(
+          contentAction,
+          prevState,
+          nextState,
+          getAffectedRanges(contentAction, prevState, nextState),
+          origin,
+        ),
+      );
+    }
+    if (selectionMoved) {
+      prepare("selection-change", createSelectionChangeEvent(prevState, nextState, origin));
+    }
+    if (historyDropped !== null) {
+      prepare("history-drop", createHistoryDropEvent(prevState, nextState, historyDropped, origin));
+    } else if (historyDirection !== null) {
+      prepare(
+        "history-change",
+        createHistoryChangeEvent(historyDirection, prevState, nextState, origin),
+      );
+    }
+    if (attentionChanged) {
       prepare(
         "attention-change",
         createAttentionChangeEvent(
           prevState,
           nextState,
           diffChangedAttentionIds(prevState, nextState),
+          origin,
         ),
       );
     }
-
-    // Emit save only for MARK_SAVED. The event records the caller reporting a
-    // successful save. Reed does not write the document itself.
-    if (action.type === "MARK_SAVED") {
-      prepare("save", createSaveEvent(nextState));
-    }
-
-    // Dirty state change events. Ordered after 'save' so a listener reacting to
-    // 'dirty-change' already sees the save that caused it.
-    if (prevState.metadata.isDirty !== nextState.metadata.isDirty) {
-      prepare("dirty-change", createDirtyChangeEvent(nextState.metadata.isDirty, nextState));
+    if (saved) prepare("save", createSaveEvent(nextState, origin));
+    if (dirtyChanged) {
+      prepare(
+        "dirty-change",
+        createDirtyChangeEvent(nextState.metadata.isDirty, nextState, origin),
+      );
     }
 
     return events;
@@ -260,7 +308,8 @@ export function withEvents(
     // one the commit notifies no one, so the level stays open until it returns.
     const level = pendingEventLevels[pendingEventLevels.length - 1];
     const slot = level === undefined ? reserveSlot() : undefined;
-    const target = level ?? slot!.events;
+    const target = level?.events ?? slot!.events;
+    const transactionId = level?.transactionId ?? null;
     try {
       committing++;
       let transition: DocumentTransition;
@@ -279,7 +328,7 @@ export function withEvents(
         slot !== undefined && !delivering && deliveryQueue[0] === slot && !hasListeners();
       if (transition.state !== prevState && !unheard) {
         try {
-          target.push(...prepareEventsForAction(action, prevState, transition));
+          target.push(...prepareEventsForAction(action, prevState, transition, transactionId));
         } catch (error) {
           // The state transition has already committed. Event metadata is
           // observational and must not make callers believe the edit failed.
@@ -311,12 +360,14 @@ export function withEvents(
   }
 
   /**
-   * Begin a transaction, pushing a new event buffer level.
+   * Begin a transaction, pushing a new event buffer level. A nested level
+   * keeps the outermost transaction's id; an outermost one takes the next id.
    */
   function beginTransaction(): void {
     if (disposed) return;
     withLevelsDetached(() => baseStore.beginTransaction());
-    pendingEventLevels.push([]);
+    const transactionId = pendingEventLevels[0]?.transactionId ?? ++lastTransactionId;
+    pendingEventLevels.push({ transactionId, events: [] });
   }
 
   /**
@@ -338,10 +389,10 @@ export function withEvents(
       return;
     }
 
-    const events = pendingEventLevels.pop()!;
+    const { events } = pendingEventLevels.pop()!;
     if (pendingEventLevels.length > 0) {
       withLevelsDetached(() => baseStore.commitTransaction());
-      pendingEventLevels[pendingEventLevels.length - 1]!.push(...events);
+      pendingEventLevels[pendingEventLevels.length - 1]!.events.push(...events);
       return;
     }
 

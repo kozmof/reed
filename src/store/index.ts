@@ -128,6 +128,7 @@ export {
 } from "./features/events.js";
 export type {
   DocumentEvent,
+  EventOrigin,
   ContentChangeEvent,
   SelectionChangeEvent,
   HistoryChangeEvent,

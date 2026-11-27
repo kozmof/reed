@@ -316,7 +316,8 @@ selections carried by a content edit do not move it.
 The selection itself also moves on edits, `UNDO`/`REDO`, and chunk loads and
 evictions, none of which move `selectionRevision`. Use
 `state.selection !== prev.selection` to detect any selection change. Actions that leave the selection in
-place keep the same object.
+place keep the same object. To learn which action moved the selection, read
+`origin.action` on the `selection-change` event.
 
 ### 5.4 `lineIndex.lastReconciledRevision`
 

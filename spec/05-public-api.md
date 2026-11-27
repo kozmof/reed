@@ -207,6 +207,57 @@ Semantics:
 Before v3.2.0 the `save` event type and `createSaveEvent` factory existed with
 no transition that could emit them, and `isDirty` was only ever set to `true`.
 
+### 3.2 Event origin
+
+Every event an event store emits carries `origin`, an `EventOrigin`. All events
+from one action share the same frozen origin object.
+
+- `id` — identifies the action within its store. A later action has a larger
+  id. Ids skip values, so they correlate events but do not count actions.
+- `action` — the action whose commit produced the event.
+- `types` — every event type the action emits, in delivery order.
+- `transactionId` — the id of the outermost transaction the action ran in, or
+  `null` outside a transaction. Nested transactions share the outermost id. A
+  later transaction has a larger id.
+
+An action delivers its events in this order. Each fires only when the action
+causes it.
+
+1. `content-change`
+2. `selection-change`
+3. `history-change` or `history-drop`
+4. `attention-change`
+5. `save`
+6. `dirty-change`
+
+The store fixes `types` before it delivers the first event. A handler therefore
+sees events that arrive after its own, such as the `history-change` that follows
+a `selection-change` on undo.
+
+Check `origin` to find out why the selection moved.
+
+```ts
+doc.addEventListener("selection-change", (e) => {
+  if (e.origin?.action.type === "SET_SELECTION") return showUserSelection(e);
+  if (e.origin?.types.includes("history-change")) return showRestoredSelection(e);
+  followEdit(e);
+});
+```
+
+Semantics:
+
+- Each action in a `batch` or transaction gets its own origin. They all share
+  one `transactionId`.
+- A rollback discards the transaction's events, so its `transactionId` never
+  appears.
+- An action that an event handler or store listener dispatches gets a later
+  `id`. Its `transactionId` is `null` unless it opens a transaction of its own.
+- `types` lists the events the store prepared. A handler that emits through
+  `events.emit` beyond the emitter's re-entrancy limit can stop later events
+  from reaching handlers.
+- Events created by a factory such as `events.createSelectionChangeEvent` have
+  no `origin` unless you pass one as the last argument.
+
 ## 4. Read APIs
 
 ### 4.1 Query namespace (`query`)
